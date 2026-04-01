@@ -1,27 +1,48 @@
-const BASE = "/api"
+import type { AskResult, PipelineRow } from './types'
 
-export async function ask(payload: {
+const BASE = '/api'
+
+async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  })
+  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText} [${path}]`)
+  return res.json()
+}
+
+export const getHealth = () => apiFetch<{ status: string; db: string }>('/health')
+
+export const getNodes = () =>
+  apiFetch<{ nodes: Record<string, string> }>('/v1/state').then(d => d.nodes)
+
+export const getPipeline = () => apiFetch<PipelineRow[]>('/v1/vault/pipeline')
+
+export const confirmPipeline = (id: string) =>
+  apiFetch<{ stage: string; tier: string; archive_path: string }>(
+    `/v1/vault/pipeline/${id}/confirm`, { method: 'POST' }
+  )
+
+export const askBrain = (payload: {
   prompt: string
   mode: string
   session_id: string
   user_id: string
   workspace_id?: string
   persistent?: boolean
-}) {
-  const res = await fetch(`${BASE}/v1/ask`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  })
-  return res.json()
-}
+}) =>
+  apiFetch<AskResult>('/v1/ask', { method: 'POST', body: JSON.stringify(payload) })
 
-export async function getHealth() {
-  const res = await fetch(`${BASE}/health`)
-  return res.json()
-}
+export const getCosts = () => apiFetch<{
+  budget: { daily: { spent_usd: number; limit_usd: number; pct_used: number }
+            weekly: { spent_usd: number; limit_usd: number; pct_used: number }
+            monthly: { spent_usd: number; limit_usd: number; pct_used: number } }
+  totals: { all_time_usd: number; all_time_calls: number }
+  averages: { daily_avg_usd: number; monthly_avg_usd: number }
+  by_provider: { provider: string; calls: number; cost_usd: number }[]
+}>('/v1/costs')
 
-export async function getPipeline() {
-  const res = await fetch(`${BASE}/v1/vault/pipeline`)
-  return res.json()
-}
+export const verifyPin = (pin: string) =>
+  apiFetch<{ valid: boolean }>('/v1/pin/verify', {
+    method: 'POST', body: JSON.stringify({ pin }),
+  }).then(r => r.valid).catch(() => false)

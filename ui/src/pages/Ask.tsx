@@ -1,94 +1,101 @@
-import { useState } from "react"
-import { useAppStore } from "../store"
-import { ask } from "../api"
+import { useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { useAppStore } from '../store'
+import { askBrain } from '../api'
+import type { AskResult } from '../types'
 
-const MODES = ["auto", "local", "claude", "gemini", "perplexity", "council"]
-const COUNCIL_COST = "$0.006"
+const MODES = ['auto', 'local', 'claude', 'gemini', 'perplexity', 'council']
+const COUNCIL_COST = '~$0.006'
 
 export default function Ask() {
-  const { mode, setMode, userId, sessionId, workspaceId, persistent, setPersistent } = useAppStore()
-  const [prompt, setPrompt] = useState("")
-  const [result, setResult] = useState<Record<string, unknown> | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [showCouncilConfirm, setShowCouncilConfirm] = useState(false)
+  const { theme, mode, setMode, userId, sessionId, workspaceId, persistent, setPersistent } = useAppStore()
+  const isDark = theme === 'dark'
+  const border = isDark ? 'border-white/10' : 'border-[#141414]/10'
+  const subtle = isDark ? 'bg-white/5' : 'bg-[#141414]/5'
 
-  async function submit() {
+  const [prompt, setPrompt] = useState('')
+  const [result, setResult] = useState<AskResult | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
+
+  const submit = async () => {
     if (!prompt.trim()) return
-    if (mode === "council" && !showCouncilConfirm) {
-      setShowCouncilConfirm(true)
-      return
-    }
-    setShowCouncilConfirm(false)
+    if (mode === 'council' && !showConfirm) { setShowConfirm(true); return }
+    setShowConfirm(false)
     setLoading(true)
     try {
-      const res = await ask({ prompt, mode, session_id: sessionId, user_id: userId, workspace_id: workspaceId ?? undefined, persistent })
+      const res = await askBrain({ prompt, mode, session_id: sessionId, user_id: userId, workspace_id: workspaceId ?? undefined, persistent })
       setResult(res)
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }
 
   return (
-    <div className="max-w-3xl space-y-6">
-      <h1 className="text-xl font-semibold">Ask</h1>
+    <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="max-w-3xl space-y-6">
+      <div>
+        <h1 className="font-serif italic text-3xl">Ask</h1>
+        <p className="text-[10px] font-mono uppercase opacity-50 mt-1">Adaptive AI router · 6 modes · hierarchical memory</p>
+      </div>
 
+      {/* Mode picker */}
       <div className="flex flex-wrap gap-2">
-        {MODES.map((m) => (
-          <button
-            key={m}
-            onClick={() => setMode(m)}
-            className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${mode === m ? "bg-indigo-600 border-indigo-500 text-white" : "border-gray-700 text-gray-400 hover:border-gray-500"}`}
-          >
-            {m}
-          </button>
+        {MODES.map(m => (
+          <button key={m} onClick={() => setMode(m)}
+            className={`px-3 py-1.5 rounded-full text-xs font-mono font-bold border transition-colors ${
+              mode === m
+                ? isDark ? 'bg-emerald-500 text-[#0A0A0A] border-emerald-500' : 'bg-[#141414] text-[#E4E3E0] border-[#141414]'
+                : `${border} opacity-50 hover:opacity-80`
+            }`}>{m}</button>
         ))}
       </div>
 
+      {/* Persistent toggle */}
       <div className="flex items-center gap-3">
-        <label className="text-xs text-gray-400">Persistent memory</label>
-        <button
-          onClick={() => setPersistent(!persistent)}
-          className={`w-10 h-5 rounded-full transition-colors ${persistent ? "bg-indigo-600" : "bg-gray-700"}`}
+        <span className="text-xs font-mono opacity-50">Persistent memory</span>
+        <button onClick={() => setPersistent(!persistent)}
+          className={`w-10 h-5 rounded-full transition-colors ${persistent ? 'bg-emerald-500' : isDark ? 'bg-white/10' : 'bg-[#141414]/10'}`}
         />
       </div>
 
-      {showCouncilConfirm && (
-        <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4 text-sm">
-          <p className="font-medium text-yellow-300 mb-2">Council mode — estimated cost {COUNCIL_COST}</p>
-          <p className="text-gray-400 mb-3">This fires Claude + Gemini + Perplexity in sequence.</p>
-          <div className="flex gap-3">
-            <button onClick={submit} className="px-4 py-1.5 bg-yellow-600 hover:bg-yellow-500 text-white rounded text-xs font-medium">Confirm</button>
-            <button onClick={() => setShowCouncilConfirm(false)} className="px-4 py-1.5 bg-gray-700 text-gray-300 rounded text-xs font-medium">Cancel</button>
-          </div>
-        </div>
-      )}
+      {/* Council confirm */}
+      <AnimatePresence>
+        {showConfirm && (
+          <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30">
+            <p className="text-sm font-bold text-amber-400 mb-1">Council mode — estimated cost {COUNCIL_COST}</p>
+            <p className="text-xs opacity-60 mb-3">Fires Claude + Gemini + Perplexity in sequence. 4 model calls.</p>
+            <div className="flex gap-3">
+              <button onClick={submit} className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-mono font-bold">Confirm</button>
+              <button onClick={() => setShowConfirm(false)} className={`px-4 py-1.5 rounded-lg text-xs font-mono ${border} opacity-60`}>Cancel</button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      <textarea
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        placeholder="Ask anything…"
-        rows={4}
-        className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 resize-none"
+      {/* Input */}
+      <textarea value={prompt} onChange={e => setPrompt(e.target.value)}
+        placeholder="Ask anything…" rows={4}
+        className={`w-full rounded-2xl border p-4 text-sm placeholder-opacity-30 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 resize-none bg-transparent ${border}`}
       />
-      <button
-        onClick={submit}
-        disabled={loading || !prompt.trim()}
-        className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-lg text-sm font-medium"
-      >
-        {loading ? "Thinking…" : "Ask"}
+      <button onClick={submit} disabled={loading || !prompt.trim()}
+        className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all disabled:opacity-40 ${isDark ? 'bg-emerald-500 text-[#0A0A0A]' : 'bg-[#141414] text-[#E4E3E0]'}`}>
+        {loading ? 'Thinking…' : 'Ask'}
       </button>
 
-      {result && (
-        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
-          <div className="flex items-center gap-2 text-xs text-gray-500">
-            <span className="px-2 py-0.5 bg-indigo-900 text-indigo-300 rounded-full">{String(result.mode)}</span>
-            {!!result.steps_completed && <span>{String(result.steps_completed)}/4 steps</span>}
-            {!!result.error && <span className="text-red-400">{String(result.error)}</span>}
-          </div>
-          <p className="text-sm text-gray-200 whitespace-pre-wrap">{String(result.result)}</p>
-          {!!result.refined_prompt && <p className="text-xs text-gray-500">Refined: {String(result.refined_prompt)}</p>}
-        </div>
-      )}
-    </div>
+      {/* Result */}
+      <AnimatePresence>
+        {result && (
+          <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+            className={`p-5 rounded-2xl border ${border} ${subtle} space-y-3`}>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${isDark ? 'bg-emerald-500/20 text-emerald-400' : 'bg-[#141414]/10'}`}>{result.mode}</span>
+              {result.steps_completed != null && <span className="text-[10px] font-mono opacity-40">{result.steps_completed}/4 steps</span>}
+              {result.error && <span className="text-[10px] font-mono text-rose-400">{result.error}</span>}
+            </div>
+            <p className="text-sm leading-relaxed whitespace-pre-wrap">{result.result}</p>
+            {result.refined_prompt && <p className="text-[10px] font-mono opacity-30 border-t pt-2 mt-2">Refined: {result.refined_prompt}</p>}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   )
 }
