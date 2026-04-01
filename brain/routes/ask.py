@@ -76,9 +76,7 @@ async def ask(body: AskRequest) -> AskResponse:
 
         enriched_prompt = body.prompt
         if context:
-            enriched_prompt = (
-                f"Context from memory:\n{context}\n\nUser: {body.prompt}"
-            )
+            enriched_prompt = f"Context from memory:\n{context}\n\nUser: {body.prompt}"
 
         result_dict = await route(enriched_prompt, body.mode)
 

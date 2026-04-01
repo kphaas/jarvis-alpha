@@ -67,7 +67,9 @@ class CouncilOrchestrator:
                 return (resp.json().get("result") or "").strip()
 
         try:
-            claude_response, gemini_response = await asyncio.gather(_claude(), _gemini())
+            claude_response, gemini_response = await asyncio.gather(
+                _claude(), _gemini()
+            )
             out["claude_response"] = claude_response
             out["gemini_response"] = gemini_response
             out["steps_completed"] = 2

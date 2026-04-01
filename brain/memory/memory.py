@@ -189,6 +189,4 @@ class MemoryService:
         memories = await self.recall(user_id, session_id, query, workspace_id)
         if not memories:
             return ""
-        return "\n".join(
-            [f"{m['role'].upper()}: {m['content']}" for m in memories]
-        )
+        return "\n".join([f"{m['role'].upper()}: {m['content']}" for m in memories])

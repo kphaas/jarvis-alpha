@@ -14,7 +14,7 @@ if git ls-files -o --exclude-standard | grep -qE '\.py$'; then
   py_changed=true
 fi
 if [[ "$py_changed" == true ]]; then
-  python3.12 -m ruff format brain/
+  ruff format brain/
 fi
 
 # 2–3. UI build and optional deploy of dist/
