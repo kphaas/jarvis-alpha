@@ -33,4 +33,19 @@ app.include_router(vault_router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "jarvis-alpha-brain"}
+    from brain.db.session import _pool
+
+    db_ok = False
+    try:
+        if _pool:
+            async with _pool.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+            db_ok = True
+    except Exception:
+        db_ok = False
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "service": "jarvis-alpha-brain",
+        "db": "ok" if db_ok else "error",
+        "version": "0.1.0",
+    }
