@@ -1,0 +1,30 @@
+import logging
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from gateway.routes.cloud_routes import router as cloud_router
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
+)
+logger = logging.getLogger("jarvis.alpha.gateway")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("jarvis-alpha gateway starting — pure adapter mode")
+    yield
+    logger.info("jarvis-alpha gateway shutdown")
+
+
+app = FastAPI(title="jarvis-alpha gateway", version="alpha-1", lifespan=lifespan)
+app.include_router(cloud_router)
+
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "ok",
+        "node": "gateway",
+        "version": "alpha-1",
+        "mode": "pure-adapter",
+    }

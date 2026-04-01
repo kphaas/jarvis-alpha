@@ -7,6 +7,7 @@ SECRETS_FILE = os.getenv("SECRETS_FILE", os.path.expanduser("~/.secrets"))
 
 _cache: dict = {}
 
+
 def get_secret(key: str) -> str:
     if key in _cache:
         return _cache[key]
@@ -30,5 +31,8 @@ def get_secret(key: str) -> str:
         logger.error(f"Secrets file not found: {SECRETS_FILE}")
     raise KeyError(f"Secret not found: {key}")
 
+
 def _log_access(key: str, source: str):
-    logger.info(f"secret_access key={key} source={source} at={datetime.utcnow().isoformat()}")
+    logger.info(
+        f"secret_access key={key} source={source} at={datetime.utcnow().isoformat()}"
+    )
