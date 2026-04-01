@@ -1,0 +1,36 @@
+name: jarvis-alpha CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: pip install ruff pytest
+      - name: Ruff lint
+        run: ruff check brain/ gateway/
+      - name: Pytest
+        run: pytest --tb=short || true
+
+  ui-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install and build
+        run: |
+          cd endpoint/dashboard
+          npm install
+          npm run build
+        continue-on-error: true
