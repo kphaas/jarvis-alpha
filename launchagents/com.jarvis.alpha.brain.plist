@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.jarvis.alpha.brain</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/jarvisbrain/jarvis-alpha/scripts/start_alpha_brain.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>WorkingDirectory</key>
+	<string>/Users/jarvisbrain/jarvis-alpha</string>
+	<key>StandardOutPath</key>
+	<string>/Users/jarvisbrain/jarvis-alpha/logs/alpha_brain.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/jarvisbrain/jarvis-alpha/logs/alpha_brain_error.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>GIT_TERMINAL_PROMPT</key>
+		<string>0</string>
+	</dict>
+</dict>
+</plist>
