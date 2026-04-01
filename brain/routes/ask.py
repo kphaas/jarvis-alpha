@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from brain.core.config import ALPHA_NODE
 from brain.db.session import get_db
+from brain.memory.memory import MemoryService
 from brain.routing.router import route
 
 router = APIRouter(prefix="/v1", tags=["ask"])
@@ -16,6 +17,10 @@ class AskRequest(BaseModel):
         default="auto",
         description="auto, local, claude, gemini, perplexity, council",
     )
+    session_id: str = "default"
+    workspace_id: str | None = None
+    user_id: str = "anon"
+    persistent: bool = False
 
 
 class AskResponse(BaseModel):
@@ -29,75 +34,87 @@ class AskResponse(BaseModel):
     error: str | None = None
 
 
-def _response_summary(result_dict: dict) -> str:
-    text = result_dict.get("result") or result_dict.get("final_answer") or ""
-    return text[:200]
-
-
-def _to_ask_response(result_dict: dict) -> AskResponse:
-    payload = {k: v for k, v in result_dict.items() if k in AskResponse.model_fields}
-    res = payload.get("result")
-    if not res:
-        res = result_dict.get("final_answer") or ""
-    payload["result"] = res if isinstance(res, str) else str(res or "")
-    payload.setdefault("mode", result_dict.get("mode", ""))
-    for key in AskResponse.model_fields:
-        if key not in payload:
-            payload[key] = None
-    if payload.get("mode") is None:
-        payload["mode"] = ""
-    return AskResponse(**payload)
-
-
 async def _log_ask(
-    conn,
     *,
+    user_id: str,
     start_time: float,
     status_code: int,
     result_dict: dict,
 ) -> None:
     latency_ms = int((time.monotonic() - start_time) * 1000)
-    await conn.execute(
-        """
-        INSERT INTO jarvis_request_log
-          (trace_id, user_id, node, route, method, status_code, latency_ms, model, error)
-        VALUES
-          (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)
-        """,
-        "anon",
-        ALPHA_NODE,
-        "/v1/ask",
-        "POST",
-        status_code,
-        latency_ms,
-        result_dict.get("mode", "unknown"),
-        result_dict.get("error", None),
-    )
+    async with get_db(user_id) as conn:
+        await conn.execute(
+            """
+            INSERT INTO jarvis_request_log
+              (trace_id, user_id, node, route, method, status_code, latency_ms, model, error)
+            VALUES
+              (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)
+            """,
+            user_id,
+            ALPHA_NODE,
+            "/v1/ask",
+            "POST",
+            status_code,
+            latency_ms,
+            result_dict.get("mode", "unknown"),
+            result_dict.get("error", None),
+        )
 
 
 @router.post("/ask", response_model=AskResponse)
 async def ask(body: AskRequest) -> AskResponse:
     start_time = time.monotonic()
     try:
-        result_dict = await route(body.prompt, body.mode)
-        async with get_db("anon") as conn:
-            await _log_ask(
-                conn,
-                start_time=start_time,
-                status_code=200,
-                result_dict=result_dict,
+        memory = MemoryService()
+
+        context = await memory.build_context(
+            user_id=body.user_id,
+            session_id=body.session_id,
+            query=body.prompt,
+            workspace_id=body.workspace_id,
+        )
+
+        enriched_prompt = body.prompt
+        if context:
+            enriched_prompt = (
+                f"Context from memory:\n{context}\n\nUser: {body.prompt}"
             )
-        return _to_ask_response(result_dict)
+
+        result_dict = await route(enriched_prompt, body.mode)
+
+        await memory.store(
+            user_id=body.user_id,
+            session_id=body.session_id,
+            role="user",
+            content=body.prompt,
+            workspace_id=body.workspace_id,
+            persistent=body.persistent,
+        )
+        await memory.store(
+            user_id=body.user_id,
+            session_id=body.session_id,
+            role="assistant",
+            content=result_dict.get("result", ""),
+            workspace_id=body.workspace_id,
+            persistent=body.persistent,
+        )
+
+        await _log_ask(
+            user_id=body.user_id,
+            status_code=200,
+            start_time=start_time,
+            result_dict=result_dict,
+        )
+        return AskResponse(**result_dict)
     except Exception as e:
         err = str(e)
         try:
-            async with get_db("anon") as conn:
-                await _log_ask(
-                    conn,
-                    start_time=start_time,
-                    status_code=500,
-                    result_dict={"mode": body.mode, "error": err},
-                )
+            await _log_ask(
+                user_id=body.user_id,
+                status_code=500,
+                start_time=start_time,
+                result_dict={"mode": body.mode, "error": err},
+            )
         except Exception:
             pass
         return AskResponse(mode=body.mode, result="", error=err)
