@@ -22,9 +22,9 @@ cd "$REPO_DIR"
 
 find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
-exec "$VENV/bin/uvicorn" brain.app:app \
+exec "$VENV/bin/python3.12" -m uvicorn brain.app:app \
   --host 0.0.0.0 \
-  --port 8183 \
+  --port 8185 \
   --ssl-certfile "$CERT_DIR/brain.crt" \
   --ssl-keyfile "$CERT_DIR/brain.key" \
   --log-level info
