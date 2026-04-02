@@ -94,7 +94,7 @@ class MemoryService:
                 LIMIT $3
                 """,
                 str(user_id),
-                embedding,
+                str(embedding),
                 EPISODIC_LIMIT,
             )
             if rows:
@@ -160,7 +160,7 @@ class MemoryService:
                 session_id,
                 summary,
                 role,
-                embedding,
+                str(embedding),
                 tier,
                 persistent,
             )
