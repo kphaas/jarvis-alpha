@@ -125,7 +125,7 @@ export function ThreadSidebar({ activeId, onSelect, onNew, refreshTick }: Props)
           width: "100%", padding: "7px 11px",
           border: "0.5px solid var(--color-border-secondary)",
           borderRadius: "var(--border-radius-md)",
-          background: "var(--color-background-primary)",
+          background: "var(--color-background-primary)", boxShadow: "0 2px 12px rgba(0,0,0,0.12)",
           color: "var(--color-text-primary)", fontSize: 12, fontWeight: 500,
           cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
           fontFamily: "var(--font-sans)",
@@ -229,12 +229,12 @@ export function ThreadSidebar({ activeId, onSelect, onNew, refreshTick }: Props)
       {toast && (
         <div style={{
           position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)",
-          background: "var(--color-background-primary)",
+          background: "var(--color-background-primary)", boxShadow: "0 2px 12px rgba(0,0,0,0.12)",
           border: "0.5px solid var(--color-border-secondary)",
           borderRadius: "var(--border-radius-md)",
           padding: "7px 12px", display: "flex", alignItems: "center", gap: 10,
           fontSize: 11, color: "var(--color-text-primary)", whiteSpace: "nowrap",
-          zIndex: 50,
+          zIndex: 200,
         }}>
           <span style={{ maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", color: "var(--color-text-secondary)" }}>
             Deleted
