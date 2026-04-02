@@ -11,6 +11,7 @@ from brain.routes.chat import router as chat_router
 from brain.routes.memory import router as memory_router
 from brain.routes.vault import router as vault_router
 from brain.routes.buddy import router as buddy_router
+from brain.routes.home import router as home_router
 from brain.middleware.jwt_auth import JWTAuthMiddleware
 
 
@@ -34,6 +35,7 @@ app.include_router(chat_router)
 app.include_router(memory_router)
 app.include_router(vault_router)
 app.include_router(buddy_router)
+app.include_router(home_router)
 
 
 @app.get("/health")
