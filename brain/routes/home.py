@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-import asyncpg
+from brain.db.pool import get_pool
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -76,7 +76,8 @@ async def _cert_days_remaining() -> int | None:
         return None
 
 
-async def _costs_today(pool: asyncpg.Pool) -> float | None:
+async def _costs_today() -> float | None:
+    pool = get_pool()
     try:
         row = await pool.fetchrow(
             "SELECT COALESCE(SUM(cost_usd), 0) AS total FROM alpha_cloud_costs "
@@ -88,7 +89,8 @@ async def _costs_today(pool: asyncpg.Pool) -> float | None:
         return None
 
 
-async def _last_overnight(pool: asyncpg.Pool) -> dict | None:
+async def _last_overnight() -> dict | None:
+    pool = get_pool()
     try:
         row = await pool.fetchrow(
             "SELECT status, created_at FROM overnight_runs ORDER BY created_at DESC LIMIT 1"
@@ -108,13 +110,11 @@ async def home_summary(request: Request):
     if _cache and (time.monotonic() - _cache_time) < CACHE_TTL:
         return JSONResponse(_cache)
 
-    pool = request.app.state.pool
-
     node_pings, cert_days, costs, overnight = await asyncio.gather(
         asyncio.gather(*[_ping_node(n, u) for n, u in NODE_URLS.items()]),
         _cert_days_remaining(),
-        _costs_today(pool),
-        _last_overnight(pool),
+        _costs_today(),
+        _last_overnight(),
     )
 
     nodes = {"brain": {"reachable": True, "latency_ms": 0}}
