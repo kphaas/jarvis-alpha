@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 
 import asyncpg
 
-from brain.db.pool import get_pool
 from brain.memory.memory import MemoryService
 
 logger = logging.getLogger("buddy_agent")
@@ -114,14 +113,18 @@ async def _run_cycle(pool: asyncpg.Pool) -> None:
 
 async def run_buddy() -> None:
     logger.info("Buddy agent starting — interval %ss", BUDDY_INTERVAL)
-    await asyncio.sleep(10)
+
+    dsn = os.environ.get("ALPHA_DB_DSN")
+    if not dsn:
+        logger.error("ALPHA_DB_DSN not set — exiting")
+        return
+
+    pool = await asyncpg.create_pool(dsn, min_size=1, max_size=3)
+    logger.info("Buddy DB pool ready")
 
     while True:
         try:
-            pool = get_pool()
             await _run_cycle(pool)
-        except RuntimeError:
-            logger.warning("Pool not ready — retrying in %ss", BUDDY_INTERVAL)
         except Exception as e:
             logger.error("Buddy top-level error: %s", e)
 
