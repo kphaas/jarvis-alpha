@@ -262,16 +262,23 @@ export default function Home() {
             <p className="text-sm opacity-40">No runs yet</p>
           )}
           {!graphsLoading && !graphsErr && graphs && graphs.length > 0 && (
-            <div className="flex flex-wrap items-center gap-3">
-              <span
-                className={`text-xs font-mono font-bold px-2 py-1 rounded-md border ${border} ${
-                  graphs[0].status === 'pass' || graphs[0].status === 'ok'
-                    ? 'text-emerald-500 border-emerald-500/30'
-                    : 'text-amber-500 border-amber-500/30'
-                }`}
-              >
-                {graphs[0].status}
-              </span>
+            <div className="flex flex-wrap items-start gap-3">
+              <div className="flex flex-col">
+                <span
+                  className={`text-xs font-mono font-bold px-2 py-1 rounded-md border ${border} ${
+                    graphs[0].status === 'pass' || graphs[0].status === 'ok'
+                      ? 'text-emerald-500 border-emerald-500/30'
+                      : graphs[0].status === 'pending'
+                        ? 'text-gray-400 border-gray-400/30'
+                        : 'text-amber-500 border-amber-500/30'
+                  }`}
+                >
+                  {graphs[0].status === 'pending' ? 'NOT YET RUN' : graphs[0].status}
+                </span>
+                {graphs[0].status === 'pending' && (
+                  <p className="text-xs opacity-40 mt-1">Dream Mode ships Alpha-3</p>
+                )}
+              </div>
               <span className="text-sm opacity-70">{formatRelativeTime(graphs[0].created_at)}</span>
             </div>
           )}
