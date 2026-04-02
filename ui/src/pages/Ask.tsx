@@ -1,14 +1,16 @@
 import { useState, useCallback } from "react";
 import { ThreadSidebar, type Thread } from "../components/ThreadSidebar";
 import { ChatWindow } from "../components/ChatWindow";
+import { ModelSelector } from "../components/ModelSelector";
 import { apiJson } from "../lib/apiFetch";
 
 export default function Ask() {
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
-  const [activeTitle, setActiveTitle] = useState<string>("New conversation");
-  const [editingTitle, setEditingTitle] = useState(false);
-  const [titleInput, setTitleInput] = useState("");
-  const [sidebarTick, setSidebarTick] = useState(0);
+  const [activeTitle, setActiveTitle]       = useState("New conversation");
+  const [editingTitle, setEditingTitle]     = useState(false);
+  const [titleInput, setTitleInput]         = useState("");
+  const [sidebarTick, setSidebarTick]       = useState(0);
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
 
   function refreshSidebar() { setSidebarTick(t => t + 1); }
 
@@ -52,8 +54,10 @@ export default function Ask() {
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <div style={{
-          padding: "10px 16px", borderBottom: "0.5px solid var(--color-border-tertiary)",
+          padding: "9px 14px",
+          borderBottom: "0.5px solid var(--color-border-tertiary)",
           display: "flex", alignItems: "center", gap: 8,
+          background: "var(--color-background-primary)", flexShrink: 0,
         }}>
           {editingTitle ? (
             <input
@@ -62,30 +66,34 @@ export default function Ask() {
               onBlur={handleTitleSave}
               onKeyDown={e => { if (e.key === "Enter") handleTitleSave(); if (e.key === "Escape") setEditingTitle(false); }}
               style={{
-                flex: 1, fontSize: 14, fontWeight: 500, border: "none",
-                borderBottom: "1px solid var(--color-border-secondary)",
-                background: "transparent", outline: "none", fontFamily: "var(--font-sans)",
-                color: "var(--color-text-primary)",
+                flex: 1, fontSize: 13, fontWeight: 500,
+                border: "none", borderBottom: "1px solid var(--color-border-secondary)",
+                background: "transparent", outline: "none",
+                fontFamily: "var(--font-sans)", color: "var(--color-text-primary)",
               }}
             />
           ) : (
             <span
-              style={{ fontSize: 14, fontWeight: 500, color: "var(--color-text-primary)", flex: 1, cursor: "text" }}
+              style={{ flex: 1, fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)", cursor: "text" }}
               onDoubleClick={() => { setTitleInput(activeTitle); setEditingTitle(true); }}
             >
               {activeTitle}
             </span>
           )}
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"
+          <svg
+            width="12" height="12" viewBox="0 0 16 16" fill="none"
             stroke="var(--color-text-tertiary)" strokeWidth="1.5"
-            style={{ cursor: "pointer", opacity: 0.6, flexShrink: 0 }}
-            onClick={() => { setTitleInput(activeTitle); setEditingTitle(true); }}>
+            style={{ cursor: "pointer", opacity: 0.4, flexShrink: 0 }}
+            onClick={() => { setTitleInput(activeTitle); setEditingTitle(true); }}
+          >
             <path d="M11 2L14 5L5 14H2V11L11 2Z"/>
           </svg>
+          <ModelSelector selected={selectedModels} onChange={setSelectedModels} />
         </div>
 
         <ChatWindow
           threadId={activeThreadId}
+          selectedModels={selectedModels}
           onThreadCreated={handleThreadCreated}
           onEscalated={refreshSidebar}
         />
