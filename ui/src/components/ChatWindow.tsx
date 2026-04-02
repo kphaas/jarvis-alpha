@@ -20,7 +20,8 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
   const [waiting, setWaiting]     = useState(false);
   const bottomRef                 = useRef<HTMLDivElement>(null);
   const activeThread              = useRef<string | null>(threadId);
-  const sendingRef                = useRef(false);
+  const sendingRef = useRef(false);
+  const [isSending, setIsSending] = useState(false);
 
   useEffect(() => { activeThread.current = threadId; }, [threadId]);
 
@@ -37,7 +38,8 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
 
   const send = useCallback(async () => {
     const text = input.trim();
-    if (!text || streaming || sendingRef.current) return;
+    if (!text || streaming || isSending || sendingRef.current) return;
+    setIsSending(true);
     sendingRef.current = true;
     setInput("");
     setStreaming(true);
@@ -126,6 +128,7 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
         setStreaming(false);
         setWaiting(false);
         sendingRef.current = false;
+        setIsSending(false);
       },
       (err) => {
         setMessages(prev => {
@@ -137,6 +140,7 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
         setStreaming(false);
         setWaiting(false);
         sendingRef.current = false;
+        setIsSending(false);
       }
     );
   }, [input, streaming, selectedModels, showCouncil, onThreadCreated]);

@@ -1,4 +1,6 @@
-import httpx
+import json
+import subprocess
+import asyncio
 
 from brain.core.config import GATEWAY_URL, OLLAMA_URL
 from brain.core.models import (
@@ -28,79 +30,103 @@ async def route(prompt: str, mode: str = "auto") -> dict:
         else:
             mode = "gemini"
 
+    def _curl_gateway(endpoint: str, payload: dict) -> dict:
+        cmd = [
+            "curl",
+            "-s",
+            "-X",
+            "POST",
+            f"{GATEWAY_URL}{endpoint}",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            json.dumps(payload),
+            "--max-time",
+            "30",
+            "-k",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
+        if result.returncode != 0:
+            raise RuntimeError(f"curl failed: {result.stderr}")
+        return json.loads(result.stdout)
+
     try:
-        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
-            if mode == "local":
-                r = await client.post(
-                    f"{OLLAMA_URL}/api/generate",
-                    json={
-                        "model": LOCAL_CHAT,
-                        "prompt": prompt,
-                        "stream": False,
-                    },
-                )
-                r.raise_for_status()
-                text = (r.json().get("response") or "").strip()
-                return {"mode": "local", "result": text}
+        if mode == "local":
+            cmd = [
+                "curl",
+                "-s",
+                "-X",
+                "POST",
+                f"{OLLAMA_URL}/api/generate",
+                "-H",
+                "Content-Type: application/json",
+                "-d",
+                json.dumps({"model": LOCAL_CHAT, "prompt": prompt, "stream": False}),
+                "--max-time",
+                "60",
+            ]
+            result = await asyncio.to_thread(
+                subprocess.run, cmd, capture_output=True, text=True, timeout=65
+            )
+            text = json.loads(result.stdout).get("response", "").strip()
+            return {"mode": "local", "result": text}
 
-            if mode == "claude":
-                r = await client.post(
-                    f"{GATEWAY_URL}/v1/cloud/call",
-                    json={
-                        "provider": "claude",
-                        "payload": {
-                            "model": CLAUDE_SMART,
-                            "max_tokens": 1024,
-                            "messages": [{"role": "user", "content": prompt}],
-                        },
+        if mode == "claude":
+            raw = await asyncio.to_thread(
+                _curl_gateway,
+                "/v1/cloud/call",
+                {
+                    "provider": "claude",
+                    "payload": {
+                        "model": CLAUDE_SMART,
+                        "max_tokens": 1024,
+                        "messages": [{"role": "user", "content": prompt}],
                     },
-                )
-                r.raise_for_status()
-                raw = r.json().get("result", {})
-                try:
-                    text = raw["content"][0]["text"]
-                except (KeyError, IndexError, TypeError):
-                    text = ""
-                return {"mode": "claude", "result": text}
+                },
+            )
+            try:
+                text = raw["result"]["content"][0]["text"]
+            except (KeyError, IndexError, TypeError):
+                text = ""
+            return {"mode": "claude", "result": text}
 
-            if mode == "gemini":
-                r = await client.post(
-                    f"{GATEWAY_URL}/v1/cloud/call",
-                    json={
-                        "provider": "gemini",
-                        "payload": {
-                            "model": GEMINI_FAST,
-                            "contents": [{"parts": [{"text": prompt}]}],
-                        },
+        if mode == "gemini":
+            raw = await asyncio.to_thread(
+                _curl_gateway,
+                "/v1/cloud/call",
+                {
+                    "provider": "gemini",
+                    "payload": {
+                        "model": GEMINI_FAST,
+                        "contents": [{"parts": [{"text": prompt}]}],
                     },
-                )
-                r.raise_for_status()
-                raw = r.json().get("result", {})
-                try:
-                    text = raw["candidates"][0]["content"]["parts"][0]["text"]
-                except (KeyError, IndexError, TypeError):
-                    text = ""
-                return {"mode": "gemini", "result": text}
+                },
+            )
+            try:
+                text = raw["result"]["candidates"][0]["content"]["parts"][0]["text"]
+            except (KeyError, IndexError, TypeError):
+                text = ""
+            return {"mode": "gemini", "result": text}
 
-            if mode == "perplexity":
-                r = await client.post(
-                    f"{GATEWAY_URL}/v1/cloud/call",
-                    json={
-                        "provider": "perplexity",
-                        "payload": {
-                            "model": PERPLEXITY_FAST,
-                            "messages": [{"role": "user", "content": prompt}],
-                        },
+        if mode == "perplexity":
+            raw = await asyncio.to_thread(
+                _curl_gateway,
+                "/v1/cloud/call",
+                {
+                    "provider": "perplexity",
+                    "payload": {
+                        "model": PERPLEXITY_FAST,
+                        "messages": [{"role": "user", "content": prompt}],
                     },
-                )
-                r.raise_for_status()
-                raw = r.json().get("result", {})
-                try:
-                    text = raw["choices"][0]["message"]["content"]
-                except (KeyError, IndexError, TypeError):
-                    text = ""
-                return {"mode": "perplexity", "result": text}
+                },
+            )
+            try:
+                text = raw["result"]["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError):
+                text = ""
+            return {"mode": "perplexity", "result": text}
 
-            return {"mode": mode, "result": "", "error": f"unknown mode: {mode}"}
+        return {"mode": mode, "result": "", "error": f"unknown mode: {mode}"}
+
     except Exception as e:
         return {"mode": mode, "result": "", "error": str(e)}

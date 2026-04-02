@@ -114,7 +114,7 @@ export function ModelSelector({ selected, onChange }: ModelSelectorProps) {
         <div
           ref={portalRef}
           style={{
-            position: "fixed",
+            position: "fixed", boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
             top: dropdownPos.top,
             left: dropdownPos.left,
             zIndex: 9999,
