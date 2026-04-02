@@ -71,13 +71,6 @@ def upgrade() -> None:
         )
     """)
 
-    op.execute("""
-        ALTER TABLE alpha_task_graphs
-            ADD CONSTRAINT fk_checkpoint_step
-            FOREIGN KEY (checkpoint_step_id)
-            REFERENCES alpha_task_steps(id)
-            DEFERRABLE INITIALLY DEFERRED
-    """)
 
     op.execute("CREATE INDEX IF NOT EXISTS idx_task_graphs_status   ON alpha_task_graphs(status)")
     op.execute("CREATE INDEX IF NOT EXISTS idx_task_graphs_created_by ON alpha_task_graphs(created_by)")
