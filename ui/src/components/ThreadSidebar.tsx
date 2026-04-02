@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import type { MouseEvent } from "react";
 import { apiJson } from "../lib/apiFetch";
 
@@ -48,19 +48,12 @@ function badgeFor(model: string | null) {
   return key ? MODEL_BADGE[key] : MODEL_BADGE["auto"];
 }
 
-interface Toast {
-  id: string;
-  title: string;
-  timer: ReturnType<typeof setTimeout>;
-}
-
 export function ThreadSidebar({ activeId, onSelect, onNew, refreshTick }: Props) {
   const [threads, setThreads]     = useState<Thread[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [toast, setToast]         = useState<Toast | null>(null);
-  const undoRef                   = useRef<{ id: string } | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -80,34 +73,22 @@ export function ThreadSidebar({ activeId, onSelect, onNew, refreshTick }: Props)
     } catch {}
   }
 
-  async function handleDelete(t: Thread, e: MouseEvent) {
+  function handleDelete(id: string, e: MouseEvent) {
     e.stopPropagation();
-    undoRef.current = { id: t.id };
-
-    if (toast) {
-      clearTimeout(toast.timer);
-      await apiJson(`/v1/threads/${toast.id}`, { method: "DELETE" }).catch(() => {});
-    }
-
-    setThreads(prev => prev.filter(th => th.id !== t.id));
-
-    const timer = setTimeout(async () => {
-      if (undoRef.current?.id === t.id) {
-        await apiJson(`/v1/threads/${t.id}`, { method: "DELETE" }).catch(() => {});
-        undoRef.current = null;
-      }
-      setToast(null);
-    }, 4000);
-
-    setToast({ id: t.id, title: t.title, timer });
+    setConfirmDeleteId(id);
   }
 
-  async function handleUndo() {
-    if (!toast) return;
-    clearTimeout(toast.timer);
-    undoRef.current = null;
-    setToast(null);
+  async function confirmDelete(id: string, e: MouseEvent) {
+    e.stopPropagation();
+    setConfirmDeleteId(null);
+    setThreads(prev => prev.filter(t => t.id !== id));
+    await apiJson(`/v1/threads/${id}`, { method: "DELETE" }).catch(() => {});
     load();
+  }
+
+  function cancelDelete(e: MouseEvent) {
+    e.stopPropagation();
+    setConfirmDeleteId(null);
   }
 
   const groups = groupThreads(threads);
@@ -159,7 +140,27 @@ export function ThreadSidebar({ activeId, onSelect, onNew, refreshTick }: Props)
                     border: isActive ? "0.5px solid var(--color-border-tertiary)" : "0.5px solid transparent",
                   }}
                 >
-                  {editingId === t.id ? (
+                  {confirmDeleteId === t.id ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 11, color: "var(--color-text-secondary)", flex: 1 }}>Delete?</span>
+                      <button
+                        onClick={e => confirmDelete(t.id, e)}
+                        style={{
+                          fontSize: 10, padding: "1px 7px", borderRadius: 4, cursor: "pointer",
+                          background: "#E24B4A", border: "none", color: "#fff",
+                          fontFamily: "var(--font-sans)", fontWeight: 500,
+                        }}
+                      >Delete</button>
+                      <button
+                        onClick={cancelDelete}
+                        style={{
+                          fontSize: 10, padding: "1px 7px", borderRadius: 4, cursor: "pointer",
+                          background: "transparent", border: "0.5px solid var(--color-border-secondary)",
+                          color: "var(--color-text-secondary)", fontFamily: "var(--font-sans)",
+                        }}
+                      >Cancel</button>
+                    </div>
+                  ) : editingId === t.id ? (
                     <input
                       autoFocus value={editTitle}
                       onChange={e => setEditTitle(e.target.value)}
@@ -196,9 +197,9 @@ export function ThreadSidebar({ activeId, onSelect, onNew, refreshTick }: Props)
                       <span style={{ fontSize: 10, color: "#BA7517" }}>◑</span>
                     )}
                   </div>
-                  {isHover && editingId !== t.id && (
+                  {isHover && editingId !== t.id && confirmDeleteId !== t.id && (
                     <button
-                      onClick={e => handleDelete(t, e)}
+                      onClick={e => handleDelete(t.id, e)}
                       style={{
                         position: "absolute", right: 8, top: "50%",
                         transform: "translateY(-50%)",
@@ -225,32 +226,6 @@ export function ThreadSidebar({ activeId, onSelect, onNew, refreshTick }: Props)
           </div>
         )}
       </div>
-
-      {toast && (
-        <div style={{
-          position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)",
-          background: "var(--color-background-primary)", boxShadow: "0 2px 12px rgba(0,0,0,0.12)",
-          border: "0.5px solid var(--color-border-secondary)",
-          borderRadius: "var(--border-radius-md)",
-          padding: "7px 12px", display: "flex", alignItems: "center", gap: 10,
-          fontSize: 11, color: "var(--color-text-primary)", whiteSpace: "nowrap",
-          zIndex: 200,
-        }}>
-          <span style={{ maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", color: "var(--color-text-secondary)" }}>
-            Deleted
-          </span>
-          <button
-            onClick={handleUndo}
-            style={{
-              background: "transparent", border: "none", cursor: "pointer",
-              fontSize: 11, fontWeight: 500, color: "#378ADD",
-              fontFamily: "var(--font-sans)", padding: 0,
-            }}
-          >
-            Undo
-          </button>
-        </div>
-      )}
     </aside>
   );
 }

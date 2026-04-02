@@ -17,9 +17,10 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
   const [messages, setMessages]   = useState<Message[]>([]);
   const [input, setInput]         = useState("");
   const [streaming, setStreaming] = useState(false);
-  const [waiting, setWaiting] = useState(false);
+  const [waiting, setWaiting]     = useState(false);
   const bottomRef                 = useRef<HTMLDivElement>(null);
   const activeThread              = useRef<string | null>(threadId);
+  const sendingRef                = useRef(false);
 
   useEffect(() => { activeThread.current = threadId; }, [threadId]);
 
@@ -36,7 +37,8 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
 
   const send = useCallback(async () => {
     const text = input.trim();
-    if (!text || streaming) return;
+    if (!text || streaming || sendingRef.current) return;
+    sendingRef.current = true;
     setInput("");
     setStreaming(true);
     setWaiting(true);
@@ -44,14 +46,18 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
     setMessages(prev => [...prev, { role: "user", content: text }]);
 
     const isCouncil = selectedModels.length >= 2;
-    const model     = selectedModels.length === 0 ? "auto" : selectedModels.length === 1 ? selectedModels[0] : "council";
+    const model     = selectedModels.length === 0 ? "auto"
+                    : selectedModels.length === 1 ? selectedModels[0]
+                    : "council";
 
     setMessages(prev => [...prev, {
       role: "assistant", content: "", streaming: true,
       model_used: model, thread_id: activeThread.current ?? undefined,
+      councilStreams: isCouncil ? {} : undefined,
     }]);
 
     let accumulated = "";
+    const councilAccum: Record<string, string> = {};
 
     await apiFetchStream(
       "/v1/chat/completions",
@@ -64,18 +70,38 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
         show_council: showCouncil,
       },
       (chunk) => {
-        accumulated += chunk.delta;
         setWaiting(false);
+
         if (chunk.thread_id && !activeThread.current) {
           activeThread.current = chunk.thread_id;
           onThreadCreated(chunk.thread_id);
         }
-        setMessages(prev => {
-          const next = [...prev];
-          const idx  = next.findLastIndex(m => m.role === "assistant" && m.streaming);
-          if (idx >= 0) next[idx] = { ...next[idx], content: accumulated, thread_id: chunk.thread_id };
-          return next;
-        });
+
+        if (chunk.council_model) {
+          councilAccum[chunk.council_model] = (councilAccum[chunk.council_model] ?? "") + chunk.delta;
+          setMessages(prev => {
+            const next = [...prev];
+            const idx  = next.findLastIndex(m => m.role === "assistant" && m.streaming);
+            if (idx >= 0) next[idx] = {
+              ...next[idx],
+              councilStreams: { ...councilAccum },
+              thread_id: chunk.thread_id,
+            };
+            return next;
+          });
+        } else {
+          accumulated += chunk.delta;
+          setMessages(prev => {
+            const next = [...prev];
+            const idx  = next.findLastIndex(m => m.role === "assistant" && m.streaming);
+            if (idx >= 0) next[idx] = {
+              ...next[idx],
+              content: accumulated,
+              thread_id: chunk.thread_id,
+            };
+            return next;
+          });
+        }
       },
       (tid, finalModel, councilDetail) => {
         const resolved = tid || activeThread.current;
@@ -91,12 +117,15 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
             streaming: false,
             model_used: finalModel,
             council_detail: councilDetail ?? null,
+            councilStreams: undefined,
             thread_id: resolved ?? undefined,
             complexity: text.split(" ").length > 30 ? 4 : 2,
           };
           return next;
         });
         setStreaming(false);
+        setWaiting(false);
+        sendingRef.current = false;
       },
       (err) => {
         setMessages(prev => {
@@ -106,6 +135,8 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
           return next;
         });
         setStreaming(false);
+        setWaiting(false);
+        sendingRef.current = false;
       }
     );
   }, [input, streaming, selectedModels, showCouncil, onThreadCreated]);
@@ -119,8 +150,12 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
     : `Council: ${selectedModels.join(" + ")} · synthesis after · enter to send`;
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100%", overflow: "hidden", position: "relative", zIndex: 1 }}>
-      <div style={{ flex: 1, overflowY: "auto", padding: "14px 18px" }}>
+    <div style={{
+      flex: 1, display: "flex", flexDirection: "column",
+      minWidth: 0, height: "100%", overflow: "hidden",
+      position: "relative", zIndex: 0,
+    }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px 18px", position: "relative", zIndex: 0 }}>
         {messages.length === 0 && (
           <div style={{
             height: "100%", display: "flex", flexDirection: "column",
@@ -135,27 +170,24 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
             <span style={{ fontSize: 12 }}>Ask JARVIS anything</span>
           </div>
         )}
-
         {messages.map((msg, i) => (
-          <MessageBubble key={i} msg={msg} onEscalated={onEscalated} />
+          <MessageBubble key={i} msg={msg} showCouncilPanels={showCouncil} onEscalated={onEscalated} />
         ))}
-
         {(streaming || waiting) && (
-          <div style={{
-            display: "flex", alignItems: "center", gap: 8,
-            padding: "6px 0 4px 36px",
-          }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0 4px 36px" }}>
             <NeuralPulse active={streaming || waiting} />
             <span style={{ fontSize: 10, color: "var(--color-text-tertiary)", fontWeight: 500 }}>
               JARVIS is thinking…
             </span>
           </div>
         )}
-
         <div ref={bottomRef} />
       </div>
 
-      <div style={{ borderTop: "0.5px solid var(--color-border-tertiary)", padding: "10px 14px", background: "var(--color-background-primary)", flexShrink: 0 }}>
+      <div style={{
+        borderTop: "0.5px solid var(--color-border-tertiary)",
+        padding: "10px 14px", background: "var(--color-background-primary)", flexShrink: 0,
+      }}>
         <div style={{ display: "flex", gap: 7, alignItems: "flex-end" }}>
           <textarea
             value={input}
@@ -174,11 +206,11 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
           />
           <button
             onClick={send}
-            disabled={streaming || !input.trim()}
+            disabled={streaming || waiting || !input.trim()}
             style={{
               width: 32, height: 32, borderRadius: 8, border: "none",
-              background: streaming || !input.trim() ? "var(--color-border-tertiary)" : sendColor,
-              cursor: streaming || !input.trim() ? "default" : "pointer",
+              background: streaming || waiting || !input.trim() ? "var(--color-border-tertiary)" : sendColor,
+              cursor: streaming || waiting || !input.trim() ? "default" : "pointer",
               display: "flex", alignItems: "center", justifyContent: "center",
               flexShrink: 0, transition: "background 0.2s",
             }}

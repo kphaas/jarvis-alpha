@@ -9,6 +9,7 @@ export interface Message {
   memory_injected?: boolean;
   latency_ms?: number | null;
   council_detail?: Record<string, string> | null;
+  councilStreams?: Record<string, string>;
   streaming?: boolean;
   complexity?: number;
   thread_id?: string;
@@ -16,6 +17,7 @@ export interface Message {
 
 interface Props {
   msg: Message;
+  showCouncilPanels?: boolean;
   onEscalated?: () => void;
 }
 
@@ -42,7 +44,7 @@ function modelLabel(model: string | null | undefined): string {
   return "Local";
 }
 
-export function MessageBubble({ msg, onEscalated }: Props) {
+export function MessageBubble({ msg, showCouncilPanels, onEscalated }: Props) {
   const [showCouncil, setShowCouncil] = useState(false);
   const [escalating, setEscalating] = useState(false);
   const [escalated, setEscalated] = useState(false);
@@ -50,6 +52,9 @@ export function MessageBubble({ msg, onEscalated }: Props) {
 
   const isUser = msg.role === "user";
   const isCouncil = !!msg.council_detail && Object.keys(msg.council_detail).length > 0;
+  const hasLiveStreams = !!msg.councilStreams && Object.keys(msg.councilStreams).length > 0;
+  const showPanels = showCouncilPanels && (hasLiveStreams || isCouncil);
+  const panelData = isCouncil ? msg.council_detail! : (msg.councilStreams ?? {});
   const isHighComplexity = (msg.complexity ?? 0) >= 4;
   const mc = modelColor(msg.model_used);
 
@@ -160,20 +165,26 @@ export function MessageBubble({ msg, onEscalated }: Props) {
           </div>
         )}
 
-        {showCouncil && isCouncil && msg.council_detail && (
+        {showPanels && Object.keys(panelData).length > 0 && (
           <div style={{
             marginTop: 8, display: "grid",
-            gridTemplateColumns: `repeat(${Object.keys(msg.council_detail).length}, 1fr)`, gap: 8,
+            gridTemplateColumns: `repeat(${Object.keys(panelData).length}, 1fr)`, gap: 6,
           }}>
-            {Object.entries(msg.council_detail).map(([model, text]) => {
+            {Object.entries(panelData).map(([model, text]) => {
               const mc2 = modelColor(model);
               return (
                 <div key={model} style={{
-                  padding: "8px 10px", borderRadius: "var(--border-radius-md)",
+                  padding: "7px 9px", borderRadius: "var(--border-radius-md)",
                   background: mc2.bg, border: `0.5px solid ${mc2.color}40`,
+                  minHeight: 40,
                 }}>
-                  <div style={{ fontSize: 10, fontWeight: 500, color: mc2.color, marginBottom: 4, textTransform: "uppercase" }}>{model}</div>
-                  <div style={{ fontSize: 12, color: "var(--color-text-primary)", lineHeight: 1.5 }}>{text}</div>
+                  <div style={{ fontSize: 9, fontWeight: 500, color: mc2.color, marginBottom: 3, textTransform: "uppercase" }}>
+                    {model}
+                    {!isCouncil && <span style={{ fontSize: 8, opacity: 0.6, marginLeft: 4 }}>streaming…</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--color-text-primary)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                    {text || <span style={{ opacity: 0.4 }}>waiting…</span>}
+                  </div>
                 </div>
               );
             })}
