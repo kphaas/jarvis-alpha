@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
+import { apiJson } from "../lib/apiFetch";
 
 const REFRESH_MS = 60_000;
-const BRAIN_URL = (import.meta.env.VITE_BRAIN_URL as string) || "";
 
 interface NodeSummary {
   reachable: boolean;
@@ -18,6 +18,35 @@ interface HomeSummary {
   cert_days_remaining: number | null;
   last_overnight_run: { status: string; ran_at: string } | null;
   cached_at: string;
+}
+
+interface MeshStatusPayload {
+  checked_at: string;
+  nodes: Array<{
+    name: string;
+    status: string;
+    extra?: { response_time_ms?: number };
+  }>;
+}
+
+interface HealthV1Payload {
+  cert_days_remaining?: number | null;
+  costs_today_usd?: number | null;
+  last_overnight_run?: { status: string; ran_at: string } | null;
+  cached_at?: string;
+}
+
+function meshRowToNodeSummary(
+  row: { status: string; extra?: { response_time_ms?: number } } | undefined
+): NodeSummary {
+  if (!row) return { reachable: false, latency_ms: null };
+  const s = row.status.toLowerCase();
+  const reachable = s === "healthy" || s === "online";
+  const ms = row.extra?.response_time_ms;
+  return {
+    reachable,
+    latency_ms: ms != null ? Math.round(ms) : null,
+  };
 }
 
 function statusDot(ok: boolean) {
@@ -57,11 +86,24 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
 
   const fetchSummary = useCallback(async () => {
     try {
-      const res = await fetch(`${BRAIN_URL}/v1/home/summary`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const [mesh, health] = await Promise.all([
+        apiJson<MeshStatusPayload>("/v1/mesh/status"),
+        apiJson<HealthV1Payload>("/v1/health"),
+      ]);
+      const byName = Object.fromEntries(
+        mesh.nodes.map((n) => [n.name.toLowerCase(), n])
+      );
+      const data: HomeSummary = {
+        nodes: {
+          brain: meshRowToNodeSummary(byName["brain"]),
+          gateway: meshRowToNodeSummary(byName["gateway"]),
+          endpoint: meshRowToNodeSummary(byName["endpoint"]),
+        },
+        cert_days_remaining: health.cert_days_remaining ?? null,
+        costs_today_usd: health.costs_today_usd ?? null,
+        last_overnight_run: health.last_overnight_run ?? null,
+        cached_at: health.cached_at ?? mesh.checked_at,
+      };
       setSummary(data);
       setFetchedAt(new Date());
       setError(null);
