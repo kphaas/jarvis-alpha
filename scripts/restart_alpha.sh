@@ -52,9 +52,8 @@ fi
 spinner $! "Waiting for port to clear"
 echo ""
 
-source ~/jarvis/.secrets
 echo "Running database migrations..."
-cd ~/jarvis-alpha && ~/jarvis-alpha/.venv/bin/alembic upgrade head
+cd ~/jarvis-alpha && JARVIS_ALPHA_DB_DSN=$(grep "^JARVIS_ALPHA_DB_DSN=" ~/jarvis/.secrets | cut -d= -f2-) ~/jarvis-alpha/.venv/bin/alembic upgrade head
 
 echo "[5/6] Loading Alpha Brain + Buddy..."
 launchctl load ~/Library/LaunchAgents/${BRAIN_PLIST}.plist
