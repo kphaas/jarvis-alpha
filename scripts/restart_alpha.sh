@@ -52,6 +52,7 @@ fi
 spinner $! "Waiting for port to clear"
 echo ""
 
+source ~/jarvis/.secrets
 echo "Running database migrations..."
 cd ~/jarvis-alpha && ~/jarvis-alpha/.venv/bin/alembic upgrade head
 
