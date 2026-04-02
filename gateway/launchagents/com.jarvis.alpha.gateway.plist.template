@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>Label</key>
+<string>com.jarvis.alpha.gateway</string>
+<key>ProgramArguments</key>
+<array>
+<string>/bin/bash</string>
+<string>{{JARVIS_ALPHA_DIR}}/scripts/start_alpha_gateway.sh</string>
+</array>
+<key>RunAtLoad</key>
+<true/>
+<key>KeepAlive</key>
+<true/>
+<key>WorkingDirectory</key>
+<string>{{JARVIS_ALPHA_DIR}}</string>
+<key>StandardOutPath</key>
+<string>{{JARVIS_ALPHA_DIR}}/logs/alpha_gateway.log</string>
+<key>StandardErrorPath</key>
+<string>{{JARVIS_ALPHA_DIR}}/logs/alpha_gateway_error.log</string>
+<key>EnvironmentVariables</key>
+<dict>
+<key>GIT_TERMINAL_PROMPT</key>
+<string>0</string>
+</dict>
+</dict>
+</plist>
