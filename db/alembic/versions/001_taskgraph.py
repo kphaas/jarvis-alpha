@@ -28,7 +28,7 @@ def upgrade() -> None:
                                 )),
             priority            INTEGER NOT NULL DEFAULT 3,
             created_by          UUID NOT NULL,
-            workspace_id        TEXT REFERENCES alpha_projects(project_id),
+            workspace_id        TEXT,
             parent_graph_id     UUID REFERENCES alpha_task_graphs(id),
             checkpoint_step_id  UUID,
             started_at          TIMESTAMP,
