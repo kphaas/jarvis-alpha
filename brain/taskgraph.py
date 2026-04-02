@@ -1,6 +1,6 @@
 """
 Jarvis-Alpha Brain — TaskGraph Manager
-Manages DAG execution state for agent_tasks and task_steps.
+Manages DAG execution state for alpha_task_graphs and alpha_task_steps.
 GitHub issue #2
 """
 
@@ -35,7 +35,7 @@ class TaskGraph:
     async def execute_step(self, step_id: UUID) -> dict:
         """
         Runs a single step. Records started_at, completed_at,
-        duration_ms. Writes output_ref to task_steps.
+        duration_ms. Writes output_ref to alpha_task_steps.
         """
         pass
 
@@ -47,21 +47,21 @@ class TaskGraph:
         error: Optional[str] = None,
     ):
         """
-        Updates task_steps row. Valid statuses:
-        pending, in_progress, complete, failed.
+        Updates alpha_task_steps row. Valid statuses:
+        pending, running, completed, failed.
         """
         pass
 
     async def get_pending_tasks(self, project_id: Optional[str] = None) -> list[dict]:
         """
-        Returns all pending agent_tasks.
+        Returns all pending alpha_task_graphs.
         Optionally filtered by project_id.
         """
         pass
 
     async def checkpoint(self, step_id: UUID, context: dict):
         """
-        Writes execution_state snapshot for step.
+        Writes checkpoint on alpha_task_graphs for step.
         Enables resume after failure.
         """
         pass

@@ -52,6 +52,9 @@ fi
 spinner $! "Waiting for port to clear"
 echo ""
 
+echo "Running database migrations..."
+cd ~/jarvis-alpha && ~/jarvis-alpha/.venv/bin/alembic upgrade head
+
 echo "[5/6] Loading Alpha Brain + Buddy..."
 launchctl load ~/Library/LaunchAgents/${BRAIN_PLIST}.plist
 launchctl load ~/Library/LaunchAgents/${BUDDY_PLIST}.plist
