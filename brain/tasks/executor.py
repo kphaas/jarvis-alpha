@@ -98,7 +98,10 @@ class TaskGraphExecutor:
             return
         graph_id = str(step["graph_id"])
         try:
-            out = await dispatch(dict(step))
+            result = await dispatch(dict(step))
+            if not result.get("success"):
+                raise RuntimeError(result.get("error") or "dispatch failed")
+            out = result.get("output") or {}
         except Exception as exc:
             err = str(exc)
             should_retry = False
