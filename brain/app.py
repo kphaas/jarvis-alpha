@@ -6,6 +6,7 @@ from brain.middleware.rate_limit_middleware import RateLimitMiddleware
 from brain.middleware.log_middleware import LogMiddleware
 from brain.db.pool import init_pool, close_pool, get_pool
 from brain.core.config import ALPHA_DB_DSN
+from brain.tasks.executor import recover_stuck_graphs
 from brain.routes.ask import router as ask_router
 from brain.routes.chat import router as chat_router
 from brain.routes.memory import router as memory_router
@@ -13,13 +14,15 @@ from brain.routes.vault import router as vault_router
 from brain.routes.buddy import router as buddy_router
 from brain.routes.home import router as home_router
 from brain.routes.mesh import router as mesh_router
+from brain.routes.pin_auth import router as pin_auth_router
 from brain.routes.tasks import tasks_router
 from brain.middleware.jwt_auth import JWTAuthMiddleware
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_pool(ALPHA_DB_DSN)
+    db_pool = await init_pool(ALPHA_DB_DSN)
+    await recover_stuck_graphs(db_pool)
     yield
     await close_pool()
 
@@ -32,6 +35,7 @@ app.add_middleware(RLSMiddleware)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(JWTAuthMiddleware)
 
+app.include_router(pin_auth_router)
 app.include_router(tasks_router)
 app.include_router(ask_router)
 app.include_router(chat_router)

@@ -7,7 +7,7 @@ import jwt
 
 logger = logging.getLogger(__name__)
 
-SKIP_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
+SKIP_PATHS = {"/health", "/docs", "/openapi.json", "/redoc", "/v1/auth/pin"}
 
 
 def _load_public_key() -> bytes:
