@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
+import { apiJson } from "../lib/apiFetch";
 
-const BRAIN_URL = (import.meta.env.VITE_BRAIN_URL as string) || "";
 const REFRESH_MS = 30_000;
 
 interface MeshNodeExtra {
@@ -32,6 +32,35 @@ interface MeshStatus {
   mesh_status: "nominal" | "degraded" | "critical";
   checked_at: string;
   nodes: MeshNode[];
+}
+
+interface MeshCertApiRow {
+  node: string;
+  domain: string;
+  expires: string;
+  days_remaining: number;
+  status: string;
+  source: string;
+}
+
+function certStatusFromApi(status: string): "green" | "amber" | "red" {
+  const s = status.toLowerCase();
+  if (s === "ok") return "green";
+  if (s === "warning") return "amber";
+  return "red";
+}
+
+function mergeMeshCerts(nodes: MeshNode[], certs: MeshCertApiRow[]): MeshNode[] {
+  const by = Object.fromEntries(certs.map((c) => [c.node.toLowerCase(), c]));
+  return nodes.map((n) => {
+    const c = by[n.name] as MeshCertApiRow | undefined;
+    if (!c) return n;
+    return {
+      ...n,
+      cert_days_remaining: n.cert_days_remaining ?? c.days_remaining,
+      cert_status: n.cert_status ?? certStatusFromApi(c.status),
+    };
+  });
 }
 
 const STATUS_GREEN = "#00ff88";
@@ -233,11 +262,14 @@ export default function Mesh({ theme, token }: { theme: "dark" | "light"; token:
   const load = useCallback(async () => {
     if (!initialLoad.current) setRefreshing(true);
     try {
-      const res = await fetch(`${BRAIN_URL}/v1/mesh/status`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const [statusData, certsData] = await Promise.all([
+        apiJson<MeshStatus>("/v1/mesh/status"),
+        apiJson<MeshCertApiRow[]>("/v1/mesh/certs"),
+      ]);
+      setMesh({
+        ...statusData,
+        nodes: mergeMeshCerts(statusData.nodes, certsData),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setMesh(await res.json());
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load mesh");

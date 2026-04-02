@@ -29,13 +29,6 @@ interface MeshStatusPayload {
   }>;
 }
 
-interface HealthV1Payload {
-  cert_days_remaining?: number | null;
-  costs_today_usd?: number | null;
-  last_overnight_run?: { status: string; ran_at: string } | null;
-  cached_at?: string;
-}
-
 function meshRowToNodeSummary(
   row: { status: string; extra?: { response_time_ms?: number } } | undefined
 ): NodeSummary {
@@ -86,10 +79,13 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
 
   const fetchSummary = useCallback(async () => {
     try {
-      const [mesh, health] = await Promise.all([
+      const bundled = await Promise.all([
         apiJson<MeshStatusPayload>("/v1/mesh/status"),
-        apiJson<HealthV1Payload>("/v1/health"),
+        apiJson<HomeSummary>("/v1/home/summary"),
+        apiJson<unknown>("/health"),
       ]);
+      const mesh = bundled[0];
+      const home = bundled[1];
       const byName = Object.fromEntries(
         mesh.nodes.map((n) => [n.name.toLowerCase(), n])
       );
@@ -99,10 +95,10 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
           gateway: meshRowToNodeSummary(byName["gateway"]),
           endpoint: meshRowToNodeSummary(byName["endpoint"]),
         },
-        cert_days_remaining: health.cert_days_remaining ?? null,
-        costs_today_usd: health.costs_today_usd ?? null,
-        last_overnight_run: health.last_overnight_run ?? null,
-        cached_at: health.cached_at ?? mesh.checked_at,
+        cert_days_remaining: home.cert_days_remaining ?? null,
+        costs_today_usd: home.costs_today_usd ?? null,
+        last_overnight_run: home.last_overnight_run ?? null,
+        cached_at: home.cached_at ?? mesh.checked_at,
       };
       setSummary(data);
       setFetchedAt(new Date());
