@@ -19,7 +19,7 @@ depends_on = None
 def upgrade() -> None:
     op.execute("""
         ALTER TABLE alpha_task_events
-            ADD CONSTRAINT IF NOT EXISTS alpha_task_events_graph_id_fkey
+            ADD CONSTRAINT alpha_task_events_graph_id_fkey
             FOREIGN KEY (graph_id)
             REFERENCES alpha_task_graphs(id)
             ON DELETE SET NULL
@@ -27,7 +27,7 @@ def upgrade() -> None:
 
     op.execute("""
         ALTER TABLE alpha_task_events
-            ADD CONSTRAINT IF NOT EXISTS alpha_task_events_step_id_fkey
+            ADD CONSTRAINT alpha_task_events_step_id_fkey
             FOREIGN KEY (step_id)
             REFERENCES alpha_task_steps(id)
             ON DELETE SET NULL
