@@ -155,7 +155,7 @@ if [[ $pull_ok -eq 1 ]]; then
   echo ""
   echo "Triggering intel refresh for jarvis-alpha (project 65)..."
   ssh "${SSH_OPTS[@]}" "$SANDBOX" \
-    "curl -sk -X POST 'https://127.0.0.1:5001/api/intel/refresh?project_id=65' \
+    "curl -sk -X POST 'http://localhost:5001/api/intel/refresh?project_id=65' \
      --max-time 30 | python3 -c \"import sys,json; d=json.load(sys.stdin); r=d.get('results',[{}])[0]; print('Intel:', r.get('symbols','?'), 'symbols' if 'symbols' in r else r.get('error','?'))\"" \
     || echo "Intel refresh skipped"
 fi
