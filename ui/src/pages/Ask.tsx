@@ -11,6 +11,9 @@ export default function Ask() {
   const [titleInput, setTitleInput]         = useState("");
   const [sidebarTick, setSidebarTick]       = useState(0);
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
+  const [showCouncil, setShowCouncil]       = useState(false);
+
+  const isCouncil = selectedModels.length >= 2;
 
   function refreshSidebar() { setSidebarTick(t => t + 1); }
 
@@ -57,7 +60,9 @@ export default function Ask() {
           padding: "9px 14px",
           borderBottom: "0.5px solid var(--color-border-tertiary)",
           display: "flex", alignItems: "center", gap: 8,
-          background: "var(--color-background-primary)", flexShrink: 0, overflow: "visible", position: "relative", zIndex: 10,
+          background: "var(--color-background-primary)",
+          flexShrink: 0, overflow: "visible",
+          position: "relative", zIndex: 10,
         }}>
           {editingTitle ? (
             <input
@@ -88,12 +93,33 @@ export default function Ask() {
           >
             <path d="M11 2L14 5L5 14H2V11L11 2Z"/>
           </svg>
+
+          <button
+            onClick={() => isCouncil && setShowCouncil(s => !s)}
+            style={{
+              display: "flex", alignItems: "center", gap: 5,
+              padding: "4px 9px", borderRadius: 20, fontSize: 11, fontWeight: 500,
+              fontFamily: "var(--font-sans)", cursor: isCouncil ? "pointer" : "default",
+              border: `0.5px solid ${isCouncil ? "rgba(83,74,183,0.3)" : "var(--color-border-tertiary)"}`,
+              background: isCouncil && showCouncil ? "rgba(83,74,183,0.12)" : "transparent",
+              color: isCouncil ? (showCouncil ? "#3C3489" : "var(--color-text-secondary)") : "var(--color-text-tertiary)",
+              transition: "all 0.2s",
+            }}
+          >
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+              <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1"/>
+              <circle cx="6" cy="6" r="2" fill="currentColor"/>
+            </svg>
+            {showCouncil ? "Hide thinking" : "Show thinking"}
+          </button>
+
           <ModelSelector selected={selectedModels} onChange={setSelectedModels} />
         </div>
 
         <ChatWindow
           threadId={activeThreadId}
           selectedModels={selectedModels}
+          showCouncil={showCouncil}
           onThreadCreated={handleThreadCreated}
           onEscalated={refreshSidebar}
         />

@@ -47,10 +47,11 @@ export function ModelSelector({ selected, onChange }: ModelSelectorProps) {
 
   function toggle(id: string) {
     if (id === "auto") { onChange([]); setOpen(false); return; }
-    const next = selected.includes(id)
-      ? selected.filter(s => s !== id)
-      : [...selected.filter(s => s !== "auto"), id].slice(0, 3);
-    onChange(next);
+    if (selected.includes(id)) {
+      onChange(selected.filter(s => s !== id));
+    } else if (selected.length < 3) {
+      onChange([...selected, id]);
+    }
   }
 
   const isAuto    = selected.length === 0;

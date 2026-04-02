@@ -8,11 +8,12 @@ import { pillSendColor } from "./ModelSelector";
 interface Props {
   threadId: string | null;
   selectedModels: string[];
+  showCouncil: boolean;
   onThreadCreated: (id: string) => void;
   onEscalated: () => void;
 }
 
-export function ChatWindow({ threadId, selectedModels, onThreadCreated, onEscalated }: Props) {
+export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCreated, onEscalated }: Props) {
   const [messages, setMessages]   = useState<Message[]>([]);
   const [input, setInput]         = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -60,7 +61,7 @@ export function ChatWindow({ threadId, selectedModels, onThreadCreated, onEscala
         council_models: isCouncil ? selectedModels : [],
         thread_id: activeThread.current,
         stream: true,
-        show_council: false,
+        show_council: showCouncil,
       },
       (chunk) => {
         accumulated += chunk.delta;
@@ -107,7 +108,7 @@ export function ChatWindow({ threadId, selectedModels, onThreadCreated, onEscala
         setStreaming(false);
       }
     );
-  }, [input, streaming, selectedModels, onThreadCreated]);
+  }, [input, streaming, selectedModels, showCouncil, onThreadCreated]);
 
   const sendColor = pillSendColor(selectedModels);
 

@@ -186,12 +186,22 @@ async def _auto_name_thread(
 
 # ── SSE streaming ──────────────────────────────────────────────────────────────
 
+JARVIS_SYSTEM_PROMPT = (
+    "You are JARVIS, a private AI assistant running on a personal multi-node infrastructure "
+    "owned by Kenneth Haas. You run on three core nodes: Brain (Mac Studio M2 Ultra, orchestrator), "
+    "Gateway (Mac Mini, internet egress), and Endpoint (Mac Mini M1, UI). "
+    "You are not a cloud service — you are a private, self-hosted system. "
+    "Always answer as JARVIS. Be direct, concise, and technically precise. "
+    "When you have memory context provided, use it to give accurate, personalized answers."
+)
+
 
 async def _stream_single(
     prompt: str, mode: str, thread_id: str, model_label: str
 ) -> AsyncGenerator[str, None]:
     """Stream tokens from router → SSE events."""
-    result = await route(prompt, mode)
+    jarvis_prompt = f"{JARVIS_SYSTEM_PROMPT}\n\n{prompt}"
+    result = await route(jarvis_prompt, mode)
     text = result.get("result", "")
     model_used = result.get("mode", mode)
 
