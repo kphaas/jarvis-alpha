@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import uuid
 from datetime import datetime, timezone
 
 import asyncpg
@@ -13,6 +14,13 @@ logger = logging.getLogger("buddy_agent")
 
 BUDDY_INTERVAL = int(os.environ.get("BUDDY_INTERVAL_SECONDS", "60"))
 ALERT_THRESHOLD_HOURS = 20
+
+
+def _to_uuid(user_id: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(user_id)
+    except ValueError:
+        return uuid.uuid5(uuid.NAMESPACE_DNS, user_id)
 
 
 async def _write_event(
@@ -48,6 +56,7 @@ async def _run_cycle(pool: asyncpg.Pool) -> None:
 
     for row in users:
         user_id = row["user_id"]
+        user_uuid = _to_uuid(user_id)
 
         try:
             eviction = await memory.evict_working()
@@ -64,7 +73,7 @@ async def _run_cycle(pool: asyncpg.Pool) -> None:
                         priority=1,
                     )
 
-            promotion = await memory.promote_to_semantic(user_id)
+            promotion = await memory.promote_to_semantic(user_uuid)
             promoted = promotion.get("promoted", 0)
 
             async with pool.acquire() as conn:
