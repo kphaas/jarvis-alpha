@@ -164,12 +164,12 @@ function CertBadgeRow({ nodes, theme }: { nodes: MeshNode[]; theme: "dark" | "li
 }
 
 const TOPO_POSITIONS: Record<string, { x: number; y: number }> = {
-  brain:    { x: 300, y: 180 },
-  gateway:  { x: 130, y: 70 },
-  endpoint: { x: 470, y: 70 },
-  iphone:   { x: 50, y: 180 },
-  unraid:   { x: 130, y: 310 },
-  sandbox:  { x: 470, y: 310 },
+  brain:    { x: 380, y: 220 },
+  gateway:  { x: 200, y: 95 },
+  endpoint: { x: 560, y: 95 },
+  iphone:   { x: 88, y: 228 },
+  unraid:   { x: 200, y: 368 },
+  sandbox:  { x: 612, y: 368 },
 };
 
 const BRAIN_LINKS = ["gateway", "endpoint", "unraid", "sandbox"] as const;
@@ -184,8 +184,8 @@ function TopologyDiagram({
   udm?: UdmSummary | null;
 }) {
   const isDark = theme === "dark";
-  const W = 600;
-  const H = 400;
+  const W = 760;
+  const H = 500;
   const barFill = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)";
   const barStroke = isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.12)";
   const barText = isDark ? "rgba(255,255,255,0.75)" : "rgba(0,0,0,0.75)";
@@ -258,17 +258,22 @@ function TopologyDiagram({
         );
       })()}
 
-      <ellipse cx="220" cy="28" rx="45" ry="12"
+      <ellipse cx="310" cy="30" rx="48" ry="12"
         fill="none"
         stroke={isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.1)"}
         strokeWidth="1" strokeDasharray="3 2"
       />
-      <text x="220" y="32" textAnchor="middle" fontSize="8"
+      <text x="310" y="34" textAnchor="middle" fontSize="8"
         fill={isDark ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.25)"}
       >INTERNET</text>
-      <line x1="130" y1="70" x2="220" y2="40"
+      <line
+        x1={TOPO_POSITIONS.gateway.x}
+        y1={TOPO_POSITIONS.gateway.y}
+        x2="310"
+        y2="42"
         stroke={isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"}
-        strokeWidth="1" strokeDasharray="3 2"
+        strokeWidth="1"
+        strokeDasharray="3 2"
       />
 
       {topoNodes.map((node) => {

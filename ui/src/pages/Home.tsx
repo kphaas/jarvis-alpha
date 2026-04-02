@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { useQuery } from '@tanstack/react-query'
 import { DollarSign } from 'lucide-react'
-import { getNodes } from '../api'
 import { apiJson } from '../lib/apiFetch'
 import { useAppStore } from '../store'
 
@@ -21,6 +19,26 @@ interface GraphTaskRow {
   graph_id: string
   status: string
   created_at: string
+}
+
+interface MeshNodeExtra {
+  response_time_ms?: number
+}
+
+interface MeshNodeRow {
+  name: string
+  display_name: string
+  status: string
+  extra?: MeshNodeExtra
+}
+
+interface MeshStatusPayload {
+  nodes: MeshNodeRow[]
+}
+
+function meshRowReachable(status: string | undefined): boolean {
+  const s = status?.toLowerCase() ?? ''
+  return s === 'healthy' || s === 'online'
 }
 
 function formatUptime(total: number): string {
@@ -52,8 +70,6 @@ export default function Home() {
   const border = isDark ? 'border-white/10' : 'border-[#141414]/10'
   const subtle = isDark ? 'bg-white/5' : 'bg-[#141414]/5'
 
-  const { data: nodes } = useQuery({ queryKey: ['nodes'], queryFn: getNodes, refetchInterval: 60000 })
-
   const [health, setHealth] = useState<HealthPayload | null>(null)
   const [healthLoading, setHealthLoading] = useState(true)
   const [healthErr, setHealthErr] = useState(false)
@@ -65,6 +81,9 @@ export default function Home() {
   const [graphs, setGraphs] = useState<GraphTaskRow[] | null>(null)
   const [graphsLoading, setGraphsLoading] = useState(true)
   const [graphsErr, setGraphsErr] = useState(false)
+
+  const [meshStatus, setMeshStatus] = useState<MeshStatusPayload | null>(null)
+  const [meshLoading, setMeshLoading] = useState(true)
 
   useEffect(() => {
     let alive = true
@@ -135,6 +154,24 @@ export default function Home() {
       })
       .finally(() => {
         if (alive) setGraphsLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    setMeshLoading(true)
+    apiJson<MeshStatusPayload>('/v1/mesh/status')
+      .then((d) => {
+        if (alive) setMeshStatus(d)
+      })
+      .catch(() => {
+        if (alive) setMeshStatus(null)
+      })
+      .finally(() => {
+        if (alive) setMeshLoading(false)
       })
     return () => {
       alive = false
@@ -245,25 +282,74 @@ export default function Home() {
       <section>
         <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest mb-3">Service Map</p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {nodeList.map(node => {
-            const status =
-              node === 'brain'
-                ? healthLoading
-                  ? 'pending'
-                  : healthErr
-                    ? 'error'
-                    : brainOk
-                      ? 'ok'
-                      : 'error'
-                : (nodes?.[node] ?? 'pending')
-            const isOk = status === 'ok'
+          {nodeList.map((node) => {
+            if (node === 'brain') {
+              const status = healthLoading
+                ? 'pending'
+                : healthErr
+                  ? 'error'
+                  : brainOk
+                    ? 'ok'
+                    : 'error'
+              const isOk = status === 'ok'
+              return (
+                <div key={node} className={`p-4 rounded-2xl border ${border} ${subtle}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span
+                      className={`w-2 h-2 rounded-full ${isOk ? 'bg-emerald-500' : status === 'pending' ? 'bg-gray-500' : 'bg-rose-500'}`}
+                    />
+                    <span className="text-sm font-bold capitalize">{node}</span>
+                  </div>
+                  <p className={`text-xs font-mono ${isOk ? 'text-emerald-500' : 'opacity-40'}`}>{status}</p>
+                </div>
+              )
+            }
+
+            const row = meshStatus?.nodes?.find((n) => n.name === node)
+            if (meshLoading) {
+              return (
+                <div key={node} className={`p-4 rounded-2xl border ${border} ${subtle}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="w-2 h-2 rounded-full bg-gray-500" />
+                    <span className="text-sm font-bold capitalize">{node}</span>
+                  </div>
+                  <p className="text-xs font-mono opacity-40">Loading...</p>
+                </div>
+              )
+            }
+            if (!meshStatus) {
+              return (
+                <div key={node} className={`p-4 rounded-2xl border ${border} ${subtle}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="w-2 h-2 rounded-full bg-rose-500" />
+                    <span className="text-sm font-bold capitalize">{node}</span>
+                  </div>
+                  <p className="text-xs font-mono text-rose-500">Unavailable</p>
+                </div>
+              )
+            }
+            if (!row) {
+              return (
+                <div key={node} className={`p-4 rounded-2xl border ${border} ${subtle}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="w-2 h-2 rounded-full bg-rose-500" />
+                    <span className="text-sm font-bold capitalize">{node}</span>
+                  </div>
+                  <p className="text-xs font-mono opacity-40">—</p>
+                </div>
+              )
+            }
+            const reachable = meshRowReachable(row.status)
+            const latency = row.extra?.response_time_ms
             return (
               <div key={node} className={`p-4 rounded-2xl border ${border} ${subtle}`}>
                 <div className="flex items-center gap-2 mb-2">
-                  <span className={`w-2 h-2 rounded-full ${isOk ? 'bg-emerald-500' : status === 'pending' ? 'bg-gray-500' : 'bg-rose-500'}`} />
-                  <span className="text-sm font-bold capitalize">{node}</span>
+                  <span className={`w-2 h-2 rounded-full ${reachable ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                  <span className="text-sm font-bold">{row.display_name}</span>
                 </div>
-                <p className={`text-xs font-mono ${isOk ? 'text-emerald-500' : 'opacity-40'}`}>{status}</p>
+                <p className={`text-xs font-mono ${reachable ? 'text-emerald-500' : 'text-rose-500'}`}>
+                  {latency != null ? `${latency} ms` : reachable ? 'online' : row.status}
+                </p>
               </div>
             )
           })}
