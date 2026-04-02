@@ -34,6 +34,14 @@ interface MeshStatus {
   nodes: MeshNode[];
 }
 
+interface UdmSummary {
+  reachable: boolean;
+  wan_up_mbps: number | null;
+  wan_down_mbps: number | null;
+  client_count: number | null;
+  wan_status: string;
+}
+
 interface MeshCertApiRow {
   node: string;
   domain: string;
@@ -156,20 +164,43 @@ function CertBadgeRow({ nodes, theme }: { nodes: MeshNode[]; theme: "dark" | "li
 }
 
 const TOPO_POSITIONS: Record<string, { x: number; y: number }> = {
-  brain:    { x: 300, y: 110 },
-  gateway:  { x: 120, y: 25 },
-  endpoint: { x: 480, y: 25 },
-  unraid:   { x: 120, y: 210 },
-  iphone:   { x: 480, y: 240 },
-  sandbox:  { x: 480, y: 210 },
+  brain:    { x: 300, y: 180 },
+  gateway:  { x: 130, y: 70 },
+  endpoint: { x: 470, y: 70 },
+  iphone:   { x: 50, y: 180 },
+  unraid:   { x: 130, y: 310 },
+  sandbox:  { x: 470, y: 310 },
 };
 
-const BRAIN_LINKS = ["gateway", "endpoint", "unraid", "iphone", "sandbox"] as const;
+const BRAIN_LINKS = ["gateway", "endpoint", "unraid", "sandbox"] as const;
 
-function TopologyDiagram({ nodes, theme }: { nodes: MeshNode[]; theme: "dark" | "light" }) {
+function TopologyDiagram({
+  nodes,
+  theme,
+  udm,
+}: {
+  nodes: MeshNode[];
+  theme: "dark" | "light";
+  udm?: UdmSummary | null;
+}) {
   const isDark = theme === "dark";
   const W = 600;
-  const H = 314;
+  const H = 400;
+  const barFill = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)";
+  const barStroke = isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.12)";
+  const barText = isDark ? "rgba(255,255,255,0.75)" : "rgba(0,0,0,0.75)";
+  const barMuted = isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.45)";
+  const reachable = udm?.reachable === true;
+  const dotFill = reachable ? STATUS_GREEN : STATUS_RED;
+  const wanUpStr = udm?.wan_up_mbps != null ? String(udm.wan_up_mbps) : "—";
+  const wanDownStr = udm?.wan_down_mbps != null ? String(udm.wan_down_mbps) : "—";
+  const clientsStr = udm?.client_count != null ? String(udm.client_count) : "—";
+  const barY = H - 40;
+  const barH = 32;
+  const barMidY = barY + barH / 2;
+  const barPad = 20;
+  const innerW = W - 2 * barPad;
+  const colW = innerW / 5;
   const byName = Object.fromEntries(nodes.map((n) => [n.name, n]));
   const topoNodes = nodes.filter((n) => TOPO_POSITIONS[n.name]);
   const center = TOPO_POSITIONS.brain;
@@ -208,16 +239,34 @@ function TopologyDiagram({ nodes, theme }: { nodes: MeshNode[]; theme: "dark" | 
           />
         );
       })}
+      {(() => {
+        const iphoneNode = byName["iphone"];
+        const iphonePos = TOPO_POSITIONS["iphone"];
+        const gatewayPos = TOPO_POSITIONS["gateway"];
+        if (!iphoneNode || !iphonePos || !gatewayPos) return null;
+        return (
+          <line
+            key="link-iphone-gateway"
+            x1={gatewayPos.x}
+            y1={gatewayPos.y}
+            x2={iphonePos.x}
+            y2={iphonePos.y}
+            stroke={statusColor(iphoneNode.status)}
+            strokeWidth={1.2}
+            opacity={0.45}
+          />
+        );
+      })()}
 
-      <ellipse cx="300" cy="20" rx="45" ry="12"
+      <ellipse cx="220" cy="28" rx="45" ry="12"
         fill="none"
         stroke={isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.1)"}
         strokeWidth="1" strokeDasharray="3 2"
       />
-      <text x="300" y="24" textAnchor="middle" fontSize="8"
+      <text x="220" y="32" textAnchor="middle" fontSize="8"
         fill={isDark ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.25)"}
       >INTERNET</text>
-      <line x1="120" y1="25" x2="255" y2="20"
+      <line x1="130" y1="70" x2="220" y2="40"
         stroke={isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"}
         strokeWidth="1" strokeDasharray="3 2"
       />
@@ -284,12 +333,76 @@ function TopologyDiagram({ nodes, theme }: { nodes: MeshNode[]; theme: "dark" | 
           </g>
         );
       })}
+
+      <rect
+        x={barPad}
+        y={barY}
+        width={W - 2 * barPad}
+        height={barH}
+        rx={6}
+        ry={6}
+        fill={barFill}
+        stroke={barStroke}
+        strokeWidth={1}
+      />
+      <text
+        x={barPad + 12}
+        y={barMidY}
+        dominantBaseline="middle"
+        textAnchor="start"
+        fontSize="9"
+        fontWeight={600}
+        fill={barText}
+        style={{ fontFamily: "ui-monospace, monospace" }}
+      >
+        NETWORK LAYER · UDM-PRO
+      </text>
+      <circle cx={barPad + colW * 1.5} cy={barMidY} r={4} fill={dotFill} />
+      <text
+        x={barPad + colW * 2.5}
+        y={barMidY}
+        dominantBaseline="middle"
+        textAnchor="middle"
+        fontSize="9"
+        fill={barText}
+        style={{ fontFamily: "ui-monospace, monospace" }}
+      >
+        <tspan fill={barMuted}>WAN ↑ </tspan>
+        <tspan fill={barText}>{wanUpStr}</tspan>
+        <tspan fill={barMuted}> Mbps</tspan>
+      </text>
+      <text
+        x={barPad + colW * 3.5}
+        y={barMidY}
+        dominantBaseline="middle"
+        textAnchor="middle"
+        fontSize="9"
+        fill={barText}
+        style={{ fontFamily: "ui-monospace, monospace" }}
+      >
+        <tspan fill={barMuted}>WAN ↓ </tspan>
+        <tspan fill={barText}>{wanDownStr}</tspan>
+        <tspan fill={barMuted}> Mbps</tspan>
+      </text>
+      <text
+        x={barPad + colW * 4.5}
+        y={barMidY}
+        dominantBaseline="middle"
+        textAnchor="middle"
+        fontSize="9"
+        fill={barText}
+        style={{ fontFamily: "ui-monospace, monospace" }}
+      >
+        <tspan fill={barMuted}>Clients: </tspan>
+        <tspan fill={barText}>{clientsStr}</tspan>
+      </text>
     </svg>
   );
 }
 
 export default function Mesh({ theme, token }: { theme: "dark" | "light"; token: string }) {
   const [mesh, setMesh] = useState<MeshStatus | null>(null);
+  const [udm, setUdm] = useState<UdmSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -302,14 +415,16 @@ export default function Mesh({ theme, token }: { theme: "dark" | "light"; token:
   const load = useCallback(async () => {
     if (!initialLoad.current) setRefreshing(true);
     try {
-      const [statusData, certsData] = await Promise.all([
+      const [statusData, certsData, udmSummary] = await Promise.all([
         apiJson<MeshStatus>("/v1/mesh/status"),
         apiJson<MeshCertApiRow[]>("/v1/mesh/certs"),
+        apiJson<UdmSummary>("/v1/unifi/summary").catch(() => null),
       ]);
       setMesh({
         ...statusData,
         nodes: mergeMeshCerts(statusData.nodes, certsData),
       });
+      setUdm(udmSummary);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load mesh");
@@ -378,7 +493,7 @@ export default function Mesh({ theme, token }: { theme: "dark" | "light"; token:
 
       <div className={`p-6 rounded-2xl border ${border} ${subtle}`}>
         <p className="text-[10px] font-mono uppercase opacity-40 mb-3">Network Topology</p>
-        <TopologyDiagram nodes={mesh.nodes} theme={theme} />
+        <TopologyDiagram nodes={mesh.nodes} theme={theme} udm={udm} />
       </div>
 
       <CertBadgeRow nodes={mesh.nodes} theme={theme} />
