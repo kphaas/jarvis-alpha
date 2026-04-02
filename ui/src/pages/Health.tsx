@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import type { ReactNode } from "react";
 import { Cpu, Globe, Monitor, FlaskConical } from 'lucide-react';
-import { apiJson } from "../lib/apiFetch";
+import { apiFetch, apiJson } from "../lib/apiFetch";
 
 const REFRESH_MS = 60_000;
 
@@ -31,6 +31,37 @@ interface MeshStatusPayload {
     status: string;
     extra?: { response_time_ms?: number };
   }>;
+}
+
+interface LaunchAgentRow {
+  label: string;
+  pid: number | null;
+  exit_code: number | null;
+  status: string;
+}
+
+function agentShortLabel(label: string): string {
+  return label.replace(/^com\.jarvis\./, "");
+}
+
+function agentBadgeColors(
+  status: string,
+  isDark: boolean
+): { bg: string; fg: string } {
+  const greyFg = isDark ? "#9ca3af" : "#64748b";
+  const greyBg = isDark ? "rgba(107,114,128,0.25)" : "rgba(148,163,184,0.35)";
+  switch (status) {
+    case "running":
+      return { bg: "rgba(34,197,94,0.2)", fg: "#22c55e" };
+    case "idle":
+      return { bg: "rgba(245,158,11,0.2)", fg: "#f59e0b" };
+    case "error":
+      return { bg: "rgba(239,68,68,0.2)", fg: "#ef4444" };
+    case "not_found":
+      return { bg: greyBg, fg: greyFg };
+    default:
+      return { bg: greyBg, fg: greyFg };
+  }
 }
 
 function meshRowToNodeSummary(
@@ -82,6 +113,10 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
   const [error, setError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
 
+  const [agents, setAgents] = useState<LaunchAgentRow[] | null>(null);
+  const [agentsLoading, setAgentsLoading] = useState(true);
+  const [agentsErr, setAgentsErr] = useState(false);
+
   const fetchSummary = useCallback(async () => {
     try {
       const bundled = await Promise.all([
@@ -114,11 +149,31 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
     }
   }, [token]);
 
+  const fetchAgents = useCallback(async () => {
+    setAgentsLoading(true);
+    setAgentsErr(false);
+    try {
+      const res = await apiFetch("/v1/health/agents");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { agents: LaunchAgentRow[] };
+      setAgents(data.agents ?? []);
+    } catch {
+      setAgents(null);
+      setAgentsErr(true);
+    } finally {
+      setAgentsLoading(false);
+    }
+  }, [token]);
+
   useEffect(() => {
     fetchSummary();
-    const t = setInterval(fetchSummary, REFRESH_MS);
+    fetchAgents();
+    const t = setInterval(() => {
+      fetchSummary();
+      fetchAgents();
+    }, REFRESH_MS);
     return () => clearInterval(t);
-  }, [fetchSummary]);
+  }, [fetchSummary, fetchAgents]);
 
   const sectionStyle = {
     background: card,
@@ -164,7 +219,10 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
             </span>
           )}
           <button
-            onClick={fetchSummary}
+            onClick={() => {
+              fetchSummary();
+              fetchAgents();
+            }}
             style={{ fontSize: 12, padding: "6px 12px", borderRadius: 6, border: `1px solid ${border}`, background: "transparent", color: text, cursor: "pointer" }}
           >
             Refresh
@@ -231,6 +289,92 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
               );
             })
           )}
+        </div>
+      </div>
+
+      {/* Brain Services */}
+      <div style={sectionStyle}>
+        <div style={sectionHeader}>
+          <span style={labelStyle}>Brain Services</span>
+        </div>
+        <div style={{ padding: "14px 16px" }}>
+          {agentsLoading && (
+            <span style={{ fontSize: 12, color: muted }}>Loading…</span>
+          )}
+          {!agentsLoading && agentsErr && (
+            <span style={{ fontSize: 12, color: "#f59e0b" }}>Agents unavailable</span>
+          )}
+          {!agentsLoading && !agentsErr && agents && agents.length === 0 && (
+            <span style={{ fontSize: 12, color: muted }}>—</span>
+          )}
+          {!agentsLoading && !agentsErr && agents && agents.length > 0 && (() => {
+            const alphaList = agents.filter((a) => a.label.includes("alpha"));
+            const coreList = agents.filter((a) => !a.label.includes("alpha"));
+            const renderCard = (a: LaunchAgentRow) => {
+              const colors = agentBadgeColors(a.status, isDark);
+              const showExit =
+                a.exit_code != null && a.exit_code !== 0;
+              return (
+                <div
+                  key={a.label}
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: 8,
+                    border: `1px solid ${border}`,
+                    marginBottom: 10,
+                    background: isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 600, fontSize: 13, fontFamily: "ui-monospace, monospace" }}>
+                      {agentShortLabel(a.label)}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.06em",
+                        padding: "3px 8px",
+                        borderRadius: 4,
+                        background: colors.bg,
+                        color: colors.fg,
+                      }}
+                    >
+                      {a.status.replace("_", " ")}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: muted, marginTop: 8, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <span>
+                      PID:{" "}
+                      <span style={{ color: text }}>{a.pid != null ? a.pid : "—"}</span>
+                    </span>
+                    {showExit && (
+                      <span style={{ color: "#ef4444" }}>
+                        Exit: {a.exit_code}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            };
+            return (
+              <div>
+                {alphaList.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ ...labelStyle, marginBottom: 10 }}>Alpha</div>
+                    {alphaList.map(renderCard)}
+                  </div>
+                )}
+                {coreList.length > 0 && (
+                  <div>
+                    <div style={{ ...labelStyle, marginBottom: 10 }}>Core</div>
+                    {coreList.map(renderCard)}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
 

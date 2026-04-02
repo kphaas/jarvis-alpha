@@ -5,7 +5,7 @@ from brain.middleware.auth_middleware import AuthMiddleware
 from brain.middleware.rls_middleware import RLSMiddleware
 from brain.middleware.rate_limit_middleware import RateLimitMiddleware
 from brain.middleware.log_middleware import LogMiddleware
-from brain.db.pool import init_pool, close_pool, get_pool
+from brain.db.pool import init_pool, close_pool
 from brain.core.config import ALPHA_DB_DSN
 from brain.tasks.executor import recover_stuck_graphs
 from brain.routes.ask import router as ask_router
@@ -17,6 +17,7 @@ from brain.routes.home import router as home_router
 from brain.routes.mesh import router as mesh_router
 from brain.routes.unifi import router as unifi_router
 from brain.routes.pin_auth import router as pin_auth_router
+from brain.routes.health import router as health_router
 from brain.routes.tasks import tasks_router
 from brain.middleware.jwt_auth import JWTAuthMiddleware
 
@@ -46,6 +47,7 @@ app.add_middleware(
 )
 
 app.include_router(pin_auth_router)
+app.include_router(health_router)
 app.include_router(tasks_router)
 app.include_router(ask_router)
 app.include_router(chat_router)
@@ -55,21 +57,3 @@ app.include_router(buddy_router)
 app.include_router(home_router)
 app.include_router(mesh_router)
 app.include_router(unifi_router)
-
-
-@app.get("/health")
-async def health():
-    db_ok = False
-    try:
-        pool = get_pool()
-        async with pool.acquire() as conn:
-            await conn.fetchval("SELECT 1")
-        db_ok = True
-    except Exception:
-        db_ok = False
-    return {
-        "status": "ok" if db_ok else "degraded",
-        "service": "jarvis-alpha-brain",
-        "db": "ok" if db_ok else "error",
-        "version": "0.1.0",
-    }
