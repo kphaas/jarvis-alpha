@@ -69,7 +69,7 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
         council_models: isCouncil ? selectedModels : [],
         thread_id: activeThread.current,
         stream: true,
-        show_council: showCouncil,
+        show_council: true,
       },
       (chunk) => {
         setWaiting(false);

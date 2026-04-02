@@ -43,6 +43,6 @@ export const getCosts = () => apiFetch<{
 }>('/v1/costs')
 
 export const verifyPin = (pin: string) =>
-  apiFetch<{ valid: boolean }>('/v1/pin/verify', {
+  apiFetch<{ valid: boolean }>('/v1/auth/pin', {
     method: 'POST', body: JSON.stringify({ pin }),
   }).then(r => r.valid).catch(() => false)
