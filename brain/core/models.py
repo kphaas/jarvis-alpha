@@ -10,5 +10,5 @@ CLAUDE_MAX = "claude-opus-4-6"
 PERPLEXITY_FAST = "sonar"
 PERPLEXITY_DEEP = "sonar-pro"
 
-GEMINI_FAST = "gemini-2.0-flash"
+GEMINI_FAST = "gemini-2.5-flash"
 GEMINI_SMART = "gemini-2.5-pro"
