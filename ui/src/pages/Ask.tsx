@@ -44,7 +44,7 @@ export default function Ask() {
   }
 
   return (
-    <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+    <div style={{ display: "flex", height: "100%", overflow: "visible" }}>
       <ThreadSidebar
         activeId={activeThreadId}
         onSelect={handleSelectThread}
@@ -52,12 +52,12 @@ export default function Ask() {
         refreshTick={sidebarTick}
       />
 
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "visible" }}>
         <div style={{
           padding: "9px 14px",
           borderBottom: "0.5px solid var(--color-border-tertiary)",
           display: "flex", alignItems: "center", gap: 8,
-          background: "var(--color-background-primary)", flexShrink: 0,
+          background: "var(--color-background-primary)", flexShrink: 0, overflow: "visible",
         }}>
           {editingTitle ? (
             <input
