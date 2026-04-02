@@ -16,6 +16,7 @@ export function ChatWindow({ threadId, selectedModels, onThreadCreated, onEscala
   const [messages, setMessages]   = useState<Message[]>([]);
   const [input, setInput]         = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [waiting, setWaiting] = useState(false);
   const bottomRef                 = useRef<HTMLDivElement>(null);
   const activeThread              = useRef<string | null>(threadId);
 
@@ -37,6 +38,7 @@ export function ChatWindow({ threadId, selectedModels, onThreadCreated, onEscala
     if (!text || streaming) return;
     setInput("");
     setStreaming(true);
+    setWaiting(true);
 
     setMessages(prev => [...prev, { role: "user", content: text }]);
 
@@ -62,6 +64,7 @@ export function ChatWindow({ threadId, selectedModels, onThreadCreated, onEscala
       },
       (chunk) => {
         accumulated += chunk.delta;
+        setWaiting(false);
         if (chunk.thread_id && !activeThread.current) {
           activeThread.current = chunk.thread_id;
           onThreadCreated(chunk.thread_id);
@@ -115,7 +118,7 @@ export function ChatWindow({ threadId, selectedModels, onThreadCreated, onEscala
     : `Council: ${selectedModels.join(" + ")} · synthesis after · enter to send`;
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100%", overflow: "hidden" }}>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100%", overflow: "hidden", position: "relative", zIndex: 1 }}>
       <div style={{ flex: 1, overflowY: "auto", padding: "14px 18px" }}>
         {messages.length === 0 && (
           <div style={{
@@ -136,12 +139,12 @@ export function ChatWindow({ threadId, selectedModels, onThreadCreated, onEscala
           <MessageBubble key={i} msg={msg} onEscalated={onEscalated} />
         ))}
 
-        {streaming && (
+        {(streaming || waiting) && (
           <div style={{
             display: "flex", alignItems: "center", gap: 8,
             padding: "6px 0 4px 36px",
           }}>
-            <NeuralPulse active={streaming} />
+            <NeuralPulse active={streaming || waiting} />
             <span style={{ fontSize: 10, color: "var(--color-text-tertiary)", fontWeight: 500 }}>
               JARVIS is thinking…
             </span>

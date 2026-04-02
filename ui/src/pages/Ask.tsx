@@ -57,7 +57,7 @@ export default function Ask() {
           padding: "9px 14px",
           borderBottom: "0.5px solid var(--color-border-tertiary)",
           display: "flex", alignItems: "center", gap: 8,
-          background: "var(--color-background-primary)", flexShrink: 0, overflow: "visible",
+          background: "var(--color-background-primary)", flexShrink: 0, overflow: "visible", position: "relative", zIndex: 10,
         }}>
           {editingTitle ? (
             <input
