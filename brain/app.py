@@ -11,6 +11,7 @@ from brain.routes.chat import router as chat_router
 from brain.routes.memory import router as memory_router
 from brain.routes.vault import router as vault_router
 from brain.routes.buddy import router as buddy_router
+from brain.middleware.jwt_auth import JWTAuthMiddleware
 
 
 @asynccontextmanager
@@ -26,6 +27,7 @@ app.add_middleware(LogMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(RLSMiddleware)
 app.add_middleware(AuthMiddleware)
+app.add_middleware(JWTAuthMiddleware)
 
 app.include_router(ask_router)
 app.include_router(chat_router)
