@@ -13,6 +13,7 @@ from brain.routes.vault import router as vault_router
 from brain.routes.buddy import router as buddy_router
 from brain.routes.home import router as home_router
 from brain.routes.mesh import router as mesh_router
+from brain.routes.tasks import tasks_router
 from brain.middleware.jwt_auth import JWTAuthMiddleware
 
 
@@ -31,6 +32,7 @@ app.add_middleware(RLSMiddleware)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(JWTAuthMiddleware)
 
+app.include_router(tasks_router)
 app.include_router(ask_router)
 app.include_router(chat_router)
 app.include_router(memory_router)

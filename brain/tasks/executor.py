@@ -22,6 +22,11 @@ class TaskGraphExecutor:
         self.pool = db_pool
         self._sem = asyncio.Semaphore(max_concurrent)
 
+    @staticmethod
+    async def _bind_worker_rls(conn: asyncpg.Connection) -> None:
+        await conn.execute("SELECT set_config('jarvis.current_user', 'admin', true)")
+        await conn.execute("SELECT set_config('jarvis.role', 'admin', true)")
+
     async def notify(
         self,
         event_type: str,
@@ -32,6 +37,7 @@ class TaskGraphExecutor:
     ) -> None:
         try:
             async with self.pool.acquire() as conn:
+                await self._bind_worker_rls(conn)
                 sid = step_id if step_id else None
                 await conn.execute(
                     """
@@ -51,6 +57,7 @@ class TaskGraphExecutor:
 
     async def resolve_ready_steps(self, graph_id: str) -> list[str]:
         async with self.pool.acquire() as conn:
+            await self._bind_worker_rls(conn)
             rows = await conn.fetch(
                 """
                 SELECT id, depends_on, status
@@ -76,6 +83,7 @@ class TaskGraphExecutor:
 
     async def execute_step(self, step_id: str) -> None:
         async with self.pool.acquire() as conn:
+            await self._bind_worker_rls(conn)
             await conn.execute(
                 """
                 UPDATE alpha_task_steps
@@ -107,6 +115,7 @@ class TaskGraphExecutor:
             should_retry = False
             should_fail = False
             async with self.pool.acquire() as conn:
+                await self._bind_worker_rls(conn)
                 async with conn.transaction():
                     row = await conn.fetchrow(
                         """
@@ -160,6 +169,7 @@ class TaskGraphExecutor:
                 await self.notify("step_failed", graph_id, step_id, err, "high")
             return
         async with self.pool.acquire() as conn:
+            await self._bind_worker_rls(conn)
             await conn.execute(
                 """
                 UPDATE alpha_task_steps
@@ -176,6 +186,7 @@ class TaskGraphExecutor:
     async def run_graph(self, graph_id: str) -> None:
         async with self._sem:
             async with self.pool.acquire() as conn:
+                await self._bind_worker_rls(conn)
                 await conn.execute(
                     """
                     UPDATE alpha_task_graphs
@@ -191,6 +202,7 @@ class TaskGraphExecutor:
                     break
                 await asyncio.gather(*(self.execute_step(sid) for sid in ready))
             async with self.pool.acquire() as conn:
+                await self._bind_worker_rls(conn)
                 rows = await conn.fetch(
                     """
                     SELECT status
@@ -206,6 +218,7 @@ class TaskGraphExecutor:
             any_halted = any(s in ("halted", "failed") for s in statuses)
             if all_done:
                 async with self.pool.acquire() as conn:
+                    await self._bind_worker_rls(conn)
                     await conn.execute(
                         """
                         UPDATE alpha_task_graphs
@@ -217,6 +230,7 @@ class TaskGraphExecutor:
                     )
             elif any_halted:
                 async with self.pool.acquire() as conn:
+                    await self._bind_worker_rls(conn)
                     await conn.execute(
                         """
                         UPDATE alpha_task_graphs
@@ -237,6 +251,7 @@ class TaskGraphExecutor:
 
 async def recover_stuck_graphs(db_pool: asyncpg.Pool) -> None:
     async with db_pool.acquire() as conn:
+        await TaskGraphExecutor._bind_worker_rls(conn)
         status = await conn.execute(
             """
             UPDATE alpha_task_graphs
