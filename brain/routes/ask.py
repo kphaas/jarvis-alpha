@@ -4,14 +4,13 @@ from uuid import NAMESPACE_DNS, UUID, uuid5
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from brain.core.config import ALPHA_NODE, OLLAMA_URL
+from brain.core.models import EMBED_MODEL
 from brain.db.session import get_db
 from brain.db.pool import get_pool
 from brain.memory.memory import MemoryService
 from brain.routing.router import route
 
 router = APIRouter(prefix="/v1", tags=["ask"])
-
-EMBED_MODEL = "all-minilm"
 
 
 def _user_uuid(user_id: str) -> UUID:

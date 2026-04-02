@@ -1,6 +1,17 @@
 import httpx
 
 from brain.core.config import GATEWAY_URL, OLLAMA_URL
+from brain.core.models import (
+    LOCAL_CHAT,
+    LOCAL_CODE,
+    LOCAL_SYNTH,
+    CLAUDE_FAST,
+    CLAUDE_SMART,
+    PERPLEXITY_FAST,
+    PERPLEXITY_DEEP,
+    GEMINI_FAST,
+    GEMINI_SMART,
+)
 from brain.routing.complexity import score
 from brain.routing.council import CouncilOrchestrator
 
@@ -28,7 +39,7 @@ async def route(prompt: str, mode: str = "auto") -> dict:
                 r = await client.post(
                     f"{OLLAMA_URL}/api/generate",
                     json={
-                        "model": "llama3.1:8b",
+                        "model": LOCAL_CHAT,
                         "prompt": prompt,
                         "stream": False,
                     },
