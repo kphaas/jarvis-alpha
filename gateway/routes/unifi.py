@@ -138,16 +138,24 @@ async def unifi_wan() -> dict[str, Any]:
 
         proc = await asyncio.to_thread(_fetch)
         data = json.loads(proc.stdout or "{}")
-        wan = next(
-            (s for s in data.get("data", []) if s.get("subsystem") == "wan"), {}
-        )
-        speedtest = wan.get("speedtest_status", {})
+        subsystems = data.get("data", [])
+        wan = next((s for s in subsystems if s.get("subsystem") == "wan"), {})
+        www = next((s for s in subsystems if s.get("subsystem") == "www"), {})
+        gw_stats = wan.get("gw_system-stats", {})
+        xput_up = www.get("xput_up", 0.0)
+        xput_down = www.get("xput_down", 0.0)
+        speedtest_ok = www.get("speedtest_status", "") not in ("", "Error")
         return {
             "wan_status": "up" if wan.get("status") == "ok" else "unknown",
-            "wan_up_mbps": round(speedtest.get("xput_upload", 0), 1) or None,
-            "wan_down_mbps": round(speedtest.get("xput_download", 0), 1) or None,
-            "latency_ms": wan.get("latency", None),
-            "uptime_sec": wan.get("uptime", None),
+            "wan_up_mbps": round(xput_up, 1) if speedtest_ok and xput_up else None,
+            "wan_down_mbps": round(xput_down, 1) if speedtest_ok and xput_down else None,
+            "latency_ms": www.get("latency"),
+            "uptime_sec": www.get("uptime"),
+            "speedtest_status": www.get("speedtest_status", "unknown"),
+            "isp_name": wan.get("isp_name"),
+            "gw_name": wan.get("gw_name"),
+            "gw_cpu_pct": gw_stats.get("cpu"),
+            "gw_mem_pct": gw_stats.get("mem"),
         }
     except Exception as e:
         logger.exception("unifi_wan")
