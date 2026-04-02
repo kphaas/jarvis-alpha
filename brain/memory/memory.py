@@ -152,12 +152,13 @@ class MemoryService:
             await conn.execute(
                 """
                 INSERT INTO alpha_conversation_memory
-                  (user_id, session_id, summary, memory_type,
+                  (user_id, session_id, role, summary, memory_type,
                    embedding, tier, persistent)
-                VALUES ($1, $2, $3, $4, $5::vector, $6, $7)
+                VALUES ($1, $2, $3, $4, $5, $6::vector, $7, $8)
                 """,
                 str(user_id),
                 session_id,
+                role,
                 summary,
                 role,
                 str(embedding),
