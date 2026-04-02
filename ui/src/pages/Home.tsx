@@ -70,7 +70,7 @@ export default function Home() {
     let alive = true
     setHealthLoading(true)
     setHealthErr(false)
-    apiJson<HealthPayload>('/v1/health')
+    apiJson<HealthPayload>('/health')
       .then((d) => {
         if (alive) {
           setHealth(d)
@@ -185,7 +185,8 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Cloud Spend */}
+      {/* Cloud Spend — hidden until /v1/costs/summary is built */}
+      {false && (
       <section>
         <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest mb-3">Cloud Spend</p>
         <div className={`p-4 rounded-2xl border ${border} ${subtle}`}>
@@ -200,13 +201,14 @@ export default function Home() {
               <p className="text-xs text-rose-500 mt-2">Failed to load</p>
             </>
           )}
-          {!costsLoading && !costsErr && costs && (
+          {!costsLoading && !costsErr && costs != null && (
             <p className="text-xl font-bold">
-              ${costs.total_usd.toFixed(2)} <span className="opacity-40">/ ${costs.budget_usd.toFixed(2)}</span>
+              {costs?.total_usd.toFixed(2)} <span className="opacity-40">/ ${costs?.budget_usd.toFixed(2)}</span>
             </p>
           )}
         </div>
       </section>
+      )}
 
       {/* Last Overnight */}
       <section>
