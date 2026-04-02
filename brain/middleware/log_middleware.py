@@ -2,7 +2,7 @@ import time
 import uuid
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from brain.db.session import _pool
+from brain.db.pool import get_pool
 
 
 class LogMiddleware(BaseHTTPMiddleware):
@@ -16,9 +16,14 @@ class LogMiddleware(BaseHTTPMiddleware):
         user_id = getattr(request.state, "user_id", "anonymous")
         workspace_id = getattr(request.state, "workspace_id", None)
 
-        if _pool:
+        try:
+            pool = get_pool()
+        except RuntimeError:
+            pool = None
+
+        if pool:
             try:
-                async with _pool.acquire() as conn:
+                async with pool.acquire() as conn:
                     await conn.execute(
                         """
                         INSERT INTO jarvis_request_log

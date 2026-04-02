@@ -1,14 +1,24 @@
 import time
-
+import httpx
+from uuid import NAMESPACE_DNS, UUID, uuid5
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-
-from brain.core.config import ALPHA_NODE
+from brain.core.config import ALPHA_NODE, OLLAMA_URL
 from brain.db.session import get_db
+from brain.db.pool import get_pool
 from brain.memory.memory import MemoryService
 from brain.routing.router import route
 
 router = APIRouter(prefix="/v1", tags=["ask"])
+
+EMBED_MODEL = "all-minilm"
+
+
+def _user_uuid(user_id: str) -> UUID:
+    try:
+        return UUID(user_id)
+    except ValueError:
+        return uuid5(NAMESPACE_DNS, user_id)
 
 
 class AskRequest(BaseModel):
@@ -32,6 +42,19 @@ class AskResponse(BaseModel):
     synthesis: str | None = None
     steps_completed: int | None = None
     error: str | None = None
+
+
+async def _embed(text: str) -> list[float]:
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{OLLAMA_URL}/api/embeddings",
+                json={"model": EMBED_MODEL, "prompt": text},
+            )
+            resp.raise_for_status()
+            return resp.json()["embedding"]
+    except Exception:
+        return []
 
 
 async def _log_ask(
@@ -65,13 +88,17 @@ async def _log_ask(
 async def ask(body: AskRequest) -> AskResponse:
     start_time = time.monotonic()
     try:
-        memory = MemoryService()
+        pool = get_pool()
+        memory = MemoryService(pool)
+
+        embedding = await _embed(body.prompt)
+        uid = _user_uuid(body.user_id)
 
         context = await memory.build_context(
-            user_id=body.user_id,
+            user_id=uid,
+            prompt=body.prompt,
             session_id=body.session_id,
-            query=body.prompt,
-            workspace_id=body.workspace_id,
+            embedding=embedding,
         )
 
         enriched_prompt = body.prompt
@@ -80,30 +107,34 @@ async def ask(body: AskRequest) -> AskResponse:
 
         result_dict = await route(enriched_prompt, body.mode)
 
+        result_text = result_dict.get("result", "")
+        result_embedding = await _embed(result_text) if result_text else []
+
         await memory.store(
-            user_id=body.user_id,
+            user_id=uid,
             session_id=body.session_id,
+            summary=body.prompt,
             role="user",
-            content=body.prompt,
-            workspace_id=body.workspace_id,
+            embedding=embedding,
             persistent=body.persistent,
         )
         await memory.store(
-            user_id=body.user_id,
+            user_id=uid,
             session_id=body.session_id,
+            summary=result_text,
             role="assistant",
-            content=result_dict.get("result", ""),
-            workspace_id=body.workspace_id,
+            embedding=result_embedding,
             persistent=body.persistent,
         )
 
         await _log_ask(
             user_id=body.user_id,
-            status_code=200,
             start_time=start_time,
+            status_code=200,
             result_dict=result_dict,
         )
         return AskResponse(**result_dict)
+
     except Exception as e:
         err = str(e)
         try:

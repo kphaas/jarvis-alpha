@@ -4,7 +4,8 @@ from brain.middleware.auth_middleware import AuthMiddleware
 from brain.middleware.rls_middleware import RLSMiddleware
 from brain.middleware.rate_limit_middleware import RateLimitMiddleware
 from brain.middleware.log_middleware import LogMiddleware
-from brain.db.session import init_pool, close_pool
+from brain.db.pool import init_pool, close_pool, get_pool
+from brain.core.config import ALPHA_DB_DSN
 from brain.routes.ask import router as ask_router
 from brain.routes.chat import router as chat_router
 from brain.routes.memory import router as memory_router
@@ -13,7 +14,7 @@ from brain.routes.vault import router as vault_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_pool()
+    await init_pool(ALPHA_DB_DSN)
     yield
     await close_pool()
 
@@ -33,14 +34,12 @@ app.include_router(vault_router)
 
 @app.get("/health")
 async def health():
-    from brain.db.session import _pool
-
     db_ok = False
     try:
-        if _pool:
-            async with _pool.acquire() as conn:
-                await conn.fetchval("SELECT 1")
-            db_ok = True
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        db_ok = True
     except Exception:
         db_ok = False
     return {
