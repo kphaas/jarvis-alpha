@@ -139,7 +139,18 @@ else
   sandbox_footer="pull failed ❌"
 fi
 
-# ── Step 8 — Intel refresh on Sandbox ─────────────────────
+# ── Step 8 — SCP dist to Endpoint ────────────────────────
+ENDPOINT_HOST="jarvisendpoint@100.87.223.31"
+scp_output=$(scp "${SSH_OPTS[@]}" -r "$REPO_DIR/ui/dist" "$ENDPOINT_HOST:~/jarvis-alpha/ui/" 2>&1)
+scp_ec=$?
+if [[ $scp_ec -eq 0 ]]; then
+  echo -e "${GREEN}✅ UI dist → Endpoint${RESET}"
+else
+  echo -e "${RED}❌ dist scp to Endpoint failed${RESET}"
+  echo "$scp_output" >&2
+fi
+
+# ── Step 9 — Intel refresh on Sandbox ─────────────────────
 if [[ $pull_ok -eq 1 ]]; then
   echo ""
   echo "Triggering intel refresh for jarvis-alpha (project 65)..."
