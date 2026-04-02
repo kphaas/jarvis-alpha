@@ -29,8 +29,9 @@ if [ ! -d "$REPO_DIR" ]; then
   git clone https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git "$REPO_DIR"
 else
   cd "$REPO_DIR"
-  git remote set-url origin https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git
-  git pull origin main --rebase
+  git config credential.helper ""
+  GIT_TERMINAL_PROMPT=0 git remote set-url origin https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git
+  GIT_TERMINAL_PROMPT=0 git pull origin main --rebase
 fi
 
 SHORT=$(git -C "$REPO_DIR" rev-parse --short HEAD)
