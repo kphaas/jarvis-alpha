@@ -8,6 +8,7 @@ import Vault from './pages/Vault'
 import Space from './pages/Space'
 import Placeholder from './pages/Placeholder'
 import Health from './pages/Health'
+import Mesh from './pages/Mesh'
 
 const qc = new QueryClient({
   defaultOptions: { queries: { staleTime: 15 * 60 * 1000, retry: 1 } },
@@ -27,7 +28,7 @@ export default function App() {
             <Route path="/vault" element={<Vault />} />
             <Route path="/space/:slug" element={<Space />} />
             <Route path="/briefing"   element={<Placeholder label="Briefing"    phase="Next session" />} />
-            <Route path="/mesh"       element={<Placeholder label="Mesh"        phase="Next session" />} />
+            <Route path="/mesh"       element={<Mesh theme={theme} token={brainToken} />} />
             <Route path="/health"     element={<Health theme={theme} token={brainToken} />} />
             <Route path="/errors"     element={<Placeholder label="Errors & Logs" phase="Next session" />} />
             <Route path="/agents"     element={<Placeholder label="Agents"      phase="Next session" />} />
