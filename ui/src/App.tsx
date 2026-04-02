@@ -7,10 +7,13 @@ import Ask from './pages/Ask'
 import Vault from './pages/Vault'
 import Space from './pages/Space'
 import Placeholder from './pages/Placeholder'
+import Health from './pages/Health'
 
 const qc = new QueryClient({
   defaultOptions: { queries: { staleTime: 15 * 60 * 1000, retry: 1 } },
 })
+
+const brainToken = (import.meta.env.VITE_BRAIN_TOKEN as string) || ''
 
 export default function App() {
   const { theme } = useAppStore()
@@ -25,7 +28,7 @@ export default function App() {
             <Route path="/space/:slug" element={<Space />} />
             <Route path="/briefing"   element={<Placeholder label="Briefing"    phase="Next session" />} />
             <Route path="/mesh"       element={<Placeholder label="Mesh"        phase="Next session" />} />
-            <Route path="/health"     element={<Placeholder label="Health"      phase="Next session" />} />
+            <Route path="/health"     element={<Health theme={theme} token={brainToken} />} />
             <Route path="/errors"     element={<Placeholder label="Errors & Logs" phase="Next session" />} />
             <Route path="/agents"     element={<Placeholder label="Agents"      phase="Next session" />} />
             <Route path="/ops"        element={<Placeholder label="Ops"         phase="Next session" />} />
