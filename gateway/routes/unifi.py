@@ -21,7 +21,10 @@ _cookie_jar_path: str | None = None
 
 
 def _base_url() -> str:
-    return os.environ.get("UNIFI_BASE_URL", "https://192.168.1.1").rstrip("/")
+    url = os.environ.get("UNIFI_BASE_URL", "")
+    if not url:
+        raise RuntimeError("UNIFI_BASE_URL is not set in environment — check ~/jarvis/.secrets on Gateway")
+    return url.rstrip("/")
 
 
 def _cookie_jar() -> str:
@@ -45,7 +48,7 @@ def _curl(args: list[str], *, timeout_sec: float = 15.0) -> subprocess.Completed
 
 def _login_sync() -> None:
     user = os.environ.get("UNIFI_USER", "")
-    password = os.environ.get("UNIFI_PASSWORD", "")
+    password = os.environ.get("UNIFI_PASS", "")
     base = _base_url()
     jar = _cookie_jar()
     body = json.dumps({"username": user, "password": password})
@@ -125,12 +128,26 @@ async def unifi_status() -> dict[str, Any]:
 @router.get("/v1/unifi/wan")
 async def unifi_wan() -> dict[str, Any]:
     try:
-        # STUB — wire to real UDM Pro API endpoints in next session
+        await ensure_unifi_session()
+        base = _base_url()
+        jar = _cookie_jar()
+
+        def _fetch() -> subprocess.CompletedProcess[str]:
+            return _curl(["-b", jar, "-c", jar,
+                          f"{base}/proxy/network/api/s/default/stat/health"])
+
+        proc = await asyncio.to_thread(_fetch)
+        data = json.loads(proc.stdout or "{}")
+        wan = next(
+            (s for s in data.get("data", []) if s.get("subsystem") == "wan"), {}
+        )
+        speedtest = wan.get("speedtest_status", {})
         return {
-            "wan_up_mbps": None,
-            "wan_down_mbps": None,
-            "wan_status": "unknown",
-            "client_count": None,
+            "wan_status": "up" if wan.get("status") == "ok" else "unknown",
+            "wan_up_mbps": round(speedtest.get("xput_upload", 0), 1) or None,
+            "wan_down_mbps": round(speedtest.get("xput_download", 0), 1) or None,
+            "latency_ms": wan.get("latency", None),
+            "uptime_sec": wan.get("uptime", None),
         }
     except Exception as e:
         logger.exception("unifi_wan")
@@ -140,12 +157,21 @@ async def unifi_wan() -> dict[str, Any]:
 @router.get("/v1/unifi/clients")
 async def unifi_clients() -> dict[str, Any]:
     try:
-        # STUB — wire to real UDM Pro API endpoints in next session
+        await ensure_unifi_session()
+        base = _base_url()
+        jar = _cookie_jar()
+
+        def _fetch() -> subprocess.CompletedProcess[str]:
+            return _curl(["-b", jar, "-c", jar,
+                          f"{base}/proxy/network/api/s/default/stat/sta"])
+
+        proc = await asyncio.to_thread(_fetch)
+        data = json.loads(proc.stdout or "{}")
+        clients = data.get("data", [])
         return {
-            "wan_up_mbps": None,
-            "wan_down_mbps": None,
-            "wan_status": "unknown",
-            "client_count": None,
+            "client_count": len(clients),
+            "wired_count": sum(1 for c in clients if c.get("is_wired")),
+            "wireless_count": sum(1 for c in clients if not c.get("is_wired")),
         }
     except Exception as e:
         logger.exception("unifi_clients")

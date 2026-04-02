@@ -1,10 +1,16 @@
 import asyncio
+import os
 import time
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from brain.db.pool import get_pool
+from brain.config.node_addresses import (
+    GATEWAY_URL,
+    ENDPOINT_URL,
+    SANDBOX_URL,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -13,17 +19,17 @@ CACHE_TTL = 60
 _cache: dict = {}
 _cache_time: float = 0.0
 
-NODE_URLS = {
-    "gateway": "https://100.112.63.25:8282/health",
-    "endpoint": "https://100.87.223.31:4000/health",
-}
+CERT_PATH = os.getenv("ALPHA_CERT_PATH", "")
 
-CERT_PATH = "/Users/jarvisbrain/jarvis/certs/brain.crt"
+NODE_URLS = {
+    "gateway": f"{GATEWAY_URL}/health",
+    "endpoint": f"{ENDPOINT_URL}/health",
+    "sandbox": f"{SANDBOX_URL}/health",
+}
 
 
 async def _ping_node(name: str, url: str) -> dict:
     import subprocess
-    import asyncio
 
     start = time.monotonic()
     try:
@@ -53,6 +59,9 @@ async def _ping_node(name: str, url: str) -> dict:
 
 
 async def _cert_days_remaining() -> int | None:
+    if not CERT_PATH:
+        logger.warning("ALPHA_CERT_PATH not set — skipping cert check")
+        return None
     try:
         import subprocess
 
@@ -63,15 +72,11 @@ async def _cert_days_remaining() -> int | None:
                 text=True,
             )
         )
-        line = result.stdout.strip()
-        date_str = line.replace("notAfter=", "")
-        from datetime import datetime
-
+        date_str = result.stdout.strip().replace("notAfter=", "")
         exp = datetime.strptime(date_str, "%b %d %H:%M:%S %Y %Z").replace(
             tzinfo=timezone.utc
         )
-        now = datetime.now(timezone.utc)
-        return (exp - now).days
+        return (exp - datetime.now(timezone.utc)).days
     except Exception as e:
         logger.warning(f"Cert check failed: {e}")
         return None
@@ -94,7 +99,8 @@ async def _last_overnight() -> dict | None:
     pool = get_pool()
     try:
         row = await pool.fetchrow(
-            "SELECT status, created_at FROM overnight_runs ORDER BY created_at DESC LIMIT 1"
+            "SELECT status, created_at FROM alpha_task_graphs "
+            "ORDER BY created_at DESC LIMIT 1"
         )
         if not row:
             return None

@@ -1,0 +1,47 @@
+# JARVIS Alpha — nginx config template
+# Do NOT edit directly. Rendered by install/setup.sh during first-run.
+#
+# Placeholders replaced by setup.sh:
+#   {{ALPHA_UI_PORT}}               — UI port (default: 4100)
+#   {{ENDPOINT_TAILSCALE_HOSTNAME}} — e.g. jarvis-endpoint.tail40ed36.ts.net
+#   {{BRAIN_TAILSCALE_HOSTNAME}}    — e.g. jarvis-brain.tail40ed36.ts.net
+#   {{BRAIN_ALPHA_PORT}}            — Brain alpha port (default: 8186)
+#   {{CERT_PATH}}                   — Full path to endpoint TLS cert
+#   {{CERT_KEY_PATH}}               — Full path to endpoint TLS key
+#   {{UI_DIST_PATH}}                — Full path to ui/dist directory
+
+server {
+    listen {{ALPHA_UI_PORT}} ssl;
+    server_name {{ENDPOINT_TAILSCALE_HOSTNAME}} localhost;
+
+    ssl_certificate {{CERT_PATH}};
+    ssl_certificate_key {{CERT_KEY_PATH}};
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    root {{UI_DIST_PATH}};
+    index index.html;
+
+    location /api/ {
+        proxy_pass https://{{BRAIN_TAILSCALE_HOSTNAME}}:{{BRAIN_ALPHA_PORT}}/;
+        proxy_ssl_verify off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 120s;
+    }
+
+    location /v1/ {
+        proxy_pass https://{{BRAIN_TAILSCALE_HOSTNAME}}:{{BRAIN_ALPHA_PORT}}/v1/;
+        proxy_ssl_verify off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 120s;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
