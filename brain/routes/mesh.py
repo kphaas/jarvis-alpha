@@ -5,7 +5,6 @@ mesh.py — Mesh topology and node health endpoints for jarvis-alpha.
 """
 
 import asyncio
-import json
 import os
 import re
 import subprocess
@@ -42,7 +41,8 @@ CERTS = [
 ]
 
 _CRITICAL_NODE_NAMES = frozenset({"brain", "gateway", "endpoint"})
-_NON_CRITICAL_NAMES = frozenset({"unraid", "air", "udmpro", "iphone"})
+_NON_CRITICAL_NAMES = frozenset({"unraid", "air", "udmpro"})
+_MOBILE_NAMES = frozenset({"iphone"})
 
 
 def _ping_node(ip: str) -> dict:
@@ -173,6 +173,8 @@ def _compute_mesh_status(nodes: list[dict[str, Any]]) -> str:
         if n["name"] in _CRITICAL_NODE_NAMES and n["status"] == "unreachable":
             return "critical"
     for n in nodes:
+        if n["name"] in _MOBILE_NAMES:
+            continue
         if n["name"] in _NON_CRITICAL_NAMES and n["status"] in (
             "unreachable",
             "offline",

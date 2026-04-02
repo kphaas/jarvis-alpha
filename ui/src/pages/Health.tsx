@@ -1,4 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
+import type { ReactNode } from "react";
+import { Cpu, Globe, Monitor, FlaskConical } from 'lucide-react';
 import { apiJson } from "../lib/apiFetch";
 
 const REFRESH_MS = 60_000;
@@ -24,6 +26,8 @@ interface MeshStatusPayload {
   checked_at: string;
   nodes: Array<{
     name: string;
+    display_name: string;
+    tailscale_ip: string | null;
     status: string;
     extra?: { response_time_ms?: number };
   }>;
@@ -74,6 +78,7 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
   const muted = isDark ? "#6b7280" : "#94a3b8";
 
   const [summary, setSummary] = useState<HomeSummary | null>(null);
+  const [meshNodes, setMeshNodes] = useState<MeshStatusPayload["nodes"]>([]);
   const [error, setError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
 
@@ -101,6 +106,7 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
         cached_at: home.cached_at ?? mesh.checked_at,
       };
       setSummary(data);
+      setMeshNodes(mesh.nodes);
       setFetchedAt(new Date());
       setError(null);
     } catch (e) {
@@ -138,11 +144,12 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
     color: muted,
   };
 
-  const nodes: { key: "brain" | "gateway" | "endpoint"; label: string; ip: string }[] = [
-    { key: "brain", label: "Brain", ip: "100.64.166.22" },
-    { key: "gateway", label: "Gateway", ip: "100.112.63.25" },
-    { key: "endpoint", label: "Endpoint", ip: "100.87.223.31" },
-  ];
+  const NODE_ICONS: Record<string, ReactNode> = {
+    brain: <Cpu className="w-4 h-4 opacity-60" />,
+    gateway: <Globe className="w-4 h-4 opacity-60" />,
+    endpoint: <Monitor className="w-4 h-4 opacity-60" />,
+    sandbox: <FlaskConical className="w-4 h-4 opacity-60" />,
+  };
 
   return (
     <div style={{ background: bg, minHeight: "100vh", padding: "20px 24px", color: text, fontFamily: "system-ui, sans-serif" }}>
@@ -181,30 +188,49 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
             </span>
           )}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 0 }}>
-          {nodes.map((node, i) => {
-            const nd = summary?.nodes[node.key];
-            return (
-              <div
-                key={node.key}
-                style={{ padding: "14px 16px", borderRight: i < 2 ? `1px solid ${border}` : "none" }}
-              >
-                <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
-                  {statusDot(nd?.reachable ?? false)}
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>{node.label}</span>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns:
+              meshNodes.length > 0 ? `repeat(${meshNodes.length}, 1fr)` : "1fr",
+            gap: 0,
+          }}
+        >
+          {meshNodes.length === 0 ? (
+            <div style={{ padding: "14px 16px" }}>
+              <span style={{ fontSize: 12, color: muted }}>{!summary && !error ? "Loading…" : "—"}</span>
+            </div>
+          ) : (
+            meshNodes.map((node, i) => {
+              const nd = meshRowToNodeSummary(node);
+              return (
+                <div
+                  key={node.name}
+                  style={{
+                    padding: "14px 16px",
+                    borderRight: i < meshNodes.length - 1 ? `1px solid ${border}` : "none",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 6 }}>
+                    {statusDot(nd.reachable)}
+                    {NODE_ICONS[node.name]}
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>{node.display_name}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: muted, marginBottom: 6 }}>
+                    {node.tailscale_ip ?? "—"}
+                  </div>
+                  <div style={{ fontSize: 12 }}>
+                    <span style={{ color: nd.reachable ? "#22c55e" : "#ef4444" }}>
+                      {nd.reachable ? "Reachable" : "Unreachable"}
+                    </span>
+                    {nd.latency_ms != null && (
+                      <span style={{ color: muted, marginLeft: 6 }}>{nd.latency_ms}ms</span>
+                    )}
+                  </div>
                 </div>
-                <div style={{ fontSize: 12, color: muted, marginBottom: 6 }}>{node.ip}</div>
-                <div style={{ fontSize: 12 }}>
-                  <span style={{ color: nd?.reachable ? "#22c55e" : "#ef4444" }}>
-                    {!summary ? "Loading…" : nd?.reachable ? "Reachable" : "Unreachable"}
-                  </span>
-                  {nd?.latency_ms != null && (
-                    <span style={{ color: muted, marginLeft: 6 }}>{nd.latency_ms}ms</span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       </div>
 

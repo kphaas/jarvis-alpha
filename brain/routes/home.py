@@ -22,7 +22,8 @@ CERT_PATH = "/Users/jarvisbrain/jarvis/certs/brain.crt"
 
 
 async def _ping_node(name: str, url: str) -> dict:
-    import subprocess, asyncio
+    import subprocess
+    import asyncio
 
     start = time.monotonic()
     try:

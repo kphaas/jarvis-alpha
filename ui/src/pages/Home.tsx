@@ -8,7 +8,7 @@ import { useAppStore } from '../store'
 
 interface HealthPayload {
   status: string
-  uptime_seconds: number
+  uptime_seconds?: number
   node: string
 }
 
@@ -23,7 +23,7 @@ interface GraphTaskRow {
   created_at: string
 }
 
-function formatUptimeSeconds(total: number): string {
+function formatUptime(total: number): string {
   const h = Math.floor(total / 3600)
   const m = Math.floor((total % 3600) / 60)
   return `${h}h ${m}m`
@@ -174,7 +174,7 @@ export default function Home() {
               </div>
               <div>
                 <p className="text-[10px] font-mono uppercase opacity-40 mb-2">Uptime</p>
-                <p className="text-sm font-bold">{formatUptimeSeconds(health.uptime_seconds)}</p>
+                <p className="text-sm font-bold">{health?.uptime_seconds != null ? formatUptime(health.uptime_seconds) : '—'}</p>
               </div>
               <div>
                 <p className="text-[10px] font-mono uppercase opacity-40 mb-2">Node</p>

@@ -3,14 +3,6 @@ import httpx
 from brain.core.config import GATEWAY_URL, OLLAMA_URL
 from brain.core.models import (
     LOCAL_CHAT,
-    LOCAL_CODE,
-    LOCAL_SYNTH,
-    CLAUDE_FAST,
-    CLAUDE_SMART,
-    PERPLEXITY_FAST,
-    PERPLEXITY_DEEP,
-    GEMINI_FAST,
-    GEMINI_SMART,
 )
 from brain.routing.complexity import score
 from brain.routing.council import CouncilOrchestrator

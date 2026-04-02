@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
-import { Loader2 } from "lucide-react";
+import { Loader2, Cpu, Globe, Monitor, FlaskConical, Server } from "lucide-react";
 import { apiJson } from "../lib/apiFetch";
 
 const REFRESH_MS = 30_000;
@@ -161,9 +161,10 @@ const TOPO_POSITIONS: Record<string, { x: number; y: number }> = {
   endpoint: { x: 480, y: 25 },
   unraid:   { x: 120, y: 210 },
   iphone:   { x: 480, y: 240 },
+  sandbox:  { x: 480, y: 210 },
 };
 
-const BRAIN_LINKS = ["gateway", "endpoint", "unraid", "iphone"] as const;
+const BRAIN_LINKS = ["gateway", "endpoint", "unraid", "iphone", "sandbox"] as const;
 
 function TopologyDiagram({ nodes, theme }: { nodes: MeshNode[]; theme: "dark" | "light" }) {
   const isDark = theme === "dark";
@@ -174,8 +175,23 @@ function TopologyDiagram({ nodes, theme }: { nodes: MeshNode[]; theme: "dark" | 
   const center = TOPO_POSITIONS.brain;
 
   const glyphs: Record<string, string> = {
-    brain: "⬡", gateway: "⬢", endpoint: "▣", unraid: "◉", iphone: "◎",
+    brain: "⬡", gateway: "⬢", endpoint: "▣", unraid: "◉", iphone: "◎", sandbox: "⬡",
   };
+
+  function iconForTopoNode(name: string) {
+    switch (name) {
+      case "brain":
+        return Cpu;
+      case "gateway":
+        return Globe;
+      case "endpoint":
+        return Monitor;
+      case "sandbox":
+        return FlaskConical;
+      default:
+        return Server;
+    }
+  }
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: H }}>
@@ -201,7 +217,7 @@ function TopologyDiagram({ nodes, theme }: { nodes: MeshNode[]; theme: "dark" | 
       <text x="300" y="24" textAnchor="middle" fontSize="8"
         fill={isDark ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.25)"}
       >INTERNET</text>
-      <line x1="120" y1="65" x2="260" y2="28"
+      <line x1="120" y1="25" x2="255" y2="20"
         stroke={isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"}
         strokeWidth="1" strokeDasharray="3 2"
       />
@@ -241,6 +257,30 @@ function TopologyDiagram({ nodes, theme }: { nodes: MeshNode[]; theme: "dark" | 
               textAnchor="middle" fontSize={isBrain ? "16" : "13"}
               fill={col} opacity={0.95}
             >{glyphs[node.name] ?? "◎"}</text>
+            {(() => {
+              const Icon = iconForTopoNode(node.name);
+              return (
+                <foreignObject
+                  x={pos.x - 8}
+                  y={pos.y - 8}
+                  width={16}
+                  height={16}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 16,
+                      height: 16,
+                      color: col,
+                    }}
+                  >
+                    <Icon width={12} height={12} stroke="currentColor" fill="none" />
+                  </div>
+                </foreignObject>
+              );
+            })()}
           </g>
         );
       })}
