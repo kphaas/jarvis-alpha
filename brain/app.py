@@ -10,6 +10,7 @@ from brain.routes.ask import router as ask_router
 from brain.routes.chat import router as chat_router
 from brain.routes.memory import router as memory_router
 from brain.routes.vault import router as vault_router
+from brain.routes.buddy import router as buddy_router
 
 
 @asynccontextmanager
@@ -30,6 +31,7 @@ app.include_router(ask_router)
 app.include_router(chat_router)
 app.include_router(memory_router)
 app.include_router(vault_router)
+app.include_router(buddy_router)
 
 
 @app.get("/health")
