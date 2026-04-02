@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from brain.middleware.auth_middleware import AuthMiddleware
 from brain.middleware.rls_middleware import RLSMiddleware
 from brain.middleware.rate_limit_middleware import RateLimitMiddleware
@@ -34,6 +35,14 @@ app.add_middleware(RateLimitMiddleware)
 app.add_middleware(RLSMiddleware)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(JWTAuthMiddleware)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://jarvis-endpoint.tail40ed36.ts.net:4100"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(pin_auth_router)
 app.include_router(tasks_router)
