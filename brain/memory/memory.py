@@ -93,7 +93,7 @@ class MemoryService:
                 ORDER BY embedding <=> $2::vector
                 LIMIT $3
                 """,
-                user_id,
+                str(user_id),
                 embedding,
                 EPISODIC_LIMIT,
             )
@@ -156,7 +156,7 @@ class MemoryService:
                    embedding, tier, persistent)
                 VALUES ($1, $2, $3, $4, $5::vector, $6, $7)
                 """,
-                user_id,
+                str(user_id),
                 session_id,
                 summary,
                 role,
@@ -226,7 +226,7 @@ class MemoryService:
                   AND access_count >= $3
                 LIMIT $4
                 """,
-                user_id,
+                str(user_id),
                 PROMOTION_SCORE_THRESHOLD,
                 PROMOTION_ACCESS_THRESHOLD,
                 SEMANTIC_CAP - cap_check,
