@@ -1,8 +1,14 @@
 #!/bin/bash
-set -e
+set -uo pipefail
 
-REPO_DIR="$HOME/jarvis-alpha"
-SECRETS_FILE="$HOME/jarvis/.secrets"
+REPO_DIR="${HOME}/jarvis-alpha"
+SECRETS_FILE="${HOME}/jarvis/.secrets"
+
+echo ""
+echo "── JARVIS-ALPHA PULL ────────────────────────────────────"
+echo "Node: $(hostname)"
+echo "Time: $(date '+%Y-%m-%d %H:%M')"
+echo ""
 
 if [ ! -f "$SECRETS_FILE" ]; then
   echo "ERROR: secrets file not found at $SECRETS_FILE"
@@ -13,12 +19,21 @@ set -a
 source "$SECRETS_FILE"
 set +a
 
-if [ -z "$GITHUB_TOKEN" ]; then
+if [ -z "${GITHUB_TOKEN:-}" ]; then
   echo "ERROR: GITHUB_TOKEN not set in secrets"
   exit 1
 fi
 
-cd "$REPO_DIR"
-git remote set-url origin https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git
-git pull origin main --rebase
-echo "jarvis-alpha pull complete: $(git rev-parse --short HEAD)"
+if [ ! -d "$REPO_DIR" ]; then
+  echo "Cloning jarvis-alpha for first time..."
+  git clone https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git "$REPO_DIR"
+else
+  cd "$REPO_DIR"
+  git remote set-url origin https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git
+  git pull origin main --rebase
+fi
+
+SHORT=$(git -C "$REPO_DIR" rev-parse --short HEAD)
+echo ""
+echo "✅ jarvis-alpha pulled — $SHORT"
+echo "─────────────────────────────────────────────────────────"
