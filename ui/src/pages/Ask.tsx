@@ -110,7 +110,7 @@ export default function Ask() {
               <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1"/>
               <circle cx="6" cy="6" r="2" fill="currentColor"/>
             </svg>
-            {showCouncil ? "Hide thinking" : "Show thinking"}
+            {showCouncil ? "Hide Council" : "Show Council"}
           </button>
 
           <ModelSelector selected={selectedModels} onChange={setSelectedModels} />

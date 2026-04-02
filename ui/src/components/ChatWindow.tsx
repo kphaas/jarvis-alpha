@@ -18,7 +18,9 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
   const [input, setInput]         = useState("");
   const [streaming, setStreaming] = useState(false);
   const [waiting, setWaiting]     = useState(false);
-  const bottomRef                 = useRef<HTMLDivElement>(null);
+  const bottomRef      = useRef<HTMLDivElement>(null);
+  const scrollRef      = useRef<HTMLDivElement>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
   const activeThread              = useRef<string | null>(threadId);
   const sendingRef = useRef(false);
   const lastSendTime = useRef(0);
@@ -28,19 +30,39 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
 
   useEffect(() => {
     if (!threadId) { setMessages([]); return; }
+    if (streaming || sendingRef.current) return;
     apiJson<Message[]>(`/v1/threads/${threadId}/messages`)
       .then(msgs => setMessages(msgs))
       .catch(() => {});
   }, [threadId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    if (isAtBottom) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, isAtBottom]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setIsAtBottom(gap < 60);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
 
   const send = useCallback(async () => {
+    if ((window as any).__jarvisSending) return;
+    (window as any).__jarvisSending = true;
+
     const text = input.trim();
     const now = Date.now();
-    if (!text || streaming || isSending || sendingRef.current || (now - lastSendTime.current < 500)) return;
+    if (!text || streaming || isSending || sendingRef.current || (now - lastSendTime.current < 500)) {
+      (window as any).__jarvisSending = false;
+      return;
+    }
     lastSendTime.current = now;
     setIsSending(true);
     (document.activeElement as HTMLElement)?.blur();
@@ -48,6 +70,10 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
     setInput("");
     setStreaming(true);
     setWaiting(true);
+
+    if (selectedModels.length >= 2) {
+      setIsAtBottom(false);
+    }
 
     setMessages(prev => [...prev, { role: "user", content: text }]);
 
@@ -59,7 +85,7 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
     setMessages(prev => [...prev, {
       role: "assistant", content: "", streaming: true,
       model_used: model, thread_id: activeThread.current ?? undefined,
-      councilStreams: isCouncil ? {} : undefined,
+      councilStreams: undefined,
     }]);
 
     let accumulated = "";
@@ -85,16 +111,14 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
 
         if (chunk.council_model) {
           councilAccum[chunk.council_model] = (councilAccum[chunk.council_model] ?? "") + (chunk.delta ?? "");
-          setMessages(prev => {
-            const next = [...prev];
-            const idx  = next.findLastIndex(m => m.role === "assistant" && m.streaming);
-            if (idx >= 0) next[idx] = {
-              ...next[idx],
-              councilStreams: { ...councilAccum },
-              thread_id: chunk.thread_id,
-            };
-            return next;
-          });
+          if (chunk.thread_id) {
+            setMessages(prev => {
+              const next = [...prev];
+              const idx  = next.findLastIndex(m => m.role === "assistant" && m.streaming);
+              if (idx >= 0) next[idx] = { ...next[idx], thread_id: chunk.thread_id };
+              return next;
+            });
+          }
         } else {
           accumulated += chunk.delta;
           setMessages(prev => {
@@ -110,11 +134,18 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
         }
       },
       (tid, finalModel, councilDetail) => {
+        (window as any).__jarvisSending = false;
         const resolved = tid || activeThread.current;
         if (resolved && !activeThread.current) {
           activeThread.current = resolved;
           onThreadCreated(resolved);
         }
+        const resolvedCouncilDetail =
+          councilDetail && Object.keys(councilDetail).length > 0
+            ? councilDetail
+            : Object.keys(councilAccum).length > 0
+              ? { ...councilAccum }
+              : null;
         setMessages(prev => {
           const next = [...prev];
           const idx  = next.findLastIndex(m => m.role === "assistant" && m.streaming);
@@ -122,7 +153,7 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
             ...next[idx],
             streaming: false,
             model_used: finalModel,
-            council_detail: councilDetail ?? null,
+            council_detail: resolvedCouncilDetail,
             councilStreams: undefined,
             thread_id: resolved ?? undefined,
             complexity: text.split(" ").length > 30 ? 4 : 2,
@@ -135,6 +166,7 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
         setIsSending(false);
       },
       (err) => {
+        (window as any).__jarvisSending = false;
         setMessages(prev => {
           const next = [...prev];
           const idx  = next.findLastIndex(m => m.role === "assistant" && m.streaming);
@@ -163,7 +195,7 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
       minWidth: 0, height: "100%", overflow: "hidden",
       position: "relative", zIndex: 0,
     }}>
-      <div style={{ flex: 1, overflowY: "auto", padding: "14px 18px", position: "relative", zIndex: 0 }}>
+      <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "14px 18px", position: "relative", zIndex: 0 }}>
         {messages.length === 0 && (
           <div style={{
             height: "100%", display: "flex", flexDirection: "column",
@@ -191,6 +223,37 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
         )}
         <div ref={bottomRef} />
       </div>
+
+      {!isAtBottom && (
+        <div
+          onClick={() => {
+            bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+            setIsAtBottom(true);
+          }}
+          style={{
+            position: "absolute",
+            bottom: 80,
+            right: 24,
+            width: 36,
+            height: 36,
+            borderRadius: "50%",
+            background: "var(--color-bg-primary, #fff)",
+            border: "1px solid var(--color-border-secondary, #ddd)",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            zIndex: 10,
+            transition: "opacity 0.2s ease",
+          }}
+          title="Scroll to bottom"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M8 3v10M4 9l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </div>
+      )}
 
       <div style={{
         borderTop: "0.5px solid var(--color-border-tertiary)",

@@ -45,16 +45,14 @@ function modelLabel(model: string | null | undefined): string {
 }
 
 export function MessageBubble({ msg, showCouncilPanels, onEscalated }: Props) {
-  const [showCouncil, setShowCouncil] = useState(false);
   const [escalating, setEscalating] = useState(false);
   const [escalated, setEscalated] = useState(false);
   const [hovered, setHovered] = useState(false);
 
   const isUser = msg.role === "user";
   const isCouncil = !!msg.council_detail && Object.keys(msg.council_detail).length > 0;
-  const hasLiveStreams = !!msg.councilStreams && Object.keys(msg.councilStreams).length > 0;
-  const showPanels = (showCouncilPanels || showCouncil) && (hasLiveStreams || isCouncil);
-  const panelData = isCouncil ? msg.council_detail! : (msg.councilStreams ?? {});
+  const showPanels = !!showCouncilPanels && isCouncil;
+  const panelData = msg.council_detail ?? {};
   const isHighComplexity = (msg.complexity ?? 0) >= 4;
   const mc = modelColor(msg.model_used);
 
@@ -128,13 +126,9 @@ export function MessageBubble({ msg, showCouncilPanels, onEscalated }: Props) {
             <span style={{ fontSize: 10, color: "var(--color-text-tertiary)" }}>{msg.latency_ms}ms</span>
           )}
           {isCouncil && (
-            <button onClick={() => setShowCouncil(s => !s)} style={{
-              fontSize: 10, padding: "1px 6px", borderRadius: 3, cursor: "pointer",
-              background: "transparent", border: "0.5px solid var(--color-border-secondary)",
-              color: "var(--color-text-secondary)", fontFamily: "var(--font-sans)",
-            }}>
-              {showCouncil ? "Hide thinking" : "Show thinking"}
-            </button>
+            <span style={{ fontSize: "0.75rem", color: "var(--color-text-tertiary)" }}>
+              {showPanels ? "Showing Council" : "Hiding Council"}
+            </span>
           )}
           {hovered && !escalated && msg.thread_id && (
             <button onClick={handleEscalate} disabled={escalating} style={{
@@ -180,7 +174,6 @@ export function MessageBubble({ msg, showCouncilPanels, onEscalated }: Props) {
                 }}>
                   <div style={{ fontSize: 9, fontWeight: 500, color: mc2.color, marginBottom: 3, textTransform: "uppercase" }}>
                     {model}
-                    {!isCouncil && <span style={{ fontSize: 8, opacity: 0.6, marginLeft: 4 }}>streaming…</span>}
                   </div>
                   <div style={{ fontSize: 11, color: "var(--color-text-primary)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
                     {text || <span style={{ opacity: 0.4 }}>waiting…</span>}
