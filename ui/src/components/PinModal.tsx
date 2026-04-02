@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Lock } from 'lucide-react'
-import { verifyPin } from '../api'
+import { apiJson } from '../lib/apiFetch'
 import type { Theme } from '../types'
 
 interface Props {
@@ -23,7 +23,8 @@ export function PinModal({ theme, title = 'Vault', subtitle = 'Enter PIN to unlo
     if (!pin.trim()) return
     setChecking(true)
     setError(false)
-    const valid = await verifyPin(pin)
+    const res = await apiJson<{ token: string }>('/v1/auth/pin', { method: 'POST', body: JSON.stringify({ pin }) })
+    const valid = !!(res?.token)
     setChecking(false)
     if (valid) { onUnlock(); setPin('') }
     else { setError(true); setPin('') }

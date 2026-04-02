@@ -40,6 +40,7 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
     const text = input.trim();
     if (!text || streaming || isSending || sendingRef.current) return;
     setIsSending(true);
+    (document.activeElement as HTMLElement)?.blur();
     sendingRef.current = true;
     setInput("");
     setStreaming(true);
@@ -80,7 +81,7 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
         }
 
         if (chunk.council_model) {
-          councilAccum[chunk.council_model] = (councilAccum[chunk.council_model] ?? "") + chunk.delta;
+          councilAccum[chunk.council_model] = (councilAccum[chunk.council_model] ?? "") + (chunk.delta ?? "");
           setMessages(prev => {
             const next = [...prev];
             const idx  = next.findLastIndex(m => m.role === "assistant" && m.streaming);
