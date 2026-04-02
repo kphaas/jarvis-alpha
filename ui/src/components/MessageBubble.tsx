@@ -53,7 +53,7 @@ export function MessageBubble({ msg, showCouncilPanels, onEscalated }: Props) {
   const isUser = msg.role === "user";
   const isCouncil = !!msg.council_detail && Object.keys(msg.council_detail).length > 0;
   const hasLiveStreams = !!msg.councilStreams && Object.keys(msg.councilStreams).length > 0;
-  const showPanels = showCouncilPanels && (hasLiveStreams || isCouncil);
+  const showPanels = (showCouncilPanels || showCouncil) && (hasLiveStreams || isCouncil);
   const panelData = isCouncil ? msg.council_detail! : (msg.councilStreams ?? {});
   const isHighComplexity = (msg.complexity ?? 0) >= 4;
   const mc = modelColor(msg.model_used);

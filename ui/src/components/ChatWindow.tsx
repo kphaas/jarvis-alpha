@@ -21,6 +21,7 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
   const bottomRef                 = useRef<HTMLDivElement>(null);
   const activeThread              = useRef<string | null>(threadId);
   const sendingRef = useRef(false);
+  const lastSendTime = useRef(0);
   const [isSending, setIsSending] = useState(false);
 
   useEffect(() => { activeThread.current = threadId; }, [threadId]);
@@ -38,7 +39,9 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
 
   const send = useCallback(async () => {
     const text = input.trim();
-    if (!text || streaming || isSending || sendingRef.current) return;
+    const now = Date.now();
+    if (!text || streaming || isSending || sendingRef.current || (now - lastSendTime.current < 500)) return;
+    lastSendTime.current = now;
     setIsSending(true);
     (document.activeElement as HTMLElement)?.blur();
     sendingRef.current = true;
