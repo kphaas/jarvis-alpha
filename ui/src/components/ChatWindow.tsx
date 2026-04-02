@@ -192,7 +192,7 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
           <textarea
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); send(); } }}
             placeholder="Ask JARVIS anything…"
             rows={1}
             style={{

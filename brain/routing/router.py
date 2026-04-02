@@ -2,7 +2,10 @@ import httpx
 
 from brain.core.config import GATEWAY_URL, OLLAMA_URL
 from brain.core.models import (
+    CLAUDE_SMART,
+    GEMINI_FAST,
     LOCAL_CHAT,
+    PERPLEXITY_FAST,
 )
 from brain.routing.complexity import score
 from brain.routing.council import CouncilOrchestrator
@@ -42,29 +45,60 @@ async def route(prompt: str, mode: str = "auto") -> dict:
 
             if mode == "claude":
                 r = await client.post(
-                    f"{GATEWAY_URL}/v1/cloud/claude",
-                    json={"prompt": prompt},
+                    f"{GATEWAY_URL}/v1/cloud/call",
+                    json={
+                        "provider": "claude",
+                        "payload": {
+                            "model": CLAUDE_SMART,
+                            "max_tokens": 1024,
+                            "messages": [{"role": "user", "content": prompt}],
+                        },
+                    },
                 )
                 r.raise_for_status()
-                text = (r.json().get("result") or "").strip()
+                raw = r.json().get("result", {})
+                try:
+                    text = raw["content"][0]["text"]
+                except (KeyError, IndexError, TypeError):
+                    text = ""
                 return {"mode": "claude", "result": text}
 
             if mode == "gemini":
                 r = await client.post(
-                    f"{GATEWAY_URL}/v1/cloud/gemini",
-                    json={"prompt": prompt},
+                    f"{GATEWAY_URL}/v1/cloud/call",
+                    json={
+                        "provider": "gemini",
+                        "payload": {
+                            "model": GEMINI_FAST,
+                            "contents": [{"parts": [{"text": prompt}]}],
+                        },
+                    },
                 )
                 r.raise_for_status()
-                text = (r.json().get("result") or "").strip()
+                raw = r.json().get("result", {})
+                try:
+                    text = raw["candidates"][0]["content"]["parts"][0]["text"]
+                except (KeyError, IndexError, TypeError):
+                    text = ""
                 return {"mode": "gemini", "result": text}
 
             if mode == "perplexity":
                 r = await client.post(
-                    f"{GATEWAY_URL}/v1/cloud/perplexity",
-                    json={"prompt": prompt},
+                    f"{GATEWAY_URL}/v1/cloud/call",
+                    json={
+                        "provider": "perplexity",
+                        "payload": {
+                            "model": PERPLEXITY_FAST,
+                            "messages": [{"role": "user", "content": prompt}],
+                        },
+                    },
                 )
                 r.raise_for_status()
-                text = (r.json().get("result") or "").strip()
+                raw = r.json().get("result", {})
+                try:
+                    text = raw["choices"][0]["message"]["content"]
+                except (KeyError, IndexError, TypeError):
+                    text = ""
                 return {"mode": "perplexity", "result": text}
 
             return {"mode": mode, "result": "", "error": f"unknown mode: {mode}"}

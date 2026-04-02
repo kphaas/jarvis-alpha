@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 
 export interface ModelOption {
   id: string;
@@ -35,11 +36,25 @@ export interface ModelSelectorProps {
 
 export function ModelSelector({ selected, onChange }: ModelSelectorProps) {
   const [open, setOpen] = useState(false);
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
   const ref = useRef<HTMLDivElement>(null);
+  const portalRef = useRef<HTMLDivElement>(null);
+
+  const updatePos = useCallback(() => {
+    if (ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      setDropdownPos({
+        top: rect.bottom + 6,
+        left: Math.max(8, rect.right - 292),
+      });
+    }
+  }, []);
 
   useEffect(() => {
     function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (ref.current?.contains(t) || portalRef.current?.contains(t)) return;
+      setOpen(false);
     }
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -68,7 +83,7 @@ export function ModelSelector({ selected, onChange }: ModelSelectorProps) {
   return (
     <div ref={ref} style={{ position: "relative" }}>
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={() => { updatePos(); setOpen(o => !o); }}
         style={{
           display: "flex", alignItems: "center", gap: 5,
           padding: "5px 10px 5px 8px", borderRadius: 20,
@@ -95,13 +110,21 @@ export function ModelSelector({ selected, onChange }: ModelSelectorProps) {
         <span style={{ fontSize: 8, opacity: 0.5, marginLeft: 1 }}>▾</span>
       </button>
 
-      {open && (
-        <div style={{
-          position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 200,
-          width: 292, background: "var(--color-background-primary)",
-          border: "0.5px solid var(--color-border-secondary)",
-          borderRadius: "var(--border-radius-lg)", overflow: "hidden",
-        }}>
+      {open && createPortal(
+        <div
+          ref={portalRef}
+          style={{
+            position: "fixed",
+            top: dropdownPos.top,
+            left: dropdownPos.left,
+            zIndex: 9999,
+            width: 292,
+            background: "var(--color-background-primary)",
+            border: "0.5px solid var(--color-border-secondary)",
+            borderRadius: "var(--border-radius-lg)",
+            overflow: "hidden",
+          }}
+        >
           <div style={{
             padding: "8px 13px", borderBottom: "0.5px solid var(--color-border-tertiary)",
             display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -118,13 +141,8 @@ export function ModelSelector({ selected, onChange }: ModelSelectorProps) {
               background: isAuto ? "rgba(55,138,221,0.06)" : "transparent",
             }}
           >
-            <div style={{
-              width: 26, height: 26, borderRadius: 7, background: "#378ADD",
-              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-            }}>
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="white">
-                <path d="M8 1l1.5 4.5H14l-3.7 2.7 1.4 4.3L8 10l-3.7 2.5 1.4-4.3L2 5.5h4.5z"/>
-              </svg>
+            <div style={{ width: 26, height: 26, borderRadius: 7, background: "#378ADD", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="white"><path d="M8 1l1.5 4.5H14l-3.7 2.7 1.4 4.3L8 10l-3.7 2.5 1.4-4.3L2 5.5h4.5z"/></svg>
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-primary)" }}>Auto</div>
@@ -141,24 +159,13 @@ export function ModelSelector({ selected, onChange }: ModelSelectorProps) {
             const ps = PILL[m.provider];
             const isSel = selected.includes(m.id);
             return (
-              <div
-                key={m.id}
-                onClick={() => toggle(m.id)}
-                style={{
-                  padding: "8px 13px", display: "flex", alignItems: "center", gap: 9,
-                  cursor: "pointer", borderBottom: "0.5px solid var(--color-border-tertiary)",
-                  background: isSel ? ps.bg : "transparent",
-                  transition: "background 0.15s",
-                }}
-              >
-                <div style={{
-                  width: 26, height: 26, borderRadius: 7, background: ps.send,
-                  display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-                }}>
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="white">
-                    <circle cx="5" cy="5" r="4" stroke="white" strokeWidth="1" fill="none"/>
-                    <circle cx="5" cy="5" r="1.5"/>
-                  </svg>
+              <div key={m.id} onClick={() => toggle(m.id)} style={{
+                padding: "8px 13px", display: "flex", alignItems: "center", gap: 9,
+                cursor: "pointer", borderBottom: "0.5px solid var(--color-border-tertiary)",
+                background: isSel ? ps.bg : "transparent", transition: "background 0.15s",
+              }}>
+                <div style={{ width: 26, height: 26, borderRadius: 7, background: ps.send, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="white"><circle cx="5" cy="5" r="4" stroke="white" strokeWidth="1" fill="none"/><circle cx="5" cy="5" r="1.5"/></svg>
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-primary)" }}>{m.label}</div>
@@ -183,23 +190,20 @@ export function ModelSelector({ selected, onChange }: ModelSelectorProps) {
                 const ps = PILL[m.provider];
                 const isSel = selected.includes(m.id);
                 return (
-                  <div
-                    key={m.id}
-                    onClick={() => toggle(m.id)}
-                    style={{
-                      padding: "3px 8px", borderRadius: 12, fontSize: 10, fontWeight: 500,
-                      cursor: "pointer", background: ps.bg, color: ps.color,
-                      border: `0.5px solid ${isSel ? ps.dot : ps.border}`,
-                      transition: "border-color 0.15s",
-                    }}
-                  >
+                  <div key={m.id} onClick={() => toggle(m.id)} style={{
+                    padding: "3px 8px", borderRadius: 12, fontSize: 10, fontWeight: 500,
+                    cursor: "pointer", background: ps.bg, color: ps.color,
+                    border: `0.5px solid ${isSel ? ps.dot : ps.border}`,
+                    transition: "border-color 0.15s",
+                  }}>
                     {m.label.split(" ")[0]}{isSel ? " ✓" : ""}
                   </div>
                 );
               })}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

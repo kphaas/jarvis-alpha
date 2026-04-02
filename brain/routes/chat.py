@@ -258,6 +258,7 @@ async def _stream_council(
     synth_result = await route(synth_prompt, "local")
     synth_text = synth_result.get("result", "")
 
+    council_summary = {m: r.get("result", "") for m, r in results.items()}
     for word in synth_text.split(" "):
         chunk = json.dumps(
             {
@@ -265,13 +266,13 @@ async def _stream_council(
                 "model": "council/synthesis",
                 "thread_id": thread_id,
                 "done": False,
-                "council_detail": {m: r.get("result", "") for m, r in results.items()},
+                "council_detail": council_summary,
             }
         )
         yield f"data: {chunk}\n\n"
         await asyncio.sleep(0.01)
 
-    yield f"data: {json.dumps({'delta': '', 'model': 'council/synthesis', 'thread_id': thread_id, 'done': True})}\n\n"
+    yield f"data: {json.dumps({'delta': '', 'model': 'council/synthesis', 'thread_id': thread_id, 'done': True, 'council_detail': council_summary})}\n\n"
     yield "data: [DONE]\n\n"
 
 
