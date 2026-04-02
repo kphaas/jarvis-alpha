@@ -17,8 +17,6 @@ from brain.db.pool import get_pool
 
 router = APIRouter()
 
-GATEWAY_URL = os.environ.get("ALPHA_GATEWAY_URL", "https://100.112.63.25:8282")
-
 CERTS = [
     {
         "node": "Brain",

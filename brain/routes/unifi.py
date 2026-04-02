@@ -10,17 +10,13 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from brain.core.config import GATEWAY_URL
+
 router = APIRouter(tags=["unifi"])
 
 
-def _gateway_url() -> str:
-    return os.environ.get(
-        "ALPHA_GATEWAY_URL", "https://jarvis-gateway.tail40ed36.ts.net:8282"
-    ).rstrip("/")
-
-
 def _gateway_get(path: str) -> dict[str, Any]:
-    base = _gateway_url()
+    base = GATEWAY_URL.rstrip("/")
     token = os.environ.get("GATEWAY_TOKEN", "")
     url = f"{base}{path}"
     try:
