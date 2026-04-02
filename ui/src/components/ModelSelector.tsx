@@ -119,7 +119,7 @@ export function ModelSelector({ selected, onChange }: ModelSelectorProps) {
             left: dropdownPos.left,
             zIndex: 9999,
             width: 292,
-            background: "var(--color-background-primary)",
+            background: "#FFFFFF",
             border: "0.5px solid var(--color-border-secondary)",
             borderRadius: "var(--border-radius-lg)",
             overflow: "hidden",
