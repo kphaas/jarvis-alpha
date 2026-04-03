@@ -99,6 +99,7 @@ async def route(prompt: str, mode: str = "auto") -> dict:
                     "payload": {
                         "model": GEMINI_FAST,
                         "contents": [{"parts": [{"text": prompt}]}],
+                        "generationConfig": {"maxOutputTokens": 1024},
                     },
                 },
             )

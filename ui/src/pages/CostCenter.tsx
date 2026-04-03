@@ -1384,16 +1384,18 @@ function PowerSection({
   const [editingRate, setEditingRate] = useState(false)
   const [rateInput, setRateInput] = useState('')
   const [savingRate, setSavingRate] = useState(false)
+  const [live, setLive] = useState<any>(null)
+  const [rate, setRate] = useState<number>(0.13)
 
   const load = useCallback(() => {
     onLoadDelta?.(1)
-    setLoading(true)
     setErr(null)
     Promise.all([apiJson<PowerPayload>('/v1/costs/power'), apiJson<HardwarePayload>('/v1/costs/hardware')])
       .then(([p, h]) => {
         setPower(p)
         setHw(h)
         setRateInput(String(p.rate_per_kwh))
+        setRate(p.rate_per_kwh)
         setErr(null)
       })
       .catch(() => {
@@ -1402,14 +1404,31 @@ function PowerSection({
         setErr('Could not load power or hardware.')
       })
       .finally(() => {
-        setLoading(false)
         onLoadDelta?.(-1)
       })
   }, [onLoadDelta])
 
   useEffect(() => {
-    load()
-  }, [refreshKey, load])
+    setLoading(true)
+    setErr(null)
+    Promise.all([
+      apiJson<any>('/v1/metrics/power/current').catch(() => null),
+      apiJson<any>('/v1/costs/power').catch(() => null),
+      apiJson<HardwarePayload>('/v1/costs/hardware').catch(() => null),
+    ]).then(([liveData, costData, hwData]) => {
+      setLive(liveData)
+      setRate(costData?.rate_per_kwh ?? 0.13)
+      if (costData) {
+        setPower(costData as PowerPayload)
+        setRateInput(String((costData as PowerPayload).rate_per_kwh))
+      } else {
+        setPower(null)
+      }
+      setHw(hwData)
+      if (!costData || !hwData) setErr('Could not load power or hardware.')
+      else setErr(null)
+    }).finally(() => setLoading(false))
+  }, [refreshKey])
 
   const saveRate = async () => {
     if (!power) return
@@ -1441,7 +1460,10 @@ function PowerSection({
   const barAreaW = chartW - padL - 16
   const barAreaH = chartH - padB - padT
   const wattsList = power
-    ? order.map((name) => power.nodes.find((n) => n.name === name)?.watts ?? 0)
+    ? order.map((nodeName) => {
+        const staticWatts = power.nodes.find((n) => n.name === nodeName)?.watts ?? 0
+        return live?.nodes?.find((n: any) => n.node_name === nodeName)?.avg_watts_24h ?? staticWatts
+      })
     : [0, 0, 0, 0]
   const maxW = Math.max(1, ...wattsList) * 1.1
   const barGap = 12
@@ -1465,12 +1487,12 @@ function PowerSection({
                   type="button"
                   onClick={() => {
                     setEditingRate(true)
-                    setRateInput(String(power.rate_per_kwh))
+                    setRateInput(String(power?.rate_per_kwh ?? rate))
                   }}
                   className={`inline-flex items-center gap-2 text-xs font-mono px-3 py-1.5 rounded-full border ${border}`}
                 >
                   <Pencil className="w-3.5 h-3.5" />
-                  {power.rate_per_kwh.toFixed(4)} $/kWh
+                  {(power?.rate_per_kwh ?? rate).toFixed(4)} $/kWh
                 </button>
               ) : (
                 <div className="flex items-center gap-2">
@@ -1493,7 +1515,7 @@ function PowerSection({
                     type="button"
                     onClick={() => {
                       setEditingRate(false)
-                      setRateInput(String(power.rate_per_kwh))
+                      setRateInput(String(power?.rate_per_kwh ?? rate))
                     }}
                     className="p-1.5 rounded-xl border border-white/10"
                   >
@@ -1519,22 +1541,29 @@ function PowerSection({
                     const hn = hw.nodes.find((n) => n.node_name === name)
                     const pCost = pn?.cost_monthly ?? 0
                     const hCost = hn?.monthly_usd ?? 0
-                    const live = name === 'Brain'
+                    const displayWatts =
+                      live?.nodes?.find((n: any) => n.node_name === name)?.avg_watts_24h ?? pn?.watts
+                    const showLiveDot =
+                      live?.nodes?.find((n: any) => n.node_name === name)?.has_live_data === true
+                    const showEst =
+                      live?.nodes?.find((n: any) => n.node_name === name)?.source === 'static'
                     return (
                       <tr key={name} className={`border-b border-white/5 ${border}`}>
                         <td className="p-3 font-medium">
                           <div className="flex items-center gap-2 flex-wrap">
                             {name}
-                            {live && (
+                            {showLiveDot && (
                               <span className="flex items-center gap-1 text-[9px] font-semibold uppercase text-emerald-500">
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                                 live
                               </span>
                             )}
-                            {!live && <span className="text-[9px] opacity-40 font-normal">est.</span>}
+                            {showEst && <span className="text-[9px] opacity-40 font-normal">est.</span>}
                           </div>
                         </td>
-                        <td className="p-3 text-right font-mono tabular-nums">{pn ? `${pn.watts.toFixed(1)}` : '—'}</td>
+                        <td className="p-3 text-right font-mono tabular-nums">
+                          {typeof displayWatts === 'number' ? `${displayWatts.toFixed(1)}` : '—'}
+                        </td>
                         <td className="p-3 text-right font-mono tabular-nums">{fmtMoney(pCost)}</td>
                         <td className="p-3 text-right font-mono tabular-nums">{fmtMoney(hCost)}</td>
                         <td className="p-3 text-right font-mono font-semibold tabular-nums">
@@ -1563,6 +1592,7 @@ function PowerSection({
           <div className={card}>
             <div className="p-4 border-b border-white/5">
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-50">LIVE POWER DRAW</p>
+              <p className="text-[10px] opacity-40 mt-1">24h avg</p>
             </div>
             <div className="p-4 flex-1 flex items-center justify-center">
               <svg width="100%" viewBox={`0 0 ${chartW} ${chartH}`} className="max-w-full" style={{ maxHeight: chartH }}>
