@@ -396,7 +396,7 @@ async def submit_graph(request: Request):
                 s["step_type"],
                 s.get("step_order", 0),
                 content_tier,
-                s.get("input", {}),
+                json.dumps(s.get("input", {})),
                 s.get("approval_required", False),
                 s.get("timeout_seconds", 300),
                 s.get("max_retries", 2),
