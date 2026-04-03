@@ -5,10 +5,12 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator, Literal
+from uuid import UUID
 
 import asyncpg
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+from starlette.responses import JSONResponse
 
 from brain.db.pool import get_pool
 from brain.tasks.executor import TaskGraphExecutor
@@ -314,3 +316,247 @@ async def get_task_buddy_events(
             }
         )
     return result
+
+
+# ------------------------------------------------------------------
+# SUBMIT — create a new task graph with steps
+# ------------------------------------------------------------------
+
+
+@tasks_router.post("/v1/tasks/submit")
+async def submit_graph(request: Request):
+    """
+    Submit a new TaskGraph for execution.
+    Body: {
+        "title": str,
+        "description": str (optional),
+        "graph_type": "overnight" | "user_request" | "agent" | "maintenance",
+        "user_type": "adult" | "child",
+        "content_tier": "unrestricted" | "filtered" | "child_safe",
+        "priority": 1-10 (default 5),
+        "steps": [
+            {
+                "step_name": str,
+                "step_type": "llm" | "code" | "tool" | "approval" | "condition" | "parallel_gate",
+                "step_order": int,
+                "input": {},
+                "depends_on_indices": [int] (references step_order of other steps),
+                "approval_required": bool (default false),
+                "timeout_seconds": int (default 300),
+                "max_retries": int (default 2)
+            }
+        ]
+    }
+    """
+    body = await request.json()
+    user_id = getattr(request.state, "user_id", "anon")
+
+    title = body.get("title", "Untitled Graph")
+    graph_type = body.get("graph_type", "user_request")
+    user_type = body.get("user_type", "adult")
+    content_tier = body.get("content_tier", "unrestricted")
+    priority = body.get("priority", 5)
+    steps_data = body.get("steps", [])
+
+    if not steps_data:
+        return JSONResponse({"error": "No steps provided"}, status_code=400)
+
+    async with _rls_conn(request) as conn:
+        graph_id = await conn.fetchval(
+            """
+            INSERT INTO alpha_task_graphs
+              (user_id, title, description, graph_type, user_type,
+               content_tier, priority)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING id
+            """,
+            user_id,
+            title,
+            body.get("description", ""),
+            graph_type,
+            user_type,
+            content_tier,
+            priority,
+        )
+
+        step_ids: dict[int, uuid.UUID] = {}
+        for s in steps_data:
+            step_id = await conn.fetchval(
+                """
+                INSERT INTO alpha_task_steps
+                  (graph_id, user_id, step_name, step_type, step_order,
+                   content_tier, input, approval_required,
+                   timeout_seconds, max_retries)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)
+                RETURNING id
+                """,
+                graph_id,
+                user_id,
+                s.get("step_name", f"step_{s.get('step_order', 0)}"),
+                s["step_type"],
+                s.get("step_order", 0),
+                content_tier,
+                s.get("input", {}),
+                s.get("approval_required", False),
+                s.get("timeout_seconds", 300),
+                s.get("max_retries", 2),
+            )
+            step_ids[s.get("step_order", 0)] = step_id
+
+        for s in steps_data:
+            dep_indices = s.get("depends_on_indices", [])
+            if dep_indices:
+                dep_uuids = [step_ids[i] for i in dep_indices if i in step_ids]
+                step_id = step_ids[s.get("step_order", 0)]
+                await conn.execute(
+                    """
+                    UPDATE alpha_task_steps
+                    SET depends_on = $2
+                    WHERE id = $1
+                    """,
+                    step_id,
+                    dep_uuids,
+                )
+
+    return JSONResponse(
+        {
+            "graph_id": str(graph_id),
+            "steps_created": len(step_ids),
+            "status": "pending",
+        }
+    )
+
+
+# ------------------------------------------------------------------
+# APPROVE / DENY — approval gateway
+# ------------------------------------------------------------------
+
+
+@tasks_router.post("/v1/tasks/steps/{step_id}/approve")
+async def approve_step(step_id: str, request: Request):
+    user_id = getattr(request.state, "user_id", "anon")
+    async with _rls_conn(request) as conn:
+        await conn.execute(
+            """
+            UPDATE alpha_task_steps
+            SET approval_status = 'approved',
+                approved_by = $2,
+                approved_at = now(),
+                updated_at = now()
+            WHERE id = $1
+              AND approval_required = true
+              AND approval_status = 'pending'
+            """,
+            UUID(step_id),
+            str(user_id),
+        )
+        await conn.execute(
+            """
+            UPDATE alpha_task_graphs
+            SET status = 'running', updated_at = now()
+            WHERE id = (SELECT graph_id FROM alpha_task_steps WHERE id = $1)
+              AND status = 'needs_approval'
+            """,
+            UUID(step_id),
+        )
+    return JSONResponse({"approved": True, "step_id": step_id})
+
+
+@tasks_router.post("/v1/tasks/steps/{step_id}/deny")
+async def deny_step(step_id: str, request: Request):
+    user_id = getattr(request.state, "user_id", "anon")
+    async with _rls_conn(request) as conn:
+        await conn.execute(
+            """
+            UPDATE alpha_task_steps
+            SET approval_status = 'denied',
+                status = 'cancelled',
+                approved_by = $2,
+                approved_at = now(),
+                updated_at = now()
+            WHERE id = $1
+            """,
+            UUID(step_id),
+            str(user_id),
+        )
+        await conn.execute(
+            """
+            UPDATE alpha_task_graphs
+            SET status = 'failed', updated_at = now()
+            WHERE id = (SELECT graph_id FROM alpha_task_steps WHERE id = $1)
+            """,
+            UUID(step_id),
+        )
+    return JSONResponse({"denied": True, "step_id": step_id})
+
+
+# ------------------------------------------------------------------
+# CANCEL — stop a running graph
+# ------------------------------------------------------------------
+
+
+@tasks_router.post("/v1/tasks/{graph_id}/cancel")
+async def cancel_graph(graph_id: str, request: Request):
+    user_id = getattr(request.state, "user_id", "anon")
+    async with _rls_conn(request) as conn:
+        await conn.execute(
+            """
+            UPDATE alpha_task_graphs
+            SET status = 'cancelled', updated_at = now()
+            WHERE id = $1 AND status IN ('pending', 'running', 'needs_approval')
+            """,
+            UUID(graph_id),
+        )
+        await conn.execute(
+            """
+            UPDATE alpha_task_steps
+            SET status = 'cancelled', updated_at = now()
+            WHERE graph_id = $1 AND status IN ('pending', 'queued', 'running')
+            """,
+            UUID(graph_id),
+        )
+    return JSONResponse({"cancelled": True, "graph_id": graph_id})
+
+
+# ------------------------------------------------------------------
+# PENDING APPROVALS — for Approvals page
+# ------------------------------------------------------------------
+
+
+@tasks_router.get("/v1/tasks/pending-approvals")
+async def pending_approvals(request: Request):
+    async with _rls_conn(request) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT s.id AS step_id, s.step_name, s.step_type,
+                   s.input, s.graph_id, s.content_tier,
+                   g.title AS graph_title, g.user_type, g.priority,
+                   s.created_at
+            FROM alpha_task_steps s
+            JOIN alpha_task_graphs g ON g.id = s.graph_id
+            WHERE s.approval_required = true
+              AND s.approval_status = 'pending'
+              AND s.status = 'queued'
+            ORDER BY g.priority DESC, s.created_at ASC
+            """,
+        )
+    return JSONResponse(
+        {
+            "pending": [
+                {
+                    "step_id": str(r["step_id"]),
+                    "step_name": r["step_name"],
+                    "step_type": r["step_type"],
+                    "input": r["input"],
+                    "graph_id": str(r["graph_id"]),
+                    "graph_title": r["graph_title"],
+                    "content_tier": r["content_tier"],
+                    "user_type": r["user_type"],
+                    "priority": r["priority"],
+                    "created_at": r["created_at"].isoformat(),
+                }
+                for r in rows
+            ],
+            "count": len(rows),
+        }
+    )
