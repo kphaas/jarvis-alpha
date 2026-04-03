@@ -85,6 +85,43 @@ async def _log_ask(
 
 @router.post("/ask", response_model=AskResponse)
 async def ask(body: AskRequest) -> AskResponse:
+    # Handle /forget command
+    if body.prompt.strip().lower().startswith("/forget"):
+        topic = body.prompt.strip()[7:].strip()
+        pool = get_pool()
+        uid = _user_uuid(body.user_id)
+        async with pool.acquire() as conn:
+            if topic:
+                result = await conn.execute(
+                    """
+                    DELETE FROM alpha_conversation_memory
+                    WHERE user_id = $1
+                      AND tier != 'semantic'
+                      AND (
+                        content ILIKE $2
+                        OR summary ILIKE $2
+                      )
+                    """,
+                    str(uid),
+                    f"%{topic}%",
+                )
+                return AskResponse(
+                    mode="system",
+                    result=f"🗑️ Forgot memories related to '{topic}'. ({result})",
+                )
+            else:
+                result = await conn.execute(
+                    """
+                    DELETE FROM alpha_conversation_memory
+                    WHERE user_id = $1 AND tier = 'working'
+                    """,
+                    str(uid),
+                )
+                return AskResponse(
+                    mode="system",
+                    result=f"🗑️ Cleared all working memory. ({result})",
+                )
+
     start_time = time.monotonic()
     try:
         pool = get_pool()

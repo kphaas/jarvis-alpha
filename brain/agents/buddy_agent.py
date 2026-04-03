@@ -87,6 +87,55 @@ async def _run_cycle(pool: asyncpg.Pool) -> None:
                         priority=2,
                     )
 
+                # Evict episodic memories older than 30 days
+                episodic_evicted = await conn.execute(
+                    """
+                    DELETE FROM alpha_conversation_memory
+                    WHERE user_id = $1
+                      AND tier = 'episodic'
+                      AND created_at < now() - interval '30 days'
+                    """,
+                    str(user_id),
+                )
+
+                # Cap episodic at 1000 rows — delete oldest beyond cap
+                episodic_capped = await conn.execute(
+                    """
+                    DELETE FROM alpha_conversation_memory
+                    WHERE id IN (
+                        SELECT id FROM alpha_conversation_memory
+                        WHERE user_id = $1 AND tier = 'episodic'
+                        ORDER BY created_at ASC
+                        OFFSET 1000
+                    )
+                    """,
+                    str(user_id),
+                )
+
+                # Cap semantic at 200 rows — delete lowest importance beyond cap
+                await conn.execute(
+                    """
+                    DELETE FROM alpha_conversation_memory
+                    WHERE id IN (
+                        SELECT id FROM alpha_conversation_memory
+                        WHERE user_id = $1 AND tier = 'semantic'
+                        ORDER BY importance_score ASC NULLS FIRST
+                        OFFSET 200
+                    )
+                    """,
+                    str(user_id),
+                )
+
+                if episodic_evicted != "DELETE 0" or episodic_capped != "DELETE 0":
+                    await _write_event(
+                        conn,
+                        user_id=user_id,
+                        event_type="system",
+                        title="Memory optimization complete",
+                        body=f"Episodic eviction: {episodic_evicted}. Cap enforcement: {episodic_capped}.",
+                        priority=1,
+                    )
+
             async with pool.acquire() as conn:
                 await conn.execute(
                     "SELECT set_config('jarvis.current_user', $1, true)",
