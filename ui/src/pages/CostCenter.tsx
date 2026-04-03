@@ -1,15 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Bot,
   Check,
   Cloud,
   ExternalLink,
-  Moon,
   Pencil,
   Plus,
+  RefreshCw,
   Sparkles,
-  Sun,
   Trash2,
   X,
 } from 'lucide-react'
@@ -118,6 +117,8 @@ function fmtMoney(n: number) {
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+type LoadDeltaFn = (delta: number) => void
+
 /* —— SVG Donut —— */
 
 function donutSlicePath(
@@ -215,13 +216,26 @@ function DonutChart({
 
 /* —— 1. Hero —— */
 
-function HeroSection({ isDark, border, subtle }: { isDark: boolean; border: string; subtle: string }) {
+function HeroSection({
+  isDark,
+  border,
+  subtle,
+  refreshKey,
+  onLoadDelta,
+}: {
+  isDark: boolean
+  border: string
+  subtle: string
+  refreshKey: number
+  onLoadDelta?: LoadDeltaFn
+}) {
   const [data, setData] = useState<CostsSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
     let a = true
+    onLoadDelta?.(1)
     setLoading(true)
     setErr(null)
     apiJson<CostsSummary>('/v1/costs/summary')
@@ -239,11 +253,12 @@ function HeroSection({ isDark, border, subtle }: { isDark: boolean; border: stri
       })
       .finally(() => {
         if (a) setLoading(false)
+        onLoadDelta?.(-1)
       })
     return () => {
       a = false
     }
-  }, [])
+  }, [refreshKey, onLoadDelta])
 
   const monthMeta = useMemo(() => {
     const now = new Date()
@@ -254,19 +269,11 @@ function HeroSection({ isDark, border, subtle }: { isDark: boolean; border: stri
     return { dim, day, pct: dim > 0 ? (day / dim) * 100 : 0 }
   }, [])
 
-  const daysRemainingCredit = useMemo(() => {
-    if (!data?.credit) return null
-    const bal = data.credit.balance_usd
-    const mtd = data.api?.anthropic?.total_usd ?? 0
-    if (bal <= 0 || mtd <= 0 || monthMeta.day < 1) return null
-    const pace = mtd / monthMeta.day
-    if (pace <= 0) return null
-    return Math.floor(bal / pace)
-  }, [data, monthMeta.day])
-
-  const cardBase = `rounded-3xl border p-8 backdrop-blur-xl ${border} ${
+  const cardBase = `rounded-3xl border p-4 backdrop-blur-xl ${border} ${
     isDark ? 'bg-white/[0.04] shadow-[0_1px_0_rgba(255,255,255,0.06)_inset]' : 'bg-white/70 shadow-sm'
   }`
+
+  const geminiCreditBal = data ? Math.max(0, 300 - (data.api?.gemini?.total_usd ?? 0)) : 0
 
   return (
     <section className="space-y-6">
@@ -280,13 +287,13 @@ function HeroSection({ isDark, border, subtle }: { isDark: boolean; border: stri
         <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
             <div className={cardBase}>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-500/90 mb-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-500/90 mb-3">
                 Estimated monthly
               </p>
-              <p className="text-5xl sm:text-6xl font-semibold tracking-tight tabular-nums text-balance">
+              <p className="text-3xl font-semibold tracking-tight tabular-nums text-balance">
                 {fmtMoney(data.true_monthly_tco ?? 0)}
               </p>
-              <p className="mt-4 text-sm opacity-50">
+              <p className="mt-3 text-sm opacity-50">
                 vs full cloud save{' '}
                 <span className="font-medium text-emerald-500/90 tabular-nums">
                   {fmtMoney(data.savings_vs_cloud_usd ?? 0)}/mo
@@ -294,17 +301,23 @@ function HeroSection({ isDark, border, subtle }: { isDark: boolean; border: stri
               </p>
             </div>
             <div className={cardBase}>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-500/90 mb-4">
-                Anthropic credit
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-500/90 mb-3">
+                CLOUD CREDITS
               </p>
-              <p className="text-5xl sm:text-6xl font-semibold tracking-tight tabular-nums">
-                {fmtMoney(data.credit.balance_usd)}
-              </p>
-              <p className="mt-4 text-sm opacity-60">
-                {daysRemainingCredit != null
-                  ? `At current pace, ${daysRemainingCredit} days remaining`
-                  : 'Add usage data to estimate runway'}
-              </p>
+              <div className="space-y-0 divide-y divide-white/10 dark:divide-white/10">
+                <div className="flex justify-between items-center py-2.5 text-sm">
+                  <span className="opacity-80">Anthropic</span>
+                  <span className="font-mono tabular-nums">{fmtMoney(data.credit.balance_usd)}</span>
+                </div>
+                <div className="flex justify-between items-center py-2.5 text-sm">
+                  <span className="opacity-80">Gemini</span>
+                  <span className="font-mono tabular-nums">{fmtMoney(geminiCreditBal)}</span>
+                </div>
+                <div className="flex justify-between items-center py-2.5 text-sm">
+                  <span className="opacity-80">Perplexity</span>
+                  <span className="font-mono tabular-nums">{fmtMoney(data.perplexity?.balance_usd ?? 0)}</span>
+                </div>
+              </div>
             </div>
           </div>
           <div className={`rounded-2xl border px-5 py-4 ${border} ${isDark ? 'bg-white/[0.02]' : 'bg-white/50'}`}>
@@ -329,13 +342,26 @@ function HeroSection({ isDark, border, subtle }: { isDark: boolean; border: stri
 
 /* —— 2. Pies —— */
 
-function PieSection({ isDark, border, subtle }: { isDark: boolean; border: string; subtle: string }) {
+function PieSection({
+  isDark,
+  border,
+  subtle,
+  refreshKey,
+  onLoadDelta,
+}: {
+  isDark: boolean
+  border: string
+  subtle: string
+  refreshKey: number
+  onLoadDelta?: LoadDeltaFn
+}) {
   const [data, setData] = useState<CostsSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
     let a = true
+    onLoadDelta?.(1)
     setLoading(true)
     setErr(null)
     apiJson<CostsSummary>('/v1/costs/summary')
@@ -353,11 +379,12 @@ function PieSection({ isDark, border, subtle }: { isDark: boolean; border: strin
       })
       .finally(() => {
         if (a) setLoading(false)
+        onLoadDelta?.(-1)
       })
     return () => {
       a = false
     }
-  }, [])
+  }, [refreshKey, onLoadDelta])
 
   const alphaSlices = useMemo(() => {
     if (!data) return []
@@ -409,7 +436,14 @@ function PieSection({ isDark, border, subtle }: { isDark: boolean; border: strin
               ))}
             </ul>
           </div>
-          <ForgePieHalf isDark={isDark} border={border} subtle={subtle} summary={data} />
+          <ForgePieHalf
+            isDark={isDark}
+            border={border}
+            subtle={subtle}
+            summary={data}
+            refreshKey={refreshKey}
+            onLoadDelta={onLoadDelta}
+          />
         </div>
       )}
     </section>
@@ -421,17 +455,22 @@ function ForgePieHalf({
   border,
   subtle,
   summary,
+  refreshKey,
+  onLoadDelta,
 }: {
   isDark: boolean
   border: string
   subtle: string
   summary: CostsSummary
+  refreshKey: number
+  onLoadDelta?: LoadDeltaFn
 }) {
   const [power, setPower] = useState<PowerPayload | null>(null)
   const [hw, setHw] = useState<HardwarePayload | null>(null)
 
   useEffect(() => {
     let a = true
+    onLoadDelta?.(1)
     Promise.all([apiJson<PowerPayload>('/v1/costs/power'), apiJson<HardwarePayload>('/v1/costs/hardware')])
       .then(([p, h]) => {
         if (!a) return
@@ -444,10 +483,13 @@ function ForgePieHalf({
           setHw(null)
         }
       })
+      .finally(() => {
+        onLoadDelta?.(-1)
+      })
     return () => {
       a = false
     }
-  }, [])
+  }, [refreshKey, onLoadDelta])
 
   const sbPower = power?.nodes.find((n) => n.name === 'Sandbox')?.cost_monthly ?? 0
   const sbHw = hw?.nodes.find((n) => n.node_name === 'Sandbox')?.monthly_usd ?? 0
@@ -485,7 +527,19 @@ function ForgePieHalf({
 
 /* —— 3. API spend —— */
 
-function ApiSpendSection({ isDark, border, subtle }: { isDark: boolean; border: string; subtle: string }) {
+function ApiSpendSection({
+  isDark,
+  border,
+  subtle,
+  refreshKey,
+  onLoadDelta,
+}: {
+  isDark: boolean
+  border: string
+  subtle: string
+  refreshKey: number
+  onLoadDelta?: LoadDeltaFn
+}) {
   const [summary, setSummary] = useState<CostsSummary | null>(null)
   const [budget, setBudget] = useState<BudgetRow[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -498,6 +552,7 @@ function ApiSpendSection({ isDark, border, subtle }: { isDark: boolean; border: 
   const [pxSaving, setPxSaving] = useState(false)
 
   const load = useCallback(() => {
+    onLoadDelta?.(1)
     setLoading(true)
     setErr(null)
     Promise.all([apiJson<CostsSummary>('/v1/costs/summary'), apiJson<BudgetRow[]>('/v1/costs/budget')])
@@ -517,24 +572,31 @@ function ApiSpendSection({ isDark, border, subtle }: { isDark: boolean; border: 
         setBudget(null)
         setErr('Could not load budget or summary.')
       })
-      .finally(() => setLoading(false))
-  }, [])
+      .finally(() => {
+        setLoading(false)
+        onLoadDelta?.(-1)
+      })
+  }, [onLoadDelta])
 
   useEffect(() => {
     load()
-  }, [load])
+  }, [refreshKey, load])
 
   const loadPx = useCallback(() => {
+    onLoadDelta?.(1)
     apiJson<PerplexityPayload>('/v1/costs/perplexity')
       .then((p) => {
         setPxForm({ balance_usd: String(p.balance_usd), spent_usd: String(p.spent_usd) })
       })
       .catch(() => {})
-  }, [])
+      .finally(() => {
+        onLoadDelta?.(-1)
+      })
+  }, [onLoadDelta])
 
   useEffect(() => {
     loadPx()
-  }, [loadPx])
+  }, [refreshKey, loadPx])
 
   const saveLimit = async (provider: string) => {
     setSaving(true)
@@ -672,7 +734,7 @@ function ApiSpendSection({ isDark, border, subtle }: { isDark: boolean; border: 
                       : 'border-white/15 opacity-60'
                   }`}
                 >
-                  {summary.api?.gemini?.source === 'gcp_api' ? 'GCP API' : 'internal'}
+                  {summary.api?.gemini?.source === 'gcp_api' ? 'GCP API' : 'GCP FREE TIER'}
                 </span>
                 <span className="font-mono text-sm tabular-nums ml-auto">
                   MTD {fmtMoney(summary.api?.gemini?.total_usd ?? 0)}
@@ -835,13 +897,26 @@ function ApiSpendSection({ isDark, border, subtle }: { isDark: boolean; border: 
 
 /* —— 4. Outcomes —— */
 
-function OutcomeSection({ isDark, border, subtle }: { isDark: boolean; border: string; subtle: string }) {
+function OutcomeSection({
+  isDark,
+  border,
+  subtle,
+  refreshKey,
+  onLoadDelta,
+}: {
+  isDark: boolean
+  border: string
+  subtle: string
+  refreshKey: number
+  onLoadDelta?: LoadDeltaFn
+}) {
   const [rows, setRows] = useState<OutcomeRow[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
     let a = true
+    onLoadDelta?.(1)
     setLoading(true)
     setErr(null)
     apiJson<OutcomeRow[]>('/v1/costs/outcomes')
@@ -859,11 +934,12 @@ function OutcomeSection({ isDark, border, subtle }: { isDark: boolean; border: s
       })
       .finally(() => {
         if (a) setLoading(false)
+        onLoadDelta?.(-1)
       })
     return () => {
       a = false
     }
-  }, [])
+  }, [refreshKey, onLoadDelta])
 
   const map = useMemo(() => {
     const m: Record<string, OutcomeRow> = {}
@@ -945,7 +1021,19 @@ function subscriptionMonthTotals(subs: SubscriptionRow[], year: number): { total
   return { totals, tips }
 }
 
-function SubscriptionSection({ isDark, border, subtle }: { isDark: boolean; border: string; subtle: string }) {
+function SubscriptionSection({
+  isDark,
+  border,
+  subtle,
+  refreshKey,
+  onLoadDelta,
+}: {
+  isDark: boolean
+  border: string
+  subtle: string
+  refreshKey: number
+  onLoadDelta?: LoadDeltaFn
+}) {
   const [rows, setRows] = useState<SubscriptionRow[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
@@ -961,6 +1049,7 @@ function SubscriptionSection({ isDark, border, subtle }: { isDark: boolean; bord
   })
 
   const load = useCallback(() => {
+    onLoadDelta?.(1)
     setLoading(true)
     setErr(null)
     apiJson<SubscriptionRow[]>('/v1/costs/subscriptions')
@@ -972,12 +1061,15 @@ function SubscriptionSection({ isDark, border, subtle }: { isDark: boolean; bord
         setRows(null)
         setErr('Could not load subscriptions.')
       })
-      .finally(() => setLoading(false))
-  }, [])
+      .finally(() => {
+        setLoading(false)
+        onLoadDelta?.(-1)
+      })
+  }, [onLoadDelta])
 
   useEffect(() => {
     load()
-  }, [load])
+  }, [refreshKey, load])
 
   const year = new Date().getFullYear()
   const { totals, tips } = useMemo(
@@ -1272,7 +1364,19 @@ function SubscriptionSection({ isDark, border, subtle }: { isDark: boolean; bord
 
 /* —— 6. Power + hardware —— */
 
-function PowerSection({ isDark, border, subtle }: { isDark: boolean; border: string; subtle: string }) {
+function PowerSection({
+  isDark,
+  border,
+  subtle,
+  refreshKey,
+  onLoadDelta,
+}: {
+  isDark: boolean
+  border: string
+  subtle: string
+  refreshKey: number
+  onLoadDelta?: LoadDeltaFn
+}) {
   const [power, setPower] = useState<PowerPayload | null>(null)
   const [hw, setHw] = useState<HardwarePayload | null>(null)
   const [loading, setLoading] = useState(true)
@@ -1282,6 +1386,7 @@ function PowerSection({ isDark, border, subtle }: { isDark: boolean; border: str
   const [savingRate, setSavingRate] = useState(false)
 
   const load = useCallback(() => {
+    onLoadDelta?.(1)
     setLoading(true)
     setErr(null)
     Promise.all([apiJson<PowerPayload>('/v1/costs/power'), apiJson<HardwarePayload>('/v1/costs/hardware')])
@@ -1296,12 +1401,15 @@ function PowerSection({ isDark, border, subtle }: { isDark: boolean; border: str
         setHw(null)
         setErr('Could not load power or hardware.')
       })
-      .finally(() => setLoading(false))
-  }, [])
+      .finally(() => {
+        setLoading(false)
+        onLoadDelta?.(-1)
+      })
+  }, [onLoadDelta])
 
   useEffect(() => {
     load()
-  }, [load])
+  }, [refreshKey, load])
 
   const saveRate = async () => {
     if (!power) return
@@ -1321,58 +1429,27 @@ function PowerSection({ isDark, border, subtle }: { isDark: boolean; border: str
   }
 
   const order = ['Brain', 'Gateway', 'Endpoint', 'Sandbox']
-  const card = `rounded-3xl border overflow-hidden ${border} ${subtle} ${isDark ? 'bg-white/[0.03]' : 'bg-white/60'}`
+  const card = `rounded-3xl border overflow-hidden h-full flex flex-col ${border} ${subtle} ${
+    isDark ? 'bg-white/[0.03]' : 'bg-white/60'
+  }`
+
+  const chartH = 180
+  const chartW = 400
+  const padL = 44
+  const padB = 28
+  const padT = 16
+  const barAreaW = chartW - padL - 16
+  const barAreaH = chartH - padB - padT
+  const wattsList = power
+    ? order.map((name) => power.nodes.find((n) => n.name === name)?.watts ?? 0)
+    : [0, 0, 0, 0]
+  const maxW = Math.max(1, ...wattsList) * 1.1
+  const barGap = 12
+  const barW = (barAreaW - barGap * 3) / 4
 
   return (
     <section>
-      <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-40">Power + hardware (true TCO)</p>
-        {!loading && power && (
-          <div className="flex items-center gap-2">
-            {!editingRate ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingRate(true)
-                  setRateInput(String(power.rate_per_kwh))
-                }}
-                className={`inline-flex items-center gap-2 text-xs font-mono px-4 py-2 rounded-full border ${border}`}
-              >
-                <Pencil className="w-3.5 h-3.5" />
-                {power.rate_per_kwh.toFixed(4)} $/kWh
-              </button>
-            ) : (
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  step="0.0001"
-                  value={rateInput}
-                  onChange={(e) => setRateInput(e.target.value)}
-                  className={`w-28 px-3 py-2 rounded-xl border text-xs font-mono bg-transparent ${border}`}
-                />
-                <button
-                  type="button"
-                  disabled={savingRate}
-                  onClick={saveRate}
-                  className="p-2 rounded-xl bg-emerald-500 text-[#0a0a0a]"
-                >
-                  <Check className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingRate(false)
-                    setRateInput(String(power.rate_per_kwh))
-                  }}
-                  className="p-2 rounded-xl border border-white/10"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-40 mb-4">Power + hardware (true TCO)</p>
       {loading && <SectionSkeleton isDark={isDark} border={border} />}
       {!loading && err && (!power || !hw) && (
         <div className={`p-8 ${card}`}>
@@ -1380,65 +1457,176 @@ function PowerSection({ isDark, border, subtle }: { isDark: boolean; border: str
         </div>
       )}
       {!loading && power && hw && (
-        <div className={card}>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[640px]">
-              <thead>
-                <tr className={`text-[10px] font-semibold uppercase opacity-40 border-b ${border}`}>
-                  <th className="text-left p-4">Node</th>
-                  <th className="text-right p-4">Live watts</th>
-                  <th className="text-right p-4">Power $/mo</th>
-                  <th className="text-right p-4">Hardware $/mo</th>
-                  <th className="text-right p-4">True $/mo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {order.map((name) => {
-                  const pn = power.nodes.find((n) => n.name === name)
-                  const hn = hw.nodes.find((n) => n.node_name === name)
-                  const pCost = pn?.cost_monthly ?? 0
-                  const hCost = hn?.monthly_usd ?? 0
-                  const live = name === 'Brain'
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 items-stretch">
+          <div className={card}>
+            <div className="flex flex-wrap items-center justify-end gap-2 p-4 border-b border-white/5">
+              {!editingRate ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingRate(true)
+                    setRateInput(String(power.rate_per_kwh))
+                  }}
+                  className={`inline-flex items-center gap-2 text-xs font-mono px-3 py-1.5 rounded-full border ${border}`}
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  {power.rate_per_kwh.toFixed(4)} $/kWh
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    step="0.0001"
+                    value={rateInput}
+                    onChange={(e) => setRateInput(e.target.value)}
+                    className={`w-28 px-3 py-1.5 rounded-xl border text-xs font-mono bg-transparent ${border}`}
+                  />
+                  <button
+                    type="button"
+                    disabled={savingRate}
+                    onClick={saveRate}
+                    className="p-1.5 rounded-xl bg-emerald-500 text-[#0a0a0a]"
+                  >
+                    <Check className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingRate(false)
+                      setRateInput(String(power.rate_per_kwh))
+                    }}
+                    className="p-1.5 rounded-xl border border-white/10"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="overflow-x-auto flex-1">
+              <table className="w-full text-xs min-w-[280px]">
+                <thead>
+                  <tr className={`text-[9px] font-semibold uppercase opacity-40 border-b ${border}`}>
+                    <th className="text-left p-3">Node</th>
+                    <th className="text-right p-3">Watts</th>
+                    <th className="text-right p-3">Power $/mo</th>
+                    <th className="text-right p-3">Hardware $/mo</th>
+                    <th className="text-right p-3">True $/mo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {order.map((name) => {
+                    const pn = power.nodes.find((n) => n.name === name)
+                    const hn = hw.nodes.find((n) => n.node_name === name)
+                    const pCost = pn?.cost_monthly ?? 0
+                    const hCost = hn?.monthly_usd ?? 0
+                    const live = name === 'Brain'
+                    return (
+                      <tr key={name} className={`border-b border-white/5 ${border}`}>
+                        <td className="p-3 font-medium">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {name}
+                            {live && (
+                              <span className="flex items-center gap-1 text-[9px] font-semibold uppercase text-emerald-500">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                live
+                              </span>
+                            )}
+                            {!live && <span className="text-[9px] opacity-40 font-normal">est.</span>}
+                          </div>
+                        </td>
+                        <td className="p-3 text-right font-mono tabular-nums">{pn ? `${pn.watts.toFixed(1)}` : '—'}</td>
+                        <td className="p-3 text-right font-mono tabular-nums">{fmtMoney(pCost)}</td>
+                        <td className="p-3 text-right font-mono tabular-nums">{fmtMoney(hCost)}</td>
+                        <td className="p-3 text-right font-mono font-semibold tabular-nums">
+                          {fmtMoney(pCost + hCost)}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className={`font-semibold ${isDark ? 'bg-white/[0.04]' : 'bg-[#141414]/5'}`}>
+                    <td className="p-3">Total</td>
+                    <td className="p-3 text-right font-mono tabular-nums">{power.total_watts.toFixed(1)}</td>
+                    <td className="p-3 text-right font-mono tabular-nums">{fmtMoney(power.total_cost_monthly)}</td>
+                    <td className="p-3 text-right font-mono tabular-nums">{fmtMoney(hw.total_monthly_usd)}</td>
+                    <td className="p-3 text-right font-mono tabular-nums">
+                      {fmtMoney(power.total_cost_monthly + hw.total_monthly_usd)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            {err && <p className="text-xs text-rose-500 p-3 border-t border-white/5">{err}</p>}
+          </div>
+
+          <div className={card}>
+            <div className="p-4 border-b border-white/5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-50">LIVE POWER DRAW</p>
+            </div>
+            <div className="p-4 flex-1 flex items-center justify-center">
+              <svg width="100%" viewBox={`0 0 ${chartW} ${chartH}`} className="max-w-full" style={{ maxHeight: chartH }}>
+                <line
+                  x1={padL}
+                  y1={chartH - padB}
+                  x2={chartW - 8}
+                  y2={chartH - padB}
+                  stroke={isDark ? 'rgba(255,255,255,0.12)' : 'rgba(20,20,20,0.15)'}
+                  strokeWidth={1}
+                />
+                <line
+                  x1={padL}
+                  y1={padT}
+                  x2={padL}
+                  y2={chartH - padB}
+                  stroke={isDark ? 'rgba(255,255,255,0.12)' : 'rgba(20,20,20,0.15)'}
+                  strokeWidth={1}
+                />
+                <text
+                  x={8}
+                  y={padT + 4}
+                  className={`text-[9px] font-mono ${isDark ? 'fill-white/35' : 'fill-[#141414]/45'}`}
+                >
+                  {maxW.toFixed(0)}W
+                </text>
+                <text
+                  x={8}
+                  y={chartH - padB}
+                  className={`text-[9px] font-mono ${isDark ? 'fill-white/35' : 'fill-[#141414]/45'}`}
+                >
+                  0
+                </text>
+                {order.map((name, i) => {
+                  const w = wattsList[i] ?? 0
+                  const h = (w / maxW) * barAreaH
+                  const x = padL + i * (barW + barGap)
+                  const y = chartH - padB - h
+                  const fill = name === 'Brain' ? '#22c55e' : '#f59e0b'
                   return (
-                    <tr key={name} className={`border-b border-white/5 ${border}`}>
-                      <td className="p-4 font-medium">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {name}
-                          {live && (
-                            <span className="flex items-center gap-1 text-[10px] font-semibold uppercase text-emerald-500">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                              live
-                            </span>
-                          )}
-                          {!live && <span className="text-[10px] opacity-40 font-normal">est.</span>}
-                        </div>
-                      </td>
-                      <td className="p-4 text-right font-mono tabular-nums">
-                        {pn ? `${pn.watts.toFixed(1)}` : '—'}
-                      </td>
-                      <td className="p-4 text-right font-mono tabular-nums">{fmtMoney(pCost)}</td>
-                      <td className="p-4 text-right font-mono tabular-nums">{fmtMoney(hCost)}</td>
-                      <td className="p-4 text-right font-mono font-semibold tabular-nums">
-                        {fmtMoney(pCost + hCost)}
-                      </td>
-                    </tr>
+                    <g key={name}>
+                      <rect x={x} y={y} width={barW} height={Math.max(h, 0)} rx={4} fill={fill} opacity={0.9} />
+                      <text
+                        x={x + barW / 2}
+                        y={y - 6}
+                        textAnchor="middle"
+                        className={`text-[10px] font-mono font-semibold ${isDark ? 'fill-white/80' : 'fill-[#141414]'}`}
+                      >
+                        {w.toFixed(1)}
+                      </text>
+                      <text
+                        x={x + barW / 2}
+                        y={chartH - padB + 14}
+                        textAnchor="middle"
+                        className={`text-[9px] font-medium ${isDark ? 'fill-white/40' : 'fill-[#141414]/50'}`}
+                      >
+                        {name}
+                      </text>
+                    </g>
                   )
                 })}
-              </tbody>
-              <tfoot>
-                <tr className={`font-semibold ${isDark ? 'bg-white/[0.04]' : 'bg-[#141414]/5'}`}>
-                  <td className="p-4">Total</td>
-                  <td className="p-4 text-right font-mono tabular-nums">{power.total_watts.toFixed(1)}</td>
-                  <td className="p-4 text-right font-mono tabular-nums">{fmtMoney(power.total_cost_monthly)}</td>
-                  <td className="p-4 text-right font-mono tabular-nums">{fmtMoney(hw.total_monthly_usd)}</td>
-                  <td className="p-4 text-right font-mono tabular-nums">
-                    {fmtMoney(power.total_cost_monthly + hw.total_monthly_usd)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+              </svg>
+            </div>
           </div>
-          {err && <p className="text-xs text-rose-500 p-4 border-t border-white/5">{err}</p>}
         </div>
       )}
     </section>
@@ -1447,13 +1635,26 @@ function PowerSection({ isDark, border, subtle }: { isDark: boolean; border: str
 
 /* —— 7. Forge —— */
 
-function ForgeSection({ isDark, border, subtle }: { isDark: boolean; border: string; subtle: string }) {
+function ForgeSection({
+  isDark,
+  border,
+  subtle,
+  refreshKey,
+  onLoadDelta,
+}: {
+  isDark: boolean
+  border: string
+  subtle: string
+  refreshKey: number
+  onLoadDelta?: LoadDeltaFn
+}) {
   const [summary, setSummary] = useState<CostsSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(false)
 
   useEffect(() => {
     let a = true
+    onLoadDelta?.(1)
     setLoading(true)
     setErr(false)
     apiJson<CostsSummary>('/v1/costs/summary')
@@ -1471,11 +1672,12 @@ function ForgeSection({ isDark, border, subtle }: { isDark: boolean; border: str
       })
       .finally(() => {
         if (a) setLoading(false)
+        onLoadDelta?.(-1)
       })
     return () => {
       a = false
     }
-  }, [])
+  }, [refreshKey, onLoadDelta])
 
   const card = `rounded-3xl border p-8 ${border} ${subtle} ${isDark ? 'bg-white/[0.03]' : 'bg-white/60'}`
 
@@ -1500,7 +1702,7 @@ function ForgeSection({ isDark, border, subtle }: { isDark: boolean; border: str
               </p>
             </div>
             <a
-              href="http://100.124.172.14:5001"
+              href="https://jarvis-forge.tail40ed36.ts.net:5001"
               target="_blank"
               rel="noopener noreferrer"
               className={`inline-flex items-center gap-2 text-sm font-medium px-5 py-2.5 rounded-full border ${border} hover:opacity-90`}
@@ -1517,12 +1719,23 @@ function ForgeSection({ isDark, border, subtle }: { isDark: boolean; border: str
 
 /* —— Savings card —— */
 
-function SavingsCard({ isDark, border }: { isDark: boolean; border: string }) {
+function SavingsCard({
+  isDark,
+  border,
+  refreshKey,
+  onLoadDelta,
+}: {
+  isDark: boolean
+  border: string
+  refreshKey: number
+  onLoadDelta?: LoadDeltaFn
+}) {
   const [data, setData] = useState<CostsSummary | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let a = true
+    onLoadDelta?.(1)
     apiJson<CostsSummary>('/v1/costs/summary')
       .then((d) => {
         if (a) setData(d)
@@ -1532,11 +1745,12 @@ function SavingsCard({ isDark, border }: { isDark: boolean; border: string }) {
       })
       .finally(() => {
         if (a) setLoading(false)
+        onLoadDelta?.(-1)
       })
     return () => {
       a = false
     }
-  }, [])
+  }, [refreshKey, onLoadDelta])
 
   const savings = data?.savings_vs_cloud_usd ?? 0
   const pct = data?.local_routing_pct
@@ -1568,24 +1782,90 @@ export default function CostCenter() {
   const border = isDark ? 'border-white/[0.08]' : 'border-[#141414]/10'
   const subtle = isDark ? 'bg-white/[0.02]' : 'bg-white/40'
 
+  const [refreshKey, setRefreshKey] = useState(0)
+  const loadCountRef = useRef(0)
+  const [, bump] = useState(0)
+  const onLoadDelta = useCallback((d: number) => {
+    loadCountRef.current = Math.max(0, loadCountRef.current + d)
+    bump((x) => x + 1)
+  }, [])
+  const spinning = loadCountRef.current > 0
+
+  const doRefresh = useCallback(() => {
+    setRefreshKey((k) => k + 1)
+  }, [])
+
+  useEffect(() => {
+    const id = window.setInterval(doRefresh, 3600000)
+    return () => window.clearInterval(id)
+  }, [doRefresh])
+
   return (
     <div className="space-y-16 max-w-6xl pb-24">
-      <header className="space-y-2">
+      <header className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-4xl sm:text-5xl font-semibold tracking-tight">Cost Center</h1>
-        <p className="text-sm opacity-50 flex items-center gap-2">
-          {isDark ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
-          Spend, routing, and infrastructure — Apple-inspired clarity.
-        </p>
+        <button
+          type="button"
+          onClick={doRefresh}
+          className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-mono uppercase tracking-wide ${border} ${
+            isDark ? 'hover:bg-white/5' : 'hover:bg-[#141414]/5'
+          }`}
+        >
+          <RefreshCw className={`w-4 h-4 ${spinning ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
       </header>
 
-      <SavingsCard isDark={isDark} border={border} />
-      <HeroSection isDark={isDark} border={border} subtle={subtle} />
-      <PieSection isDark={isDark} border={border} subtle={subtle} />
-      <ApiSpendSection isDark={isDark} border={border} subtle={subtle} />
-      <OutcomeSection isDark={isDark} border={border} subtle={subtle} />
-      <SubscriptionSection isDark={isDark} border={border} subtle={subtle} />
-      <PowerSection isDark={isDark} border={border} subtle={subtle} />
-      <ForgeSection isDark={isDark} border={border} subtle={subtle} />
+      <SavingsCard isDark={isDark} border={border} refreshKey={refreshKey} onLoadDelta={onLoadDelta} />
+      <HeroSection
+        isDark={isDark}
+        border={border}
+        subtle={subtle}
+        refreshKey={refreshKey}
+        onLoadDelta={onLoadDelta}
+      />
+      <PieSection
+        isDark={isDark}
+        border={border}
+        subtle={subtle}
+        refreshKey={refreshKey}
+        onLoadDelta={onLoadDelta}
+      />
+      <ApiSpendSection
+        isDark={isDark}
+        border={border}
+        subtle={subtle}
+        refreshKey={refreshKey}
+        onLoadDelta={onLoadDelta}
+      />
+      <OutcomeSection
+        isDark={isDark}
+        border={border}
+        subtle={subtle}
+        refreshKey={refreshKey}
+        onLoadDelta={onLoadDelta}
+      />
+      <SubscriptionSection
+        isDark={isDark}
+        border={border}
+        subtle={subtle}
+        refreshKey={refreshKey}
+        onLoadDelta={onLoadDelta}
+      />
+      <PowerSection
+        isDark={isDark}
+        border={border}
+        subtle={subtle}
+        refreshKey={refreshKey}
+        onLoadDelta={onLoadDelta}
+      />
+      <ForgeSection
+        isDark={isDark}
+        border={border}
+        subtle={subtle}
+        refreshKey={refreshKey}
+        onLoadDelta={onLoadDelta}
+      />
     </div>
   )
 }
