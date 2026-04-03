@@ -1,0 +1,5 @@
+repo:
+  slug: kphaas/jarvis-alpha
+  name: jarvis-alpha
+  local_path: ~/jarvis-alpha
+  description: JARVIS Alpha — clean-break rebuild, Brain middleware, UI shell
