@@ -19,6 +19,7 @@ from brain.routes.unifi import router as unifi_router
 from brain.routes.pin_auth import router as pin_auth_router
 from brain.routes.health import router as health_router
 from brain.routes.tasks import tasks_router
+from brain.routes.costs import router as costs_router
 from brain.middleware.jwt_auth import JWTAuthMiddleware
 
 
@@ -57,3 +58,4 @@ app.include_router(buddy_router)
 app.include_router(home_router)
 app.include_router(mesh_router)
 app.include_router(unifi_router)
+app.include_router(costs_router)

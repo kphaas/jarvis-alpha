@@ -1,6 +1,6 @@
 import os
 import logging
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 import jwt
@@ -8,6 +8,13 @@ import jwt
 logger = logging.getLogger(__name__)
 
 SKIP_PATHS = {"/health", "/docs", "/openapi.json", "/redoc", "/v1/auth/pin"}
+
+
+def require_auth(request: Request) -> str:
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id or user_id == "unknown":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return user_id
 
 
 def _load_public_key() -> bytes:

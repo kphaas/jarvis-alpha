@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Layout } from './components/Layout'
 import { PinGate } from './components/PinGate'
@@ -8,6 +8,7 @@ import Ask from './pages/Ask'
 import Vault from './pages/Vault'
 import Space from './pages/Space'
 import Placeholder from './pages/Placeholder'
+import CostCenter from './pages/CostCenter'
 import Health from './pages/Health'
 import Mesh from './pages/Mesh'
 
@@ -37,7 +38,8 @@ export default function App() {
               <Route path="/ops"        element={<Placeholder label="Ops"         phase="Next session" />} />
               <Route path="/security"   element={<Placeholder label="Security"    phase="Next session" />} />
               <Route path="/governance" element={<Placeholder label="Governance"  phase="Next session" />} />
-              <Route path="/cost"       element={<Placeholder label="Cost Center" phase="Next session" />} />
+              <Route path="/cost"       element={<Navigate to="/costs" replace />} />
+              <Route path="/costs"      element={<CostCenter />} />
               <Route path="/documents"  element={<Placeholder label="Documents"   phase="Next session" />} />
               <Route path="/settings"   element={<Placeholder label="Settings"    phase="Next session" />} />
             </Routes>
