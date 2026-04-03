@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
+  Bot,
   Check,
-  Cpu,
-  DollarSign,
+  Cloud,
   ExternalLink,
-  Factory,
-  Loader2,
+  Moon,
   Pencil,
   Plus,
+  Sparkles,
+  Sun,
   Trash2,
   X,
-  Zap,
 } from 'lucide-react'
 import { apiJson } from '../lib/apiFetch'
 import { useAppStore } from '../store'
@@ -19,20 +19,38 @@ import { useAppStore } from '../store'
 /* —— Types —— */
 
 interface CostsSummary {
-  subscriptions_monthly_usd: number
+  subscriptions_monthly_usd?: number
   credit: { balance_usd: number; spent_usd: number; pending_usd: number }
+  perplexity?: { balance_usd: number; spent_usd: number }
   power_monthly_usd: number
+  hardware_monthly_usd?: number
+  true_monthly_tco: number
   forge_monthly_usd: number
-  api_mtd_usd: number
-  total_estimated_monthly_usd: number
+  api: {
+    anthropic: { total_usd: number; jarvis_core_usd?: number; jarvis_forge_usd?: number }
+    gemini: { total_usd: number; source?: string }
+    perplexity_mtd_usd?: number
+  }
+  budget?: Array<{ provider: string; monthly_limit_usd: number; mtd_usd: number; pct_used: number }>
+  outcomes?: Array<{ session_type: string | null; run_count: number; avg_usd: number }>
+  savings_vs_cloud_usd?: number
+  local_routing_pct?: number
   generated_at: string
 }
 
-interface CreditPayload {
-  balance_usd: number
-  spent_usd: number
-  pending_usd: number
-  updated_at: string | null
+interface BudgetRow {
+  provider: string
+  monthly_limit_usd: number
+  mtd_usd: number
+  remaining_usd: number
+  pct_used: number
+}
+
+interface OutcomeRow {
+  session_type: string | null
+  run_count: number
+  total_usd: number
+  avg_usd: number
 }
 
 interface SubscriptionRow {
@@ -59,156 +77,445 @@ interface PowerPayload {
   total_cost_monthly: number
 }
 
-/* —— Shared UI —— */
+interface HardwareNode {
+  node_name: string
+  cost_usd: number
+  years: number
+  monthly_usd: number
+}
+
+interface HardwarePayload {
+  nodes: HardwareNode[]
+  total_monthly_usd: number
+}
+
+interface PerplexityPayload {
+  balance_usd: number
+  spent_usd: number
+  updated_at: string | null
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/* —— Shared —— */
 
 function SectionSkeleton({ isDark, border }: { isDark: boolean; border: string }) {
   return (
-    <div className={`animate-pulse rounded-2xl border p-6 ${border} ${isDark ? 'bg-white/[0.03]' : 'bg-[#141414]/5'}`}>
-      <div className={`h-3 w-32 rounded ${isDark ? 'bg-white/10' : 'bg-[#141414]/15'}`} />
-      <div className={`mt-4 h-24 rounded-xl ${isDark ? 'bg-white/5' : 'bg-[#141414]/8'}`} />
+    <div className={`animate-pulse rounded-3xl border p-8 ${border} ${isDark ? 'bg-white/[0.03]' : 'bg-white/60'}`}>
+      <div className={`h-3 w-40 rounded-full ${isDark ? 'bg-white/10' : 'bg-[#141414]/10'}`} />
+      <div className={`mt-6 h-32 rounded-2xl ${isDark ? 'bg-white/[0.04]' : 'bg-[#141414]/5'}`} />
     </div>
   )
 }
 
 function SectionError({ message, isDark }: { message: string; isDark: boolean }) {
   return (
-    <p className={`text-xs font-mono ${isDark ? 'text-amber-400/90' : 'text-amber-700'}`}>
-      {message}
-    </p>
+    <p className={`text-xs font-medium ${isDark ? 'text-amber-400/90' : 'text-amber-700'}`}>{message}</p>
   )
 }
 
-/* —— 1. Monthly overview —— */
+function fmtMoney(n: number) {
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
 
-function MonthlyOverviewSection({
+/* —— SVG Donut —— */
+
+function donutSlicePath(
+  cx: number,
+  cy: number,
+  rOut: number,
+  rIn: number,
+  a0: number,
+  a1: number
+): string {
+  const x0o = cx + rOut * Math.cos(a0)
+  const y0o = cy + rOut * Math.sin(a0)
+  const x1o = cx + rOut * Math.cos(a1)
+  const y1o = cy + rOut * Math.sin(a1)
+  const x0i = cx + rIn * Math.cos(a1)
+  const y0i = cy + rIn * Math.sin(a1)
+  const x1i = cx + rIn * Math.cos(a0)
+  const y1i = cy + rIn * Math.sin(a0)
+  const large = a1 - a0 > Math.PI ? 1 : 0
+  return [
+    `M ${x0o} ${y0o}`,
+    `A ${rOut} ${rOut} 0 ${large} 1 ${x1o} ${y1o}`,
+    `L ${x0i} ${y0i}`,
+    `A ${rIn} ${rIn} 0 ${large} 0 ${x1i} ${y1i}`,
+    'Z',
+  ].join(' ')
+}
+
+function DonutChart({
+  slices,
+  centerLabel,
+  centerValue,
   isDark,
-  border,
-  subtle,
+  size = 200,
 }: {
+  slices: { key: string; label: string; value: number; color: string }[]
+  centerLabel: string
+  centerValue: string
   isDark: boolean
-  border: string
-  subtle: string
+  size?: number
 }) {
+  const total = slices.reduce((s, x) => s + Math.max(0, x.value), 0)
+  const cx = size / 2
+  const cy = size / 2
+  const rOut = size * 0.38
+  const rIn = size * 0.22
+  let angle = -Math.PI / 2
+  const paths: { d: string; color: string; key: string }[] = []
+  if (total > 0) {
+    for (const sl of slices) {
+      const v = Math.max(0, sl.value)
+      if (v <= 0) continue
+      const span = (v / total) * Math.PI * 2
+      const a0 = angle
+      const a1 = angle + span
+      paths.push({ d: donutSlicePath(cx, cy, rOut, rIn, a0, a1), color: sl.color, key: sl.key })
+      angle = a1
+    }
+  }
+  return (
+    <div className="flex flex-col items-center">
+      <svg width={size} height={size} className="overflow-visible">
+        {total <= 0 ? (
+          <circle
+            cx={cx}
+            cy={cy}
+            r={(rOut + rIn) / 2}
+            fill="none"
+            stroke={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(20,20,20,0.08)'}
+            strokeWidth={rOut - rIn}
+          />
+        ) : (
+          paths.map((p) => <path key={p.key} d={p.d} fill={p.color} className="transition-opacity hover:opacity-90" />)
+        )}
+        <text
+          x={cx}
+          y={cy - 6}
+          textAnchor="middle"
+          className={`text-[10px] font-medium uppercase tracking-wider ${isDark ? 'fill-white/40' : 'fill-[#141414]/40'}`}
+        >
+          {centerLabel}
+        </text>
+        <text
+          x={cx}
+          y={cy + 14}
+          textAnchor="middle"
+          className={`text-sm font-semibold tabular-nums ${isDark ? 'fill-white' : 'fill-[#141414]'}`}
+        >
+          {centerValue}
+        </text>
+      </svg>
+    </div>
+  )
+}
+
+/* —— 1. Hero —— */
+
+function HeroSection({ isDark, border, subtle }: { isDark: boolean; border: string; subtle: string }) {
   const [data, setData] = useState<CostsSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
-    let alive = true
+    let a = true
     setLoading(true)
     setErr(null)
     apiJson<CostsSummary>('/v1/costs/summary')
       .then((d) => {
-        if (alive) {
+        if (a) {
           setData(d)
           setErr(null)
         }
       })
       .catch(() => {
-        if (alive) {
+        if (a) {
           setData(null)
-          setErr('Could not load monthly overview.')
+          setErr('Could not load summary.')
         }
       })
       .finally(() => {
-        if (alive) setLoading(false)
+        if (a) setLoading(false)
       })
     return () => {
-      alive = false
+      a = false
     }
   }, [])
 
-  const bars = useMemo(() => {
-    if (!data) return []
-    return [
-      { key: 'sub', label: 'Subscriptions', value: data.subscriptions_monthly_usd, color: 'bg-blue-500' },
-      { key: 'api', label: 'API', value: data.api_mtd_usd, color: 'bg-teal-500', suffix: ' MTD' },
-      { key: 'pwr', label: 'Power', value: data.power_monthly_usd, color: 'bg-amber-500' },
-      { key: 'frg', label: 'Forge', value: data.forge_monthly_usd, color: 'bg-purple-500' },
-    ]
-  }, [data])
+  const monthMeta = useMemo(() => {
+    const now = new Date()
+    const y = now.getFullYear()
+    const m = now.getMonth()
+    const dim = new Date(y, m + 1, 0).getDate()
+    const day = now.getDate()
+    return { dim, day, pct: dim > 0 ? (day / dim) * 100 : 0 }
+  }, [])
 
-  const maxVal = useMemo(() => Math.max(1, ...bars.map((b) => b.value)), [bars])
+  const daysRemainingCredit = useMemo(() => {
+    if (!data?.credit) return null
+    const bal = data.credit.balance_usd
+    const mtd = data.api?.anthropic?.total_usd ?? 0
+    if (bal <= 0 || mtd <= 0 || monthMeta.day < 1) return null
+    const pace = mtd / monthMeta.day
+    if (pace <= 0) return null
+    return Math.floor(bal / pace)
+  }, [data, monthMeta.day])
+
+  const cardBase = `rounded-3xl border p-8 backdrop-blur-xl ${border} ${
+    isDark ? 'bg-white/[0.04] shadow-[0_1px_0_rgba(255,255,255,0.06)_inset]' : 'bg-white/70 shadow-sm'
+  }`
 
   return (
-    <section>
-      <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest mb-3 flex items-center gap-2">
-        <DollarSign className="w-3.5 h-3.5" />
-        Monthly overview
-      </p>
+    <section className="space-y-6">
       {loading && <SectionSkeleton isDark={isDark} border={border} />}
       {!loading && err && (
-        <div className={`rounded-2xl border p-6 ${border} ${subtle}`}>
+        <div className={`${cardBase} ${subtle}`}>
           <SectionError message={err} isDark={isDark} />
         </div>
       )}
       {!loading && !err && data && (
-        <div className={`rounded-2xl border p-6 space-y-5 ${border} ${subtle}`}>
-          <div className="space-y-4">
-            {bars.map((b) => {
-              const pct = Math.min(100, (b.value / maxVal) * 100)
-              return (
-                <div key={b.key} className="grid grid-cols-[8rem_1fr_auto] gap-3 items-center text-sm">
-                  <span className="text-[11px] font-mono uppercase opacity-70 truncate">{b.label}</span>
-                  <div className={`h-2.5 rounded-full overflow-hidden ${isDark ? 'bg-white/10' : 'bg-[#141414]/10'}`}>
-                    <div className={`h-full rounded-full transition-all ${b.color}`} style={{ width: `${pct}%` }} />
-                  </div>
-                  <span className="text-right font-mono text-xs tabular-nums whitespace-nowrap">
-                    ${b.value.toFixed(2)}
-                    {b.suffix ? <span className="opacity-50">{b.suffix}</span> : <span className="opacity-50">/mo</span>}
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
+            <div className={cardBase}>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-500/90 mb-4">
+                Estimated monthly
+              </p>
+              <p className="text-5xl sm:text-6xl font-semibold tracking-tight tabular-nums text-balance">
+                {fmtMoney(data.true_monthly_tco ?? 0)}
+              </p>
+              <p className="mt-4 text-sm opacity-50">
+                vs full cloud save{' '}
+                <span className="font-medium text-emerald-500/90 tabular-nums">
+                  {fmtMoney(data.savings_vs_cloud_usd ?? 0)}/mo
+                </span>
+              </p>
+            </div>
+            <div className={cardBase}>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-500/90 mb-4">
+                Anthropic credit
+              </p>
+              <p className="text-5xl sm:text-6xl font-semibold tracking-tight tabular-nums">
+                {fmtMoney(data.credit.balance_usd)}
+              </p>
+              <p className="mt-4 text-sm opacity-60">
+                {daysRemainingCredit != null
+                  ? `At current pace, ${daysRemainingCredit} days remaining`
+                  : 'Add usage data to estimate runway'}
+              </p>
+            </div>
+          </div>
+          <div className={`rounded-2xl border px-5 py-4 ${border} ${isDark ? 'bg-white/[0.02]' : 'bg-white/50'}`}>
+            <div className="flex justify-between text-[11px] font-medium uppercase tracking-wider opacity-40 mb-2">
+              <span>Month progress</span>
+              <span>
+                Day {monthMeta.day} of {monthMeta.dim}
+              </span>
+            </div>
+            <div className={`h-1 rounded-full overflow-hidden ${isDark ? 'bg-white/10' : 'bg-[#141414]/10'}`}>
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500"
+                style={{ width: `${Math.min(100, monthMeta.pct)}%` }}
+              />
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
+/* —— 2. Pies —— */
+
+function PieSection({ isDark, border, subtle }: { isDark: boolean; border: string; subtle: string }) {
+  const [data, setData] = useState<CostsSummary | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    let a = true
+    setLoading(true)
+    setErr(null)
+    apiJson<CostsSummary>('/v1/costs/summary')
+      .then((d) => {
+        if (a) {
+          setData(d)
+          setErr(null)
+        }
+      })
+      .catch(() => {
+        if (a) {
+          setData(null)
+          setErr('Could not load charts.')
+        }
+      })
+      .finally(() => {
+        if (a) setLoading(false)
+      })
+    return () => {
+      a = false
+    }
+  }, [])
+
+  const alphaSlices = useMemo(() => {
+    if (!data) return []
+    const ant = data.api?.anthropic?.total_usd ?? 0
+    const gem = data.api?.gemini?.total_usd ?? 0
+    const pwr = data.power_monthly_usd ?? 0
+    const hw = data.hardware_monthly_usd ?? 0
+    return [
+      { key: 'ant', label: 'Anthropic API', value: ant, color: '#d97757' },
+      { key: 'gem', label: 'Gemini API', value: gem, color: '#4285f4' },
+      { key: 'pwr', label: 'Power', value: pwr, color: '#f59e0b' },
+      { key: 'hw', label: 'Hardware', value: hw, color: '#8b5cf6' },
+    ]
+  }, [data])
+
+  const alphaTotal = alphaSlices.reduce((s, x) => s + x.value, 0)
+
+  const wrap = `rounded-3xl border p-8 ${border} ${subtle} ${
+    isDark ? 'bg-white/[0.03]' : 'bg-white/60'
+  }`
+
+  return (
+    <section>
+      {loading && <SectionSkeleton isDark={isDark} border={border} />}
+      {!loading && err && (
+        <div className={wrap}>
+          <SectionError message={err} isDark={isDark} />
+        </div>
+      )}
+      {!loading && !err && data && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className={wrap}>
+            <p className="text-center text-xs font-semibold uppercase tracking-[0.25em] opacity-40 mb-6">Alpha</p>
+            <DonutChart
+              slices={alphaSlices}
+              centerLabel="Total"
+              centerValue={fmtMoney(alphaTotal)}
+              isDark={isDark}
+            />
+            <ul className="mt-6 space-y-2 max-w-xs mx-auto">
+              {alphaSlices.map((s) => (
+                <li key={s.key} className="flex items-center justify-between text-sm gap-3">
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: s.color }} />
+                    <span className="truncate opacity-80">{s.label}</span>
                   </span>
-                </div>
-              )
-            })}
+                  <span className="font-mono text-xs tabular-nums shrink-0">{fmtMoney(s.value)}</span>
+                </li>
+              ))}
+            </ul>
           </div>
-          <div className={`pt-4 border-t flex items-center justify-between ${border}`}>
-            <span className="text-[10px] font-mono uppercase opacity-50 tracking-widest">
-              ESTIMATED MONTHLY TOTAL
-            </span>
-            <span className="text-lg font-bold font-mono tabular-nums">
-              ${data.total_estimated_monthly_usd.toFixed(2)}
-            </span>
-          </div>
+          <ForgePieHalf isDark={isDark} border={border} subtle={subtle} summary={data} />
         </div>
       )}
     </section>
   )
 }
 
-/* —— 2. Credit balance —— */
-
-function CreditBalanceSection({
+function ForgePieHalf({
   isDark,
   border,
   subtle,
+  summary,
 }: {
   isDark: boolean
   border: string
   subtle: string
+  summary: CostsSummary
 }) {
-  const [data, setData] = useState<CreditPayload | null>(null)
+  const [power, setPower] = useState<PowerPayload | null>(null)
+  const [hw, setHw] = useState<HardwarePayload | null>(null)
+
+  useEffect(() => {
+    let a = true
+    Promise.all([apiJson<PowerPayload>('/v1/costs/power'), apiJson<HardwarePayload>('/v1/costs/hardware')])
+      .then(([p, h]) => {
+        if (!a) return
+        setPower(p)
+        setHw(h)
+      })
+      .catch(() => {
+        if (a) {
+          setPower(null)
+          setHw(null)
+        }
+      })
+    return () => {
+      a = false
+    }
+  }, [])
+
+  const sbPower = power?.nodes.find((n) => n.name === 'Sandbox')?.cost_monthly ?? 0
+  const sbHw = hw?.nodes.find((n) => n.node_name === 'Sandbox')?.monthly_usd ?? 0
+
+  const slices = useMemo(() => {
+    const forgeApi = summary.forge_monthly_usd ?? 0
+    return [
+      { key: 'fa', label: 'Forge API', value: forgeApi, color: '#a855f7' },
+      { key: 'sp', label: 'Sandbox power', value: sbPower, color: '#fbbf24' },
+      { key: 'sh', label: 'Sandbox hardware', value: sbHw, color: '#64748b' },
+    ]
+  }, [summary.forge_monthly_usd, sbPower, sbHw])
+
+  const total = slices.reduce((s, x) => s + x.value, 0)
+  const wrap = `rounded-3xl border p-8 ${border} ${subtle} ${isDark ? 'bg-white/[0.03]' : 'bg-white/60'}`
+
+  return (
+    <div className={wrap}>
+      <p className="text-center text-xs font-semibold uppercase tracking-[0.25em] opacity-40 mb-6">Forge</p>
+      <DonutChart slices={slices} centerLabel="Total" centerValue={fmtMoney(total)} isDark={isDark} />
+      <ul className="mt-6 space-y-2 max-w-xs mx-auto">
+        {slices.map((s) => (
+          <li key={s.key} className="flex items-center justify-between text-sm gap-3">
+            <span className="flex items-center gap-2 min-w-0">
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: s.color }} />
+              <span className="truncate opacity-80">{s.label}</span>
+            </span>
+            <span className="font-mono text-xs tabular-nums shrink-0">{fmtMoney(s.value)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+/* —— 3. API spend —— */
+
+function ApiSpendSection({ isDark, border, subtle }: { isDark: boolean; border: string; subtle: string }) {
+  const [summary, setSummary] = useState<CostsSummary | null>(null)
+  const [budget, setBudget] = useState<BudgetRow[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
-  const [editing, setEditing] = useState(false)
+  const [editProv, setEditProv] = useState<string | null>(null)
+  const [limitInput, setLimitInput] = useState('')
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ balance_usd: '', spent_usd: '', pending_usd: '' })
+  const [pxEdit, setPxEdit] = useState(false)
+  const [pxForm, setPxForm] = useState({ balance_usd: '', spent_usd: '' })
+  const [pxSaving, setPxSaving] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
     setErr(null)
-    apiJson<CreditPayload>('/v1/costs/credit')
-      .then((d) => {
-        setData(d)
-        setForm({
-          balance_usd: String(d.balance_usd),
-          spent_usd: String(d.spent_usd),
-          pending_usd: String(d.pending_usd),
-        })
+    Promise.all([apiJson<CostsSummary>('/v1/costs/summary'), apiJson<BudgetRow[]>('/v1/costs/budget')])
+      .then(([s, b]) => {
+        setSummary(s)
+        setBudget(b)
+        if (s.perplexity) {
+          setPxForm({
+            balance_usd: String(s.perplexity.balance_usd),
+            spent_usd: String(s.perplexity.spent_usd),
+          })
+        }
         setErr(null)
       })
       .catch(() => {
-        setData(null)
-        setErr('Could not load credit balance.')
+        setSummary(null)
+        setBudget(null)
+        setErr('Could not load budget or summary.')
       })
       .finally(() => setLoading(false))
   }, [])
@@ -217,162 +524,434 @@ function CreditBalanceSection({
     load()
   }, [load])
 
-  const save = async () => {
+  const loadPx = useCallback(() => {
+    apiJson<PerplexityPayload>('/v1/costs/perplexity')
+      .then((p) => {
+        setPxForm({ balance_usd: String(p.balance_usd), spent_usd: String(p.spent_usd) })
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    loadPx()
+  }, [loadPx])
+
+  const saveLimit = async (provider: string) => {
     setSaving(true)
     try {
-      const body = {
-        balance_usd: parseFloat(form.balance_usd) || 0,
-        spent_usd: parseFloat(form.spent_usd) || 0,
-        pending_usd: parseFloat(form.pending_usd) || 0,
-      }
-      const out = await apiJson<CreditPayload>('/v1/costs/credit', {
+      const v = parseFloat(limitInput)
+      await apiJson(`/v1/costs/budget/${encodeURIComponent(provider)}`, {
         method: 'POST',
-        body: JSON.stringify(body),
+        body: JSON.stringify({ monthly_limit_usd: v }),
       })
-      setData(out)
-      setEditing(false)
-      setErr(null)
+      setEditProv(null)
+      load()
     } catch {
-      setErr('Save failed.')
+      setErr('Failed to update limit.')
     } finally {
       setSaving(false)
     }
   }
 
-  const lowBalance = data && data.balance_usd < 10
+  const savePx = async () => {
+    setPxSaving(true)
+    try {
+      await apiJson<PerplexityPayload>('/v1/costs/perplexity', {
+        method: 'POST',
+        body: JSON.stringify({
+          balance_usd: parseFloat(pxForm.balance_usd) || 0,
+          spent_usd: parseFloat(pxForm.spent_usd) || 0,
+        }),
+      })
+      setPxEdit(false)
+      loadPx()
+      load()
+    } catch {
+      setErr('Perplexity save failed.')
+    } finally {
+      setPxSaving(false)
+    }
+  }
+
+  const wrap = `rounded-3xl border overflow-hidden ${border} ${subtle} ${isDark ? 'bg-white/[0.03]' : 'bg-white/60'}`
 
   return (
     <section>
-      <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest mb-3 flex items-center gap-2">
-        <Zap className="w-3.5 h-3.5" />
-        Anthropic credit balance
-      </p>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-40 mb-4">Cloud API spend</p>
       {loading && <SectionSkeleton isDark={isDark} border={border} />}
-      {!loading && err && !data && (
-        <div className={`rounded-2xl border p-6 ${border} ${subtle}`}>
+      {!loading && err && !summary && (
+        <div className={`p-8 ${wrap}`}>
           <SectionError message={err} isDark={isDark} />
         </div>
       )}
-      {!loading && data && (
-        <div className={`rounded-2xl border p-6 ${border} ${subtle}`}>
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <p className="text-4xl font-bold font-mono tabular-nums tracking-tight">
-                  ${data.balance_usd.toFixed(2)}
-                </p>
-                {lowBalance && (
-                  <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full border border-amber-500/50 text-amber-500 bg-amber-500/10">
-                    Low balance
+      {!loading && summary && budget && (
+        <div className={wrap}>
+          <div className="divide-y divide-white/5">
+            {/* Anthropic */}
+            <div className="p-6 space-y-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <Sparkles className="w-5 h-5 text-orange-400 shrink-0" />
+                <span className="font-semibold">Anthropic</span>
+                <span className="font-mono text-sm tabular-nums ml-auto">
+                  MTD {fmtMoney(summary.api?.anthropic?.total_usd ?? 0)}
+                </span>
+              </div>
+              <div className="pl-8 text-xs opacity-60 space-y-1">
+                <p>
+                  jarvis_core ·{' '}
+                  <span className="font-mono tabular-nums">
+                    {fmtMoney(summary.api?.anthropic?.jarvis_core_usd ?? 0)}
                   </span>
+                </p>
+                <p>
+                  jarvis_forge ·{' '}
+                  <span className="font-mono tabular-nums">
+                    {fmtMoney(summary.api?.anthropic?.jarvis_forge_usd ?? 0)}
+                  </span>
+                </p>
+              </div>
+              {(() => {
+                const b = budget.find((x) => x.provider === 'anthropic')
+                if (!b) return null
+                const pct = Math.min(100, b.pct_used)
+                return (
+                  <div className="pl-8 pt-2 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="opacity-50">Limit</span>
+                      {editProv === 'anthropic' ? (
+                        <>
+                          <input
+                            type="number"
+                            value={limitInput}
+                            onChange={(e) => setLimitInput(e.target.value)}
+                            className={`w-24 px-2 py-1 rounded-lg border text-xs font-mono bg-transparent ${border}`}
+                          />
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => saveLimit('anthropic')}
+                            className="p-1 rounded-lg bg-emerald-500 text-[#0a0a0a]"
+                          >
+                            <Check className="w-4 h-4" />
+                          </button>
+                          <button type="button" onClick={() => setEditProv(null)} className="p-1 rounded-lg border border-white/10">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditProv('anthropic')
+                            setLimitInput(String(b.monthly_limit_usd))
+                          }}
+                          className="inline-flex items-center gap-1 font-mono tabular-nums"
+                        >
+                          {fmtMoney(b.monthly_limit_usd)}
+                          <Pencil className="w-3 h-3 opacity-40" />
+                        </button>
+                      )}
+                      <span className="opacity-50 ml-2">Remaining {fmtMoney(b.remaining_usd)}</span>
+                    </div>
+                    <div className={`h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-white/10' : 'bg-[#141414]/10'}`}>
+                      <div className="h-full rounded-full bg-orange-400/90" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+            {/* Gemini */}
+            <div className="p-6 space-y-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <Bot className="w-5 h-5 text-blue-500 shrink-0" />
+                <span className="font-semibold">Gemini</span>
+                <span
+                  className={`text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full border ${
+                    summary.api?.gemini?.source === 'gcp_api'
+                      ? 'border-blue-500/40 text-blue-400'
+                      : 'border-white/15 opacity-60'
+                  }`}
+                >
+                  {summary.api?.gemini?.source === 'gcp_api' ? 'GCP API' : 'internal'}
+                </span>
+                <span className="font-mono text-sm tabular-nums ml-auto">
+                  MTD {fmtMoney(summary.api?.gemini?.total_usd ?? 0)}
+                </span>
+              </div>
+              {(() => {
+                const b = budget.find((x) => x.provider === 'gemini')
+                if (!b) return null
+                const pct = Math.min(100, b.pct_used)
+                return (
+                  <div className="pl-8 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="opacity-50">Limit</span>
+                      {editProv === 'gemini' ? (
+                        <>
+                          <input
+                            type="number"
+                            value={limitInput}
+                            onChange={(e) => setLimitInput(e.target.value)}
+                            className={`w-24 px-2 py-1 rounded-lg border text-xs font-mono bg-transparent ${border}`}
+                          />
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => saveLimit('gemini')}
+                            className="p-1 rounded-lg bg-emerald-500 text-[#0a0a0a]"
+                          >
+                            <Check className="w-4 h-4" />
+                          </button>
+                          <button type="button" onClick={() => setEditProv(null)} className="p-1 rounded-lg border border-white/10">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditProv('gemini')
+                            setLimitInput(String(b.monthly_limit_usd))
+                          }}
+                          className="inline-flex items-center gap-1 font-mono tabular-nums"
+                        >
+                          {fmtMoney(b.monthly_limit_usd)}
+                          <Pencil className="w-3 h-3 opacity-40" />
+                        </button>
+                      )}
+                      <span className="opacity-50 ml-2">Remaining {fmtMoney(b.remaining_usd)}</span>
+                    </div>
+                    <div className={`h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-white/10' : 'bg-[#141414]/10'}`}>
+                      <div className="h-full rounded-full bg-blue-500/80" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+            {/* Perplexity */}
+            <div className="p-6 space-y-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <Cloud className="w-5 h-5 text-cyan-400 shrink-0" />
+                <span className="font-semibold">Perplexity</span>
+                <span className="font-mono text-sm tabular-nums ml-auto">
+                  MTD {fmtMoney(summary.api?.perplexity_mtd_usd ?? 0)}
+                </span>
+              </div>
+              <div className="pl-8 flex flex-wrap items-center gap-4 text-sm">
+                <span className="opacity-60">
+                  Credit {fmtMoney(parseFloat(pxForm.balance_usd) || 0)} · Spent {fmtMoney(parseFloat(pxForm.spent_usd) || 0)}
+                </span>
+                {!pxEdit ? (
+                  <button type="button" onClick={() => setPxEdit(true)} className="p-1.5 rounded-lg border border-white/10">
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="number"
+                      placeholder="balance"
+                      value={pxForm.balance_usd}
+                      onChange={(e) => setPxForm((f) => ({ ...f, balance_usd: e.target.value }))}
+                      className={`w-24 px-2 py-1 rounded-lg border text-xs font-mono bg-transparent ${border}`}
+                    />
+                    <input
+                      type="number"
+                      placeholder="spent"
+                      value={pxForm.spent_usd}
+                      onChange={(e) => setPxForm((f) => ({ ...f, spent_usd: e.target.value }))}
+                      className={`w-24 px-2 py-1 rounded-lg border text-xs font-mono bg-transparent ${border}`}
+                    />
+                    <button
+                      type="button"
+                      disabled={pxSaving}
+                      onClick={savePx}
+                      className="p-1.5 rounded-lg bg-emerald-500 text-[#0a0a0a]"
+                    >
+                      <Check className="w-4 h-4" />
+                    </button>
+                    <button type="button" onClick={() => setPxEdit(false)} className="p-1.5 rounded-lg border border-white/10">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 )}
               </div>
-              <div className="mt-3 flex gap-6 text-xs font-mono opacity-70">
-                <span>Spent: ${Number(data.spent_usd).toFixed(4)}</span>
-                <span>Pending: ${Number(data.pending_usd).toFixed(2)}</span>
-              </div>
-              {data.updated_at && (
-                <p className="text-[9px] font-mono opacity-30 mt-2">Updated {data.updated_at}</p>
-              )}
+              {(() => {
+                const b = budget.find((x) => x.provider === 'perplexity')
+                if (!b) return null
+                const pct = Math.min(100, b.pct_used)
+                return (
+                  <div className="pl-8 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="opacity-50">Limit</span>
+                      {editProv === 'perplexity' ? (
+                        <>
+                          <input
+                            type="number"
+                            value={limitInput}
+                            onChange={(e) => setLimitInput(e.target.value)}
+                            className={`w-24 px-2 py-1 rounded-lg border text-xs font-mono bg-transparent ${border}`}
+                          />
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => saveLimit('perplexity')}
+                            className="p-1 rounded-lg bg-emerald-500 text-[#0a0a0a]"
+                          >
+                            <Check className="w-4 h-4" />
+                          </button>
+                          <button type="button" onClick={() => setEditProv(null)} className="p-1 rounded-lg border border-white/10">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditProv('perplexity')
+                            setLimitInput(String(b.monthly_limit_usd))
+                          }}
+                          className="inline-flex items-center gap-1 font-mono tabular-nums"
+                        >
+                          {fmtMoney(b.monthly_limit_usd)}
+                          <Pencil className="w-3 h-3 opacity-40" />
+                        </button>
+                      )}
+                      <span className="opacity-50 ml-2">Remaining {fmtMoney(b.remaining_usd)}</span>
+                    </div>
+                    <div className={`h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-white/10' : 'bg-[#141414]/10'}`}>
+                      <div className="h-full rounded-full bg-cyan-500/80" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
-            {!editing && (
-              <button
-                type="button"
-                onClick={() => setEditing(true)}
-                className={`p-2 rounded-lg border ${border} ${isDark ? 'hover:bg-white/10' : 'hover:bg-[#141414]/10'}`}
-                aria-label="Edit credit"
-              >
-                <Pencil className="w-4 h-4" />
-              </button>
-            )}
           </div>
-          {editing && (
-            <div className="mt-6 space-y-3 pt-4 border-t border-dashed border-white/10">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <label className="text-[9px] font-mono uppercase opacity-50 block">
-                  Balance USD
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={form.balance_usd}
-                    onChange={(e) => setForm((f) => ({ ...f, balance_usd: e.target.value }))}
-                    className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm font-mono bg-transparent ${border}`}
-                  />
-                </label>
-                <label className="text-[9px] font-mono uppercase opacity-50 block">
-                  Spent USD
-                  <input
-                    type="number"
-                    step="0.000001"
-                    value={form.spent_usd}
-                    onChange={(e) => setForm((f) => ({ ...f, spent_usd: e.target.value }))}
-                    className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm font-mono bg-transparent ${border}`}
-                  />
-                </label>
-                <label className="text-[9px] font-mono uppercase opacity-50 block">
-                  Pending USD
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={form.pending_usd}
-                    onChange={(e) => setForm((f) => ({ ...f, pending_usd: e.target.value }))}
-                    className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm font-mono bg-transparent ${border}`}
-                  />
-                </label>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={save}
-                  className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold font-mono uppercase ${isDark ? 'bg-emerald-500 text-[#0A0A0A]' : 'bg-[#141414] text-[#E4E3E0]'} disabled:opacity-50`}
-                >
-                  {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                  Save
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditing(false)
-                    if (data) {
-                      setForm({
-                        balance_usd: String(data.balance_usd),
-                        spent_usd: String(data.spent_usd),
-                        pending_usd: String(data.pending_usd),
-                      })
-                    }
-                  }}
-                  className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-mono uppercase border ${border}`}
-                >
-                  <X className="w-3.5 h-3.5" />
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-          {err && data && <p className="text-xs text-rose-500 mt-3 font-mono">{err}</p>}
+          {err && summary && <p className="text-xs text-rose-500 p-4">{err}</p>}
         </div>
       )}
     </section>
   )
 }
 
-/* —— 3. Subscriptions —— */
+/* —— 4. Outcomes —— */
 
-function SubscriptionsSection({
-  isDark,
-  border,
-  subtle,
-}: {
-  isDark: boolean
-  border: string
-  subtle: string
-}) {
+function OutcomeSection({ isDark, border, subtle }: { isDark: boolean; border: string; subtle: string }) {
+  const [rows, setRows] = useState<OutcomeRow[] | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    let a = true
+    setLoading(true)
+    setErr(null)
+    apiJson<OutcomeRow[]>('/v1/costs/outcomes')
+      .then((d) => {
+        if (a) {
+          setRows(d)
+          setErr(null)
+        }
+      })
+      .catch(() => {
+        if (a) {
+          setRows(null)
+          setErr('Could not load outcomes.')
+        }
+      })
+      .finally(() => {
+        if (a) setLoading(false)
+      })
+    return () => {
+      a = false
+    }
+  }, [])
+
+  const map = useMemo(() => {
+    const m: Record<string, OutcomeRow> = {}
+    for (const r of rows ?? []) {
+      const k = (r.session_type || 'other').toLowerCase()
+      m[k] = r
+    }
+    return m
+  }, [rows])
+
+  const cards = [
+    { key: 'ask', title: 'Ask queries', row: map.ask },
+    { key: 'overnight', title: 'Overnight runs', row: map.overnight },
+    { key: 'forge', title: 'Forge features', row: map.forge },
+  ]
+
+  const cardCls = `rounded-3xl border p-6 ${border} ${subtle} ${isDark ? 'bg-white/[0.03]' : 'bg-white/60'}`
+
+  return (
+    <section>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-40 mb-4">Cost per outcome</p>
+      {loading && <SectionSkeleton isDark={isDark} border={border} />}
+      {!loading && err && !rows && (
+        <div className={`p-8 ${cardCls}`}>
+          <SectionError message={err} isDark={isDark} />
+        </div>
+      )}
+      {!loading && rows && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {cards.map((c) => (
+            <div key={c.key} className={cardCls}>
+              <p className="text-xs font-semibold uppercase tracking-wider opacity-50 mb-4">{c.title}</p>
+              {!c.row || c.row.run_count === 0 ? (
+                <p className="text-sm opacity-50 leading-relaxed">No data yet — costs logged as calls are made</p>
+              ) : (
+                <dl className="space-y-3">
+                  <div>
+                    <dt className="text-[10px] uppercase opacity-40">Runs</dt>
+                    <dd className="text-2xl font-semibold tabular-nums">{c.row.run_count}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] uppercase opacity-40">Avg $/run</dt>
+                    <dd className="text-lg font-mono tabular-nums">{fmtMoney(c.row.avg_usd)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] uppercase opacity-40">Total this month</dt>
+                    <dd className="text-lg font-mono tabular-nums">{fmtMoney(c.row.total_usd)}</dd>
+                  </div>
+                </dl>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+/* —— 5. Subscriptions + chart —— */
+
+function subscriptionMonthTotals(subs: SubscriptionRow[], year: number): { totals: number[]; tips: string[][] } {
+  const totals = Array(12).fill(0)
+  const tips: string[][] = Array.from({ length: 12 }, () => [])
+  for (const s of subs) {
+    if (s.billing === 'monthly') {
+      for (let m = 0; m < 12; m++) {
+        totals[m] += s.cost_usd
+        tips[m].push(`${s.name} (monthly) ${fmtMoney(s.cost_usd)}`)
+      }
+    } else {
+      const rd = new Date(s.next_renewal + 'T12:00:00')
+      if (rd.getFullYear() === year) {
+        const m = rd.getMonth()
+        totals[m] += s.cost_usd
+        tips[m].push(`${s.name} (annual) ${fmtMoney(s.cost_usd)}`)
+      }
+    }
+  }
+  return { totals, tips }
+}
+
+function SubscriptionSection({ isDark, border, subtle }: { isDark: boolean; border: string; subtle: string }) {
   const [rows, setRows] = useState<SubscriptionRow[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [hoverM, setHoverM] = useState<number | null>(null)
   const [form, setForm] = useState({
     name: '',
     url: '',
@@ -400,10 +979,17 @@ function SubscriptionsSection({
     load()
   }, [load])
 
+  const year = new Date().getFullYear()
+  const { totals, tips } = useMemo(
+    () => subscriptionMonthTotals(rows ?? [], year),
+    [rows, year]
+  )
+  const maxBar = Math.max(1, ...totals)
+
   const addSubscription = async () => {
     setSubmitting(true)
     try {
-      await apiJson<SubscriptionRow>('/v1/costs/subscriptions', {
+      await apiJson('/v1/costs/subscriptions', {
         method: 'POST',
         body: JSON.stringify({
           name: form.name.trim(),
@@ -433,17 +1019,15 @@ function SubscriptionsSection({
     }
   }
 
-  const monthlyDisplay = (r: SubscriptionRow) => {
-    if (r.billing === 'yearly') {
-      return (
-        <span>
-          ${(r.cost_usd / 12).toFixed(2)}
-          <span className="opacity-50 text-[10px] ml-1">(yearly)</span>
-        </span>
-      )
-    }
-    return <>${r.cost_usd.toFixed(2)}</>
-  }
+  const monthlyDisplay = (r: SubscriptionRow) =>
+    r.billing === 'yearly' ? (
+      <span>
+        {fmtMoney(r.cost_usd / 12)}
+        <span className="text-[10px] opacity-50 ml-1">(yearly)</span>
+      </span>
+    ) : (
+      fmtMoney(r.cost_usd)
+    )
 
   const daysClass = (d: number) => {
     if (d < 7) return isDark ? 'text-rose-400' : 'text-rose-600'
@@ -451,88 +1035,160 @@ function SubscriptionsSection({
     return ''
   }
 
+  const w = 480
+  const h = 200
+  const pad = 36
+  const bw = (w - pad * 2) / 12
+
+  const card = `rounded-3xl border overflow-hidden ${border} ${subtle} ${isDark ? 'bg-white/[0.03]' : 'bg-white/60'}`
+
   return (
     <section>
-      <div className="flex items-center justify-between mb-3">
-        <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest">Subscriptions</p>
-        <button
-          type="button"
-          onClick={() => setModalOpen(true)}
-          className={`inline-flex items-center gap-1.5 text-[10px] font-mono uppercase px-3 py-1.5 rounded-lg border ${border} ${isDark ? 'hover:bg-white/10' : 'hover:bg-[#141414]/10'}`}
-        >
-          <Plus className="w-3.5 h-3.5" />
-          Add
-        </button>
-      </div>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-40 mb-4">Subscriptions</p>
       {loading && <SectionSkeleton isDark={isDark} border={border} />}
       {!loading && err && !rows && (
-        <div className={`rounded-2xl border p-6 ${border} ${subtle}`}>
+        <div className={`p-8 ${card}`}>
           <SectionError message={err} isDark={isDark} />
         </div>
       )}
       {!loading && rows && (
-        <div className={`rounded-2xl border overflow-hidden ${border} ${subtle}`}>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className={`text-[9px] font-mono uppercase opacity-50 border-b ${border}`}>
-                  <th className="p-3">Name</th>
-                  <th className="p-3">Monthly cost</th>
-                  <th className="p-3">Billing</th>
-                  <th className="p-3">Renewal</th>
-                  <th className="p-3">Days until</th>
-                  <th className="p-3">Login</th>
-                  <th className="p-3 w-10" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="p-6 text-center text-xs opacity-50 font-mono">
-                      No subscriptions yet.
-                    </td>
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className={card}>
+            <div className="flex justify-end p-4 border-b border-white/5">
+              <button
+                type="button"
+                onClick={() => setModalOpen(true)}
+                className={`inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide px-4 py-2 rounded-full border ${border}`}
+              >
+                <Plus className="w-4 h-4" />
+                Add
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className={`text-[10px] font-semibold uppercase opacity-40 border-b ${border}`}>
+                    <th className="p-4">Name</th>
+                    <th className="p-4">Monthly</th>
+                    <th className="p-4">Renewal</th>
+                    <th className="p-4">Days</th>
+                    <th className="p-4 w-10" />
+                    <th className="p-4 w-10" />
                   </tr>
-                )}
-                {rows.map((r) => (
-                  <tr key={r.id} className={`border-b last:border-0 ${border}`}>
-                    <td className="p-3 font-medium">{r.name}</td>
-                    <td className="p-3 font-mono tabular-nums">{monthlyDisplay(r)}</td>
-                    <td className="p-3 text-xs capitalize">{r.billing}</td>
-                    <td className="p-3 font-mono text-xs">{r.next_renewal}</td>
-                    <td className={`p-3 font-mono text-xs ${daysClass(r.days_until_renewal)}`}>
-                      {r.days_until_renewal}
-                    </td>
-                    <td className="p-3">
-                      {r.url ? (
-                        <a
-                          href={r.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={`inline-flex p-1.5 rounded-lg ${isDark ? 'hover:bg-white/10' : 'hover:bg-[#141414]/10'}`}
-                          aria-label={`Open ${r.name}`}
+                </thead>
+                <tbody>
+                  {rows.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-sm opacity-50">
+                        No subscriptions
+                      </td>
+                    </tr>
+                  )}
+                  {rows.map((r) => (
+                    <tr key={r.id} className={`border-b border-white/5 ${border}`}>
+                      <td className="p-4 font-medium">{r.name}</td>
+                      <td className="p-4 font-mono text-xs tabular-nums">{monthlyDisplay(r)}</td>
+                      <td className="p-4 font-mono text-xs">{r.next_renewal}</td>
+                      <td className={`p-4 font-mono text-xs ${daysClass(r.days_until_renewal)}`}>{r.days_until_renewal}</td>
+                      <td className="p-4">
+                        {r.url ? (
+                          <a
+                            href={r.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex p-2 rounded-xl opacity-70 hover:opacity-100"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                        ) : (
+                          <span className="opacity-20">—</span>
+                        )}
+                      </td>
+                      <td className="p-4">
+                        <button
+                          type="button"
+                          onClick={() => remove(r.id)}
+                          className="p-2 rounded-xl text-rose-500/80 hover:bg-rose-500/10"
                         >
-                          <ExternalLink className="w-4 h-4 opacity-70" />
-                        </a>
-                      ) : (
-                        <span className="opacity-25">—</span>
-                      )}
-                    </td>
-                    <td className="p-3">
-                      <button
-                        type="button"
-                        onClick={() => remove(r.id)}
-                        className="p-1.5 rounded-lg text-rose-500/80 hover:bg-rose-500/10"
-                        aria-label="Delete"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {err && rows.length >= 0 && <p className="text-xs text-rose-500 p-4 border-t border-white/5">{err}</p>}
           </div>
-          {err && rows && <p className="text-xs text-rose-500 p-3 font-mono border-t border-white/10">{err}</p>}
+          <div className={`${card} p-6`}>
+            <p className="text-xs font-semibold uppercase tracking-wider opacity-50 mb-6">{year} cash view</p>
+            <div className="relative">
+              <svg width="100%" viewBox={`0 0 ${w} ${h}`} className="overflow-visible">
+                {[0, 0.25, 0.5, 0.75, 1].map((t) => {
+                  const y = pad + (1 - t) * (h - pad * 2)
+                  return (
+                    <g key={t}>
+                      <line
+                        x1={pad}
+                        y1={y}
+                        x2={w - pad}
+                        y2={y}
+                        stroke={isDark ? 'rgba(255,255,255,0.06)' : 'rgba(20,20,20,0.08)'}
+                        strokeWidth={1}
+                      />
+                    </g>
+                  )
+                })}
+                {MONTHS.map((label, m) => {
+                  const barH = (totals[m] / maxBar) * (h - pad * 2)
+                  const x = pad + m * bw + bw * 0.15
+                  const bwInner = bw * 0.7
+                  const y = h - pad - barH
+                  const active = hoverM === m
+                  return (
+                    <g
+                      key={label}
+                      onMouseEnter={() => setHoverM(m)}
+                      onMouseLeave={() => setHoverM(null)}
+                      className="cursor-crosshair"
+                    >
+                      <rect
+                        x={x}
+                        y={y}
+                        width={bwInner}
+                        height={Math.max(barH, 0)}
+                        rx={6}
+                        fill={active ? '#f59e0b' : '#d97706'}
+                        opacity={active ? 1 : 0.85}
+                      />
+                      <text
+                        x={x + bwInner / 2}
+                        y={h - pad + 14}
+                        textAnchor="middle"
+                        className={`text-[9px] font-medium ${isDark ? 'fill-white/35' : 'fill-[#141414]/45'}`}
+                      >
+                        {label}
+                      </text>
+                    </g>
+                  )
+                })}
+              </svg>
+              {hoverM != null && tips[hoverM].length > 0 && (
+                <div
+                  className={`absolute z-10 left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 rounded-xl border text-xs max-w-xs shadow-xl ${
+                    isDark ? 'bg-[#1a1a1a] border-white/10' : 'bg-white border-[#141414]/10'
+                  }`}
+                >
+                  <p className="font-mono font-semibold mb-1">{fmtMoney(totals[hoverM])}</p>
+                  <ul className="opacity-80 space-y-0.5 text-[11px]">
+                    {tips[hoverM].map((t, i) => (
+                      <li key={i}>{t}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -543,79 +1199,65 @@ function SubscriptionsSection({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              className="absolute inset-0 bg-black/50 backdrop-blur-sm"
               onClick={() => !submitting && setModalOpen(false)}
             />
             <motion.div
-              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 8 }}
-              className={`relative w-full max-w-md rounded-2xl border p-6 shadow-2xl ${border} ${isDark ? 'bg-[#0F0F0F]' : 'bg-[#E4E3E0]'}`}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              className={`relative w-full max-w-md rounded-3xl border p-8 shadow-2xl ${border} ${isDark ? 'bg-[#141414]' : 'bg-white'}`}
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 className="font-serif italic text-xl mb-4">Add subscription</h3>
-              <div className="space-y-3">
-                <label className="text-[9px] font-mono uppercase opacity-50 block">
-                  Name
-                  <input
-                    value={form.name}
-                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                    className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm bg-transparent ${border}`}
-                  />
-                </label>
-                <label className="text-[9px] font-mono uppercase opacity-50 block">
-                  URL (optional)
-                  <input
-                    value={form.url}
-                    onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
-                    className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm bg-transparent ${border}`}
-                  />
-                </label>
-                <label className="text-[9px] font-mono uppercase opacity-50 block">
-                  Cost USD
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={form.cost_usd}
-                    onChange={(e) => setForm((f) => ({ ...f, cost_usd: e.target.value }))}
-                    className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm bg-transparent ${border}`}
-                  />
-                </label>
-                <label className="text-[9px] font-mono uppercase opacity-50 block">
-                  Billing
-                  <select
-                    value={form.billing}
-                    onChange={(e) => setForm((f) => ({ ...f, billing: e.target.value as 'monthly' | 'yearly' }))}
-                    className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm bg-transparent ${border}`}
-                  >
-                    <option value="monthly">monthly</option>
-                    <option value="yearly">yearly</option>
-                  </select>
-                </label>
-                <label className="text-[9px] font-mono uppercase opacity-50 block">
-                  Next renewal
-                  <input
-                    type="date"
-                    value={form.next_renewal}
-                    onChange={(e) => setForm((f) => ({ ...f, next_renewal: e.target.value }))}
-                    className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm bg-transparent ${border}`}
-                  />
-                </label>
+              <h3 className="text-xl font-semibold tracking-tight mb-6">New subscription</h3>
+              <div className="space-y-4">
+                <input
+                  placeholder="Name"
+                  value={form.name}
+                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                  className={`w-full px-4 py-3 rounded-2xl border bg-transparent text-sm ${border}`}
+                />
+                <input
+                  placeholder="URL (optional)"
+                  value={form.url}
+                  onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
+                  className={`w-full px-4 py-3 rounded-2xl border bg-transparent text-sm ${border}`}
+                />
+                <input
+                  type="number"
+                  placeholder="Cost USD"
+                  value={form.cost_usd}
+                  onChange={(e) => setForm((f) => ({ ...f, cost_usd: e.target.value }))}
+                  className={`w-full px-4 py-3 rounded-2xl border bg-transparent text-sm font-mono ${border}`}
+                />
+                <select
+                  value={form.billing}
+                  onChange={(e) => setForm((f) => ({ ...f, billing: e.target.value as 'monthly' | 'yearly' }))}
+                  className={`w-full px-4 py-3 rounded-2xl border bg-transparent text-sm ${border}`}
+                >
+                  <option value="monthly">Monthly</option>
+                  <option value="yearly">Yearly</option>
+                </select>
+                <input
+                  type="date"
+                  value={form.next_renewal}
+                  onChange={(e) => setForm((f) => ({ ...f, next_renewal: e.target.value }))}
+                  className={`w-full px-4 py-3 rounded-2xl border bg-transparent text-sm ${border}`}
+                />
               </div>
-              <div className="flex gap-2 mt-6">
+              <div className="flex gap-3 mt-8">
                 <button
                   type="button"
                   disabled={submitting || !form.name.trim() || !form.next_renewal}
                   onClick={addSubscription}
-                  className={`flex-1 py-2.5 rounded-lg text-xs font-bold font-mono uppercase ${isDark ? 'bg-emerald-500 text-[#0A0A0A]' : 'bg-[#141414] text-[#E4E3E0]'} disabled:opacity-40`}
+                  className="flex-1 py-3 rounded-2xl bg-emerald-500 text-[#0a0a0a] font-semibold text-sm disabled:opacity-40"
                 >
-                  {submitting ? 'Saving…' : 'Save'}
+                  Save
                 </button>
                 <button
                   type="button"
-                  disabled={submitting}
                   onClick={() => setModalOpen(false)}
-                  className={`px-4 py-2.5 rounded-lg text-xs font-mono uppercase border ${border}`}
+                  className="px-6 py-3 rounded-2xl border border-white/10 text-sm font-medium"
                 >
                   Cancel
                 </button>
@@ -628,18 +1270,11 @@ function SubscriptionsSection({
   )
 }
 
-/* —— 4. Power —— */
+/* —— 6. Power + hardware —— */
 
-function PowerSection({
-  isDark,
-  border,
-  subtle,
-}: {
-  isDark: boolean
-  border: string
-  subtle: string
-}) {
-  const [data, setData] = useState<PowerPayload | null>(null)
+function PowerSection({ isDark, border, subtle }: { isDark: boolean; border: string; subtle: string }) {
+  const [power, setPower] = useState<PowerPayload | null>(null)
+  const [hw, setHw] = useState<HardwarePayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [editingRate, setEditingRate] = useState(false)
@@ -649,15 +1284,17 @@ function PowerSection({
   const load = useCallback(() => {
     setLoading(true)
     setErr(null)
-    apiJson<PowerPayload>('/v1/costs/power')
-      .then((d) => {
-        setData(d)
-        setRateInput(String(d.rate_per_kwh))
+    Promise.all([apiJson<PowerPayload>('/v1/costs/power'), apiJson<HardwarePayload>('/v1/costs/hardware')])
+      .then(([p, h]) => {
+        setPower(p)
+        setHw(h)
+        setRateInput(String(p.rate_per_kwh))
         setErr(null)
       })
       .catch(() => {
-        setData(null)
-        setErr('Could not load power data.')
+        setPower(null)
+        setHw(null)
+        setErr('Could not load power or hardware.')
       })
       .finally(() => setLoading(false))
   }, [])
@@ -667,60 +1304,57 @@ function PowerSection({
   }, [load])
 
   const saveRate = async () => {
+    if (!power) return
     setSavingRate(true)
     try {
-      const v = parseFloat(rateInput)
-      await apiJson<{ rate_per_kwh: number }>('/v1/costs/power/rate', {
+      await apiJson('/v1/costs/power/rate', {
         method: 'POST',
-        body: JSON.stringify({ rate_per_kwh: v }),
+        body: JSON.stringify({ rate_per_kwh: parseFloat(rateInput) }),
       })
       setEditingRate(false)
       load()
     } catch {
-      setErr('Failed to update rate.')
+      setErr('Rate update failed.')
     } finally {
       setSavingRate(false)
     }
   }
 
-  const nodeOrder = ['Brain', 'Gateway', 'Endpoint', 'Sandbox']
+  const order = ['Brain', 'Gateway', 'Endpoint', 'Sandbox']
+  const card = `rounded-3xl border overflow-hidden ${border} ${subtle} ${isDark ? 'bg-white/[0.03]' : 'bg-white/60'}`
 
   return (
     <section>
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-        <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest flex items-center gap-2">
-          <Cpu className="w-3.5 h-3.5" />
-          Node power consumption
-        </p>
-        {!loading && data && (
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-40">Power + hardware (true TCO)</p>
+        {!loading && power && (
           <div className="flex items-center gap-2">
-            {!editingRate && (
+            {!editingRate ? (
               <button
                 type="button"
                 onClick={() => {
                   setEditingRate(true)
-                  setRateInput(String(data.rate_per_kwh))
+                  setRateInput(String(power.rate_per_kwh))
                 }}
-                className={`inline-flex items-center gap-1.5 text-[10px] font-mono uppercase px-2 py-1 rounded-lg border ${border}`}
+                className={`inline-flex items-center gap-2 text-xs font-mono px-4 py-2 rounded-full border ${border}`}
               >
-                <Pencil className="w-3 h-3" />
-                ${data.rate_per_kwh.toFixed(4)}/kWh
+                <Pencil className="w-3.5 h-3.5" />
+                {power.rate_per_kwh.toFixed(4)} $/kWh
               </button>
-            )}
-            {editingRate && (
+            ) : (
               <div className="flex items-center gap-2">
                 <input
                   type="number"
                   step="0.0001"
                   value={rateInput}
                   onChange={(e) => setRateInput(e.target.value)}
-                  className={`w-28 px-2 py-1 rounded-lg border text-xs font-mono bg-transparent ${border}`}
+                  className={`w-28 px-3 py-2 rounded-xl border text-xs font-mono bg-transparent ${border}`}
                 />
                 <button
                   type="button"
                   disabled={savingRate}
                   onClick={saveRate}
-                  className={`p-1.5 rounded-lg ${isDark ? 'bg-emerald-500 text-[#0A0A0A]' : 'bg-[#141414] text-[#E4E3E0]'}`}
+                  className="p-2 rounded-xl bg-emerald-500 text-[#0a0a0a]"
                 >
                   <Check className="w-4 h-4" />
                 </button>
@@ -728,9 +1362,9 @@ function PowerSection({
                   type="button"
                   onClick={() => {
                     setEditingRate(false)
-                    setRateInput(String(data.rate_per_kwh))
+                    setRateInput(String(power.rate_per_kwh))
                   }}
-                  className="p-1.5 rounded-lg border border-white/10"
+                  className="p-2 rounded-xl border border-white/10"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -740,123 +1374,138 @@ function PowerSection({
         )}
       </div>
       {loading && <SectionSkeleton isDark={isDark} border={border} />}
-      {!loading && err && !data && (
-        <div className={`rounded-2xl border p-6 ${border} ${subtle}`}>
+      {!loading && err && (!power || !hw) && (
+        <div className={`p-8 ${card}`}>
           <SectionError message={err} isDark={isDark} />
         </div>
       )}
-      {!loading && data && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {nodeOrder.map((name) => {
-              const n = data.nodes.find((x) => x.name === name)
-              if (!n) return null
-              const live = name === 'Brain'
-              return (
-                <div key={name} className={`rounded-2xl border p-4 ${border} ${subtle}`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-xs font-bold font-mono uppercase">{name}</span>
-                    {live && (
-                      <span className="flex items-center gap-1.5 text-[9px] font-mono uppercase text-emerald-500">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                        live
-                      </span>
-                    )}
-                  </div>
-                  <dl className="space-y-1 text-xs font-mono">
-                    <div className="flex justify-between opacity-80">
-                      <dt>Watts</dt>
-                      <dd className="tabular-nums">{n.watts.toFixed(1)}</dd>
-                    </div>
-                    <div className="flex justify-between opacity-80">
-                      <dt>kWh/mo</dt>
-                      <dd className="tabular-nums">{n.kwh_monthly.toFixed(2)}</dd>
-                    </div>
-                    <div className="flex justify-between font-bold pt-1 border-t border-white/10">
-                      <dt>$/mo</dt>
-                      <dd className="tabular-nums">${n.cost_monthly.toFixed(2)}</dd>
-                    </div>
-                  </dl>
-                </div>
-              )
-            })}
+      {!loading && power && hw && (
+        <div className={card}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[640px]">
+              <thead>
+                <tr className={`text-[10px] font-semibold uppercase opacity-40 border-b ${border}`}>
+                  <th className="text-left p-4">Node</th>
+                  <th className="text-right p-4">Live watts</th>
+                  <th className="text-right p-4">Power $/mo</th>
+                  <th className="text-right p-4">Hardware $/mo</th>
+                  <th className="text-right p-4">True $/mo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {order.map((name) => {
+                  const pn = power.nodes.find((n) => n.name === name)
+                  const hn = hw.nodes.find((n) => n.node_name === name)
+                  const pCost = pn?.cost_monthly ?? 0
+                  const hCost = hn?.monthly_usd ?? 0
+                  const live = name === 'Brain'
+                  return (
+                    <tr key={name} className={`border-b border-white/5 ${border}`}>
+                      <td className="p-4 font-medium">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {name}
+                          {live && (
+                            <span className="flex items-center gap-1 text-[10px] font-semibold uppercase text-emerald-500">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                              live
+                            </span>
+                          )}
+                          {!live && <span className="text-[10px] opacity-40 font-normal">est.</span>}
+                        </div>
+                      </td>
+                      <td className="p-4 text-right font-mono tabular-nums">
+                        {pn ? `${pn.watts.toFixed(1)}` : '—'}
+                      </td>
+                      <td className="p-4 text-right font-mono tabular-nums">{fmtMoney(pCost)}</td>
+                      <td className="p-4 text-right font-mono tabular-nums">{fmtMoney(hCost)}</td>
+                      <td className="p-4 text-right font-mono font-semibold tabular-nums">
+                        {fmtMoney(pCost + hCost)}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+              <tfoot>
+                <tr className={`font-semibold ${isDark ? 'bg-white/[0.04]' : 'bg-[#141414]/5'}`}>
+                  <td className="p-4">Total</td>
+                  <td className="p-4 text-right font-mono tabular-nums">{power.total_watts.toFixed(1)}</td>
+                  <td className="p-4 text-right font-mono tabular-nums">{fmtMoney(power.total_cost_monthly)}</td>
+                  <td className="p-4 text-right font-mono tabular-nums">{fmtMoney(hw.total_monthly_usd)}</td>
+                  <td className="p-4 text-right font-mono tabular-nums">
+                    {fmtMoney(power.total_cost_monthly + hw.total_monthly_usd)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
           </div>
-          <div className={`rounded-xl border px-4 py-3 flex justify-between items-center ${border} ${isDark ? 'bg-white/[0.04]' : 'bg-[#141414]/5'}`}>
-            <span className="text-[10px] font-mono uppercase opacity-50">Total</span>
-            <span className="font-mono text-sm font-bold tabular-nums">
-              {data.total_watts.toFixed(1)} W · ${data.total_cost_monthly.toFixed(2)}/mo
-            </span>
-          </div>
-          {err && data && <SectionError message={err} isDark={isDark} />}
+          {err && <p className="text-xs text-rose-500 p-4 border-t border-white/5">{err}</p>}
         </div>
       )}
     </section>
   )
 }
 
-/* —— 5. Forge —— */
+/* —— 7. Forge —— */
 
 function ForgeSection({ isDark, border, subtle }: { isDark: boolean; border: string; subtle: string }) {
-  const [forgeMonthly, setForgeMonthly] = useState<number | null>(null)
+  const [summary, setSummary] = useState<CostsSummary | null>(null)
   const [loading, setLoading] = useState(true)
-  const [offline, setOffline] = useState(false)
+  const [err, setErr] = useState(false)
 
   useEffect(() => {
-    let alive = true
+    let a = true
     setLoading(true)
-    setOffline(false)
+    setErr(false)
     apiJson<CostsSummary>('/v1/costs/summary')
       .then((d) => {
-        if (alive) {
-          setForgeMonthly(d.forge_monthly_usd)
-          setOffline(false)
+        if (a) {
+          setSummary(d)
+          setErr(false)
         }
       })
       .catch(() => {
-        if (alive) {
-          setForgeMonthly(null)
-          setOffline(true)
+        if (a) {
+          setSummary(null)
+          setErr(true)
         }
       })
       .finally(() => {
-        if (alive) setLoading(false)
+        if (a) setLoading(false)
       })
     return () => {
-      alive = false
+      a = false
     }
   }, [])
 
-  const forgeUrl = 'http://100.124.172.14:5001'
+  const card = `rounded-3xl border p-8 ${border} ${subtle} ${isDark ? 'bg-white/[0.03]' : 'bg-white/60'}`
 
   return (
     <section>
-      <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest mb-3 flex items-center gap-2">
-        <Factory className="w-3.5 h-3.5" />
-        Forge pipeline costs
-      </p>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-40 mb-4">Forge pipeline</p>
       {loading && <SectionSkeleton isDark={isDark} border={border} />}
-      {!loading && offline && (
-        <div className={`rounded-2xl border p-6 flex flex-wrap items-center gap-3 ${border} ${subtle}`}>
-          <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full border border-amber-500/50 text-amber-500 bg-amber-500/10">
+      {!loading && err && (
+        <div className={card}>
+          <span className="text-[10px] font-semibold uppercase tracking-wide px-3 py-1 rounded-full border border-amber-500/40 text-amber-500">
             Forge offline
           </span>
-          <span className="text-xs opacity-60 font-mono">Summary unavailable.</span>
         </div>
       )}
-      {!loading && !offline && forgeMonthly !== null && (
-        <div className={`rounded-2xl border p-6 ${border} ${subtle}`}>
+      {!loading && !err && summary && (
+        <div className={card}>
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
-              <p className="text-[10px] font-mono uppercase opacity-50">Monthly total (Forge)</p>
-              <p className="text-3xl font-bold font-mono tabular-nums mt-1">${forgeMonthly.toFixed(2)}</p>
+              <p className="text-xs opacity-50 mb-2">Monthly total</p>
+              <p className="text-4xl font-semibold tabular-nums tracking-tight">
+                {fmtMoney(summary.forge_monthly_usd ?? 0)}
+              </p>
             </div>
             <a
-              href={forgeUrl}
+              href="http://100.124.172.14:5001"
               target="_blank"
               rel="noopener noreferrer"
-              className={`inline-flex items-center gap-2 text-xs font-mono uppercase px-4 py-2 rounded-lg border ${border} ${isDark ? 'hover:bg-white/10' : 'hover:bg-[#141414]/10'}`}
+              className={`inline-flex items-center gap-2 text-sm font-medium px-5 py-2.5 rounded-full border ${border} hover:opacity-90`}
             >
-              <ExternalLink className="w-3.5 h-3.5" />
+              <ExternalLink className="w-4 h-4" />
               Forge dashboard
             </a>
           </div>
@@ -866,27 +1515,75 @@ function ForgeSection({ isDark, border, subtle }: { isDark: boolean; border: str
   )
 }
 
+/* —— Savings card —— */
+
+function SavingsCard({ isDark, border }: { isDark: boolean; border: string }) {
+  const [data, setData] = useState<CostsSummary | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let a = true
+    apiJson<CostsSummary>('/v1/costs/summary')
+      .then((d) => {
+        if (a) setData(d)
+      })
+      .catch(() => {
+        if (a) setData(null)
+      })
+      .finally(() => {
+        if (a) setLoading(false)
+      })
+    return () => {
+      a = false
+    }
+  }, [])
+
+  const savings = data?.savings_vs_cloud_usd ?? 0
+  const pct = data?.local_routing_pct
+  const hasPct = typeof pct === 'number' && pct > 0
+
+  if (loading || savings <= 0) return null
+  if (!hasPct) return null
+
+  return (
+    <div
+      className={`rounded-3xl border p-6 ${border} ${
+        isDark ? 'bg-emerald-500/10 border-emerald-500/25' : 'bg-emerald-50 border-emerald-200/80'
+      }`}
+    >
+      <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">
+        Estimated savings vs full cloud this month:{' '}
+        <span className="font-semibold tabular-nums">{fmtMoney(savings)}</span>
+      </p>
+      <p className="text-xs opacity-70 mt-2">Based on {pct}% local routing</p>
+    </div>
+  )
+}
+
 /* —— Page —— */
 
 export default function CostCenter() {
   const { theme } = useAppStore()
   const isDark = theme === 'dark'
-  const border = isDark ? 'border-white/10' : 'border-[#141414]/10'
-  const subtle = isDark ? 'bg-white/5' : 'bg-[#141414]/5'
+  const border = isDark ? 'border-white/[0.08]' : 'border-[#141414]/10'
+  const subtle = isDark ? 'bg-white/[0.02]' : 'bg-white/40'
 
   return (
-    <div className="space-y-10 max-w-5xl">
-      <div>
-        <h1 className="font-serif italic text-3xl flex items-center gap-2">
-          <DollarSign className="w-7 h-7 opacity-80" />
-          Cost Center
-        </h1>
-        <p className="text-[10px] font-mono uppercase opacity-50 mt-1">Spend · Power · Subscriptions · Forge</p>
-      </div>
+    <div className="space-y-16 max-w-6xl pb-24">
+      <header className="space-y-2">
+        <h1 className="text-4xl sm:text-5xl font-semibold tracking-tight">Cost Center</h1>
+        <p className="text-sm opacity-50 flex items-center gap-2">
+          {isDark ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+          Spend, routing, and infrastructure — Apple-inspired clarity.
+        </p>
+      </header>
 
-      <MonthlyOverviewSection isDark={isDark} border={border} subtle={subtle} />
-      <CreditBalanceSection isDark={isDark} border={border} subtle={subtle} />
-      <SubscriptionsSection isDark={isDark} border={border} subtle={subtle} />
+      <SavingsCard isDark={isDark} border={border} />
+      <HeroSection isDark={isDark} border={border} subtle={subtle} />
+      <PieSection isDark={isDark} border={border} subtle={subtle} />
+      <ApiSpendSection isDark={isDark} border={border} subtle={subtle} />
+      <OutcomeSection isDark={isDark} border={border} subtle={subtle} />
+      <SubscriptionSection isDark={isDark} border={border} subtle={subtle} />
       <PowerSection isDark={isDark} border={border} subtle={subtle} />
       <ForgeSection isDark={isDark} border={border} subtle={subtle} />
     </div>
