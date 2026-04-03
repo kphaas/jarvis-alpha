@@ -17,7 +17,9 @@ def get_watts_psutil() -> tuple[float, float]:
     import psutil
     cpu_pct = float(psutil.cpu_percent(interval=2))
 
-    if NODE_NAME == "Gateway":
+    if NODE_NAME == "Brain":
+        idle, tdp = 20.0, 60.0
+    elif NODE_NAME == "Gateway":
         idle, tdp = 7.0, 39.0
     elif NODE_NAME == "Endpoint":
         idle, tdp = 7.0, 39.0
@@ -92,12 +94,8 @@ def post_reading(watts: float, cpu_pct: float, source: str) -> None:
 
 def main() -> None:
     while True:
-        if NODE_NAME == "Brain":
-            watts, cpu_pct = get_watts_brain()
-            source = "powermetrics"
-        else:
-            watts, cpu_pct = get_watts_psutil()
-            source = "psutil"
+        watts, cpu_pct = get_watts_psutil()
+        source = "psutil"
 
         post_reading(watts, cpu_pct, source)
         print(
