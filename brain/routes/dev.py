@@ -98,10 +98,9 @@ def _build_branch_name(
 
 def _strip_json_fence(text: str) -> str:
     s = text.strip()
-    m = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", s)
-    if m:
-        return m.group(1).strip()
-    return s
+    s = re.sub(r"(?i)```(?:json)?\s*", "", s)
+    s = re.sub(r"\s*```\s*", "", s)
+    return s.strip()
 
 
 async def _github_open_issues(owner: str, repo: str, token: str) -> list[dict]:
