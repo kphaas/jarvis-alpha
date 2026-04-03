@@ -42,3 +42,13 @@ SHORT=$(git -C "$REPO_DIR" rev-parse --short HEAD)
 echo ""
 echo "✅ jarvis-alpha pulled — $SHORT"
 echo "─────────────────────────────────────────────────────────"
+
+BRAIN_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.brain.plist"
+if [ -f "$BRAIN_PLIST" ]; then
+  echo ""
+  echo "Restarting Alpha Brain LaunchAgent..."
+  pkill -f "uvicorn.*brain" 2>/dev/null || true
+  sleep 2
+  launchctl unload "$BRAIN_PLIST" 2>/dev/null || true
+  launchctl load "$BRAIN_PLIST"
+fi
