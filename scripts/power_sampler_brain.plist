@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jarvis.alpha.power.brain</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/jarvisbrain/jarvis-alpha/.venv/bin/python3</string>
+    <string>/Users/jarvisbrain/jarvis-alpha/scripts/power_sampler.py</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>JARVIS_NODE_NAME</key>
+    <string>Brain</string>
+    <key>JARVIS_ALPHA_BRAIN_URL</key>
+    <string>https://jarvis-brain.tail40ed36.ts.net:8186</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/jarvisbrain/jarvis-alpha/logs/power_sampler.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jarvisbrain/jarvis-alpha/logs/power_sampler_error.log</string>
+</dict>
+</plist>
