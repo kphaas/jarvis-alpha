@@ -7,7 +7,15 @@ import jwt
 
 logger = logging.getLogger(__name__)
 
-SKIP_PATHS = {"/health", "/docs", "/openapi.json", "/redoc", "/v1/auth/pin"}
+SKIP_PATHS = {
+    "/health",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+    "/v1/auth/pin",
+    "/v1/metrics/power",
+    "/v1/metrics/power/rollup",
+}
 
 
 def require_auth(request: Request) -> str:
