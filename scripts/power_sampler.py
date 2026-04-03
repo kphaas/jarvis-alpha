@@ -14,18 +14,8 @@ _COMBINED_MARKER = "combined power (cpu + gpu + ane):"
 
 
 def get_watts_psutil() -> tuple[float, float]:
-    proc = subprocess.run(
-        [
-            "python3",
-            "-c",
-            "import psutil; print(psutil.cpu_percent(interval=2))",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    out = (proc.stdout or "").strip()
-    cpu_pct = float(out)
+    import psutil
+    cpu_pct = float(psutil.cpu_percent(interval=2))
 
     if NODE_NAME == "Gateway":
         idle, tdp = 7.0, 39.0
