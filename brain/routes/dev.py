@@ -207,23 +207,22 @@ async def dev_analyze(
 ):
     pool = get_pool()
     async with pool.acquire() as conn:
-        await _rls_dev(conn, request)
         row = await conn.fetchrow(
             "SELECT repo_slug FROM alpha_projects WHERE id = $1",
             body.project_id,
         )
-    if not row:
-        raise HTTPException(status_code=404, detail="project not found")
-    repo_slug = row["repo_slug"]
-    if not repo_slug or not str(repo_slug).strip():
-        raise HTTPException(status_code=500, detail="project has no repo_slug")
+        if not row:
+            raise HTTPException(status_code=404, detail="project not found")
+        repo_slug = row["repo_slug"]
+        if not repo_slug or not str(repo_slug).strip():
+            raise HTTPException(status_code=500, detail="project has no repo_slug")
+        owner, repo = _parse_owner_repo(str(repo_slug))
+        await _rls_dev(conn, request)
 
     try:
         token = get_secret("GITHUB_TOKEN")
     except KeyError:
         raise HTTPException(status_code=500, detail="GITHUB_TOKEN not configured")
-
-    owner, repo = _parse_owner_repo(str(repo_slug))
     issues = await _github_open_issues(owner, repo, token)
     groups = await _ollama_group_issues(issues) if issues else []
 
