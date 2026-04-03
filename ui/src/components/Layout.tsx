@@ -229,10 +229,11 @@ export function Layout({ theme, children, monthSpend = 0, budget = 500, onRefres
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto">
-          <div className="p-8">
-            <AnimatePresence mode="wait">{children}</AnimatePresence>
-          </div>
+        <main className={`flex-1 ${location.pathname === '/ask' ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'}`}>
+          {location.pathname === '/ask'
+            ? <AnimatePresence mode="wait">{children}</AnimatePresence>
+            : <div className="p-8"><AnimatePresence mode="wait">{children}</AnimatePresence></div>
+          }
         </main>
       </div>
 
