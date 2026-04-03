@@ -183,6 +183,8 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
 
   const sendColor = pillSendColor(selectedModels);
 
+  const _fadeStyle = `@keyframes msgFadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }`;
+
   const statusLine = selectedModels.length === 0
     ? "Tier: auto · JARVIS decides · keyword-routed"
     : selectedModels.length === 1
@@ -195,7 +197,9 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
       minWidth: 0, height: "100%", overflow: "hidden",
       position: "relative", zIndex: 0,
     }}>
-      <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "14px 18px", position: "relative", zIndex: 0 }}>
+      <style>{_fadeStyle}</style>
+      <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "24px 0", position: "relative", zIndex: 0 }}>
+        <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 24px" }}>
         {messages.length === 0 && (
           <div style={{
             height: "100%", display: "flex", flexDirection: "column",
@@ -221,7 +225,7 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
             </span>
           </div>
         )}
-        <div ref={bottomRef} />
+        </div><div ref={bottomRef} />
       </div>
 
       {!isAtBottom && (

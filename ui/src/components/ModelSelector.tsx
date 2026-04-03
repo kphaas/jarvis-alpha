@@ -1,5 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { createPortal } from "react-dom";
+import { useRef } from "react";
 
 export interface ModelOption {
   id: string;
@@ -26,8 +25,6 @@ const PILL: Record<string, { bg: string; border: string; color: string; dot: str
   council:    { bg: "rgba(83,74,183,0.1)",    border: "rgba(83,74,183,0.22)",   color: "#3C3489", dot: "#534AB7", send: "#534AB7" },
 };
 
-const COST: Record<string, string> = { free: "$0", low: "$", medium: "$$", high: "$$$" };
-const SPEED: Record<string, string> = { fast: "Fast", medium: "Moderate", slow: "Slow" };
 
 export interface ModelSelectorProps {
   selected: string[];
@@ -35,33 +32,10 @@ export interface ModelSelectorProps {
 }
 
 export function ModelSelector({ selected, onChange }: ModelSelectorProps) {
-  const [open, setOpen] = useState(false);
-  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
   const ref = useRef<HTMLDivElement>(null);
-  const portalRef = useRef<HTMLDivElement>(null);
-
-  const updatePos = useCallback(() => {
-    if (ref.current) {
-      const rect = ref.current.getBoundingClientRect();
-      setDropdownPos({
-        top: rect.bottom + 6,
-        left: Math.max(8, rect.right - 292),
-      });
-    }
-  }, []);
-
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      const t = e.target as Node;
-      if (ref.current?.contains(t) || portalRef.current?.contains(t)) return;
-      setOpen(false);
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
 
   function toggle(id: string) {
-    if (id === "auto") { onChange([]); setOpen(false); return; }
+    if (id === "auto") { onChange([]); return; }
     if (selected.includes(id)) {
       onChange(selected.filter(s => s !== id));
     } else if (selected.length < 3) {
@@ -69,142 +43,57 @@ export function ModelSelector({ selected, onChange }: ModelSelectorProps) {
     }
   }
 
-  const isAuto    = selected.length === 0;
-  const isCouncil = selected.length >= 2;
-  const activeKey = isAuto ? "auto" : isCouncil ? "council" : selected[0];
-  const style     = PILL[activeKey] ?? PILL["auto"];
-
-  const pillLabel = isAuto
-    ? "Auto"
-    : isCouncil
-    ? `Council (${selected.length})`
-    : MODELS.find(m => m.id === selected[0])?.label ?? selected[0];
+  const isAuto = selected.length === 0;
 
   return (
-    <div ref={ref} style={{ position: "relative" }}>
+    <div ref={ref} style={{
+      display: "flex", alignItems: "center",
+      background: "var(--color-background-secondary)",
+      border: "0.5px solid var(--color-border-secondary)",
+      borderRadius: 10, padding: 2, gap: 1,
+    }}>
+      {/* Auto segment */}
       <button
-        onClick={() => { updatePos(); setOpen(o => !o); }}
+        onClick={() => onChange([])}
         style={{
-          display: "flex", alignItems: "center", gap: 5,
-          padding: "5px 10px 5px 8px", borderRadius: 20,
-          background: style.bg,
-          border: `0.5px solid ${style.border}`,
-          cursor: "pointer", fontSize: 11, fontWeight: 500,
-          color: style.color, fontFamily: "var(--font-sans)",
-          transition: "background 0.2s, color 0.2s, border-color 0.2s",
+          padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: isAuto ? 600 : 400,
+          background: isAuto ? PILL["auto"].bg : "transparent",
+          border: isAuto ? `0.5px solid ${PILL["auto"].border}` : "0.5px solid transparent",
+          color: isAuto ? PILL["auto"].color : "var(--color-text-tertiary)",
+          cursor: "pointer", fontFamily: "var(--font-sans)",
+          transition: "all 0.15s",
+          whiteSpace: "nowrap",
         }}
-      >
-        {isCouncil ? (
-          <div style={{ display: "flex", gap: 2, alignItems: "center" }}>
-            {selected.slice(0, 3).map(id => (
-              <div key={id} style={{
-                width: 5, height: 5, borderRadius: "50%",
-                background: PILL[id]?.dot ?? "#888",
-              }} />
-            ))}
-          </div>
-        ) : (
-          <div style={{ width: 6, height: 6, borderRadius: "50%", background: style.dot }} />
-        )}
-        {pillLabel}
-        <span style={{ fontSize: 8, opacity: 0.5, marginLeft: 1 }}>▾</span>
-      </button>
+      >Auto</button>
 
-      {open && createPortal(
-        <div
-          ref={portalRef}
-          style={{
-            position: "fixed", boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
-            top: dropdownPos.top,
-            left: dropdownPos.left,
-            zIndex: 9999,
-            width: 292,
-            background: "#FFFFFF",
-            border: "0.5px solid var(--color-border-secondary)",
-            borderRadius: "var(--border-radius-lg)",
-            overflow: "hidden",
-          }}
-        >
-          <div style={{
-            padding: "8px 13px", borderBottom: "0.5px solid var(--color-border-tertiary)",
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-          }}>
-            <span style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-secondary)" }}>Choose model</span>
-            <span style={{ fontSize: 9, color: "var(--color-text-tertiary)" }}>Tap 2+ for council</span>
-          </div>
-
-          <div
-            onClick={() => toggle("auto")}
+      {/* Model segments */}
+      {MODELS.map(m => {
+        const ps    = PILL[m.provider];
+        const isSel = selected.includes(m.id);
+        const ICONS: Record<string, string> = {
+          local: "⚡", claude: "◈", perplexity: "◎", gemini: "✦",
+        };
+        return (
+          <button
+            key={m.id}
+            onClick={() => toggle(m.id)}
+            title={m.bestFor}
             style={{
-              padding: "8px 13px", display: "flex", alignItems: "center", gap: 9,
-              cursor: "pointer", borderBottom: "0.5px solid var(--color-border-tertiary)",
-              background: isAuto ? "rgba(55,138,221,0.06)" : "transparent",
+              padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: isSel ? 600 : 400,
+              background: isSel ? ps.bg : "transparent",
+              border: isSel ? `0.5px solid ${ps.border}` : "0.5px solid transparent",
+              color: isSel ? ps.color : "var(--color-text-tertiary)",
+              cursor: "pointer", fontFamily: "var(--font-sans)",
+              display: "flex", alignItems: "center", gap: 4,
+              transition: "all 0.15s",
+              whiteSpace: "nowrap",
             }}
           >
-            <div style={{ width: 26, height: 26, borderRadius: 7, background: "#378ADD", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="white"><path d="M8 1l1.5 4.5H14l-3.7 2.7 1.4 4.3L8 10l-3.7 2.5 1.4-4.3L2 5.5h4.5z"/></svg>
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-primary)" }}>Auto</div>
-              <div style={{ fontSize: 10, color: "var(--color-text-tertiary)" }}>JARVIS picks based on complexity</div>
-              <div style={{ display: "flex", gap: 4, marginTop: 2 }}>
-                <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, background: "#E6F1FB", color: "#0C447C", fontWeight: 500 }}>Smart routing</span>
-                <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, background: "#EAF3DE", color: "#27500A", fontWeight: 500 }}>$0</span>
-              </div>
-            </div>
-            {isAuto && <span style={{ color: "#378ADD", fontSize: 13 }}>✓</span>}
-          </div>
-
-          {MODELS.map(m => {
-            const ps = PILL[m.provider];
-            const isSel = selected.includes(m.id);
-            return (
-              <div key={m.id} onClick={() => toggle(m.id)} style={{
-                padding: "8px 13px", display: "flex", alignItems: "center", gap: 9,
-                cursor: "pointer", borderBottom: "0.5px solid var(--color-border-tertiary)",
-                background: isSel ? ps.bg : "transparent", transition: "background 0.15s",
-              }}>
-                <div style={{ width: 26, height: 26, borderRadius: 7, background: ps.send, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="white"><circle cx="5" cy="5" r="4" stroke="white" strokeWidth="1" fill="none"/><circle cx="5" cy="5" r="1.5"/></svg>
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-primary)" }}>{m.label}</div>
-                  <div style={{ fontSize: 10, color: "var(--color-text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.bestFor}</div>
-                  <div style={{ display: "flex", gap: 4, marginTop: 2 }}>
-                    <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, background: ps.bg, color: ps.color, fontWeight: 500 }}>{m.provider}</span>
-                    <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, background: "#FAEEDA", color: "#633806", fontWeight: 500 }}>Cost: {COST[m.costTier]}</span>
-                    <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, background: "#F1EFE8", color: "#444441", fontWeight: 500 }}>{SPEED[m.speed]}</span>
-                  </div>
-                </div>
-                {isSel && <span style={{ color: ps.dot, fontSize: 13, flexShrink: 0 }}>✓</span>}
-              </div>
-            );
-          })}
-
-          <div style={{ padding: "8px 13px", background: "#F7F6F2" }}>
-            <div style={{ fontSize: 9, fontWeight: 500, color: "var(--color-text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>
-              Council mode — select 2 or 3
-            </div>
-            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-              {MODELS.map(m => {
-                const ps = PILL[m.provider];
-                const isSel = selected.includes(m.id);
-                return (
-                  <div key={m.id} onClick={() => toggle(m.id)} style={{
-                    padding: "3px 8px", borderRadius: 12, fontSize: 10, fontWeight: 500,
-                    cursor: "pointer", background: ps.bg, color: ps.color,
-                    border: `0.5px solid ${isSel ? ps.dot : ps.border}`,
-                    transition: "border-color 0.15s",
-                  }}>
-                    {m.label.split(" ")[0]}{isSel ? " ✓" : ""}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+            <span style={{ fontSize: 10 }}>{ICONS[m.id]}</span>
+            {m.label.split(" ")[0]}
+          </button>
+        );
+      })}
     </div>
   );
 }

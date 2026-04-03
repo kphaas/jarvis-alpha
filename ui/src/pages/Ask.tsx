@@ -47,7 +47,7 @@ export default function Ask() {
   }
 
   return (
-    <div style={{ display: "flex", height: "100%", overflow: "visible" }}>
+    <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
       <ThreadSidebar
         activeId={activeThreadId}
         onSelect={handleSelectThread}
@@ -110,7 +110,7 @@ export default function Ask() {
               <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1"/>
               <circle cx="6" cy="6" r="2" fill="currentColor"/>
             </svg>
-            {showCouncil ? "Hide Council" : "Show Council"}
+            {isCouncil ? (showCouncil ? "Hide Council" : `··· Council (${selectedModels.length})`) : "Council"}
           </button>
 
           <ModelSelector selected={selectedModels} onChange={setSelectedModels} />
