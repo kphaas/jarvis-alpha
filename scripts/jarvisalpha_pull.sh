@@ -2,7 +2,11 @@
 set -uo pipefail
 
 REPO_DIR="${HOME}/jarvis-alpha"
-SECRETS_FILE="${HOME}/jarvis/.secrets"
+if [ -f "${HOME}/jarvis/.secrets" ]; then
+  SECRETS_FILE="${HOME}/jarvis/.secrets"
+else
+  SECRETS_FILE="${HOME}/.secrets"
+fi
 
 echo ""
 echo "── JARVIS-ALPHA PULL ────────────────────────────────────"
