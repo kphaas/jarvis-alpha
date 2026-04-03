@@ -155,8 +155,9 @@ if [[ $pull_ok -eq 1 ]]; then
   echo ""
   echo "Triggering intel refresh for jarvis-alpha (project 65)..."
   ssh "${SSH_OPTS[@]}" "$SANDBOX" \
-    "curl -sk -X POST 'http://localhost:5001/api/intel/refresh?project_id=65' \
-     --max-time 30 | python3 -c \"import sys,json; d=json.load(sys.stdin); r=d.get('results',[{}])[0]; print('Intel:', r.get('symbols','?'), 'symbols' if 'symbols' in r else r.get('error','?'))\"" \
+    "body=\$(curl -sk -X POST 'http://localhost:5001/api/intel/refresh?project_id=65' --max-time 30); \
+     if [ -z \"\$body\" ]; then echo 'Intel refresh: forge offline — skipped'; \
+     else echo \"\$body\" | python3 -c \"import sys,json; d=json.load(sys.stdin); r=d.get('results',[{}])[0]; print('Intel:', r.get('symbols','?'), 'symbols' if 'symbols' in r else r.get('error','?'))\" 2>/dev/null || echo 'Intel refresh: unexpected response'; fi" \
     || echo "Intel refresh skipped"
 fi
 

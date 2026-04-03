@@ -106,7 +106,7 @@ def _strip_json_fence(text: str) -> str:
 
 async def _github_open_issues(owner: str, repo: str, token: str) -> list[dict]:
     url = f"https://api.github.com/repos/{owner}/{repo}/issues"
-    params = {"state": "open", "labels": "bug,known-issue", "per_page": "100"}
+    params = {"state": "open", "labels": "bug", "per_page": "100"}
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
