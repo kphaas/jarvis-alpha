@@ -295,7 +295,6 @@ async def child_profiles():
 
 @security_router.get("/perimeter")
 async def perimeter():
-    brain_host = _host_from_service_url(BRAIN_URL)
     base_brain = BRAIN_URL.rstrip("/")
     gw = GATEWAY_URL.rstrip("/")
     ep = ENDPOINT_URL.rstrip("/")
