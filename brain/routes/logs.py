@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import subprocess
 import time
 
@@ -14,10 +15,64 @@ from brain.config.logging_config import get_logger
 logger = get_logger("alpha_brain")
 logs_router = APIRouter()
 
+_VALID_NODES = frozenset({"brain", "gateway", "endpoint", "sandbox"})
+_VALID_LEVELS = frozenset({"INFO", "WARNING", "ERROR", "CRITICAL"})
+
+
+def _build_logql(
+    nodes_csv: str | None,
+    level_csv: str | None,
+    service: str,
+    search: str | None,
+) -> str:
+    """Build LogQL for Fluent Bit lines: outer JSON with string field ``log`` holding inner JSON."""
+    # Stream selector
+    if not nodes_csv or not nodes_csv.strip():
+        node_part = '{node=~".+"}'
+    else:
+        parts = [n.strip() for n in nodes_csv.split(",") if n.strip()]
+        picked = [n for n in parts if n in _VALID_NODES]
+        if not picked or len(picked) >= len(_VALID_NODES):
+            node_part = '{node=~".+"}'
+        else:
+            node_part = '{node=~"' + "|".join(picked) + '"}'
+
+    # Parse outer JSON, expand nested log line, parse inner JSON for level/service filters
+    q = node_part + ' | json | line_format "{{.log}}" | json'
+
+    if level_csv and level_csv.strip():
+        levels = []
+        for raw in level_csv.split(","):
+            lv = raw.strip().upper()
+            if lv in _VALID_LEVELS:
+                levels.append(lv)
+        if levels and len(levels) < len(_VALID_LEVELS):
+            pattern = "|".join(re.escape(x) for x in levels)
+            q += f' | level=~"{pattern}"'
+
+    if service and service.strip() and service.strip() != "all":
+        svc = service.strip().replace("\\", "\\\\").replace('"', '\\"')
+        q += f' | service="{svc}"'
+
+    if search and search.strip():
+        esc = search.strip().replace("\\", "\\\\").replace('"', '\\"')
+        q += f' |= "{esc}"'
+
+    return q
+
 
 @logs_router.get("/v1/logs/query")
 async def query_logs(
-    query: str = Query(default='{node=~".+"}'),
+    nodes: str | None = Query(
+        default=None,
+        description="Comma-separated nodes (brain,gateway,...); omit for all",
+    ),
+    level: str | None = Query(
+        default=None,
+        description="Comma-separated levels (INFO,ERROR,...); omit for all",
+    ),
+    service: str = Query(default="all"),
+    search: str | None = Query(default=None, description="Free-text line filter"),
     limit: int = Query(default=100, ge=1, le=1000),
     start: str | None = Query(default=None),
     end: str | None = Query(default=None),
@@ -35,6 +90,8 @@ async def query_logs(
         start_ns = str(now_ns - seconds * 1_000_000_000)
         end_ns = str(now_ns)
 
+    logql = _build_logql(nodes, level, service, search)
+
     # Use curl + asyncio.to_thread to avoid httpx TLS issues
     cmd = [
         "curl",
@@ -44,7 +101,7 @@ async def query_logs(
         "-G",
         "http://127.0.0.1:3100/loki/api/v1/query_range",
         "--data-urlencode",
-        f"query={query}",
+        f"query={logql}",
         "--data-urlencode",
         f"limit={limit}",
         "--data-urlencode",

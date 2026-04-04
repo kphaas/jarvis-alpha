@@ -143,38 +143,22 @@ function renderInlineOnly(
   );
 }
 
-function buildLogQL(
+/** Human-readable summary of active filters (Brain builds real LogQL from query params). */
+function describeActiveFilters(
   selectedNodes: Set<string>,
   selectedLevels: Set<string>,
-  service: (typeof SERVICES)[number],
+  svc: (typeof SERVICES)[number],
   textSearch: string
 ): string {
-  const allNodes = NODES.length === selectedNodes.size;
-  const nodePart = allNodes
-    ? '{node=~".+"}'
-    : `{node=~"${Array.from(selectedNodes).join("|")}"}`;
-
-  let q = `${nodePart} | json | line_format "{{.log}}" | json`;
-
-  const allLevels = LEVELS.length === selectedLevels.size;
-  if (!allLevels && selectedLevels.size > 0) {
-    const pattern = Array.from(selectedLevels)
-      .map((l) => l.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-      .join("|");
-    q += ` | level=~"${pattern}"`;
-  }
-
-  if (service !== "all") {
-    q += ` | service="${service}"`;
-  }
-
+  const allN = NODES.length === selectedNodes.size;
+  const allL = LEVELS.length === selectedLevels.size;
+  const parts: string[] = [];
+  parts.push(allN ? "All nodes" : `Nodes: ${Array.from(selectedNodes).join(", ")}`);
+  parts.push(allL ? "All levels" : `Levels: ${Array.from(selectedLevels).join(", ")}`);
+  parts.push(svc === "all" ? "All services" : `Service: ${svc}`);
   const t = textSearch.trim();
-  if (t) {
-    const escaped = t.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    q += ` |= "${escaped}"`;
-  }
-
-  return q;
+  parts.push(t ? `Text: ${t}` : "No text filter");
+  return parts.join(" · ");
 }
 
 function parseEntryTime(entry: LogEntry): Date | null {
@@ -249,8 +233,9 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
 
   const showDate = since === "7d";
 
-  const logql = useMemo(
-    () => buildLogQL(selectedNodes, selectedLevels, service, textSearch),
+  const filterSummary = useMemo(
+    () =>
+      describeActiveFilters(selectedNodes, selectedLevels, service, textSearch),
     [selectedNodes, selectedLevels, service, textSearch]
   );
 
@@ -259,7 +244,22 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
     setFetchError(null);
     try {
       const params = new URLSearchParams();
-      params.set("query", logql);
+      const allNodes = NODES.length === selectedNodes.size;
+      if (!allNodes) {
+        params.set("nodes", Array.from(selectedNodes).join(","));
+      }
+      const allLevels = LEVELS.length === selectedLevels.size;
+      // HTTP query uses level=ERROR,CRITICAL style params, not LogQL; Brain builds the pipeline.
+      if (!allLevels && selectedLevels.size > 0) {
+        params.set("level", Array.from(selectedLevels).join(",")); // ?level= in request URL
+      }
+      if (service !== "all") {
+        params.set("service", service);
+      }
+      const t = textSearch.trim();
+      if (t) {
+        params.set("search", t);
+      }
       params.set("limit", "500");
       params.set("since", since);
       const res = await apiFetch(`/v1/logs/query?${params.toString()}`);
@@ -285,7 +285,7 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
     } finally {
       setLoading(false);
     }
-  }, [logql, since]);
+  }, [selectedNodes, selectedLevels, service, textSearch, since]);
 
   useEffect(() => {
     void fetchLogs();
@@ -506,8 +506,8 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
           </div>
         </div>
 
-        <p className={`break-all font-mono text-[10px] ${muted}`}>
-          LogQL: <span className={text}>{logql}</span>
+        <p className={`text-[10px] leading-relaxed ${muted}`}>
+          Active filters: <span className={`font-medium ${text}`}>{filterSummary}</span>
         </p>
       </div>
 
