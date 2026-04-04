@@ -18,11 +18,11 @@ const NAV = [
     { to: '/',          label: 'Home',         icon: Home          },
     { to: '/briefing',  label: 'Briefing',     icon: Newspaper     },
     { to: '/ask',       label: 'Ask',          icon: MessageSquare },
-    { to: '/mesh',      label: 'Mesh',         icon: Network       },
   ]},
   { group: 'OPERATE', items: [
     { to: '/health',    label: 'Health',       icon: Activity      },
     { to: '/errors',    label: 'Errors & Logs',icon: Bug           },
+    { to: '/mesh',      label: 'Mesh',         icon: Network       },
     { to: '/agents',    label: 'Agents',       icon: Bot           },
     { to: '/ops',       label: 'Ops',          icon: Terminal      },
   ]},

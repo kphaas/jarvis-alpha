@@ -12,6 +12,7 @@ const Space = lazy(() => import('./pages/Space'))
 const Placeholder = lazy(() => import('./pages/Placeholder'))
 const CostCenter = lazy(() => import('./pages/CostCenter'))
 const Health = lazy(() => import('./pages/Health'))
+const Errors = lazy(() => import('./pages/Errors'))
 const Mesh = lazy(() => import('./pages/Mesh'))
 const Approvals = lazy(() => import('./pages/Approvals'))
 const Security = lazy(() => import('./pages/Security'))
@@ -38,7 +39,7 @@ export default function App() {
               <Route path="/briefing"   element={<Placeholder label="Briefing"    phase="Next session" />} />
               <Route path="/mesh"       element={<Mesh theme={theme} token={brainToken} />} />
               <Route path="/health"     element={<Health theme={theme} token={brainToken} />} />
-              <Route path="/errors"     element={<Placeholder label="Errors & Logs" phase="Next session" />} />
+              <Route path="/errors"     element={<Errors theme={theme} />} />
               <Route path="/agents"     element={<Placeholder label="Agents"      phase="Next session" />} />
               <Route path="/ops"        element={<Placeholder label="Ops"         phase="Next session" />} />
               <Route path="/approvals"  element={<Approvals />} />
