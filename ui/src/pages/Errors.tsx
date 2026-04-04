@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { RefreshCw, Cpu, Cloud, Loader2 } from "lucide-react";
 import { apiFetch } from "../lib/apiFetch";
 
 const NODES = ["brain", "gateway", "endpoint", "sandbox"] as const;
@@ -35,6 +35,110 @@ interface QueryResponse {
   count?: number;
   entries?: LogEntry[];
   error?: string;
+}
+
+interface DiagnoseResponse {
+  status?: string;
+  provider?: string;
+  diagnosis?: string;
+}
+
+function entryToPayload(entry: LogEntry): Record<string, unknown> {
+  return {
+    ts_ns: entry.ts_ns,
+    ts: entry.ts,
+    level: entry.level,
+    service: entry.service,
+    node: entry.node,
+    trace_id: entry.trace_id,
+    message: entry.message,
+    raw: entry.raw,
+  };
+}
+
+/** Up to 5 other logs with same trace_id, or 2 newer + 2 older by list order (newest first). */
+function gatherContextEntries(
+  list: LogEntry[],
+  idx: number,
+  entry: LogEntry
+): Record<string, unknown>[] {
+  const tid = (entry.trace_id || "").trim();
+  const noTrace = !tid || tid.toLowerCase() === "no-trace";
+
+  if (!noTrace) {
+    const same = list
+      .filter((e, i) => i !== idx && (e.trace_id || "").trim() === tid)
+      .slice(0, 5);
+    return same.map(entryToPayload);
+  }
+
+  const newer = list.slice(Math.max(0, idx - 2), idx);
+  const older = list.slice(idx + 1, idx + 3);
+  return [...newer, ...older].map(entryToPayload);
+}
+
+function isSevereLevel(level: string): boolean {
+  const u = level.toUpperCase();
+  return u === "ERROR" || u === "CRITICAL";
+}
+
+function renderDiagnosisBody(text: string, isDark: boolean): ReactNode {
+  const codeBg = isDark ? "bg-zinc-800/90" : "bg-zinc-200";
+  const inlineCode = `${codeBg} rounded px-1 py-0.5 font-mono text-[11px]`;
+
+  const out: ReactNode[] = [];
+  let rest = text;
+  let key = 0;
+
+  while (rest.length > 0) {
+    const fence = rest.indexOf("```");
+    if (fence === -1) {
+      out.push(...renderInlineOnly(rest, `end-${key}`, inlineCode));
+      break;
+    }
+    if (fence > 0) {
+      out.push(...renderInlineOnly(rest.slice(0, fence), `pre-${key}`, inlineCode));
+    }
+    const close = rest.indexOf("```", fence + 3);
+    if (close === -1) {
+      out.push(...renderInlineOnly(rest.slice(fence), `broken-${key}`, inlineCode));
+      break;
+    }
+    let code = rest.slice(fence + 3, close);
+    const nl = code.indexOf("\n");
+    if (nl !== -1 && /^[a-z0-9_-]+$/i.test(code.slice(0, nl).trim())) {
+      code = code.slice(nl + 1);
+    }
+    out.push(
+      <pre
+        key={`fence-${key}`}
+        className={`my-2 overflow-x-auto rounded-lg p-3 font-mono text-xs ${codeBg}`}
+      >
+        {code.replace(/\n$/, "")}
+      </pre>
+    );
+    rest = rest.slice(close + 3);
+    key += 1;
+  }
+
+  return <div className="space-y-1 whitespace-pre-wrap text-sm leading-relaxed">{out}</div>;
+}
+
+function renderInlineOnly(
+  segment: string,
+  keyPrefix: string,
+  inlineCodeClass: string
+): ReactNode[] {
+  const parts = segment.split(/`([^`]+)`/);
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <code key={`${keyPrefix}-c-${i}`} className={inlineCodeClass}>
+        {part}
+      </code>
+    ) : (
+      <span key={`${keyPrefix}-t-${i}`}>{part}</span>
+    )
+  );
 }
 
 function buildLogQL(
@@ -130,6 +234,16 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [count, setCount] = useState(0);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [diagnoseLoading, setDiagnoseLoading] = useState<{
+    rowKey: string;
+    provider: "local" | "claude";
+  } | null>(null);
+  const [diagnosePanel, setDiagnosePanel] = useState<{
+    rowKey: string;
+    provider: "local" | "claude";
+    text: string;
+    isError: boolean;
+  } | null>(null);
 
   const showDate = since === "7d";
 
@@ -200,6 +314,50 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
       return next;
     });
   };
+
+  const runDiagnose = useCallback(
+    async (
+      rowKey: string,
+      idx: number,
+      entry: LogEntry,
+      provider: "local" | "claude"
+    ) => {
+      setDiagnosePanel(null);
+      setDiagnoseLoading({ rowKey, provider });
+      try {
+        const body = {
+          entry: entryToPayload(entry),
+          context_entries: gatherContextEntries(entries, idx, entry),
+          provider,
+        };
+        const res = await apiFetch("/v1/logs/diagnose", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        let data: DiagnoseResponse;
+        try {
+          data = (await res.json()) as DiagnoseResponse;
+        } catch {
+          data = { status: "error", diagnosis: "Invalid response" };
+        }
+        const isError = !res.ok || data.status === "error";
+        const text =
+          (typeof data.diagnosis === "string" ? data.diagnosis : null) ||
+          `HTTP ${res.status}`;
+        setDiagnoseLoading(null);
+        setDiagnosePanel({ rowKey, provider, text, isError });
+      } catch (e) {
+        setDiagnoseLoading(null);
+        setDiagnosePanel({
+          rowKey,
+          provider,
+          text: String(e),
+          isError: true,
+        });
+      }
+    },
+    [entries]
+  );
 
   const border = isDark ? "border-white/10" : "border-[#141414]/15";
   const panel = isDark ? "bg-[#0F0F0F]" : "bg-white";
@@ -362,7 +520,7 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
       {/* Table */}
       <div className={`overflow-hidden rounded-xl border ${border} ${panel}`}>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[1024px] border-collapse text-left text-sm">
             <thead>
               <tr className={`border-b ${border} ${isDark ? "bg-black/20" : "bg-zinc-100"}`}>
                 <th className={`px-3 py-2.5 text-[10px] font-mono uppercase tracking-wider ${muted}`}>
@@ -383,18 +541,21 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
                 <th className={`px-3 py-2.5 text-[10px] font-mono uppercase tracking-wider ${muted}`}>
                   Message
                 </th>
+                <th className={`px-3 py-2.5 text-[10px] font-mono uppercase tracking-wider ${muted}`}>
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
               {loading && entries.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className={`px-4 py-16 text-center ${muted}`}>
+                  <td colSpan={7} className={`px-4 py-16 text-center ${muted}`}>
                     Loading…
                   </td>
                 </tr>
               ) : entries.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className={`px-4 py-16 text-center ${muted}`}>
+                  <td colSpan={7} className={`px-4 py-16 text-center ${muted}`}>
                     No logs found
                   </td>
                 </tr>
@@ -408,55 +569,159 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
                     msg.length > MSG_PREVIEW && !expanded
                       ? `${msg.slice(0, MSG_PREVIEW)}…`
                       : msg;
+                  const severe = isSevereLevel(entry.level);
+                  const load = diagnoseLoading;
+                  const loadingHere =
+                    load?.rowKey === rowKey;
+                  const panelHere = diagnosePanel?.rowKey === rowKey;
 
                   return (
-                    <tr
-                      key={rowKey}
-                      className={`border-b ${border} ${idx % 2 === 1 ? rowEven : ""}`}
-                    >
-                      <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
-                        {formatTimestamp(d, showDate)}
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className={levelBadgeClass(entry.level, isDark)}>
-                          {entry.level}
-                        </span>
-                      </td>
-                      <td className={`px-3 py-2 font-mono text-xs ${text}`}>
-                        {entry.service}
-                      </td>
-                      <td className={`px-3 py-2 font-mono text-xs ${muted}`}>
-                        {entry.node}
-                      </td>
-                      <td className="px-3 py-2 font-mono text-xs">
-                        {entry.trace_id ? (
+                    <Fragment key={rowKey}>
+                      <tr
+                        className={`border-b ${border} ${idx % 2 === 1 ? rowEven : ""}`}
+                      >
+                        <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
+                          {formatTimestamp(d, showDate)}
+                        </td>
+                        <td className="px-3 py-2">
+                          <span className={levelBadgeClass(entry.level, isDark)}>
+                            {entry.level}
+                          </span>
+                        </td>
+                        <td className={`px-3 py-2 font-mono text-xs ${text}`}>
+                          {entry.service}
+                        </td>
+                        <td className={`px-3 py-2 font-mono text-xs ${muted}`}>
+                          {entry.node}
+                        </td>
+                        <td className="px-3 py-2 font-mono text-xs">
+                          {entry.trace_id ? (
+                            <button
+                              type="button"
+                              onClick={() => setTextSearch(entry.trace_id)}
+                              className={
+                                isDark
+                                  ? "text-sky-400 underline decoration-sky-500/50 hover:text-sky-300"
+                                  : "text-sky-700 underline hover:text-sky-900"
+                              }
+                            >
+                              {entry.trace_id}
+                            </button>
+                          ) : (
+                            <span className={muted}>—</span>
+                          )}
+                        </td>
+                        <td className={`max-w-md px-3 py-2 text-xs ${text}`}>
                           <button
                             type="button"
-                            onClick={() => setTextSearch(entry.trace_id)}
-                            className={
-                              isDark
-                                ? "text-sky-400 underline decoration-sky-500/50 hover:text-sky-300"
-                                : "text-sky-700 underline hover:text-sky-900"
+                            onClick={() =>
+                              setExpandedKey(expanded ? null : rowKey)
                             }
+                            className="w-full text-left"
                           >
-                            {entry.trace_id}
+                            <span className="break-words">{short}</span>
                           </button>
-                        ) : (
-                          <span className={muted}>—</span>
-                        )}
-                      </td>
-                      <td className={`max-w-xl px-3 py-2 text-xs ${text}`}>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setExpandedKey(expanded ? null : rowKey)
-                          }
-                          className="w-full text-left"
+                        </td>
+                        <td className="whitespace-nowrap px-2 py-2 align-top">
+                          {severe ? (
+                            loadingHere ? (
+                              <div className="flex items-center gap-1 py-0.5">
+                                <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
+                                <span className={`text-[10px] ${muted}`}>
+                                  {load?.provider === "local"
+                                    ? "Local…"
+                                    : "Claude…"}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="flex flex-wrap items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void runDiagnose(rowKey, idx, entry, "local")
+                                  }
+                                  className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-medium ${border} ${isDark ? "hover:bg-white/5" : "hover:bg-zinc-100"}`}
+                                  title="Diagnose with Ollama (local)"
+                                >
+                                  <Cpu className="h-3 w-3 shrink-0 opacity-70" />
+                                  Local
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void runDiagnose(rowKey, idx, entry, "claude")
+                                  }
+                                  className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-medium ${border} ${isDark ? "hover:bg-white/5" : "hover:bg-zinc-100"}`}
+                                  title="Diagnose with Claude (gateway)"
+                                >
+                                  <Cloud className="h-3 w-3 shrink-0 opacity-70" />
+                                  Claude
+                                </button>
+                              </div>
+                            )
+                          ) : (
+                            <span className={muted}>—</span>
+                          )}
+                        </td>
+                      </tr>
+                      {panelHere && diagnosePanel && (
+                        <tr
+                          className={`border-b ${border} ${idx % 2 === 1 ? rowEven : ""}`}
                         >
-                          <span className="break-words">{short}</span>
-                        </button>
-                      </td>
-                    </tr>
+                          <td colSpan={7} className="px-0 pb-4 pt-0">
+                            <div
+                              className={`mx-3 overflow-hidden rounded-lg border text-left shadow-lg transition-all ${border} ${
+                                diagnosePanel.isError
+                                  ? isDark
+                                    ? "border-red-500/50 bg-red-950/40"
+                                    : "border-red-300 bg-red-50"
+                                  : isDark
+                                    ? "bg-[#0A0A0A]"
+                                    : "bg-zinc-50"
+                              }`}
+                            >
+                              <div
+                                className={`flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2 ${border}`}
+                              >
+                                <span
+                                  className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                                    diagnosePanel.provider === "local"
+                                      ? isDark
+                                        ? "bg-blue-500/25 text-blue-300"
+                                        : "bg-blue-100 text-blue-800"
+                                      : isDark
+                                        ? "bg-violet-500/25 text-violet-300"
+                                        : "bg-violet-100 text-violet-800"
+                                  }`}
+                                >
+                                  {diagnosePanel.provider === "local"
+                                    ? "Local LLM"
+                                    : "Claude"}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setDiagnosePanel(null)}
+                                  className={`rounded px-3 py-1 text-xs font-medium ${isDark ? "hover:bg-white/10" : "hover:bg-zinc-200"}`}
+                                >
+                                  Close
+                                </button>
+                              </div>
+                              <div
+                                className={`max-h-[min(70vh,28rem)] overflow-y-auto px-4 py-3 ${diagnosePanel.isError ? (isDark ? "text-red-200" : "text-red-900") : text}`}
+                              >
+                                {diagnosePanel.isError ? (
+                                  <p className="whitespace-pre-wrap text-sm">
+                                    {diagnosePanel.text}
+                                  </p>
+                                ) : (
+                                  renderDiagnosisBody(diagnosePanel.text, isDark)
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })
               )}
