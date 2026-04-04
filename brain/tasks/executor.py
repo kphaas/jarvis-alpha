@@ -137,6 +137,11 @@ async def dispatch_step(_conn: asyncpg.Connection, step: dict) -> dict:
     step_type = step.get("step_type") or "llm"
     content_tier = step.get("content_tier") or "unrestricted"
     step_input = step.get("input") or {}
+    if isinstance(step_input, str):
+        try:
+            step_input = json.loads(step_input)
+        except (json.JSONDecodeError, TypeError):
+            step_input = {}
     if not isinstance(step_input, dict):
         step_input = {}
 
