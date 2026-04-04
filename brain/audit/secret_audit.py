@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections import deque
+from datetime import datetime
 
 from jarvis_common.logging_config import get_logger
 
@@ -73,7 +74,8 @@ async def _flush() -> None:
 
         pool = get_pool()
         async with pool.acquire() as conn:
-            await conn.executemany(INSERT_SQL, batch)
+            parsed = [(k, s, datetime.fromisoformat(ts), n) for k, s, ts, n in batch]
+            await conn.executemany(INSERT_SQL, parsed)
         logger.debug("secret_audit: flushed %d events to postgres", len(batch))
     except Exception as e:
         logger.warning(
