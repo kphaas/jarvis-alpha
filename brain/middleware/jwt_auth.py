@@ -18,6 +18,13 @@ SKIP_PATHS = {
     "/v1/metrics/power/current",
     "/v1/metrics/power/history",
     "/v1/metrics/power/rollup",
+    "/admin",
+    "/wp-login.php",
+    "/.env",
+    "/.git/config",
+    "/phpmyadmin",
+    "/phpmyadmin/",
+    "/api/v1/debug",
 }
 
 

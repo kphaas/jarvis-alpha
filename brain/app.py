@@ -30,6 +30,8 @@ from brain.routes.dev import dev_router
 from brain.routes.metrics import router as metrics_router
 from brain.routes.rotation import rotation_router
 from brain.routes.security import security_router
+from brain.routes.honeypot import honeypot_router
+from brain.routes.mcp_registry import mcp_router
 from brain.middleware.jwt_auth import JWTAuthMiddleware
 
 logger = get_logger("alpha_brain")
@@ -76,6 +78,7 @@ app.add_middleware(TraceIdMiddleware)
 
 app.include_router(pin_auth_router)
 app.include_router(health_router)
+app.include_router(honeypot_router)
 app.include_router(logs_router)
 app.include_router(diagnose_router)
 app.include_router(patterns_router)
@@ -92,4 +95,5 @@ app.include_router(costs_router)
 app.include_router(dev_router)
 app.include_router(metrics_router)
 app.include_router(security_router)
+app.include_router(mcp_router)
 app.include_router(rotation_router)

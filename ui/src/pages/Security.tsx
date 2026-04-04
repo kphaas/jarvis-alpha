@@ -13,11 +13,13 @@ import {
   Radio,
   Server,
   RotateCw,
+  Bug,
+  Plug,
 } from "lucide-react";
 import { apiJson } from "../lib/apiFetch";
 import { useAppStore } from "../store";
 
-const TABS = ["Overview", "Identity", "Network", "Certs", "Keys", "Events"] as const;
+const TABS = ["Overview", "Identity", "Network", "Certs", "Keys", "Honeypot", "MCP", "Events"] as const;
 type TabId = (typeof TABS)[number];
 
 const REFRESH_MS = 30_000;
@@ -125,14 +127,58 @@ interface SecretsAuditResponse {
   error?: string;
 }
 
+interface HoneypotEvent {
+  ts: string;
+  path: string;
+  trap_type: string;
+  client_ip: string;
+  user_agent: string;
+  method: string;
+}
+
+interface HoneypotData {
+  total: number;
+  events: HoneypotEvent[];
+  traps_active: number;
+  traps: string[];
+}
+
+interface McpServer {
+  name: string;
+  id: string;
+  endpoint: string;
+  status: string;
+  permissions: string[];
+  backlog_ref: string;
+  description: string;
+}
+
+interface McpRegistry {
+  total: number;
+  active: number;
+  planned: number;
+  servers: McpServer[];
+}
+
 const TAB_ICONS = {
   Overview: Shield,
   Identity: Key,
   Network: Globe,
   Certs: Lock,
   Keys: RotateCw,
+  Honeypot: Bug,
+  MCP: Plug,
   Events: AlertTriangle,
 } as const;
+
+const HONEYPOT_TRAP_CARDS: { path: string; trapType: string; description: string }[] = [
+  { path: "/admin", trapType: "admin_panel", description: "Fake admin login panel" },
+  { path: "/wp-login.php", trapType: "wordpress", description: "WordPress login decoy" },
+  { path: "/.env", trapType: "env_file", description: "Fake environment file with dummy credentials" },
+  { path: "/.git/config", trapType: "git_config", description: "Fake git repository config" },
+  { path: "/phpmyadmin", trapType: "phpmyadmin", description: "phpMyAdmin login decoy" },
+  { path: "/api/v1/debug", trapType: "debug_api", description: "Fake debug endpoint with dummy tokens" },
+];
 
 const R_SCORE = 56;
 const C_SCORE = 2 * Math.PI * R_SCORE;
@@ -182,13 +228,22 @@ function portPoints(perimeter: Perimeter | null): number {
   return allMatch ? 10 : 5;
 }
 
-/** Security posture score — raw points 0..85 (15 reserved for future checks) */
+/** Honeypot posture slice: 0 hits = 5 pts, 1–5 hits = 3 pts, 6+ = 0. Unavailable = 0. */
+function honeypotPoints(totalHits: number | null): number {
+  if (totalHits === null) return 0;
+  if (totalHits === 0) return 5;
+  if (totalHits >= 1 && totalHits <= 5) return 3;
+  return 0;
+}
+
+/** Security posture score — raw points up to 90 (10 reserved for future checks) */
 function computePostureScore(
   jwt: JwtCheck | null,
   rls: RlsStatus | null,
   child: ChildProfileStatus | null,
   perimeter: Perimeter | null,
-  certs: CertRow[] | null
+  certs: CertRow[] | null,
+  honeypotTotalHits: number | null
 ): { earned: number; displayScore: number; reserved: number } {
   const earned =
     certPoints(certs) +
@@ -197,9 +252,10 @@ function computePostureScore(
     corsPoints(perimeter) +
     childPoints(child) +
     tailscalePoints(perimeter) +
-    portPoints(perimeter);
-  const reserved = 15;
-  const maxCurrent = 85;
+    portPoints(perimeter) +
+    honeypotPoints(honeypotTotalHits);
+  const reserved = 10;
+  const maxCurrent = 90;
   const displayScore = Math.round(Math.min(100, (earned / maxCurrent) * 100));
   return { earned, displayScore, reserved };
 }
@@ -337,6 +393,13 @@ export default function Security() {
   const [rotationResult, setRotationResult] = useState<RotationResult | null>(null);
   const [formatError, setFormatError] = useState<string | null>(null);
 
+  const [honeypotData, setHoneypotData] = useState<HoneypotData | null>(null);
+  const [mcpRegistry, setMcpRegistry] = useState<McpRegistry | null>(null);
+  const [loadHoneypot, setLoadHoneypot] = useState(true);
+  const [loadMcp, setLoadMcp] = useState(true);
+  const [errHoneypot, setErrHoneypot] = useState(false);
+  const [errMcp, setErrMcp] = useState(false);
+
   const mounted = useRef(true);
   const fetchRunning = useRef(false);
 
@@ -353,10 +416,12 @@ export default function Security() {
       setLoadLogs(true);
       setLoadRotatableKeys(true);
       setLoadSecretsAudit(true);
+      setLoadHoneypot(true);
+      setLoadMcp(true);
     }
 
     try {
-      const [j, r, c, p, cert, logs, rk, sa] = await Promise.all([
+      const [j, r, c, p, cert, logs, rk, sa, hp, mcp] = await Promise.all([
         apiJson<JwtCheck>("/v1/security/jwt-check")
           .then((data) => ({ ok: true as const, data }))
           .catch(() => ({ ok: false as const })),
@@ -381,6 +446,12 @@ export default function Security() {
           .then((data) => ({ ok: true as const, data }))
           .catch(() => ({ ok: false as const, data: { keys: [] as RotatableKey[] } })),
         apiJson<SecretsAuditResponse>("/v1/security/secrets-audit?limit=20")
+          .then((data) => ({ ok: true as const, data }))
+          .catch(() => ({ ok: false as const })),
+        apiJson<HoneypotData>("/v1/honeypot/events?limit=50")
+          .then((data) => ({ ok: true as const, data }))
+          .catch(() => ({ ok: false as const })),
+        apiJson<McpRegistry>("/v1/security/mcp/registry")
           .then((data) => ({ ok: true as const, data }))
           .catch(() => ({ ok: false as const })),
       ]);
@@ -450,6 +521,21 @@ export default function Security() {
         setSecretsAuditEvents([]);
         setErrSecretsAudit(true);
       }
+
+      if (hp.ok) {
+        setHoneypotData(hp.data);
+        setErrHoneypot(false);
+      } else {
+        setHoneypotData(null);
+        setErrHoneypot(true);
+      }
+      if (mcp.ok) {
+        setMcpRegistry(mcp.data);
+        setErrMcp(false);
+      } else {
+        setMcpRegistry(null);
+        setErrMcp(true);
+      }
     } finally {
       fetchRunning.current = false;
       if (mounted.current && showLoading) {
@@ -461,6 +547,8 @@ export default function Security() {
         setLoadLogs(false);
         setLoadRotatableKeys(false);
         setLoadSecretsAudit(false);
+        setLoadHoneypot(false);
+        setLoadMcp(false);
       }
     }
   }, []);
@@ -514,15 +602,18 @@ export default function Security() {
     };
   }, [fetchAll]);
 
+  const honeypotTotalHits =
+    honeypotData !== null && !errHoneypot ? honeypotData.total : null;
   const { earned, displayScore, reserved } = computePostureScore(
     jwt,
     rls,
     child,
     perimeter,
-    certs
+    certs,
+    honeypotTotalHits
   );
   const strokeColor = scoreColor(displayScore, isDark);
-  /** posture arc: earned points are 0..85 of 100 — leaves 15% track for reserved future checks */
+  /** posture arc: earned points up to 90 of 100 — leaves 10% track for reserved future checks */
   const dashEarned = (earned / 100) * C_SCORE;
 
   const jwtPassing = jwt?.passing ?? 0;
@@ -585,6 +676,10 @@ export default function Security() {
             >
               {tab === "Keys" ? (
                 <RotateCw className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
+              ) : tab === "Honeypot" ? (
+                <Bug className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
+              ) : tab === "MCP" ? (
+                <Plug className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
               ) : (
                 <Icon className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
               )}
@@ -604,7 +699,13 @@ export default function Security() {
             <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest self-start">
               Security posture score
             </p>
-            {loadJwt && loadPerimeter && loadCerts && loadRls && loadChild && !jwt ? (
+            {loadJwt &&
+            loadPerimeter &&
+            loadCerts &&
+            loadRls &&
+            loadChild &&
+            loadHoneypot &&
+            !jwt ? (
               <SectionSkeleton border={border} subtle={subtle} />
             ) : (
               <div className="relative w-[200px] h-[200px] flex items-center justify-center">
@@ -648,12 +749,12 @@ export default function Security() {
                 : "Collecting check data…"}
             </p>
             <p className={`text-[10px] font-mono ${muted} text-center max-w-md`}>
-              <span className="opacity-70">{reserved} pts reserved</span> (secrets audit, honeypot, key rotation) —{" "}
+              <span className="opacity-70">{reserved} pts reserved</span> (secrets audit, key rotation, future checks) —{" "}
               <span className="text-zinc-500">locked</span>
             </p>
           </section>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <motion.button
               type="button"
               initial={{ opacity: 0, y: 4 }}
@@ -765,6 +866,34 @@ export default function Security() {
                   <p className="text-xs font-mono opacity-50 mt-2">
                     CORS {perimeter.cors.locked ? "locked" : "open"}
                   </p>
+                </>
+              )}
+            </motion.button>
+
+            <motion.button
+              type="button"
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.25 }}
+              onClick={() => setActiveTab("Honeypot")}
+              className={`rounded-2xl border ${border} ${subtle} p-5 text-left hover:opacity-95 transition-opacity`}
+            >
+              <Bug className="w-4 h-4 opacity-50 mb-3" />
+              {loadHoneypot && !honeypotData ? (
+                <Loader2 className="w-6 h-6 animate-spin opacity-30 my-2" />
+              ) : errHoneypot || honeypotData === null ? (
+                <p className="text-sm opacity-40 font-mono">Unavailable</p>
+              ) : (
+                <>
+                  <p
+                    className={`text-3xl font-bold font-mono tabular-nums ${
+                      honeypotData.total === 0 ? "text-emerald-400" : "text-rose-400"
+                    }`}
+                  >
+                    {honeypotData.total}
+                  </p>
+                  <p className={`text-xs font-mono ${muted} mt-0.5`}>hits detected</p>
+                  <p className="text-[10px] font-mono uppercase opacity-40 mt-1">Honeypot</p>
                 </>
               )}
             </motion.button>
@@ -1462,6 +1591,210 @@ export default function Security() {
               </div>
             </div>
           )}
+        </motion.div>
+      )}
+
+      {activeTab === "Honeypot" && (
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-8"
+        >
+          <section>
+            <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest mb-4">
+              Active honeypot traps
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {HONEYPOT_TRAP_CARDS.map((t) => (
+                <div
+                  key={t.path}
+                  className={`rounded-2xl border ${border} ${subtle} p-5 space-y-2`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-mono font-bold text-sm break-all">{t.path}</p>
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/15 text-emerald-400 shrink-0">
+                      ARMED
+                    </span>
+                  </div>
+                  <p className="text-[10px] font-mono uppercase opacity-50">{t.trapType}</p>
+                  <p className={`text-xs ${muted} leading-relaxed`}>{t.description}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section>
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest">
+                Recent hits
+              </p>
+              {!loadHoneypot && honeypotData && (
+                <span className="text-xs font-mono opacity-60">Total: {honeypotData.total}</span>
+              )}
+            </div>
+            {loadHoneypot && !honeypotData ? (
+              <SectionSkeleton border={border} subtle={subtle} />
+            ) : errHoneypot || !honeypotData ? (
+              <SectionUnavailable border={border} subtle={subtle} />
+            ) : honeypotData.events.length === 0 ? (
+              <div
+                className={`rounded-2xl border ${border} ${subtle} p-10 flex flex-col items-center gap-3 text-center`}
+              >
+                <Shield className="w-10 h-10 text-emerald-400/60" />
+                <p className={`text-sm font-mono ${muted}`}>No suspicious activity detected</p>
+              </div>
+            ) : (
+              <div className={`rounded-2xl border ${border} ${subtle} overflow-hidden`}>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className={isDark ? "bg-white/5" : "bg-black/5"}>
+                      <th className="text-left px-4 py-2 font-mono uppercase opacity-40">
+                        Timestamp
+                      </th>
+                      <th className="text-left px-2 py-2 font-mono uppercase opacity-40">Path</th>
+                      <th className="text-center px-2 py-2 font-mono uppercase opacity-40">
+                        Method
+                      </th>
+                      <th className="text-left px-2 py-2 font-mono uppercase opacity-40">
+                        Client IP
+                      </th>
+                      <th className="text-left px-2 py-2 font-mono uppercase opacity-40">
+                        User agent
+                      </th>
+                      <th className="text-left px-4 py-2 font-mono uppercase opacity-40">Trap</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {honeypotData.events.map((ev, i) => {
+                      const m = (ev.method || "GET").toUpperCase();
+                      const methodBadge =
+                        m === "POST"
+                          ? isDark
+                            ? "border-amber-500/30 bg-amber-500/15 text-amber-400"
+                            : "border-amber-600/30 bg-amber-500/10 text-amber-700"
+                          : isDark
+                            ? "border-blue-500/30 bg-blue-500/15 text-blue-400"
+                            : "border-blue-600/30 bg-blue-500/10 text-blue-700";
+                      const ua =
+                        ev.user_agent && ev.user_agent.length > 50
+                          ? `${ev.user_agent.slice(0, 50)}…`
+                          : ev.user_agent || "—";
+                      return (
+                        <tr key={`${ev.ts}-${ev.path}-${i}`}>
+                          <td className="px-4 py-2 font-mono whitespace-nowrap opacity-80">
+                            {relativeAccessedLabel(ev.ts)}
+                          </td>
+                          <td className="px-2 py-2 font-mono break-all max-w-[120px]">{ev.path}</td>
+                          <td className="px-2 py-2 text-center">
+                            <span
+                              className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${methodBadge}`}
+                            >
+                              {m}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2 font-mono opacity-80">{ev.client_ip}</td>
+                          <td className="px-2 py-2 font-mono opacity-70 max-w-[200px] break-all">
+                            {ua}
+                          </td>
+                          <td className="px-4 py-2">
+                            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border border-zinc-500/30 bg-zinc-500/15 text-zinc-400">
+                              {ev.trap_type}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </motion.div>
+      )}
+
+      {activeTab === "MCP" && (
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-8"
+        >
+          <section>
+            <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest mb-2">
+              MCP server registry
+            </p>
+            {loadMcp && !mcpRegistry ? (
+              <SectionSkeleton border={border} subtle={subtle} />
+            ) : errMcp || !mcpRegistry ? (
+              <SectionUnavailable border={border} subtle={subtle} />
+            ) : (
+              <p className={`text-sm font-mono ${fg}`}>
+                <span className="text-emerald-400 font-bold">{mcpRegistry.active}</span> active ·{" "}
+                <span className="opacity-70">{mcpRegistry.planned}</span> planned ·{" "}
+                <span className="opacity-50">{mcpRegistry.total}</span> total
+              </p>
+            )}
+          </section>
+
+          <section>
+            {!loadMcp && mcpRegistry && (
+              <div className="space-y-4">
+                {mcpRegistry.servers.map((s) => {
+                  let statusBadge =
+                    "border-zinc-500/30 bg-zinc-500/15 text-zinc-400";
+                  if (s.status === "active") {
+                    statusBadge = "border-emerald-500/30 bg-emerald-500/15 text-emerald-400";
+                  } else if (s.status === "error") {
+                    statusBadge = "border-rose-500/30 bg-rose-500/15 text-rose-400";
+                  }
+                  const endpointBadge = isDark
+                    ? "border-blue-500/30 bg-blue-500/15 text-blue-400"
+                    : "border-blue-600/30 bg-blue-500/10 text-blue-700";
+                  return (
+                    <div
+                      key={s.id}
+                      className={`rounded-2xl border ${border} ${subtle} p-5 space-y-3`}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="font-bold">{s.name}</p>
+                          <p className={`text-xs ${muted} mt-1 leading-relaxed`}>{s.description}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2 shrink-0">
+                          <span
+                            className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${statusBadge}`}
+                          >
+                            {s.status}
+                          </span>
+                          <span
+                            className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${endpointBadge}`}
+                          >
+                            {s.endpoint}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-xs font-mono text-blue-400/90 hover:underline cursor-default">
+                        {s.backlog_ref}
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {s.permissions.map((perm) => (
+                          <span
+                            key={perm}
+                            className={`text-[9px] font-mono px-2 py-0.5 rounded border ${
+                              isDark
+                                ? "border-white/10 bg-white/5 text-zinc-400"
+                                : "border-[#141414]/15 bg-[#141414]/5 text-zinc-600"
+                            }`}
+                          >
+                            {perm}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
         </motion.div>
       )}
 
