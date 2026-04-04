@@ -154,7 +154,7 @@ function buildLogQL(
     ? '{node=~".+"}'
     : `{node=~"${Array.from(selectedNodes).join("|")}"}`;
 
-  let q = `${nodePart} | json`;
+  let q = `${nodePart} | json | line_format "{{.log}}" | json`;
 
   const allLevels = LEVELS.length === selectedLevels.size;
   if (!allLevels && selectedLevels.size > 0) {
