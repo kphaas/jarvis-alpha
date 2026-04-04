@@ -93,7 +93,7 @@ ORDER BY t.tablename;
 def _tailscale_status_sync() -> tuple[bool, int]:
     try:
         r = subprocess.run(
-            ["tailscale", "status", "--json"],
+            ["/opt/homebrew/bin/tailscale", "status", "--json"],
             capture_output=True,
             text=True,
             timeout=20,
@@ -312,14 +312,14 @@ async def perimeter():
         ),
         (
             "brain",
-            f"https://{brain_host}:3100/health",
+            "http://localhost:3100/ready",
             3100,
             "Loki",
             True,
         ),
         (
             "brain",
-            "https://localhost:11434/health",
+            "http://localhost:11434/api/tags",
             11434,
             "Ollama",
             True,

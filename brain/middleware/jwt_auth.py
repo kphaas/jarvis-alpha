@@ -15,6 +15,8 @@ SKIP_PATHS = {
     "/redoc",
     "/v1/auth/pin",
     "/v1/metrics/power",
+    "/v1/metrics/power/current",
+    "/v1/metrics/power/history",
     "/v1/metrics/power/rollup",
 }
 
