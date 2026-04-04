@@ -1,8 +1,9 @@
 import httpx
-import logging
 from abc import ABC, abstractmethod
 
-logger = logging.getLogger("jarvis.gateway.adapter")
+from gateway.config.logging_config import get_logger
+
+logger = get_logger("alpha_gateway")
 
 
 class BaseCloudAdapter(ABC):

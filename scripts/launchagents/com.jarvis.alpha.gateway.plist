@@ -23,6 +23,8 @@
 <dict>
 <key>GIT_TERMINAL_PROMPT</key>
 <string>0</string>
+<key>JARVIS_NODE</key>
+<string>gateway</string>
 <key>SECRETS_FILE</key>
 <string>/Users/infranet/jarvis/.secrets</string>
 </dict>

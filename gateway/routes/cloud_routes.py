@@ -1,9 +1,9 @@
-import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from gateway.adapters import ClaudeAdapter, PerplexityAdapter, GeminiAdapter
+from gateway.config.logging_config import get_logger
 
-logger = logging.getLogger("jarvis.gateway.cloud_routes")
+logger = get_logger("alpha_gateway")
 router = APIRouter(prefix="/v1/cloud", tags=["cloud"])
 
 _adapters = {

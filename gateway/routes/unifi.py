@@ -3,7 +3,6 @@ Alpha Gateway UniFi proxy — talks to UDM Pro (local TLS, curl -sk).
 """
 import asyncio
 import json
-import logging
 import os
 import subprocess
 import tempfile
@@ -11,7 +10,9 @@ from typing import Any
 
 from fastapi import APIRouter
 
-logger = logging.getLogger("jarvis.gateway.unifi")
+from gateway.config.logging_config import get_logger
+
+logger = get_logger("alpha_gateway")
 
 router = APIRouter(tags=["unifi"])
 

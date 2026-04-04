@@ -1,13 +1,10 @@
-import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from gateway.config.logging_config import get_logger
 from gateway.routes.cloud_routes import router as cloud_router
 from gateway.routes.unifi import router as unifi_router
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
-)
-logger = logging.getLogger("jarvis.alpha.gateway")
+logger = get_logger("alpha_gateway")
 
 
 @asynccontextmanager

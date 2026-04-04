@@ -1,9 +1,9 @@
 import httpx
-import logging
 from brain.config.secrets import get_secret
+from gateway.config.logging_config import get_logger
 from .base_adapter import BaseCloudAdapter
 
-logger = logging.getLogger("jarvis.gateway.claude")
+logger = get_logger("alpha_gateway")
 
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
 
