@@ -61,7 +61,7 @@ def _run_psql_rls_sync() -> str:
     query = """
 SELECT t.tablename,
        CASE WHEN t.rowsecurity THEN 'enabled' ELSE 'disabled' END as rls_status,
-       COALESCE(p.polname, 'none') as policy_name
+       COALESCE(p.policyname, 'none') as policy_name
 FROM pg_tables t
 LEFT JOIN pg_policies p ON t.tablename = p.tablename
 WHERE t.schemaname = 'public'
