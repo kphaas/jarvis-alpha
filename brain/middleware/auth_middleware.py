@@ -3,7 +3,7 @@ import json
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
-from brain.config.logging_config import get_logger
+from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
 

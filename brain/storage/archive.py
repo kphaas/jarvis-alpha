@@ -5,7 +5,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from brain.config.logging_config import get_logger
+from jarvis_common.logging_config import get_logger
 from brain.core.secrets import get_secret  # noqa: F401
 from brain.storage.mount import ensure_mounted
 

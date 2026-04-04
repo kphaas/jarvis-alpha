@@ -1,6 +1,6 @@
 import httpx
-from brain.config.secrets import get_secret
-from gateway.config.logging_config import get_logger
+from jarvis_common.secrets import get_secret
+from jarvis_common.logging_config import get_logger
 from .base_adapter import BaseCloudAdapter
 
 logger = get_logger("alpha_gateway")

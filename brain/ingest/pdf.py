@@ -4,7 +4,7 @@ from typing import Optional
 import httpx
 import pdfplumber
 
-from brain.config.logging_config import get_logger
+from jarvis_common.logging_config import get_logger
 from brain.core.config import OLLAMA_URL
 from brain.db.session import get_db
 

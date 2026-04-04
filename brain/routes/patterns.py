@@ -11,7 +11,7 @@ from collections import defaultdict
 
 from fastapi import APIRouter, Query
 
-from brain.config.logging_config import get_logger
+from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
 patterns_router = APIRouter()

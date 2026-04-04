@@ -16,8 +16,8 @@ from uuid import UUID
 
 import asyncpg
 
-from brain.config.logging_config import get_logger, new_trace_id
-from brain.config.secrets import get_secret
+from jarvis_common.logging_config import get_logger, new_trace_id
+from jarvis_common.secrets import get_secret
 from brain.tasks.dispatch import (
     call_code_agent,
     call_llm_agent,

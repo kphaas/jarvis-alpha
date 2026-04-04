@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from brain.db.pool import get_pool
-from brain.config.logging_config import get_logger
+from jarvis_common.logging_config import get_logger
 from brain.config.node_addresses import (
     GATEWAY_URL,
     ENDPOINT_URL,

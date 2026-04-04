@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import asyncpg
 
-from brain.config.logging_config import get_logger, new_trace_id
+from jarvis_common.logging_config import get_logger, new_trace_id
 from brain.memory.memory import MemoryService
 
 logger = get_logger("alpha_buddy")

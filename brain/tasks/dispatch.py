@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
-from brain.config.logging_config import get_logger
+from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_dispatch")
 

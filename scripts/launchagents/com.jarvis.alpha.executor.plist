@@ -24,7 +24,7 @@
         <key>SECRETS_FILE</key>
         <string>/Users/jarvisbrain/jarvis/.secrets</string>
         <key>PYTHONPATH</key>
-        <string>/Users/jarvisbrain/jarvis-alpha</string>
+        <string>/Users/jarvisbrain/jarvis-alpha:/Users/jarvisbrain/jarvis-alpha/common</string>
     </dict>
 </dict>
 </plist>

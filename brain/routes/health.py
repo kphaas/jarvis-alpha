@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter
 
-from brain.config.logging_config import get_logger
+from jarvis_common.logging_config import get_logger
 
 log = get_logger("alpha_brain")
 router = APIRouter()

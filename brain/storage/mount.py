@@ -3,7 +3,7 @@ import os
 import subprocess
 from datetime import datetime, timezone
 
-from brain.config.logging_config import get_logger
+from jarvis_common.logging_config import get_logger
 from brain.core.secrets import get_secret
 
 MOUNT_PATH = "/Volumes/Documents"

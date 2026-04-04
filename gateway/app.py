@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from gateway.config.logging_config import get_logger
+from jarvis_common.logging_config import get_logger
 from gateway.routes.cloud_routes import router as cloud_router
 from gateway.routes.unifi import router as unifi_router
 

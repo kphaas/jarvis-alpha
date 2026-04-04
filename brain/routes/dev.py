@@ -14,7 +14,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from brain.config.secrets import get_secret
+from jarvis_common.secrets import get_secret
 from brain.db.pool import get_pool
 from brain.middleware.jwt_auth import require_auth
 
