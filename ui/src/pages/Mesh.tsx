@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
-import { Loader2, Cpu, Globe, Monitor, FlaskConical, Server } from "lucide-react";
-import { apiJson } from "../lib/apiFetch";
+import { Loader2, Cpu, Globe, Monitor, FlaskConical, Server, Router } from "lucide-react";
+import { apiFetch, apiJson } from "../lib/apiFetch";
 
 const REFRESH_MS = 30_000;
 
@@ -129,6 +129,124 @@ function NodeHealthStrip({ nodes, theme }: { nodes: MeshNode[]; theme: "dark" | 
   );
 }
 
+interface LogEntry {
+  ts: string;
+  level: string;
+  service: string;
+  node: string;
+  message: string;
+}
+
+function parseStatusCodeFromMessage(message: string): number {
+  const afterHttp = message.match(/HTTP\/1\.1\s+(\d{3})\b/);
+  if (afterHttp) return parseInt(afterHttp[1], 10);
+  const triples = message.match(/\d{3}/g);
+  if (triples?.length) return parseInt(triples[triples.length - 1], 10);
+  return 200;
+}
+
+function parseMethodPath(message: string): string {
+  const quoted = message.match(
+    /"(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+([^"\s]+)/i
+  );
+  if (quoted) return `${quoted[1]} ${quoted[2]}`;
+  const loose = message.match(/\b(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\S+)/i);
+  if (loose) return `${loose[1]} ${loose[2]}`;
+  return message.trim() || "—";
+}
+
+function relativeSecsAgo(iso: string): string {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "—";
+  const secs = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const h = Math.floor(mins / 60);
+  return `${h}h ago`;
+}
+
+function statusDotColor(code: number): string {
+  if (code >= 500) return STATUS_RED;
+  if (code >= 400) return STATUS_AMBER;
+  return STATUS_GREEN;
+}
+
+function RequestTicker({ theme }: { theme: "dark" | "light" }) {
+  const isDark = theme === "dark";
+  const border = isDark ? "border-white/10" : "border-[#141414]/10";
+  const subtle = isDark ? "bg-white/5" : "bg-[#141414]/5";
+  const fg = isDark ? "text-white/85" : "text-[#141414]/85";
+  const muted = isDark ? "text-white/40" : "text-[#141414]/45";
+  const [entries, setEntries] = useState<LogEntry[]>([]);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await apiFetch(
+        "/v1/logs/query?limit=10&level=INFO&service=alpha_brain_access"
+      );
+      const data = (await res.json()) as {
+        status: string;
+        entries?: LogEntry[];
+      };
+      if (!res.ok || data.status === "error" || !data.entries?.length) {
+        setEntries([]);
+        return;
+      }
+      setEntries(data.entries);
+    } catch {
+      setEntries([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const id = setInterval(() => void load(), 15_000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  return (
+    <div className={`rounded-xl border ${border} ${subtle} px-3 py-2 overflow-x-auto`}>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-emerald-400 animate-pulse" />
+        <p className="text-[9px] font-mono uppercase opacity-40">LIVE ACTIVITY</p>
+      </div>
+      {entries.length === 0 ? (
+        <p className={`text-[9px] font-mono ${muted}`}>No recent activity</p>
+      ) : (
+        <div className="flex items-stretch gap-2 min-w-min">
+          {entries.map((e, i) => {
+            const code = parseStatusCodeFromMessage(e.message);
+            const label = parseMethodPath(e.message);
+            const short =
+              label.length > 30 ? `${label.slice(0, 27)}…` : label;
+            return (
+              <div
+                key={`${e.ts}-${i}`}
+                className={`flex items-center gap-1.5 shrink-0 rounded-lg border px-2 py-1 ${
+                  isDark ? "border-white/10 bg-white/[0.03]" : "border-[#141414]/10 bg-[#141414]/[0.03]"
+                }`}
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-full shrink-0"
+                  style={{ backgroundColor: statusDotColor(code) }}
+                />
+                <span className={`text-[9px] font-mono truncate max-w-[11rem] ${fg}`}>
+                  {short}
+                </span>
+                <span className={`text-[9px] font-mono shrink-0 opacity-50 ${fg}`}>
+                  {relativeSecsAgo(e.ts)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CertBadgeRow({ nodes, theme }: { nodes: MeshNode[]; theme: "dark" | "light" }) {
   const isDark = theme === "dark";
   const border = isDark ? "border-white/10" : "border-[#141414]/10";
@@ -224,19 +342,46 @@ function TopologyDiagram({
     }
   }
 
+  const internetStroke = isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)";
+  const internetDotFill = isDark ? "rgba(255,255,255,0.45)" : "rgba(0,0,0,0.35)";
+
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: H }}>
-      {BRAIN_LINKS.map((id) => {
+      {BRAIN_LINKS.map((id, idx) => {
         const node = byName[id];
         const pos = TOPO_POSITIONS[id];
         if (!node || !pos) return null;
+        const strokeCol = statusColor(node.status);
+        const d = `M ${center.x},${center.y} L ${pos.x},${pos.y}`;
+        const pathId = `path-brain-${id}`;
+        const durSec = [3, 3.5, 4, 4.5][idx] ?? 3;
         return (
-          <line
-            key={`link-${id}`}
-            x1={center.x} y1={center.y} x2={pos.x} y2={pos.y}
-            stroke={statusColor(node.status)}
-            strokeWidth={1.2} opacity={0.45}
-          />
+          <g key={`link-${id}`}>
+            <path
+              id={pathId}
+              d={d}
+              stroke={strokeCol}
+              strokeWidth={1.2}
+              opacity={0.45}
+              fill="none"
+            />
+            <circle r="2.5" fill={strokeCol} opacity={0.7}>
+              <animateMotion dur={`${durSec}s`} repeatCount="indefinite">
+                <mpath xlinkHref={`#${pathId}`} />
+              </animateMotion>
+            </circle>
+            <circle r="2" fill={strokeCol} opacity={0.4}>
+              <animateMotion
+                dur={`${durSec}s`}
+                repeatCount="indefinite"
+                keyPoints="1;0"
+                keyTimes="0;1"
+                calcMode="linear"
+              >
+                <mpath xlinkHref={`#${pathId}`} />
+              </animateMotion>
+            </circle>
+          </g>
         );
       })}
       {(() => {
@@ -244,17 +389,36 @@ function TopologyDiagram({
         const iphonePos = TOPO_POSITIONS["iphone"];
         const gatewayPos = TOPO_POSITIONS["gateway"];
         if (!iphoneNode || !iphonePos || !gatewayPos) return null;
+        const strokeCol = statusColor(iphoneNode.status);
+        const d = `M ${gatewayPos.x},${gatewayPos.y} L ${iphonePos.x},${iphonePos.y}`;
+        const pathId = "path-iphone-gateway";
         return (
-          <line
-            key="link-iphone-gateway"
-            x1={gatewayPos.x}
-            y1={gatewayPos.y}
-            x2={iphonePos.x}
-            y2={iphonePos.y}
-            stroke={statusColor(iphoneNode.status)}
-            strokeWidth={1.2}
-            opacity={0.45}
-          />
+          <g key="link-iphone-gateway">
+            <path
+              id={pathId}
+              d={d}
+              stroke={strokeCol}
+              strokeWidth={1.2}
+              opacity={0.45}
+              fill="none"
+            />
+            <circle r="2.5" fill={strokeCol} opacity={0.7}>
+              <animateMotion dur="3.2s" repeatCount="indefinite">
+                <mpath xlinkHref={`#${pathId}`} />
+              </animateMotion>
+            </circle>
+            <circle r="2" fill={strokeCol} opacity={0.4}>
+              <animateMotion
+                dur="3.65s"
+                repeatCount="indefinite"
+                keyPoints="1;0"
+                keyTimes="0;1"
+                calcMode="linear"
+              >
+                <mpath xlinkHref={`#${pathId}`} />
+              </animateMotion>
+            </circle>
+          </g>
         );
       })()}
 
@@ -266,15 +430,19 @@ function TopologyDiagram({
       <text x="310" y="34" textAnchor="middle" fontSize="8"
         fill={isDark ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.25)"}
       >INTERNET</text>
-      <line
-        x1={TOPO_POSITIONS.gateway.x}
-        y1={TOPO_POSITIONS.gateway.y}
-        x2="310"
-        y2="42"
-        stroke={isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"}
-        strokeWidth="1"
+      <path
+        id="path-gateway-internet"
+        d={`M ${TOPO_POSITIONS.gateway.x},${TOPO_POSITIONS.gateway.y} L 310,42`}
+        stroke={internetStroke}
+        strokeWidth={1}
         strokeDasharray="3 2"
+        fill="none"
       />
+      <circle r="2.5" fill={internetDotFill} opacity={0.3}>
+        <animateMotion dur="5s" repeatCount="indefinite">
+          <mpath xlinkHref="#path-gateway-internet" />
+        </animateMotion>
+      </circle>
 
       {topoNodes.map((node) => {
         const pos = TOPO_POSITIONS[node.name];
@@ -350,8 +518,23 @@ function TopologyDiagram({
         stroke={barStroke}
         strokeWidth={1}
       />
+      <foreignObject x={barPad + 8} y={barMidY - 7} width={14} height={14}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 14,
+            height: 14,
+            color: barText,
+          }}
+        >
+          <Router width={14} height={14} stroke="currentColor" fill="none" />
+        </div>
+      </foreignObject>
+      <circle cx={barPad + 28} cy={barMidY} r={3} fill={dotFill} />
       <text
-        x={barPad + 12}
+        x={barPad + 42}
         y={barMidY}
         dominantBaseline="middle"
         textAnchor="start"
@@ -362,7 +545,6 @@ function TopologyDiagram({
       >
         NETWORK LAYER · UDM-PRO
       </text>
-      <circle cx={barPad + colW * 1.5} cy={barMidY} r={4} fill={dotFill} />
       <text
         x={barPad + colW * 2.5}
         y={barMidY}
@@ -500,6 +682,8 @@ export default function Mesh({ theme, token }: { theme: "dark" | "light"; token:
         <p className="text-[10px] font-mono uppercase opacity-40 mb-3">Network Topology</p>
         <TopologyDiagram nodes={mesh.nodes} theme={theme} udm={udm} />
       </div>
+
+      <RequestTicker theme={theme} />
 
       <CertBadgeRow nodes={mesh.nodes} theme={theme} />
     </div>
