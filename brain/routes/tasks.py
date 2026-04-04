@@ -498,7 +498,6 @@ async def deny_step(step_id: str, request: Request):
 
 @tasks_router.post("/v1/tasks/{graph_id}/cancel")
 async def cancel_graph(graph_id: str, request: Request):
-    user_id = getattr(request.state, "user_id", "anon")
     async with _rls_conn(request) as conn:
         await conn.execute(
             """

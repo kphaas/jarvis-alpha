@@ -92,7 +92,7 @@ async def _costs_today() -> float | None:
         return float(row["total"]) if row else 0.0
     except Exception as e:
         logger.warning(f"Cost query failed: {e}")
-        return None
+        return 0.0
 
 
 async def _last_overnight() -> dict | None:

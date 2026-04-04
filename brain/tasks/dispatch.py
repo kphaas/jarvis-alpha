@@ -91,9 +91,49 @@ _ROUTERS: dict[str, Handler] = {
 }
 
 
+def _normalise_step(step: dict) -> dict:
+    """Bridge old (executor+config) and new (step_type+input) schemas."""
+    ex = step.get("executor") or step.get("step_type")
+    step_input = step.get("input") or {}
+    if not isinstance(step_input, dict):
+        step_input = {}
+
+    if ex == "llm":
+        return {
+            "executor": "llm",
+            "config": {
+                "prompt": step_input.get("prompt", ""),
+                "model": step_input.get("model", "llama3.1:8b"),
+            },
+        }
+    if ex == "code":
+        return {
+            "executor": "code",
+            "config": {
+                "prompt": step_input.get("prompt", ""),
+                "language": step_input.get("language", "python"),
+            },
+        }
+    if ex == "tool":
+        return {
+            "executor": "tool",
+            "config": {
+                "tool_name": step_input.get("tool_name", ""),
+                "params": step_input.get("params", {}),
+            },
+        }
+    if ex == "memory":
+        return {"executor": "memory", "config": step_input}
+    # Pass through if already normalised (has config key)
+    if "config" in step:
+        return step
+    return {"executor": ex, "config": step_input}
+
+
 async def dispatch(step: dict) -> dict:
     try:
-        ex = step.get("executor")
+        normalised = _normalise_step(step)
+        ex = normalised.get("executor")
         if ex not in _ROUTERS:
             value = str(ex) if ex is not None else "None"
             return {
@@ -102,7 +142,7 @@ async def dispatch(step: dict) -> dict:
                 "error": f"unknown executor type: {value}",
             }
         handler = _ROUTERS[ex]
-        return await handler(step)
+        return await handler(normalised)
     except Exception as exc:
         return {
             "success": False,

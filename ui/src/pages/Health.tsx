@@ -378,6 +378,65 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
         </div>
       </div>
 
+      {/* LaunchAgents */}
+      <div style={sectionStyle}>
+        <div style={sectionHeader}>
+          <span style={labelStyle}>LaunchAgents</span>
+        </div>
+        <div style={{ padding: "14px 16px" }}>
+          {(() => {
+            const known = ['brain', 'executor', 'watchdog', 'buddy', 'power_sampler'] as const;
+            const agentMap = new Map((agents ?? []).map((a) => [agentShortLabel(a.label), a]));
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
+                {known.map((name) => {
+                  const match = agentMap.get(name) ?? agentMap.get(`alpha_${name}`);
+                  const colors = match
+                    ? agentBadgeColors(match.status, isDark)
+                    : { bg: isDark ? 'rgba(107,114,128,0.25)' : 'rgba(148,163,184,0.35)', fg: isDark ? '#9ca3af' : '#64748b' };
+                  const label = match ? match.status.replace('_', ' ') : 'status check pending';
+                  const pid = match?.pid;
+                  return (
+                    <div
+                      key={name}
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: 8,
+                        border: `1px solid ${border}`,
+                        background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                        <span style={{ fontWeight: 600, fontSize: 12, fontFamily: 'ui-monospace, monospace' }}>{name}</span>
+                        <span
+                          style={{
+                            fontSize: 9,
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.06em',
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                            background: colors.bg,
+                            color: colors.fg,
+                          }}
+                        >
+                          {label}
+                        </span>
+                      </div>
+                      {pid != null && (
+                        <div style={{ fontSize: 10, color: muted, marginTop: 4 }}>
+                          PID: <span style={{ color: text }}>{pid}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+
       {/* System Stats */}
       <div style={sectionStyle}>
         <div style={sectionHeader}>

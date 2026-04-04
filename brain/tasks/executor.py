@@ -18,7 +18,12 @@ from uuid import UUID
 import asyncpg
 
 from brain.config.secrets import get_secret
-from brain.tasks.dispatch import call_code_agent, call_llm_agent, call_tool_agent
+from brain.tasks.dispatch import (
+    call_code_agent,
+    call_llm_agent,
+    call_tool_agent,
+    dispatch,
+)
 
 # --------------- config ---------------
 
@@ -469,8 +474,6 @@ async def main() -> None:
 # ---------------------------------------------------------------------------
 # In-process API (existing FastAPI wiring)
 # ---------------------------------------------------------------------------
-
-from brain.tasks.dispatch import dispatch
 
 
 class TaskGraphExecutor:

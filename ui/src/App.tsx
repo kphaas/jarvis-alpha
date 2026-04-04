@@ -11,6 +11,8 @@ import Placeholder from './pages/Placeholder'
 import CostCenter from './pages/CostCenter'
 import Health from './pages/Health'
 import Mesh from './pages/Mesh'
+import Approvals from './pages/Approvals'
+import Security from './pages/Security'
 
 const qc = new QueryClient({
   defaultOptions: { queries: { staleTime: 15 * 60 * 1000, retry: 1 } },
@@ -36,7 +38,8 @@ export default function App() {
               <Route path="/errors"     element={<Placeholder label="Errors & Logs" phase="Next session" />} />
               <Route path="/agents"     element={<Placeholder label="Agents"      phase="Next session" />} />
               <Route path="/ops"        element={<Placeholder label="Ops"         phase="Next session" />} />
-              <Route path="/security"   element={<Placeholder label="Security"    phase="Next session" />} />
+              <Route path="/approvals"  element={<Approvals />} />
+              <Route path="/security"   element={<Security />} />
               <Route path="/governance" element={<Placeholder label="Governance"  phase="Next session" />} />
               <Route path="/cost"       element={<Navigate to="/costs" replace />} />
               <Route path="/costs"      element={<CostCenter />} />

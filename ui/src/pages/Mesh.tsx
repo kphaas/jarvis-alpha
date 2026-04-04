@@ -167,9 +167,9 @@ const TOPO_POSITIONS: Record<string, { x: number; y: number }> = {
   brain:    { x: 380, y: 220 },
   gateway:  { x: 200, y: 95 },
   endpoint: { x: 560, y: 95 },
-  iphone:   { x: 88, y: 228 },
+  iphone:   { x: 60, y: 340 },
   unraid:   { x: 200, y: 368 },
-  sandbox:  { x: 612, y: 368 },
+  sandbox:  { x: 680, y: 340 },
 };
 
 const BRAIN_LINKS = ["gateway", "endpoint", "unraid", "sandbox"] as const;

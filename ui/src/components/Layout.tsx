@@ -27,8 +27,9 @@ const NAV = [
     { to: '/ops',       label: 'Ops',          icon: Terminal      },
   ]},
   { group: 'SECURE', items: [
+    { to: '/approvals', label: 'Approvals',    icon: ShieldCheck   },
     { to: '/security',  label: 'Security',     icon: ShieldAlert   },
-    { to: '/governance',label: 'Governance',   icon: ShieldCheck   },
+    { to: '/governance',label: 'Governance',   icon: ShieldAlert   },
   ]},
   { group: 'COST', items: [
     { to: '/cost',      label: 'Cost Center',  icon: DollarSign    },
