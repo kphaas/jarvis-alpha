@@ -7,6 +7,8 @@ LOG_DIR="/Users/jarvisbrain/jarvis-alpha/logs"
 SERVICE_DIR="/Users/jarvisbrain/jarvis-alpha"
 BRAIN_PLIST="com.jarvis.alpha.brain"
 BUDDY_PLIST="com.jarvis.alpha.buddy"
+EXECUTOR_PLIST="com.jarvis.alpha.executor"
+WATCHDOG_PLIST="com.jarvis.alpha.watchdog"
 
 spinner() {
     local pid=$1 msg=$2 delay=0.1 i=0
@@ -30,9 +32,11 @@ find "$SERVICE_DIR/brain" -name "__pycache__" -exec rm -rf {} + 2>/dev/null || t
 echo "      Cache cleared"
 echo ""
 
-echo "[2/6] Unloading Buddy..."
+echo "[2/6] Unloading Buddy, Executor, Watchdog..."
 launchctl unload ~/Library/LaunchAgents/${BUDDY_PLIST}.plist 2>/dev/null || true
-echo "      Unloaded: $BUDDY_PLIST"
+launchctl unload ~/Library/LaunchAgents/${EXECUTOR_PLIST}.plist 2>/dev/null || true
+launchctl unload ~/Library/LaunchAgents/${WATCHDOG_PLIST}.plist 2>/dev/null || true
+echo "      Unloaded: $BUDDY_PLIST, $EXECUTOR_PLIST, $WATCHDOG_PLIST"
 echo ""
 
 echo "[3/6] Unloading Alpha Brain..."
@@ -58,7 +62,9 @@ cd ~/jarvis-alpha && JARVIS_ALPHA_DB_DSN=$(grep "^JARVIS_ALPHA_DB_DSN=" ~/jarvis
 echo "[5/6] Loading Alpha Brain + Buddy..."
 launchctl load ~/Library/LaunchAgents/${BRAIN_PLIST}.plist
 launchctl load ~/Library/LaunchAgents/${BUDDY_PLIST}.plist
-echo "      Loaded: $BRAIN_PLIST + $BUDDY_PLIST"
+launchctl load ~/Library/LaunchAgents/${EXECUTOR_PLIST}.plist
+launchctl load ~/Library/LaunchAgents/${WATCHDOG_PLIST}.plist
+echo "      Loaded: $BRAIN_PLIST + $BUDDY_PLIST + $EXECUTOR_PLIST + $WATCHDOG_PLIST"
 (sleep 12) &
 spinner $! "Waiting for Alpha Brain to start"
 echo ""
