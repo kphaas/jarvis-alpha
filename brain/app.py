@@ -21,6 +21,7 @@ from brain.routes.pin_auth import router as pin_auth_router
 from brain.routes.health import router as health_router
 from brain.routes.logs import logs_router
 from brain.routes.diagnose import diagnose_router
+from brain.routes.patterns import patterns_router
 from brain.routes.tasks import tasks_router
 from brain.routes.costs import router as costs_router
 from brain.routes.dev import dev_router
@@ -57,6 +58,7 @@ app.include_router(pin_auth_router)
 app.include_router(health_router)
 app.include_router(logs_router)
 app.include_router(diagnose_router)
+app.include_router(patterns_router)
 app.include_router(tasks_router)
 app.include_router(ask_router)
 app.include_router(chat_router)

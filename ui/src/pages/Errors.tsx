@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { RefreshCw, Cpu, Cloud, Loader2 } from "lucide-react";
+import { RefreshCw, Cpu, Cloud, Loader2, Sparkles } from "lucide-react";
 import { apiFetch } from "../lib/apiFetch";
 
 const NODES = ["brain", "gateway", "endpoint", "sandbox"] as const;
@@ -41,6 +41,64 @@ interface DiagnoseResponse {
   status?: string;
   provider?: string;
   diagnosis?: string;
+}
+
+const PATTERN_FETCH_MS = 90_000;
+
+interface LlmPatternRow {
+  severity?: string;
+  title?: string;
+  count?: number;
+  nodes?: string[];
+  root_cause?: string;
+  fix?: string;
+  related_to?: string | null;
+}
+
+interface PatternAnalysisPayload {
+  patterns?: LlmPatternRow[];
+  summary?: string;
+}
+
+interface AnalyzePatternsApiResponse {
+  status: string;
+  error?: string;
+  pattern_count?: number;
+  raw_log_count?: number;
+  analysis?: PatternAnalysisPayload;
+}
+
+type PatternPanelState =
+  | null
+  | { phase: "loading"; startedAt: Date }
+  | { phase: "error"; at: Date; message: string }
+  | { phase: "done"; at: Date; data: AnalyzePatternsApiResponse };
+
+function isPatternAnalyzeTimeout(e: unknown): boolean {
+  if (e instanceof Error && (e.name === "AbortError" || e.name === "TimeoutError")) {
+    return true;
+  }
+  if (typeof DOMException !== "undefined" && e instanceof DOMException) {
+    return e.name === "TimeoutError" || e.name === "AbortError";
+  }
+  return false;
+}
+
+function patternSeverityBarClass(severity: string, isDark: boolean): string {
+  const s = severity.toUpperCase();
+  if (s === "CRITICAL") {
+    return isDark ? "bg-red-500" : "bg-red-600";
+  }
+  if (s === "HIGH") {
+    return isDark ? "bg-orange-500" : "bg-orange-600";
+  }
+  if (s === "MEDIUM") {
+    return isDark ? "bg-amber-500" : "bg-amber-600";
+  }
+  if (s === "LOW") {
+    return isDark ? "bg-blue-500" : "bg-blue-600";
+  }
+  return isDark ? "bg-zinc-500" : "bg-zinc-400";
 }
 
 function entryToPayload(entry: LogEntry): Record<string, unknown> {
@@ -230,8 +288,10 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
     text: string;
     isError: boolean;
   } | null>(null);
+  const [patternPanel, setPatternPanel] = useState<PatternPanelState>(null);
 
   const showDate = since === "7d";
+  const patternLoading = patternPanel?.phase === "loading";
 
   const filterSummary = useMemo(
     () =>
@@ -361,6 +421,38 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
     [entries]
   );
 
+  const runAnalyzePatterns = useCallback(async () => {
+    setPatternPanel({ phase: "loading", startedAt: new Date() });
+    try {
+      const params = new URLSearchParams();
+      params.set("since", since);
+      params.set("nodes", Array.from(selectedNodes).join(","));
+      const res = await apiFetch(`/v1/logs/analyze-patterns?${params.toString()}`, {
+        signal: AbortSignal.timeout(PATTERN_FETCH_MS),
+      });
+      let data: AnalyzePatternsApiResponse;
+      try {
+        data = (await res.json()) as AnalyzePatternsApiResponse;
+      } catch {
+        data = { status: "error", error: "Invalid response" };
+      }
+      if (!res.ok || data.status === "error") {
+        setPatternPanel({
+          phase: "error",
+          at: new Date(),
+          message: data.error || `HTTP ${res.status}`,
+        });
+        return;
+      }
+      setPatternPanel({ phase: "done", at: new Date(), data });
+    } catch (e) {
+      const message = isPatternAnalyzeTimeout(e)
+        ? "Analysis timed out — try a shorter time range"
+        : String(e);
+      setPatternPanel({ phase: "error", at: new Date(), message });
+    }
+  }, [since, selectedNodes]);
+
   const border = isDark ? "border-white/10" : "border-[#141414]/15";
   const panel = isDark ? "bg-[#0F0F0F]" : "bg-white";
   const muted = isDark ? "text-zinc-500" : "text-zinc-600";
@@ -389,6 +481,28 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
             Refresh
+          </button>
+          <button
+            type="button"
+            onClick={() => void runAnalyzePatterns()}
+            disabled={patternLoading}
+            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-40 ${
+              isDark
+                ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
+                : "border-emerald-600/50 bg-emerald-50 text-emerald-900 hover:bg-emerald-100"
+            }`}
+          >
+            {patternLoading ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Analyzing…
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-3.5 w-3.5" />
+                Analyze Patterns
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -516,6 +630,139 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
           className={`mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-400`}
         >
           {fetchError}
+        </div>
+      )}
+
+      {patternPanel && (
+        <div
+          className={`mb-4 overflow-hidden rounded-xl border ${border} ${panel}`}
+        >
+          <div
+            className={`flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3 ${border}`}
+          >
+            <div>
+              <h2 className={`text-sm font-semibold ${text}`}>Pattern Analysis</h2>
+              <p className={`text-[10px] font-mono ${muted}`}>
+                {patternPanel.phase === "loading"
+                  ? `Started ${patternPanel.startedAt.toLocaleString()}`
+                  : patternPanel.phase === "done" || patternPanel.phase === "error"
+                    ? patternPanel.at.toLocaleString()
+                    : ""}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPatternPanel(null)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium ${isDark ? "hover:bg-white/10" : "hover:bg-zinc-100"}`}
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="space-y-4 p-4">
+            {patternPanel.phase === "loading" && (
+              <div className={`flex flex-col items-center gap-3 py-8 ${muted}`}>
+                <Loader2 className="h-8 w-8 animate-spin text-emerald-500" />
+                <p className={`text-center text-sm ${text}`}>
+                  Analyzing patterns…
+                </p>
+                <p className="max-w-md text-center text-xs">
+                  Ollama inference can take 30–60 seconds. This request times out after 90s.
+                </p>
+              </div>
+            )}
+
+            {patternPanel.phase === "error" && (
+              <div
+                className={`rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm ${isDark ? "text-red-200" : "text-red-900"}`}
+              >
+                {patternPanel.message}
+              </div>
+            )}
+
+            {patternPanel.phase === "done" && (() => {
+              const analysis = patternPanel.data.analysis;
+              const rows = analysis?.patterns ?? [];
+              const summary = analysis?.summary ?? "";
+              const hasStructured = rows.length > 0;
+
+              return (
+                <>
+                  {hasStructured ? (
+                    <>
+                      {summary && (
+                        <p className={`text-sm leading-relaxed ${text}`}>{summary}</p>
+                      )}
+                      {patternPanel.data.raw_log_count != null && (
+                        <p className={`text-[11px] ${muted}`}>
+                          {patternPanel.data.raw_log_count} log lines ·{" "}
+                          {patternPanel.data.pattern_count ?? rows.length} pattern groups
+                          (top 10 sent to model)
+                        </p>
+                      )}
+                      <div className="space-y-3">
+                        {rows.map((p, i) => (
+                          <div
+                            key={`${p.title ?? "p"}-${i}`}
+                            className={`flex overflow-hidden rounded-lg border ${border} ${isDark ? "bg-[#0A0A0A]" : "bg-zinc-50"}`}
+                          >
+                            <div
+                              className={`w-1 shrink-0 ${patternSeverityBarClass(p.severity ?? "", isDark)}`}
+                              aria-hidden
+                            />
+                            <div className="min-w-0 flex-1 p-4">
+                              <div className="mb-2 flex flex-wrap items-center gap-2">
+                                <span className={`font-semibold ${text}`}>
+                                  {p.title ?? "Pattern"}
+                                </span>
+                                {p.count != null && (
+                                  <span
+                                    className={`rounded-full border px-2 py-0.5 text-[10px] font-mono ${border} ${muted}`}
+                                  >
+                                    ×{p.count}
+                                  </span>
+                                )}
+                                {(p.nodes ?? []).map((n) => (
+                                  <span
+                                    key={n}
+                                    className={`rounded border px-2 py-0.5 text-[10px] font-mono ${border} ${muted}`}
+                                  >
+                                    {n}
+                                  </span>
+                                ))}
+                              </div>
+                              {p.root_cause && (
+                                <p className={`mb-3 text-sm leading-relaxed ${muted}`}>
+                                  {p.root_cause}
+                                </p>
+                              )}
+                              {p.fix && (
+                                <pre
+                                  className={`whitespace-pre-wrap rounded-lg p-3 font-mono text-xs leading-relaxed ${isDark ? "bg-zinc-900/80 text-zinc-200" : "bg-zinc-200/80 text-zinc-900"}`}
+                                >
+                                  {p.fix}
+                                </pre>
+                              )}
+                              {p.related_to != null && p.related_to !== "" && (
+                                <p className={`mt-2 text-xs ${muted}`}>
+                                  Related to:{" "}
+                                  <span className={text}>{String(p.related_to)}</span>
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : summary ? (
+                    <div className={`text-sm ${text}`}>
+                      {renderDiagnosisBody(summary, isDark)}
+                    </div>
+                  ) : null}
+                </>
+              );
+            })()}
+          </div>
         </div>
       )}
 
