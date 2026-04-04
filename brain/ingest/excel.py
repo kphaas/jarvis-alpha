@@ -1,13 +1,13 @@
 import io
-import logging
 import re
 from collections.abc import Sequence
 
 import openpyxl
 
+from brain.config.logging_config import get_logger
 from brain.db.session import get_db
 
-logger = logging.getLogger(__name__)
+logger = get_logger("alpha_brain")
 
 
 def _sanitize_table_name(filename: str) -> str:

@@ -4,6 +4,10 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
+from brain.config.logging_config import get_logger
+
+logger = get_logger("alpha_dispatch")
+
 Handler = Callable[[dict], Awaitable[dict]]
 
 _OLLAMA_GENERATE = "http://127.0.0.1:11434/api/generate"

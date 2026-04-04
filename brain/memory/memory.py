@@ -6,6 +6,10 @@ from uuid import UUID
 import asyncpg
 import re
 
+from brain.config.logging_config import get_logger
+
+logger = get_logger("alpha_memory")
+
 SEMANTIC_CAP = 50
 EPISODIC_LIMIT = 5
 WORKING_LIMIT = 10

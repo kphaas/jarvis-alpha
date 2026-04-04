@@ -1,17 +1,17 @@
 import io
-import logging
 from typing import Optional
 
 import httpx
 import pdfplumber
 
+from brain.config.logging_config import get_logger
 from brain.core.config import OLLAMA_URL
 from brain.db.session import get_db
 
 CHUNK_SIZE = 512
 CHUNK_OVERLAP = 50
 
-logger = logging.getLogger(__name__)
+logger = get_logger("alpha_brain")
 
 
 def _vector_literal(embedding: list[float]) -> str:

@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import uuid
 from datetime import datetime, timezone
 
 import asyncpg
 
+from brain.config.logging_config import get_logger, new_trace_id
 from brain.memory.memory import MemoryService
 
-logger = logging.getLogger("buddy_agent")
+logger = get_logger("alpha_buddy")
 
 BUDDY_INTERVAL = int(os.environ.get("BUDDY_INTERVAL_SECONDS", "60"))
 ALERT_THRESHOLD_HOURS = 20
@@ -47,6 +47,7 @@ async def _write_event(
 
 
 async def _run_cycle(pool: asyncpg.Pool) -> None:
+    new_trace_id()
     memory = MemoryService(pool)
 
     async with pool.acquire() as conn:
@@ -190,8 +191,4 @@ async def run_buddy() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s — %(message)s",
-    )
     asyncio.run(run_buddy())

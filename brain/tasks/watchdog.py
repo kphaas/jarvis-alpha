@@ -8,29 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import signal
 
 import asyncpg
 
+from brain.config.logging_config import get_logger, new_trace_id
 from brain.config.secrets import get_secret
 
 WATCHDOG_INTERVAL_SECONDS = 300  # 5 minutes
 DB_DSN_KEY = "JARVIS_ALPHA_DB_DSN"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format=json.dumps(
-        {
-            "timestamp": "%(asctime)s",
-            "level": "%(levelname)s",
-            "service": "alpha_watchdog",
-            "node": "brain",
-            "message": "%(message)s",
-        }
-    ),
-)
-log = logging.getLogger("alpha_watchdog")
+log = get_logger("alpha_watchdog")
 
 
 def _load_dsn() -> str:
@@ -43,6 +31,7 @@ async def _bind_watchdog_rls(conn: asyncpg.Connection) -> None:
 
 
 async def check_stuck(pool: asyncpg.Pool) -> None:
+    new_trace_id()
     async with pool.acquire() as conn:
         await _bind_watchdog_rls(conn)
         stuck = await conn.fetch(

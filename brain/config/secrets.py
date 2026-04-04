@@ -1,8 +1,9 @@
 import os
-import logging
 from datetime import datetime
 
-logger = logging.getLogger(__name__)
+from brain.config.logging_config import get_logger
+
+logger = get_logger("alpha_brain")
 SECRETS_FILE = os.getenv("SECRETS_FILE", os.path.expanduser("~/.secrets"))
 
 _cache: dict = {}

@@ -1,18 +1,18 @@
 import asyncio
 import os
 import time
-import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from brain.db.pool import get_pool
+from brain.config.logging_config import get_logger
 from brain.config.node_addresses import (
     GATEWAY_URL,
     ENDPOINT_URL,
     SANDBOX_URL,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger("alpha_brain")
 router = APIRouter()
 
 CACHE_TTL = 60

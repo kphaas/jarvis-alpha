@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import signal
 from typing import Any
 from uuid import UUID
 
 import asyncpg
 
+from brain.config.logging_config import get_logger, new_trace_id
 from brain.config.secrets import get_secret
 from brain.tasks.dispatch import (
     call_code_agent,
@@ -33,19 +33,7 @@ DB_DSN_KEY = "JARVIS_ALPHA_DB_DSN"
 
 # --------------- logging ---------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format=json.dumps(
-        {
-            "timestamp": "%(asctime)s",
-            "level": "%(levelname)s",
-            "service": "alpha_executor",
-            "node": "brain",
-            "message": "%(message)s",
-        }
-    ),
-)
-log = logging.getLogger("alpha_executor")
+log = get_logger("alpha_executor")
 
 # --------------- secrets ---------------
 
@@ -188,6 +176,7 @@ async def dispatch_step(_conn: asyncpg.Connection, step: dict) -> dict:
 
 async def run_graph(pool: asyncpg.Pool, graph_id: UUID) -> None:
     """Execute a single graph to completion, failure, or approval block."""
+    new_trace_id()
     log.info("Starting graph %s", graph_id)
 
     async with pool.acquire() as conn:

@@ -1,11 +1,12 @@
 import os
-import logging
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 import jwt
 
-logger = logging.getLogger(__name__)
+from brain.config.logging_config import get_logger
+
+logger = get_logger("alpha_brain")
 
 SKIP_PATHS = {
     "/health",

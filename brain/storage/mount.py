@@ -1,9 +1,9 @@
 import asyncio
-import logging
 import os
 import subprocess
 from datetime import datetime, timezone
 
+from brain.config.logging_config import get_logger
 from brain.core.secrets import get_secret
 
 MOUNT_PATH = "/Volumes/Documents"
@@ -11,7 +11,7 @@ NAS_HOST = "192.168.30.10"
 NAS_SHARE = "Documents"
 HEALTH_PROBE = ".jarvis_alpha_health"
 
-logger = logging.getLogger(__name__)
+logger = get_logger("alpha_brain")
 
 
 def is_mounted() -> bool:

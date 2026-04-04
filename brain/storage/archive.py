@@ -1,11 +1,11 @@
 import asyncio
 import hashlib
-import logging
 import os as _os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from brain.config.logging_config import get_logger
 from brain.core.secrets import get_secret  # noqa: F401
 from brain.storage.mount import ensure_mounted
 
@@ -21,7 +21,7 @@ TIER_TO_UNRAID = {
     "50_SECRETS": None,
 }
 
-logger = logging.getLogger(__name__)
+logger = get_logger("alpha_brain")
 
 
 def sha256_file(path: str) -> str:

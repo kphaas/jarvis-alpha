@@ -4,12 +4,13 @@ health.py — Health and LaunchAgent status endpoints for jarvis-alpha Brain.
 
 import asyncio
 import subprocess
-import logging
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter
 
-log = logging.getLogger(__name__)
+from brain.config.logging_config import get_logger
+
+log = get_logger("alpha_brain")
 router = APIRouter()
 
 BRAIN_AGENTS = [

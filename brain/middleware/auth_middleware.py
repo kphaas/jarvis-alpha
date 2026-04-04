@@ -1,10 +1,11 @@
-import logging
 import base64
 import json
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
-logger = logging.getLogger("jarvis.auth")
+from brain.config.logging_config import get_logger
+
+logger = get_logger("alpha_brain")
 
 BYPASS_PATHS = {"/health", "/v1/health", "/docs", "/openapi.json"}
 

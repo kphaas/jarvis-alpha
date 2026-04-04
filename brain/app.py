@@ -5,6 +5,7 @@ from brain.middleware.auth_middleware import AuthMiddleware
 from brain.middleware.rls_middleware import RLSMiddleware
 from brain.middleware.rate_limit_middleware import RateLimitMiddleware
 from brain.middleware.log_middleware import LogMiddleware
+from brain.middleware.trace_id import TraceIdMiddleware
 from brain.db.pool import init_pool, close_pool
 from brain.core.config import ALPHA_DB_DSN
 from brain.tasks.executor import recover_stuck_graphs
@@ -48,6 +49,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(TraceIdMiddleware)
 
 app.include_router(pin_auth_router)
 app.include_router(health_router)
