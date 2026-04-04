@@ -26,6 +26,7 @@ from brain.routes.tasks import tasks_router
 from brain.routes.costs import router as costs_router
 from brain.routes.dev import dev_router
 from brain.routes.metrics import router as metrics_router
+from brain.routes.security import security_router
 from brain.middleware.jwt_auth import JWTAuthMiddleware
 
 
@@ -71,3 +72,4 @@ app.include_router(unifi_router)
 app.include_router(costs_router)
 app.include_router(dev_router)
 app.include_router(metrics_router)
+app.include_router(security_router)
