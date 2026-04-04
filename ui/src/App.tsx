@@ -3,16 +3,18 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Layout } from './components/Layout'
 import { PinGate } from './components/PinGate'
 import { useAppStore } from './store'
-import Home from './pages/Home'
-import Ask from './pages/Ask'
-import Vault from './pages/Vault'
-import Space from './pages/Space'
-import Placeholder from './pages/Placeholder'
-import CostCenter from './pages/CostCenter'
-import Health from './pages/Health'
-import Mesh from './pages/Mesh'
-import Approvals from './pages/Approvals'
-import Security from './pages/Security'
+import { Suspense, lazy } from 'react'
+
+const Home = lazy(() => import('./pages/Home'))
+const Ask = lazy(() => import('./pages/Ask'))
+const Vault = lazy(() => import('./pages/Vault'))
+const Space = lazy(() => import('./pages/Space'))
+const Placeholder = lazy(() => import('./pages/Placeholder'))
+const CostCenter = lazy(() => import('./pages/CostCenter'))
+const Health = lazy(() => import('./pages/Health'))
+const Mesh = lazy(() => import('./pages/Mesh'))
+const Approvals = lazy(() => import('./pages/Approvals'))
+const Security = lazy(() => import('./pages/Security'))
 
 const qc = new QueryClient({
   defaultOptions: { queries: { staleTime: 15 * 60 * 1000, retry: 1 } },
@@ -27,7 +29,8 @@ export default function App() {
       <QueryClientProvider client={qc}>
         <BrowserRouter>
           <Layout theme={theme}>
-            <Routes>
+            <Suspense fallback={<div className="flex items-center justify-center h-screen text-zinc-500">Loading...</div>}>
+              <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/ask" element={<Ask />} />
               <Route path="/vault" element={<Vault />} />
@@ -46,6 +49,7 @@ export default function App() {
               <Route path="/documents"  element={<Placeholder label="Documents"   phase="Next session" />} />
               <Route path="/settings"   element={<Placeholder label="Settings"    phase="Next session" />} />
             </Routes>
+              </Suspense>
           </Layout>
         </BrowserRouter>
       </QueryClientProvider>
