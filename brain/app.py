@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from jarvis_common.logging_config import get_logger
 from brain.middleware.auth_middleware import AuthMiddleware
 from brain.middleware.rls_middleware import RLSMiddleware
 from brain.middleware.rate_limit_middleware import RateLimitMiddleware
@@ -29,11 +31,23 @@ from brain.routes.metrics import router as metrics_router
 from brain.routes.security import security_router
 from brain.middleware.jwt_auth import JWTAuthMiddleware
 
+logger = get_logger("alpha_brain")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db_pool = await init_pool(ALPHA_DB_DSN)
     await recover_stuck_graphs(db_pool)
+    # Secret audit trail
+    import asyncio
+
+    from brain.audit.secret_audit import audit_hook, ensure_table, init_audit
+    from jarvis_common.secrets import register_audit_hook
+
+    await ensure_table()
+    init_audit(asyncio.get_running_loop())
+    register_audit_hook(audit_hook)
+    logger.info("secret audit hook registered")
     yield
     await close_pool()
 

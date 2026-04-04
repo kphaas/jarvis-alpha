@@ -8,7 +8,7 @@ import os
 import subprocess
 from urllib.parse import urlparse
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from jarvis_common.logging_config import get_logger
 from brain.config.node_addresses import (
@@ -353,3 +353,40 @@ async def perimeter():
             "node_count": ts_nodes,
         },
     }
+
+
+@security_router.get("/secrets-audit")
+async def secrets_audit(limit: int = Query(default=50, ge=1, le=500)):
+    """Return recent secret access events from Postgres."""
+    try:
+        from brain.db.pool import get_pool
+
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT key_name, source, accessed_at, node
+                FROM secret_access_log
+                ORDER BY accessed_at DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+        events = [
+            {
+                "key": r["key_name"],
+                "source": r["source"],
+                "accessed_at": r["accessed_at"].isoformat(),
+                "node": r["node"],
+            }
+            for r in rows
+        ]
+        unique_keys = len({e["key"] for e in events})
+        return {
+            "total_events": len(events),
+            "unique_keys": unique_keys,
+            "events": events,
+        }
+    except Exception as e:
+        logger.warning("secrets-audit query failed: %s", e)
+        return {"total_events": 0, "unique_keys": 0, "events": [], "error": str(e)}
