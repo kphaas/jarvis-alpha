@@ -77,9 +77,11 @@ function gatherContextEntries(
   return [...newer, ...older].map(entryToPayload);
 }
 
-function isSevereLevel(level: string): boolean {
+function showDiagnoseActions(level: string): boolean {
   const u = level.toUpperCase();
-  return u === "ERROR" || u === "CRITICAL";
+  return (
+    u === "ERROR" || u === "CRITICAL" || u === "UNKNOWN"
+  );
 }
 
 function renderDiagnosisBody(text: string, isDark: boolean): ReactNode {
@@ -152,18 +154,18 @@ function buildLogQL(
     ? '{node=~".+"}'
     : `{node=~"${Array.from(selectedNodes).join("|")}"}`;
 
-  let q = nodePart;
+  let q = `${nodePart} | json`;
 
   const allLevels = LEVELS.length === selectedLevels.size;
   if (!allLevels && selectedLevels.size > 0) {
     const pattern = Array.from(selectedLevels)
       .map((l) => l.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
       .join("|");
-    q += ` |~ "${pattern}"`;
+    q += ` | level=~"${pattern}"`;
   }
 
   if (service !== "all") {
-    q += ` |= "\\"service\\": \\"${service}\\""`;
+    q += ` | service="${service}"`;
   }
 
   const t = textSearch.trim();
@@ -569,7 +571,7 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
                     msg.length > MSG_PREVIEW && !expanded
                       ? `${msg.slice(0, MSG_PREVIEW)}…`
                       : msg;
-                  const severe = isSevereLevel(entry.level);
+                  const severe = showDiagnoseActions(entry.level);
                   const load = diagnoseLoading;
                   const loadingHere =
                     load?.rowKey === rowKey;
