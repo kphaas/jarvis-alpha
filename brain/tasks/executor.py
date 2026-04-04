@@ -155,9 +155,7 @@ async def dispatch_step(_conn: asyncpg.Connection, step: dict) -> dict:
 
     try:
         if step_type == "llm":
-            log.info(f"LLM input: {_step_dict_llm(step_input)}")
             raw = await call_llm_agent(_step_dict_llm(step_input))
-            log.info(f"LLM dispatch raw: {raw}")
             return _map_dispatch_result(raw)
 
         if step_type == "code":
