@@ -104,12 +104,15 @@ async def _diagnose_claude(prompt: str) -> dict:
     """Call Claude via Gateway cloud adapter."""
     payload = json.dumps(
         {
-            "adapter": "claude",
-            "messages": [
-                {"role": "system", "content": JARVIS_CONTEXT},
-                {"role": "user", "content": prompt},
-            ],
-            "max_tokens": 1000,
+            "provider": "claude",
+            "payload": {
+                "model": "claude-haiku-4-5-20251001",
+                "system": JARVIS_CONTEXT,
+                "messages": [
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": 1000,
+            },
         }
     )
 
@@ -138,12 +141,19 @@ async def _diagnose_claude(prompt: str) -> dict:
             }
 
         data = json.loads(result.stdout)
-        # Gateway adapter returns response in various formats — handle flexibly
-        diagnosis = data.get(
-            "response", data.get("content", data.get("message", "No response"))
-        )
-        if isinstance(diagnosis, list):
-            diagnosis = "\n".join(d.get("text", str(d)) for d in diagnosis)
+        # Gateway returns {"provider": "claude", "result": {<anthropic response>}}
+        api_result = data.get("result", {})
+        content = api_result.get("content", [])
+        if isinstance(content, list):
+            diagnosis = "\n".join(
+                block.get("text", str(block))
+                for block in content
+                if block.get("type") == "text"
+            )
+        else:
+            diagnosis = str(content) if content else "No response"
+        if not diagnosis:
+            diagnosis = "No response from Claude"
         return {"status": "success", "provider": "claude", "diagnosis": diagnosis}
     except Exception as e:
         return {"status": "error", "diagnosis": str(e)}
