@@ -47,6 +47,10 @@ async def lifespan(app: FastAPI):
     await ensure_table()
     init_audit(asyncio.get_running_loop())
     register_audit_hook(audit_hook)
+    from jarvis_common.secrets import clear_cache
+
+    clear_cache()
+    logger.info("secret cache cleared — next access will trigger audit")
     logger.info("secret audit hook registered")
     yield
     await close_pool()
