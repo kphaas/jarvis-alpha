@@ -295,7 +295,7 @@ async def graph_status(request: Request, graph_id: str) -> dict[str, Any]:
     }
 
 
-@tasks_router.get("/v1/buddy/events")
+@tasks_router.get("/v1/tasks/events")
 async def get_task_buddy_events(
     request: Request,
     limit: int = Query(default=20, ge=1, le=500),
@@ -304,7 +304,7 @@ async def get_task_buddy_events(
     async with _rls_conn(request) as conn:
         rows = await conn.fetch(
             """
-            SELECT id, event_type, graph_id, step_id, message, priority, read, created_at
+            SELECT id, event_type, graph_id, step_id, message, severity, read, created_at
             FROM alpha_task_events
             WHERE read = false
             ORDER BY created_at DESC
