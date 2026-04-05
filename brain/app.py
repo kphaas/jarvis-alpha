@@ -6,6 +6,7 @@ from jarvis_common.logging_config import get_logger
 from brain.middleware.auth_middleware import AuthMiddleware
 from brain.middleware.rls_middleware import RLSMiddleware
 from brain.middleware.rate_limit_middleware import RateLimitMiddleware
+from brain.middleware.approval import ApprovalMiddleware
 from brain.middleware.log_middleware import LogMiddleware
 from brain.middleware.trace_id import TraceIdMiddleware
 from brain.db.pool import init_pool, close_pool
@@ -64,6 +65,7 @@ app = FastAPI(title="jarvis-alpha", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(LogMiddleware)
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(ApprovalMiddleware)
 app.add_middleware(RLSMiddleware)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(JWTAuthMiddleware)
