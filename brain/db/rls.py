@@ -34,10 +34,14 @@ async def rls_connection(request: Request):
     max_rating = getattr(request.state, "max_rating", "all_ages") or "all_ages"
 
     async with pool.acquire() as conn:
+        await conn.execute("SET ROLE jarvis_alpha_app")
         await conn.execute("SELECT set_config('app.profile_id', $1, true)", profile_id)
         await conn.execute(
             "SELECT set_config('app.profile_role', $1, true)", profile_role
         )
         await conn.execute("SELECT set_config('app.max_rating', $1, true)", max_rating)
         await conn.execute("SELECT set_config('app.user_id', $1, true)", profile_id)
-        yield conn
+        try:
+            yield conn
+        finally:
+            await conn.execute("RESET ROLE")
