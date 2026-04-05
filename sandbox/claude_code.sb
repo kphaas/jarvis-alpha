@@ -1,0 +1,65 @@
+;; jarvis-alpha Seatbelt profile for Claude Code
+;; Restricts filesystem + network access during overnight runs
+;; Usage: sandbox-exec -f sandbox/claude_code.sb -- claude -p "..."
+
+(version 1)
+(deny default)
+
+;; --- Process execution ---
+(allow process-exec)
+(allow process-fork)
+(allow signal (target self))
+
+;; --- Read/write: jarvis-alpha repo ---
+(allow file-read* file-write*
+    (subpath "/Users/jarvissand/jarvis-alpha"))
+
+;; --- Read-only: jarvis-forge (cross-repo context) ---
+(allow file-read*
+    (subpath "/Users/jarvissand/jarvis-forge"))
+
+;; --- Block secrets files ---
+(deny file-read* file-write*
+    (literal "/Users/jarvissand/.secrets")
+    (literal "/Users/jarvissand/jarvis/.secrets")
+    (subpath "/Users/jarvissand/jarvis/pki"))
+
+;; --- Read-only: system essentials ---
+(allow file-read*
+    (subpath "/usr")
+    (subpath "/bin")
+    (subpath "/sbin")
+    (subpath "/Library")
+    (subpath "/System")
+    (subpath "/opt/homebrew")
+    (subpath "/private/tmp")
+    (subpath "/private/var/tmp")
+    (subpath "/dev"))
+
+;; --- Read/write: temp + cache ---
+(allow file-read* file-write*
+    (subpath "/private/tmp")
+    (subpath "/private/var/folders")
+    (subpath "/Users/jarvissand/.cache")
+    (subpath "/Users/jarvissand/.npm")
+    (subpath "/Users/jarvissand/.claude"))
+
+;; --- Read-only: venvs ---
+(allow file-read*
+    (subpath "/Users/jarvissand/jarvis-alpha/.venv")
+    (subpath "/Users/jarvissand/jarvis-forge/.venv"))
+
+;; --- Read-only: git config ---
+(allow file-read*
+    (subpath "/Users/jarvissand/.config/git")
+    (subpath "/Users/jarvissand/.gitconfig"))
+
+;; --- Network: deny all outbound ---
+;; Claude Code uses its own transport — no raw network needed
+(deny network*)
+
+;; --- Allow IPC (Claude Code needs this) ---
+(allow ipc-posix*)
+(allow ipc-sysv*)
+(allow mach-lookup)
+(allow sysctl-read)
