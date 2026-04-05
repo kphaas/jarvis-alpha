@@ -190,7 +190,11 @@ async def _save_message(
 
 
 async def _auto_name_thread(
-    pool, thread_id: str, user_id: str, first_prompt: str
+    pool,
+    thread_id: str,
+    user_id: str,
+    first_prompt: str,
+    request: Request | None = None,
 ) -> None:
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -209,12 +213,15 @@ async def _auto_name_thread(
             title = r.json().get("response", "").strip()[:80]
             if title:
                 async with pool.acquire() as conn:
-                    await _set_rls_user(conn, user_id)
-                    await conn.execute(
-                        "UPDATE chat_threads SET title=$1, updated_at=now() WHERE id=$2",
-                        title,
-                        UUID(thread_id),
-                    )
+                    try:
+                        await _set_rls_user(conn, user_id, request)
+                        await conn.execute(
+                            "UPDATE chat_threads SET title=$1, updated_at=now() WHERE id=$2",
+                            title,
+                            UUID(thread_id),
+                        )
+                    finally:
+                        await _reset_rls(conn)
     except Exception:
         pass
 
@@ -361,7 +368,9 @@ async def chat_completions(body: CompletionRequest, request: Request):
 
     is_new = body.thread_id is None
     if is_new:
-        asyncio.create_task(_auto_name_thread(pool, thread_id, user_id, user_msg))
+        asyncio.create_task(
+            _auto_name_thread(pool, thread_id, user_id, user_msg, request)
+        )
 
     delta_parts: list[str] = []
 
@@ -498,42 +507,45 @@ async def escalate_to_overnight(
     created_by_uuid = uuid5(NAMESPACE_DNS, user_id)
     graph_id = uuid4()
     async with pool.acquire() as conn:
-        await _set_rls_user(conn, user_id)
-        thread = await conn.fetchrow(
-            "SELECT title FROM chat_threads WHERE id=$1 AND user_id=$2",
-            UUID(thread_id),
-            user_id,
-        )
-        if not thread:
-            raise HTTPException(404, "Thread not found")
+        try:
+            await _set_rls_user(conn, user_id, request)
+            thread = await conn.fetchrow(
+                "SELECT title FROM chat_threads WHERE id=$1 AND user_id=$2",
+                UUID(thread_id),
+                user_id,
+            )
+            if not thread:
+                raise HTTPException(404, "Thread not found")
 
-        messages = await conn.fetch(
-            "SELECT role, content FROM chat_messages WHERE thread_id=$1 ORDER BY created_at ASC",
-            UUID(thread_id),
-        )
-        context_summary = "\n".join(
-            f"{r['role']}: {r['content'][:300]}" for r in messages[-10:]
-        )
+            messages = await conn.fetch(
+                "SELECT role, content FROM chat_messages WHERE thread_id=$1 ORDER BY created_at ASC",
+                UUID(thread_id),
+            )
+            context_summary = "\n".join(
+                f"{r['role']}: {r['content'][:300]}" for r in messages[-10:]
+            )
 
-        await conn.execute(
-            """INSERT INTO alpha_task_graphs
-               (id, title, status, created_by, metadata)
-               VALUES ($1, $2, 'pending', $3, $4::jsonb)""",
-            graph_id,
-            f"Overnight: {thread['title']}",
-            created_by_uuid,
-            json.dumps(
-                {
-                    "source": "chat_escalation",
-                    "thread_id": thread_id,
-                    "reason": body.reason,
-                    "context_summary": context_summary,
-                }
-            ),
-        )
-        await conn.execute(
-            "UPDATE chat_threads SET mode='overnight', updated_at=now() WHERE id=$1",
-            UUID(thread_id),
-        )
+            await conn.execute(
+                """INSERT INTO alpha_task_graphs
+                   (id, title, status, created_by, metadata)
+                   VALUES ($1, $2, 'pending', $3, $4::jsonb)""",
+                graph_id,
+                f"Overnight: {thread['title']}",
+                created_by_uuid,
+                json.dumps(
+                    {
+                        "source": "chat_escalation",
+                        "thread_id": thread_id,
+                        "reason": body.reason,
+                        "context_summary": context_summary,
+                    }
+                ),
+            )
+            await conn.execute(
+                "UPDATE chat_threads SET mode='overnight', updated_at=now() WHERE id=$1",
+                UUID(thread_id),
+            )
+        finally:
+            await _reset_rls(conn)
 
     return {"ok": True, "task_graph_id": str(graph_id)}
