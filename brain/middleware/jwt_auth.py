@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -7,6 +9,45 @@ import jwt
 from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
+
+# Issuer → public key mapping
+# "user" is the default for PIN-authenticated user tokens
+_KEY_REGISTRY: dict[str, Path] = {}
+
+
+def _build_key_registry() -> dict[str, Path]:
+    """Build issuer → public key path mapping at startup."""
+    registry = {}
+
+    # User key (existing — backward compatible)
+    user_key = Path(os.path.dirname(__file__)).parent / "pki" / "jwt_public.pem"
+    if user_key.exists():
+        registry["user"] = user_key
+
+    # Service keys
+    services_dir = Path.home() / "jarvis" / "pki" / "services"
+    if services_dir.is_dir():
+        for pem in services_dir.glob("*_public.pem"):
+            issuer = pem.stem.replace("_public", "")
+            registry[issuer] = pem
+
+    return registry
+
+
+def _get_public_key(iss: str | None) -> str:
+    """Look up the public key for a given issuer."""
+    global _KEY_REGISTRY
+    if not _KEY_REGISTRY:
+        _KEY_REGISTRY = _build_key_registry()
+
+    # If no iss claim, try user key (backward compat for PIN tokens)
+    if not iss or iss not in _KEY_REGISTRY:
+        if "user" in _KEY_REGISTRY:
+            return _KEY_REGISTRY["user"].read_text()
+        raise ValueError(f"No public key found for issuer: {iss}")
+
+    return _KEY_REGISTRY[iss].read_text()
+
 
 SKIP_PATHS = {
     "/health",
@@ -35,18 +76,9 @@ def require_auth(request: Request) -> str:
     return user_id
 
 
-def _load_public_key() -> bytes:
-    path = os.environ.get("ALPHA_JWT_PUBLIC_KEY_PATH", "")
-    if not path:
-        raise RuntimeError("ALPHA_JWT_PUBLIC_KEY_PATH not set")
-    with open(path, "rb") as f:
-        return f.read()
-
-
 class JWTAuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         super().__init__(app)
-        self._public_key = _load_public_key()
 
     async def dispatch(self, request: Request, call_next):
         if request.method == "OPTIONS":
@@ -61,12 +93,21 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
 
         token = auth_header.removeprefix("Bearer ").strip()
         try:
-            payload = jwt.decode(token, self._public_key, algorithms=["RS256"])
+            unverified = jwt.decode(token, options={"verify_signature": False})
+            iss = unverified.get("iss")
+            public_key = _get_public_key(iss)
+            payload = jwt.decode(token, public_key, algorithms=["RS256"])
             request.state.user_id = payload.get("sub", "unknown")
             request.state.role = payload.get("role", "user")
+            request.state.actor_type = payload.get("actor_type", "user")
+            request.state.scopes = payload.get("scopes", [])
+            request.state.iss = payload.get("iss", "user")
         except jwt.ExpiredSignatureError:
             return JSONResponse(status_code=401, content={"error": "Token expired"})
         except jwt.InvalidTokenError as e:
+            logger.warning(f"JWT validation failed: {e}")
+            return JSONResponse(status_code=401, content={"error": "Invalid token"})
+        except ValueError as e:
             logger.warning(f"JWT validation failed: {e}")
             return JSONResponse(status_code=401, content={"error": "Invalid token"})
 
