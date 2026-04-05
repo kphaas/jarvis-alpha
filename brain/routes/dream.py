@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from brain.db.pool import get_pool
+from brain.db.rls import rls_connection
 from brain.middleware.scopes import check_scopes
 from jarvis_common.logging_config import get_logger
 
@@ -100,9 +101,8 @@ async def create_session(request: Request, req: CreateSessionRequest):
 
 
 @dream_router.get("/sessions")
-async def list_sessions(limit: int = 20):
-    pool = get_pool()
-    async with pool.acquire() as conn:
+async def list_sessions(request: Request, limit: int = 20):
+    async with rls_connection(request) as conn:
         rows = await conn.fetch(
             "SELECT * FROM alpha_dream_sessions ORDER BY created_at DESC LIMIT $1",
             min(limit, 100),
@@ -111,9 +111,8 @@ async def list_sessions(limit: int = 20):
 
 
 @dream_router.get("/sessions/{session_id}")
-async def get_session(session_id: int):
-    pool = get_pool()
-    async with pool.acquire() as conn:
+async def get_session(request: Request, session_id: int):
+    async with rls_connection(request) as conn:
         session = await conn.fetchrow(
             "SELECT * FROM alpha_dream_sessions WHERE id = $1", session_id
         )
