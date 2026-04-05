@@ -40,29 +40,31 @@ async def _rls_conn(request: Request) -> AsyncIterator[asyncpg.Connection]:
 
     async with pool.acquire() as conn:
         await conn.execute("SET ROLE jarvis_alpha_app")
-        async with conn.transaction():
-            await conn.execute(
-                "SELECT set_config('jarvis.current_user', $1, true)",
-                user_id,
-            )
-            await conn.execute(
-                "SELECT set_config('jarvis.role', $1, true)",
-                role,
-            )
-            await conn.execute("SELECT set_config('app.user_id', $1, true)", user_id)
-            await conn.execute(
-                "SELECT set_config('app.profile_id', $1, true)", profile_id
-            )
-            await conn.execute(
-                "SELECT set_config('app.profile_role', $1, true)", profile_role
-            )
-            await conn.execute(
-                "SELECT set_config('app.max_rating', $1, true)", max_rating
-            )
-            try:
+        try:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('jarvis.current_user', $1, true)",
+                    user_id,
+                )
+                await conn.execute(
+                    "SELECT set_config('jarvis.role', $1, true)",
+                    role,
+                )
+                await conn.execute(
+                    "SELECT set_config('app.user_id', $1, true)", user_id
+                )
+                await conn.execute(
+                    "SELECT set_config('app.profile_id', $1, true)", profile_id
+                )
+                await conn.execute(
+                    "SELECT set_config('app.profile_role', $1, true)", profile_role
+                )
+                await conn.execute(
+                    "SELECT set_config('app.max_rating', $1, true)", max_rating
+                )
                 yield conn
-            finally:
-                await conn.execute("RESET ROLE")
+        finally:
+            await conn.execute("RESET ROLE")
 
 
 def _iso(dt: datetime | None) -> str | None:
