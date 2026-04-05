@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from brain.db.pool import get_pool
-from brain.middleware.scopes import require_scopes
+from brain.middleware.scopes import check_scopes
 from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
@@ -58,8 +58,8 @@ VALID_STEP_TRANSITIONS = {
 
 
 @dream_router.post("/sessions")
-@require_scopes("dream.execute")
 async def create_session(request: Request, req: CreateSessionRequest):
+    check_scopes(request, "dream.execute")
     pool = get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -127,8 +127,8 @@ async def get_session(session_id: int):
 
 
 @dream_router.post("/sessions/{session_id}/start")
-@require_scopes("dream.execute")
 async def start_session(request: Request, session_id: int):
+    check_scopes(request, "dream.execute")
     pool = get_pool()
     async with pool.acquire() as conn:
         session = await conn.fetchrow(
@@ -155,8 +155,8 @@ async def start_session(request: Request, session_id: int):
 
 
 @dream_router.post("/sessions/{session_id}/kill")
-@require_scopes("dream.execute", "dream.kill")
 async def kill_session(request: Request, session_id: int, req: KillRequest):
+    check_scopes(request, "dream.execute", "dream.kill")
     pool = get_pool()
     async with pool.acquire() as conn:
         session = await conn.fetchrow(
@@ -196,8 +196,8 @@ async def kill_session(request: Request, session_id: int, req: KillRequest):
 
 
 @dream_router.get("/sessions/{session_id}/next-step")
-@require_scopes("dream.execute")
 async def get_next_step(request: Request, session_id: int):
+    check_scopes(request, "dream.execute")
     pool = get_pool()
     async with pool.acquire() as conn:
         session = await conn.fetchrow(
@@ -255,8 +255,8 @@ async def get_next_step(request: Request, session_id: int):
 
 
 @dream_router.patch("/steps/{step_id}")
-@require_scopes("dream.execute")
 async def update_step(request: Request, step_id: int, req: UpdateStepRequest):
+    check_scopes(request, "dream.execute")
     pool = get_pool()
     now = datetime.now(timezone.utc)
     async with pool.acquire() as conn:
@@ -351,8 +351,8 @@ async def update_step(request: Request, step_id: int, req: UpdateStepRequest):
 
 
 @dream_router.post("/sessions/{session_id}/complete")
-@require_scopes("dream.execute")
 async def complete_session(request: Request, session_id: int):
+    check_scopes(request, "dream.execute")
     pool = get_pool()
     async with pool.acquire() as conn:
         session = await conn.fetchrow(
