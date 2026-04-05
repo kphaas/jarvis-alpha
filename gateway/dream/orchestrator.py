@@ -34,7 +34,7 @@ from pathlib import Path
 # ── Configuration ──────────────────────────────────────────────
 
 BRAIN_URL = None  # Set from env JARVIS_ALPHA_BRAIN_URL or secrets
-GATEWAY_TOKEN = None  # Set from env or secrets
+ALPHA_SERVICE_TOKEN = None  # Set from env or secrets
 MAX_CALLS_PER_SESSION = 200  # Circuit breaker
 POLL_INTERVAL_S = 2  # Seconds between next-step polls
 RETRY_BACKOFF = [5, 15, 45]  # Seconds between retries
@@ -42,13 +42,13 @@ RETRY_BACKOFF = [5, 15, 45]  # Seconds between retries
 
 def _load_config():
     """Load Brain URL and Gateway token from environment or secrets file."""
-    global BRAIN_URL, GATEWAY_TOKEN
+    global BRAIN_URL, ALPHA_SERVICE_TOKEN
     import os
 
     BRAIN_URL = os.environ.get("JARVIS_ALPHA_BRAIN_URL")
-    GATEWAY_TOKEN = os.environ.get("GATEWAY_TOKEN")
+    ALPHA_SERVICE_TOKEN = os.environ.get("ALPHA_SERVICE_TOKEN")
 
-    if not BRAIN_URL or not GATEWAY_TOKEN:
+    if not BRAIN_URL or not ALPHA_SERVICE_TOKEN:
         secrets_path = Path.home() / "jarvis" / ".secrets"
         if secrets_path.exists():
             for line in secrets_path.read_text().splitlines():
@@ -60,14 +60,14 @@ def _load_config():
                 val = val.strip().strip('"').strip("'")
                 if key == "JARVIS_ALPHA_BRAIN_URL" and not BRAIN_URL:
                     BRAIN_URL = val
-                elif key == "GATEWAY_TOKEN" and not GATEWAY_TOKEN:
-                    GATEWAY_TOKEN = val
+                elif key == "ALPHA_SERVICE_TOKEN" and not ALPHA_SERVICE_TOKEN:
+                    ALPHA_SERVICE_TOKEN = val
 
     if not BRAIN_URL:
         print("FATAL: JARVIS_ALPHA_BRAIN_URL not set", file=sys.stderr)
         sys.exit(1)
-    if not GATEWAY_TOKEN:
-        print("FATAL: GATEWAY_TOKEN not set", file=sys.stderr)
+    if not ALPHA_SERVICE_TOKEN:
+        print("FATAL: ALPHA_SERVICE_TOKEN not set", file=sys.stderr)
         sys.exit(1)
 
 
@@ -76,7 +76,7 @@ def _load_config():
 async def _curl(method: str, path: str, body: dict | None = None) -> dict:
     """Make an authenticated request to Brain via curl."""
     url = f"{BRAIN_URL}{path}"
-    cmd = ["curl", "-sk", "-X", method, "-H", f"Authorization: Bearer {GATEWAY_TOKEN}"]
+    cmd = ["curl", "-sk", "-X", method, "-H", f"Authorization: Bearer {ALPHA_SERVICE_TOKEN}"]
     if body is not None:
         cmd += ["-H", "Content-Type: application/json", "-d", json.dumps(body)]
     cmd.append(url)
