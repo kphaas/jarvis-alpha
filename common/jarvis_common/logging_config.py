@@ -33,6 +33,12 @@ class JarvisFormatter(logging.Formatter):
         self._service = service
 
     def format(self, record: logging.LogRecord) -> str:
+        import traceback as tb
+
+        msg = record.getMessage()
+        if record.exc_info and record.exc_info[0] is not None:
+            msg += "\n" + "".join(tb.format_exception(*record.exc_info))
+
         return json.dumps(
             {
                 "ts": datetime.now(timezone.utc).isoformat(),
@@ -40,7 +46,7 @@ class JarvisFormatter(logging.Formatter):
                 "service": self._service,
                 "node": _NODE,
                 "trace_id": trace_id_var.get("no-trace"),
-                "message": record.getMessage(),
+                "message": msg,
             }
         )
 

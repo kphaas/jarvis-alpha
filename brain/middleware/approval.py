@@ -18,7 +18,6 @@ Phase 2 (next session):
 """
 
 import hashlib
-import logging
 from uuid import uuid4
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -27,8 +26,9 @@ from starlette.responses import JSONResponse
 
 from brain.db.pool import get_pool
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
+from jarvis_common.logging_config import get_logger
 
-logger = logging.getLogger("jarvis.approval")
+logger = get_logger("alpha_brain")
 
 # Paths that skip approval entirely (pre-auth paths already skipped by AuthMiddleware)
 SKIP_PATHS = {"/v1/auth/pin", "/health"}
