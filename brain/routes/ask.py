@@ -1,7 +1,7 @@
 import time
 import httpx
 from uuid import NAMESPACE_DNS, UUID, uuid5
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from brain.core.config import ALPHA_NODE, OLLAMA_URL
 from brain.core.models import EMBED_MODEL
@@ -9,6 +9,27 @@ from brain.db.session import get_db
 from brain.db.pool import get_pool
 from brain.memory.memory import MemoryService
 from brain.routing.router import route
+
+
+async def _set_rls(conn, user_id: str, request: Request | None = None) -> None:
+    await conn.execute("SET ROLE jarvis_alpha_app")
+    await conn.execute("SELECT set_config('app.user_id', $1, true)", user_id)
+    if request:
+        profile_id = getattr(request.state, "sub", user_id) or user_id
+        profile_role = getattr(request.state, "role", "child") or "child"
+        max_rating = getattr(request.state, "max_rating", "all_ages") or "all_ages"
+    else:
+        profile_id = user_id
+        profile_role = "admin"
+        max_rating = "adult"
+    await conn.execute("SELECT set_config('app.profile_id', $1, true)", profile_id)
+    await conn.execute("SELECT set_config('app.profile_role', $1, true)", profile_role)
+    await conn.execute("SELECT set_config('app.max_rating', $1, true)", max_rating)
+
+
+async def _reset_rls(conn) -> None:
+    await conn.execute("RESET ROLE")
+
 
 router = APIRouter(prefix="/v1", tags=["ask"])
 
@@ -84,43 +105,50 @@ async def _log_ask(
 
 
 @router.post("/ask", response_model=AskResponse)
-async def ask(body: AskRequest) -> AskResponse:
+async def ask(body: AskRequest, request: Request) -> AskResponse:
     # Handle /forget command
     if body.prompt.strip().lower().startswith("/forget"):
+        from brain.middleware.scopes import check_scopes
+
+        check_scopes(request, "memory.write", "admin")
         topic = body.prompt.strip()[7:].strip()
         pool = get_pool()
         uid = _user_uuid(body.user_id)
         async with pool.acquire() as conn:
-            if topic:
-                result = await conn.execute(
-                    """
-                    DELETE FROM alpha_conversation_memory
-                    WHERE user_id = $1
-                      AND tier != 'semantic'
-                      AND (
-                        content ILIKE $2
-                        OR summary ILIKE $2
-                      )
-                    """,
-                    str(uid),
-                    f"%{topic}%",
-                )
-                return AskResponse(
-                    mode="system",
-                    result=f"🗑️ Forgot memories related to '{topic}'. ({result})",
-                )
-            else:
-                result = await conn.execute(
-                    """
-                    DELETE FROM alpha_conversation_memory
-                    WHERE user_id = $1 AND tier = 'working'
-                    """,
-                    str(uid),
-                )
-                return AskResponse(
-                    mode="system",
-                    result=f"🗑️ Cleared all working memory. ({result})",
-                )
+            await _set_rls(conn, str(uid), request)
+            try:
+                if topic:
+                    result = await conn.execute(
+                        """
+                        DELETE FROM alpha_conversation_memory
+                        WHERE user_id = $1
+                          AND tier != 'semantic'
+                          AND (
+                            content ILIKE $2
+                            OR summary ILIKE $2
+                          )
+                        """,
+                        str(uid),
+                        f"%{topic}%",
+                    )
+                    return AskResponse(
+                        mode="system",
+                        result=f"🗑️ Forgot memories related to '{topic}'. ({result})",
+                    )
+                else:
+                    result = await conn.execute(
+                        """
+                        DELETE FROM alpha_conversation_memory
+                        WHERE user_id = $1 AND tier = 'working'
+                        """,
+                        str(uid),
+                    )
+                    return AskResponse(
+                        mode="system",
+                        result=f"🗑️ Cleared all working memory. ({result})",
+                    )
+            finally:
+                await _reset_rls(conn)
 
     start_time = time.monotonic()
     try:
