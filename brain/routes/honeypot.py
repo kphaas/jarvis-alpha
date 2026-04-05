@@ -8,12 +8,14 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from jarvis_common.logging_config import get_logger
 
+from brain.db.pool import get_pool
+
 logger = get_logger("alpha_brain")
 honeypot_router = APIRouter(tags=["honeypot"])
 
 
 async def _persist_event(request: Request, trap_path: str):
-    pool = request.app.state.db_pool
+    pool = get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
             """
@@ -157,7 +159,7 @@ async def trap_debug(request: Request):
 @honeypot_router.get("/v1/honeypot/events")
 async def get_honeypot_events(request: Request, limit: int = 50):
     """Return recent honeypot hits. Protected by JWT (normal auth middleware applies)."""
-    pool = request.app.state.db_pool
+    pool = get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT * FROM alpha_honeypot_events ORDER BY captured_at DESC LIMIT $1",
