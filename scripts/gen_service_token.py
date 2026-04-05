@@ -63,7 +63,7 @@ def find_private_key(iss: str) -> Path:
     sys.exit(1)
 
 
-def generate_token(iss: str, actor_type: str, scopes: list[str]) -> str:
+def generate_token(iss: str, actor_type: str, scopes: list[str], days: int = 7) -> str:
     """Generate and sign a service JWT."""
     if (iss, actor_type) not in VALID_ISS_ACTOR_PAIRS:
         print(f"WARNING: ({iss}, {actor_type}) not in VALID_ISS_ACTOR_PAIRS", file=sys.stderr)
@@ -79,7 +79,7 @@ def generate_token(iss: str, actor_type: str, scopes: list[str]) -> str:
         "scopes": scopes,
         "jti": str(uuid.uuid4()),
         "iat": now,
-        "exp": now + (TOKEN_LIFETIME_DAYS * 86400),
+        "exp": now + (days * 86400),
     }
 
     token = pyjwt.encode(payload, private_key, algorithm="RS256")
@@ -111,10 +111,7 @@ def main():
     else:
         scopes = DEFAULT_SCOPES.get(iss, ["health.read"])
 
-    global TOKEN_LIFETIME_DAYS
-    TOKEN_LIFETIME_DAYS = args.days
-
-    token = generate_token(iss, actor_type, scopes)
+    token = generate_token(iss, actor_type, scopes, days=args.days)
 
     if args.json:
         # Decode without verification to show claims
