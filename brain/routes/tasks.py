@@ -117,14 +117,14 @@ async def list_graphs(
     async with _rls_conn(request) as conn:
         rows = await conn.fetch(
             """
-            SELECT g.id, g.title, g.source, g.status, g.ci_required, g.ci_passed,
-                   g.created_at,
+            SELECT g.id, g.title, g.graph_type, g.status, g.priority,
+                   g.created_at, g.updated_at,
                    COUNT(s.id)::bigint AS step_count
             FROM alpha_task_graphs g
             LEFT JOIN alpha_task_steps s ON s.graph_id = g.id
             WHERE ($1::text IS NULL OR g.status = $1)
-            GROUP BY g.id, g.title, g.source, g.status, g.ci_required,
-                     g.ci_passed, g.created_at
+            GROUP BY g.id, g.title, g.graph_type, g.status, g.priority,
+                     g.created_at, g.updated_at
             ORDER BY g.created_at DESC
             """,
             status,
@@ -135,11 +135,11 @@ async def list_graphs(
             {
                 "id": str(r["id"]),
                 "title": r["title"],
-                "source": r["source"],
+                "graph_type": r["graph_type"],
                 "status": r["status"],
-                "ci_required": r["ci_required"],
-                "ci_passed": r["ci_passed"],
+                "priority": r["priority"],
                 "created_at": _iso(r["created_at"]),
+                "updated_at": _iso(r["updated_at"]),
                 "step_count": int(r["step_count"]),
             }
         )
