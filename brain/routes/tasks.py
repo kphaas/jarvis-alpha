@@ -34,7 +34,12 @@ async def _rls_conn(request: Request) -> AsyncIterator[asyncpg.Connection]:
     pool = get_pool()
     user_id = getattr(request.state, "user_id", "anon")
     role = getattr(request.state, "role", "user")
+    profile_id = getattr(request.state, "sub", user_id) or user_id
+    profile_role = getattr(request.state, "role", "child") or "child"
+    max_rating = getattr(request.state, "max_rating", "all_ages") or "all_ages"
+
     async with pool.acquire() as conn:
+        await conn.execute("SET ROLE jarvis_alpha_app")
         async with conn.transaction():
             await conn.execute(
                 "SELECT set_config('jarvis.current_user', $1, true)",
@@ -44,7 +49,20 @@ async def _rls_conn(request: Request) -> AsyncIterator[asyncpg.Connection]:
                 "SELECT set_config('jarvis.role', $1, true)",
                 role,
             )
-            yield conn
+            await conn.execute("SELECT set_config('app.user_id', $1, true)", user_id)
+            await conn.execute(
+                "SELECT set_config('app.profile_id', $1, true)", profile_id
+            )
+            await conn.execute(
+                "SELECT set_config('app.profile_role', $1, true)", profile_role
+            )
+            await conn.execute(
+                "SELECT set_config('app.max_rating', $1, true)", max_rating
+            )
+            try:
+                yield conn
+            finally:
+                await conn.execute("RESET ROLE")
 
 
 def _iso(dt: datetime | None) -> str | None:
