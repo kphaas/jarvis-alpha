@@ -27,25 +27,7 @@ except ImportError:
     print("FATAL: PyJWT not installed. Run: pip install PyJWT", file=sys.stderr)
     sys.exit(1)
 
-
-# Valid issuer → actor type pairs (from SERVICE_IDENTITY_MODEL.md)
-VALID_ISS_ACTOR_PAIRS = {
-    ("gateway", "service"),
-    ("sandbox", "service"),
-    ("buddy", "agent"),
-    ("endpoint", "service"),  # future-proofed
-    ("brain", "service"),     # future-proofed
-}
-
-# Default scopes per issuer (convenience — can be overridden via CLI)
-DEFAULT_SCOPES = {
-    "gateway": ["dream.execute", "cloud.call", "dream.kill", "health.read"],
-    "sandbox": ["forge.deploy.submit", "forge.costs.report", "forge.llm.call", "health.read"],
-    "buddy": ["memory.evict", "memory.promote", "tasks.scan", "buddy.events.write", "health.read"],
-    "endpoint": ["health.read"],
-}
-
-TOKEN_LIFETIME_DAYS = 7
+from service_identity import DEFAULT_SCOPES, TOKEN_LIFETIME_DAYS, VALID_ISS_ACTOR_PAIRS
 
 
 def find_private_key(iss: str) -> Path:
@@ -65,7 +47,7 @@ def find_private_key(iss: str) -> Path:
 
 def generate_token(iss: str, actor_type: str, scopes: list[str], days: int = 7) -> str:
     """Generate and sign a service JWT."""
-    if (iss, actor_type) not in VALID_ISS_ACTOR_PAIRS:
+    if VALID_ISS_ACTOR_PAIRS.get(iss) != actor_type:
         print(f"WARNING: ({iss}, {actor_type}) not in VALID_ISS_ACTOR_PAIRS", file=sys.stderr)
 
     key_path = find_private_key(iss)

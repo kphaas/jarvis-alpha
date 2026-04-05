@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>Label</key>
+<string>com.jarvis.alpha.rotate.buddy</string>
+<key>ProgramArguments</key>
+<array>
+<string>/Users/jarvisbrain/jarvis-alpha/.venv/bin/python3</string>
+<string>/Users/jarvisbrain/jarvis-alpha/scripts/rotate_service_token.py</string>
+<string>--node</string>
+<string>brain</string>
+</array>
+<key>StartInterval</key>
+<integer>432000</integer>
+<key>StandardOutPath</key>
+<string>/Users/jarvisbrain/jarvis-alpha/logs/token_rotation.log</string>
+<key>StandardErrorPath</key>
+<string>/Users/jarvisbrain/jarvis-alpha/logs/token_rotation_error.log</string>
+<key>RunAtLoad</key>
+<false/>
+<key>KeepAlive</key>
+<false/>
+</dict>
+</plist>
