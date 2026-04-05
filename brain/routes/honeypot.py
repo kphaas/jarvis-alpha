@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import json
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -11,37 +11,38 @@ from jarvis_common.logging_config import get_logger
 logger = get_logger("alpha_brain")
 honeypot_router = APIRouter(tags=["honeypot"])
 
-_events: list[dict] = []
-MAX_EVENTS = 500
+
+async def _persist_event(request: Request, trap_path: str):
+    pool = request.app.state.db_pool
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO alpha_honeypot_events (trap_path, source_ip, method, user_agent, headers)
+            VALUES ($1, $2, $3, $4, $5::jsonb)
+            """,
+            trap_path,
+            request.client.host if request.client else "unknown",
+            request.method,
+            request.headers.get("user-agent", ""),
+            json.dumps(dict(request.headers)),
+        )
 
 
-def _record_event(request: Request, path: str, trap_type: str) -> None:
-    """Record a honeypot hit in memory and log it."""
-    event = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "path": path,
-        "trap_type": trap_type,
-        "client_ip": request.client.host if request.client else "unknown",
-        "user_agent": request.headers.get("user-agent", "unknown"),
-        "method": request.method,
-        "headers": dict(request.headers),
-    }
-    _events.append(event)
-    if len(_events) > MAX_EVENTS:
-        _events.pop(0)
+def _log_hit(request: Request, path: str, trap_type: str) -> None:
     logger.warning(
         "HONEYPOT_HIT path=%s trap=%s ip=%s ua=%s",
         path,
         trap_type,
-        event["client_ip"],
-        event["user_agent"][:80],
+        request.client.host if request.client else "unknown",
+        (request.headers.get("user-agent", "unknown") or "unknown")[:80],
     )
 
 
 @honeypot_router.get("/admin", response_class=HTMLResponse)
 @honeypot_router.post("/admin", response_class=HTMLResponse)
 async def trap_admin(request: Request):
-    _record_event(request, "/admin", "admin_panel")
+    await _persist_event(request, "/admin")
+    _log_hit(request, "/admin", "admin_panel")
     return HTMLResponse(
         content="""<!DOCTYPE html><html><head><title>Admin Login</title></head>
 <body style="font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;background:#f5f5f5">
@@ -57,7 +58,8 @@ async def trap_admin(request: Request):
 @honeypot_router.get("/wp-login.php", response_class=HTMLResponse)
 @honeypot_router.post("/wp-login.php", response_class=HTMLResponse)
 async def trap_wordpress(request: Request):
-    _record_event(request, "/wp-login.php", "wordpress")
+    await _persist_event(request, "/wp-login.php")
+    _log_hit(request, "/wp-login.php", "wordpress")
     return HTMLResponse(
         content="""<!DOCTYPE html><html><head><title>WordPress &rsaquo; Log In</title></head>
 <body style="font-family:-apple-system,sans-serif;background:#f0f0f1;display:flex;justify-content:center;padding-top:8%">
@@ -74,7 +76,8 @@ async def trap_wordpress(request: Request):
 
 @honeypot_router.get("/.env", response_class=PlainTextResponse)
 async def trap_env(request: Request):
-    _record_event(request, "/.env", "env_file")
+    await _persist_event(request, "/.env")
+    _log_hit(request, "/.env", "env_file")
     return PlainTextResponse(
         content="""# Application Configuration
 APP_ENV=production
@@ -95,7 +98,8 @@ AWS_SECRET_ACCESS_KEY=FAKE+SECRET+KEY+HONEYPOT+TRAP+xxxxxxxx
 
 @honeypot_router.get("/.git/config", response_class=PlainTextResponse)
 async def trap_git(request: Request):
-    _record_event(request, "/.git/config", "git_config")
+    await _persist_event(request, "/.git/config")
+    _log_hit(request, "/.git/config", "git_config")
     return PlainTextResponse(
         content="""[core]
     repositoryformatversion = 0
@@ -118,7 +122,8 @@ async def trap_git(request: Request):
 @honeypot_router.get("/phpmyadmin", response_class=HTMLResponse)
 @honeypot_router.get("/phpmyadmin/", response_class=HTMLResponse)
 async def trap_phpmyadmin(request: Request):
-    _record_event(request, "/phpmyadmin", "phpmyadmin")
+    await _persist_event(request, "/phpmyadmin")
+    _log_hit(request, "/phpmyadmin", "phpmyadmin")
     return HTMLResponse(
         content="""<!DOCTYPE html><html><head><title>phpMyAdmin</title></head>
 <body style="font-family:sans-serif;background:#e7e9ed;display:flex;justify-content:center;padding-top:10%">
@@ -133,7 +138,8 @@ async def trap_phpmyadmin(request: Request):
 
 @honeypot_router.get("/api/v1/debug", response_class=JSONResponse)
 async def trap_debug(request: Request):
-    _record_event(request, "/api/v1/debug", "debug_api")
+    await _persist_event(request, "/api/v1/debug")
+    _log_hit(request, "/api/v1/debug", "debug_api")
     return JSONResponse(
         content={
             "debug": True,
@@ -149,20 +155,12 @@ async def trap_debug(request: Request):
 
 
 @honeypot_router.get("/v1/honeypot/events")
-async def get_honeypot_events(limit: int = 50):
+async def get_honeypot_events(request: Request, limit: int = 50):
     """Return recent honeypot hits. Protected by JWT (normal auth middleware applies)."""
-    recent = list(reversed(_events[-limit:]))
-    events_out = [{k: v for k, v in e.items() if k != "headers"} for e in recent]
-    return {
-        "total": len(_events),
-        "events": events_out,
-        "traps_active": 6,
-        "traps": [
-            "/admin",
-            "/wp-login.php",
-            "/.env",
-            "/.git/config",
-            "/phpmyadmin",
-            "/api/v1/debug",
-        ],
-    }
+    pool = request.app.state.db_pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM alpha_honeypot_events ORDER BY captured_at DESC LIMIT $1",
+            min(limit, 200),
+        )
+    return [dict(r) for r in rows]
