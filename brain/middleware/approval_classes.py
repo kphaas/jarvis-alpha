@@ -26,6 +26,9 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/logs/query": ["read", "security_read"],
     "GET /v1/prompts/": ["read"],
     "GET /v1/prompts/{prompt_id}": ["read"],
+    "POST /v1/approvals/unlock": ["approval_unlock"],
+    "GET /v1/approvals/pending": ["read", "security_read"],
+    "POST /v1/approvals/{id}/decide": ["approval_decide"],
     # Writes — T2
     "POST /v1/tasks/ingest": ["write"],
     "POST /v1/memory": ["write"],
@@ -65,6 +68,8 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
 # If action has ALL required_classes, that tier applies
 TIER_RULES: list[tuple[set[str], str]] = [
     # Compound high-risk first
+    ({"approval_decide"}, "T2"),
+    ({"approval_unlock"}, "T2"),
     ({"deploy", "child_facing"}, "T5"),
     ({"unclassified"}, "T5"),
     ({"destructive"}, "T5"),

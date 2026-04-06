@@ -35,6 +35,7 @@ from brain.routes.honeypot import honeypot_router
 from brain.routes.dream import dream_router
 from brain.routes.mcp_registry import mcp_router
 from brain.routes.prompts import router as prompts_router
+from brain.routes.approvals import router as approvals_router
 from brain.middleware.jwt_auth import JWTAuthMiddleware
 
 logger = get_logger("alpha_brain")
@@ -103,3 +104,4 @@ app.include_router(security_router)
 app.include_router(mcp_router)
 app.include_router(rotation_router)
 app.include_router(prompts_router)
+app.include_router(approvals_router)
