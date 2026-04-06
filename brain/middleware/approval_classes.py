@@ -24,10 +24,13 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/security/audit": ["read", "security_read"],
     "GET /v1/mesh/certs": ["read"],
     "GET /v1/logs/query": ["read", "security_read"],
+    "GET /v1/prompts/": ["read"],
+    "GET /v1/prompts/{prompt_id}": ["read"],
     # Writes — T2
     "POST /v1/tasks/ingest": ["write"],
     "POST /v1/memory": ["write"],
     "PATCH /v1/tasks": ["write"],
+    "POST /v1/prompts/": ["write"],
     # Chat — varies by model routing (local=write, cloud=external_call+cost)
     # Default to write — cloud escalation handled at route level
     "POST /v1/chat": ["write"],
