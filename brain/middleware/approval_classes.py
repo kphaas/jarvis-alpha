@@ -193,6 +193,9 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/tasks/graphs/{graph_id}/steps": ["write"],
     # --- Threads patch ---
     "PATCH /v1/threads/{thread_id}": ["write"],
+    # --- Watchdog — T1 read (monitoring events) ---
+    "GET /v1/watchdog/events": ["read"],
+    "GET /v1/watchdog/status": ["read"],
     # --- Admin panel ---
     "GET /admin": ["admin"],
     "POST /admin": ["admin"],

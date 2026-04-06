@@ -13,7 +13,12 @@
   <key>WorkingDirectory</key>
   <string>/Users/jarvisbrain/jarvis-alpha</string>
   <key>KeepAlive</key>
-  <true/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+    <key>Crashed</key>
+    <true/>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>

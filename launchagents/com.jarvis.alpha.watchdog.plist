@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jarvis.alpha.watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/jarvisbrain/jarvis-alpha/scripts/start_alpha_watchdog.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/jarvisbrain/jarvis-alpha</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+    <key>Crashed</key>
+    <true/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/jarvisbrain/jarvis-alpha/logs/alpha_watchdog.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jarvisbrain/jarvis-alpha/logs/alpha_watchdog_error.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>JARVIS_NODE</key>
+    <string>brain</string>
+    <key>WATCHDOG_INTERVAL_SECONDS</key>
+    <string>60</string>
+    <key>WATCHDOG_FAILURE_THRESHOLD</key>
+    <string>3</string>
+    <key>WATCHDOG_CHECK_TIMEOUT_SECONDS</key>
+    <string>5</string>
+  </dict>
+</dict>
+</plist>
