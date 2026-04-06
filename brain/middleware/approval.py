@@ -228,10 +228,17 @@ class ApprovalMiddleware(BaseHTTPMiddleware):
                 )
                 await conn.execute(
                     """INSERT INTO alpha_approval_audit
-                       (approval_id, action, actor_sub, created_at)
-                       VALUES ($1, 'queued', $2, NOW())""",
+                       (approval_id, action_class, risk_tier, actor_sub, actor_type,
+                        description, parameters_hash, nonce, decision, decided_by, overnight)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'auto', $4, false)""",
                     queue_id,
+                    action_classes,
+                    tier,
                     actor_sub,
+                    actor_type,
+                    description,
+                    parameters_hash,
+                    nonce,
                 )
         return str(queue_id)
 

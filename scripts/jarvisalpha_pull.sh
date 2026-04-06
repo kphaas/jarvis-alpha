@@ -47,8 +47,17 @@ BRAIN_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.brain.plist"
 if [ -f "$BRAIN_PLIST" ]; then
   echo ""
   echo "Restarting Alpha Brain LaunchAgent..."
-  pkill -f "uvicorn.*brain" 2>/dev/null || true
-  sleep 2
   launchctl unload "$BRAIN_PLIST" 2>/dev/null || true
+  sleep 1
+  lsof -ti :8186 | xargs kill -9 2>/dev/null || true
+  sleep 2
+  find "${REPO_DIR}/brain" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null
   launchctl load "$BRAIN_PLIST"
+  sleep 4
+  if curl -sk --max-time 5 https://jarvis-brain.tail40ed36.ts.net:8186/health | grep -q '"status":"ok"'; then
+    echo "✅ Alpha Brain healthy after restart"
+  else
+    echo "⚠️  Alpha Brain health check failed — check logs"
+    tail -5 "${REPO_DIR}/logs/alpha_brain_error.log" 2>/dev/null
+  fi
 fi
