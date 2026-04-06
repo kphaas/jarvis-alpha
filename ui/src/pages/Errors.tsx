@@ -1,265 +1,32 @@
-import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw, Cpu, Cloud, Loader2, Sparkles } from "lucide-react";
 import { apiFetch } from "../lib/apiFetch";
-
-const NODES = ["brain", "gateway", "endpoint", "sandbox"] as const;
-const LEVELS = ["INFO", "WARNING", "ERROR", "CRITICAL"] as const;
-const SERVICES = [
-  "all",
-  "alpha_brain",
-  "alpha_buddy",
-  "alpha_executor",
-  "alpha_watchdog",
-  "alpha_dispatch",
-  "alpha_memory",
-  "unknown",
-] as const;
-
-const SINCE_OPTIONS = ["15m", "1h", "6h", "24h", "7d"] as const;
-
-type Since = (typeof SINCE_OPTIONS)[number];
-
-interface LogEntry {
-  ts_ns: string;
-  node: string;
-  raw: string;
-  ts: string;
-  level: string;
-  service: string;
-  trace_id: string;
-  message: string;
-}
-
-interface QueryResponse {
-  status: string;
-  count?: number;
-  entries?: LogEntry[];
-  error?: string;
-}
-
-interface DiagnoseResponse {
-  status?: string;
-  provider?: string;
-  diagnosis?: string;
-}
-
-const PATTERN_FETCH_MS = 90_000;
-
-interface LlmPatternRow {
-  severity?: string;
-  title?: string;
-  count?: number;
-  nodes?: string[];
-  root_cause?: string;
-  fix?: string;
-  related_to?: string | null;
-}
-
-interface PatternAnalysisPayload {
-  patterns?: LlmPatternRow[];
-  summary?: string;
-}
-
-interface AnalyzePatternsApiResponse {
-  status: string;
-  error?: string;
-  pattern_count?: number;
-  raw_log_count?: number;
-  analysis?: PatternAnalysisPayload;
-}
-
-type PatternPanelState =
-  | null
-  | { phase: "loading"; startedAt: Date }
-  | { phase: "error"; at: Date; message: string }
-  | { phase: "done"; at: Date; data: AnalyzePatternsApiResponse };
-
-function isPatternAnalyzeTimeout(e: unknown): boolean {
-  if (e instanceof Error && (e.name === "AbortError" || e.name === "TimeoutError")) {
-    return true;
-  }
-  if (typeof DOMException !== "undefined" && e instanceof DOMException) {
-    return e.name === "TimeoutError" || e.name === "AbortError";
-  }
-  return false;
-}
-
-function patternSeverityBarClass(severity: string, isDark: boolean): string {
-  const s = severity.toUpperCase();
-  if (s === "CRITICAL") {
-    return isDark ? "bg-red-500" : "bg-red-600";
-  }
-  if (s === "HIGH") {
-    return isDark ? "bg-orange-500" : "bg-orange-600";
-  }
-  if (s === "MEDIUM") {
-    return isDark ? "bg-amber-500" : "bg-amber-600";
-  }
-  if (s === "LOW") {
-    return isDark ? "bg-blue-500" : "bg-blue-600";
-  }
-  return isDark ? "bg-zinc-500" : "bg-zinc-400";
-}
-
-function entryToPayload(entry: LogEntry): Record<string, unknown> {
-  return {
-    ts_ns: entry.ts_ns,
-    ts: entry.ts,
-    level: entry.level,
-    service: entry.service,
-    node: entry.node,
-    trace_id: entry.trace_id,
-    message: entry.message,
-    raw: entry.raw,
-  };
-}
-
-/** Up to 5 other logs with same trace_id, or 2 newer + 2 older by list order (newest first). */
-function gatherContextEntries(
-  list: LogEntry[],
-  idx: number,
-  entry: LogEntry
-): Record<string, unknown>[] {
-  const tid = (entry.trace_id || "").trim();
-  const noTrace = !tid || tid.toLowerCase() === "no-trace";
-
-  if (!noTrace) {
-    const same = list
-      .filter((e, i) => i !== idx && (e.trace_id || "").trim() === tid)
-      .slice(0, 5);
-    return same.map(entryToPayload);
-  }
-
-  const newer = list.slice(Math.max(0, idx - 2), idx);
-  const older = list.slice(idx + 1, idx + 3);
-  return [...newer, ...older].map(entryToPayload);
-}
-
-function showDiagnoseActions(level: string): boolean {
-  const u = level.toUpperCase();
-  return (
-    u === "ERROR" || u === "CRITICAL" || u === "UNKNOWN"
-  );
-}
-
-function renderDiagnosisBody(text: string, isDark: boolean): ReactNode {
-  const codeBg = isDark ? "bg-zinc-800/90" : "bg-zinc-200";
-  const inlineCode = `${codeBg} rounded px-1 py-0.5 font-mono text-[11px]`;
-
-  const out: ReactNode[] = [];
-  let rest = text;
-  let key = 0;
-
-  while (rest.length > 0) {
-    const fence = rest.indexOf("```");
-    if (fence === -1) {
-      out.push(...renderInlineOnly(rest, `end-${key}`, inlineCode));
-      break;
-    }
-    if (fence > 0) {
-      out.push(...renderInlineOnly(rest.slice(0, fence), `pre-${key}`, inlineCode));
-    }
-    const close = rest.indexOf("```", fence + 3);
-    if (close === -1) {
-      out.push(...renderInlineOnly(rest.slice(fence), `broken-${key}`, inlineCode));
-      break;
-    }
-    let code = rest.slice(fence + 3, close);
-    const nl = code.indexOf("\n");
-    if (nl !== -1 && /^[a-z0-9_-]+$/i.test(code.slice(0, nl).trim())) {
-      code = code.slice(nl + 1);
-    }
-    out.push(
-      <pre
-        key={`fence-${key}`}
-        className={`my-2 overflow-x-auto rounded-lg p-3 font-mono text-xs ${codeBg}`}
-      >
-        {code.replace(/\n$/, "")}
-      </pre>
-    );
-    rest = rest.slice(close + 3);
-    key += 1;
-  }
-
-  return <div className="space-y-1 whitespace-pre-wrap text-sm leading-relaxed">{out}</div>;
-}
-
-function renderInlineOnly(
-  segment: string,
-  keyPrefix: string,
-  inlineCodeClass: string
-): ReactNode[] {
-  const parts = segment.split(/`([^`]+)`/);
-  return parts.map((part, i) =>
-    i % 2 === 1 ? (
-      <code key={`${keyPrefix}-c-${i}`} className={inlineCodeClass}>
-        {part}
-      </code>
-    ) : (
-      <span key={`${keyPrefix}-t-${i}`}>{part}</span>
-    )
-  );
-}
-
-/** Human-readable summary of active filters (Brain builds real LogQL from query params). */
-function describeActiveFilters(
-  selectedNodes: Set<string>,
-  selectedLevels: Set<string>,
-  svc: (typeof SERVICES)[number],
-  textSearch: string
-): string {
-  const allN = NODES.length === selectedNodes.size;
-  const allL = LEVELS.length === selectedLevels.size;
-  const parts: string[] = [];
-  parts.push(allN ? "All nodes" : `Nodes: ${Array.from(selectedNodes).join(", ")}`);
-  parts.push(allL ? "All levels" : `Levels: ${Array.from(selectedLevels).join(", ")}`);
-  parts.push(svc === "all" ? "All services" : `Service: ${svc}`);
-  const t = textSearch.trim();
-  parts.push(t ? `Text: ${t}` : "No text filter");
-  return parts.join(" · ");
-}
-
-function parseEntryTime(entry: LogEntry): Date | null {
-  if (entry.ts) {
-    const d = new Date(entry.ts);
-    if (!Number.isNaN(d.getTime())) return d;
-  }
-  const ns = Number(entry.ts_ns);
-  if (!Number.isNaN(ns)) return new Date(ns / 1e6);
-  return null;
-}
-
-function formatTimestamp(d: Date | null, showDate: boolean): string {
-  if (!d) return "—";
-  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
-  const h = pad(d.getHours());
-  const m = pad(d.getMinutes());
-  const s = pad(d.getSeconds());
-  const ms = pad(d.getMilliseconds(), 3);
-  const time = `${h}:${m}:${s}.${ms}`;
-  if (!showDate) return time;
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`;
-}
-
-function levelBadgeClass(level: string, isDark: boolean): string {
-  const u = level.toUpperCase();
-  const base = "inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide";
-  if (u === "INFO") {
-    return `${base} ${isDark ? "bg-blue-500/20 text-blue-400" : "bg-blue-100 text-blue-800"}`;
-  }
-  if (u === "WARNING") {
-    return `${base} ${isDark ? "bg-amber-500/20 text-amber-400" : "bg-amber-100 text-amber-800"}`;
-  }
-  if (u === "ERROR") {
-    return `${base} ${isDark ? "bg-red-500/20 text-red-400" : "bg-red-100 text-red-800"}`;
-  }
-  if (u === "CRITICAL") {
-    return `${base} font-bold ${isDark ? "bg-red-600/30 text-red-300" : "bg-red-200 text-red-900"}`;
-  }
-  return `${base} ${isDark ? "bg-zinc-500/20 text-zinc-400" : "bg-zinc-200 text-zinc-700"}`;
-}
-
-const MSG_PREVIEW = 160;
+import type {
+  ErrorLogEntry as LogEntry,
+  QueryResponse,
+  DiagnoseResponse,
+  AnalyzePatternsApiResponse,
+  PatternPanelState,
+} from "../types/errors";
+import {
+  isPatternAnalyzeTimeout,
+  patternSeverityBarClass,
+  entryToPayload,
+  gatherContextEntries,
+  showDiagnoseActions,
+  renderDiagnosisBody,
+  describeActiveFilters,
+  parseEntryTime,
+  formatTimestamp,
+  levelBadgeClass,
+  NODES,
+  LEVELS,
+  SERVICES,
+  SINCE_OPTIONS,
+  MSG_PREVIEW,
+  PATTERN_FETCH_MS,
+  type Since,
+} from "../components/errors";
 
 export default function Errors({ theme }: { theme: "dark" | "light" }) {
   const isDark = theme === "dark";
