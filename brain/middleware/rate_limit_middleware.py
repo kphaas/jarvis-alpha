@@ -9,7 +9,7 @@ from jarvis_common.logging_config import get_logger
 logger = get_logger("alpha_brain")
 
 WINDOW_SECONDS = 60
-MAX_REQUESTS = 100
+MAX_REQUESTS = 300
 BYPASS_PATHS = {"/health", "/v1/health", "/docs", "/openapi.json"}
 
 _request_log: dict[str, deque] = defaultdict(deque)
