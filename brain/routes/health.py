@@ -13,22 +13,14 @@ from jarvis_common.logging_config import get_logger
 log = get_logger("alpha_brain")
 router = APIRouter()
 
+# Only list agents that have installed LaunchAgent plists.
+# Add new entries here AFTER creating the plist — never list stubs.
 BRAIN_AGENTS = [
+    # Alpha core
     "com.jarvis.alpha.brain",
     "com.jarvis.alpha.buddy",
+    # Infrastructure
     "com.jarvis.ollama",
-    "com.jarvis.agentworker",
-    "com.jarvis.policy",
-    "com.jarvis.auth",
-    "com.jarvis.ingestservice",
-    "com.jarvis.watchdog",
-    "com.jarvis.weeklyreport",
-    "com.jarvis.weeklybackup",
-    "com.jarvis.certrenew",
-    "com.jarvis.cleanup",
-    "com.jarvis.mountwatch",
-    "com.jarvis.sshagent",
-    "com.jarvis.ingest.scheduler",
 ]
 
 
