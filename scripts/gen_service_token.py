@@ -91,7 +91,11 @@ def main():
     if args.scopes:
         scopes = [s.strip() for s in args.scopes.split(",")]
     else:
-        scopes = DEFAULT_SCOPES.get(iss, ["health.read"])
+        scopes = list(DEFAULT_SCOPES.get(iss, ["health.read"]))
+        if iss == "sandbox":
+            for extra in ("forge.briefings.ingest", "briefings.read"):
+                if extra not in scopes:
+                    scopes.append(extra)
 
     token = generate_token(iss, actor_type, scopes, days=args.days)
 

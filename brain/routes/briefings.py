@@ -18,6 +18,11 @@ router = APIRouter(prefix="/v1/briefings", tags=["briefings"])
 BATCH_RUN_ID_RE = re.compile(r"^[0-9]{8}_[0-9]{4}_[a-f0-9]{4}$")
 
 
+def _check_read_scope(request: Request) -> None:
+    """Check briefings.read scope or admin wildcard."""
+    check_scopes(request, "briefings.read")
+
+
 class BriefingIngest(BaseModel):
     batch_run_id: str
     briefing_date: date
@@ -103,7 +108,7 @@ def _record_to_list_item(row: asyncpg.Record) -> BriefingListItem:
 async def ingest_briefing(
     request: Request, body: BriefingIngest
 ) -> BriefingIngestResponse:
-    check_scopes(request, "briefings.ingest")
+    check_scopes(request, "forge.briefings.ingest")
     pool = get_pool()
     try:
         async with pool.acquire() as conn:
@@ -135,9 +140,11 @@ async def ingest_briefing(
 
 @router.get("/latest", response_model=BriefingFull)
 async def get_latest_briefing(
+    request: Request,
     _: str = Depends(require_auth),
     source: str | None = Query(default=None),
 ) -> BriefingFull:
+    _check_read_scope(request)
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -158,6 +165,7 @@ async def get_latest_briefing(
 
 @router.get("", response_model=BriefingListResponse)
 async def list_briefings(
+    request: Request,
     _: str = Depends(require_auth),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
@@ -165,6 +173,7 @@ async def list_briefings(
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
 ) -> BriefingListResponse:
+    _check_read_scope(request)
     pool = get_pool()
     conditions: list[str] = []
     params: list[Any] = []
@@ -213,8 +222,10 @@ async def list_briefings(
 @router.get("/{batch_run_id}", response_model=BriefingFull)
 async def get_briefing_by_batch_run_id(
     batch_run_id: str,
+    request: Request,
     _: str = Depends(require_auth),
 ) -> BriefingFull:
+    _check_read_scope(request)
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(

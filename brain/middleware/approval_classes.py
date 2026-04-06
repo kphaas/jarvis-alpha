@@ -124,7 +124,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Buddy events mark read — T2 write ---
     "POST /v1/buddy/events/{event_id}/read": ["write"],
     "POST /v1/buddy/events/read-all": ["write"],
-    # --- Briefings — JWT scopes in route handlers: briefings.ingest (POST ingest),
+    # --- Briefings — JWT scopes in route handlers: forge.briefings.ingest (POST ingest),
     #     briefings.read or admin on GETs. T2 write / T1 read; service-to-service ingest.
     "POST /v1/briefings/ingest": ["write"],
     "GET /v1/briefings": ["read"],
