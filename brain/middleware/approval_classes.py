@@ -154,6 +154,49 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/dream/budget": ["read"],
     "POST /v1/dream/budget/{provider}": ["write", "cost_incurring"],
     "POST /v1/dream/credit": ["admin"],
+    # --- FastAPI built-in docs — T1 read ---
+    "GET /docs": ["read"],
+    "HEAD /docs": ["read"],
+    "GET /docs/oauth2-redirect": ["read"],
+    "HEAD /docs/oauth2-redirect": ["read"],
+    "GET /openapi.json": ["read"],
+    "HEAD /openapi.json": ["read"],
+    "GET /redoc": ["read"],
+    "HEAD /redoc": ["read"],
+    # --- Costs — reads T1, writes T2, admin T5 ---
+    "GET /v1/costs/budget": ["read"],
+    "GET /v1/costs/credit": ["read"],
+    "GET /v1/costs/hardware": ["read"],
+    "GET /v1/costs/outcomes": ["read"],
+    "GET /v1/costs/perplexity": ["read"],
+    "GET /v1/costs/power": ["read"],
+    "GET /v1/costs/subscriptions": ["read"],
+    "POST /v1/costs/budget/{provider}": ["write", "cost_incurring"],
+    "POST /v1/costs/credit": ["admin"],
+    "POST /v1/costs/perplexity": ["write", "external_call", "cost_incurring"],
+    "POST /v1/costs/power/rate": ["write"],
+    "POST /v1/costs/subscriptions": ["write"],
+    "DELETE /v1/costs/subscriptions/{sub_id}": ["destructive"],
+    # --- Security child profiles — T2 security_read ---
+    "GET /v1/security/child-profiles": ["read", "security_read"],
+    "GET /v1/security/mcp/registry": ["read"],
+    # --- Vault — reads T1, writes T2 ---
+    "GET /v1/vault/pipeline": ["read"],
+    "POST /v1/vault/ask": ["write", "external_call", "cost_incurring"],
+    "POST /v1/vault/search": ["write"],
+    "POST /v1/vault/pipeline/{pipeline_id}/confirm": ["write"],
+    # --- Logs — POST diagnose is T2 ---
+    "POST /v1/logs/diagnose": ["write", "security_read"],
+    # --- Tasks — additional routes ---
+    "POST /v1/tasks/graphs": ["write"],
+    "POST /v1/tasks/graphs/{graph_id}/approve": ["admin"],
+    "POST /v1/tasks/graphs/{graph_id}/steps": ["write"],
+    # --- Threads patch ---
+    "PATCH /v1/threads/{thread_id}": ["write"],
+    # --- Admin panel ---
+    "GET /admin": ["admin"],
+    "POST /admin": ["admin"],
+    "POST /v1/auth/pin": ["auth"],
 }
 
 
