@@ -37,74 +37,29 @@ SKIP_PATHS = {"/v1/auth/pin", "/health"}
 
 class ApprovalMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # Skip OPTIONS (CORS preflight)
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        # Skip pre-auth paths
         if request.url.path in SKIP_PATHS:
             return await call_next(request)
 
-        async def receive_body():
-            body = b""
-            while True:
-                message = await request.receive()
-                body += message.get("body", b"")
-                if not message.get("more_body", False):
-                    break
-            return body
-
-        body_bytes = await receive_body()
-        parameters_hash = hashlib.sha256(body_bytes or b"").hexdigest()
-        replay_sent = False
-
-        async def new_receive():
-            nonlocal replay_sent
-            if replay_sent:
-                return {"type": "http.request", "body": b"", "more_body": False}
-            replay_sent = True
-            return {"type": "http.request", "body": body_bytes, "more_body": False}
-
-        replay_request = Request(request.scope, receive=new_receive)
-
-        actor_sub = (
-            getattr(request.state, "user_sub", None)
-            or getattr(request.state, "user_id", None)
-            or getattr(request.state, "sub", None)
-            or "unknown"
-        )
-        actor_type = getattr(request.state, "actor_type", "user")
-
-        approved_queue_id = await self._get_approved_queue_id(
-            actor_sub=actor_sub,
-            parameters_hash=parameters_hash,
-        )
-        if approved_queue_id:
-            response = await call_next(replay_request)
-            await self._consume_approved_queue(approved_queue_id)
-            return response
-
-        # Classify
+        # Classify BEFORE reading body — no body needed for classification
         action_classes = classify_route(request.method, request.url.path)
         risk_tier = determine_risk_tier(action_classes)
-        action_class_str = ",".join(action_classes)
 
-        # Attach to request.state for downstream use
-        replay_request.state.action_classes = action_classes
-        replay_request.state.risk_tier = risk_tier
-
-        # T1 — execute, no audit
+        # T1 — pass through, no audit, no body read
         if risk_tier == "T1":
-            return await call_next(replay_request)
+            request.state.action_classes = action_classes
+            request.state.risk_tier = risk_tier
+            return await call_next(request)
 
-        # T2 — execute + audit
+        # T2 — pass through + audit after
         if risk_tier == "T2":
-            response = await call_next(replay_request)
-            # Fire-and-forget audit (don't block response)
+            request.state.action_classes = action_classes
+            request.state.risk_tier = risk_tier
+            response = await call_next(request)
             try:
-                await self._write_audit(
-                    replay_request, action_classes, risk_tier, "auto"
-                )
+                await self._write_audit(request, action_classes, risk_tier, "auto")
             except Exception:
                 logger.error(
                     "audit write failed for T2 request %s %s",
@@ -114,12 +69,14 @@ class ApprovalMiddleware(BaseHTTPMiddleware):
                 )
             return response
 
-        # T3 — execute + audit + mark for notification
+        # T3 — pass through + audit + notification marker
         if risk_tier == "T3":
-            response = await call_next(replay_request)
+            request.state.action_classes = action_classes
+            request.state.risk_tier = risk_tier
+            response = await call_next(request)
             try:
                 await self._write_audit(
-                    replay_request, action_classes, risk_tier, "auto", notify=True
+                    request, action_classes, risk_tier, "auto", notify=True
                 )
             except Exception:
                 logger.error(
@@ -130,7 +87,32 @@ class ApprovalMiddleware(BaseHTTPMiddleware):
                 )
             return response
 
-        # T4/T5/unclassified — BLOCK and queue for approval
+        # --- T4/T5 only below this line — safe to read body ---
+
+        actor_sub = (
+            getattr(request.state, "user_sub", None)
+            or getattr(request.state, "user_id", None)
+            or getattr(request.state, "sub", None)
+            or "unknown"
+        )
+        actor_type = getattr(request.state, "actor_type", "user")
+
+        # Read body for hash — only T4/T5 gets here
+        body_bytes = await request.body()
+        parameters_hash = hashlib.sha256(body_bytes or b"").hexdigest()
+
+        # Check if this request was already approved
+        approved_queue_id = await self._get_approved_queue_id(
+            actor_sub=actor_sub,
+            parameters_hash=parameters_hash,
+        )
+        if approved_queue_id:
+            response = await call_next(request)
+            await self._consume_approved_queue(approved_queue_id)
+            return response
+
+        # Queue for approval
+        action_class_str = ",".join(action_classes)
         queue_id = await self._queue_for_approval(
             actor_sub=actor_sub,
             actor_type=actor_type,
