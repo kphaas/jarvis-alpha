@@ -126,21 +126,22 @@ class MemoryService:
 
     async def _get_semantic(self, user_id: UUID) -> list[dict]:
         async with self.pool.acquire() as conn:
-            await conn.execute(
-                "SELECT set_config('jarvis.current_user', $1, true)",
-                str(user_id),
-            )
-            rows = await conn.fetch(
-                """
-                SELECT fact, category
-                FROM alpha_semantic_memory
-                WHERE user_id = $1
-                ORDER BY created_at DESC
-                LIMIT $2
-                """,
-                user_id,
-                SEMANTIC_CAP,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('jarvis.current_user', $1, true)",
+                    str(user_id),
+                )
+                rows = await conn.fetch(
+                    """
+                    SELECT fact, category
+                    FROM alpha_semantic_memory
+                    WHERE user_id = $1
+                    ORDER BY created_at DESC
+                    LIMIT $2
+                    """,
+                    user_id,
+                    SEMANTIC_CAP,
+                )
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
@@ -154,61 +155,62 @@ class MemoryService:
         All factors normalized to [0, 1].
         """
         async with self.pool.acquire() as conn:
-            await conn.execute(
-                "SELECT set_config('jarvis.current_user', $1, true)",
-                str(user_id),
-            )
-            rows = await conn.fetch(
-                """
-                WITH candidates AS (
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('jarvis.current_user', $1, true)",
+                    str(user_id),
+                )
+                rows = await conn.fetch(
+                    """
+                    WITH candidates AS (
+                        SELECT
+                            id,
+                            summary,
+                            importance_score,
+                            last_accessed_at,
+                            access_count,
+                            1 - (embedding <=> $2::vector) AS cosine_sim
+                        FROM alpha_conversation_memory
+                        WHERE user_id = $1
+                          AND tier = 'episodic'
+                    )
                     SELECT
                         id,
                         summary,
                         importance_score,
-                        last_accessed_at,
                         access_count,
-                        1 - (embedding <=> $2::vector) AS cosine_sim
-                    FROM alpha_conversation_memory
-                    WHERE user_id = $1
-                      AND tier = 'episodic'
-                )
-                SELECT
-                    id,
-                    summary,
-                    importance_score,
-                    access_count,
-                    cosine_sim,
-                    -- Recency: exponential decay, 0.995^hours since last access
-                    POWER(0.995, EXTRACT(EPOCH FROM (now() - last_accessed_at)) / 3600.0)
-                        AS recency_score,
-                    -- Final weighted score (Stanford formula)
-                    (
-                        0.3 * POWER(0.995, EXTRACT(EPOCH FROM (now() - last_accessed_at)) / 3600.0)
-                      + 0.4 * importance_score
-                      + 0.3 * cosine_sim
-                    ) AS retrieval_score
-                FROM candidates
-                WHERE cosine_sim > 0.3
-                ORDER BY retrieval_score DESC
-                LIMIT $3
-                """,
-                str(user_id),
-                str(embedding),
-                EPISODIC_LIMIT,
-            )
-
-            # Bump access tracking on retrieved rows (fire and forget)
-            if rows:
-                ids = [r["id"] for r in rows]
-                await conn.execute(
-                    """
-                    UPDATE alpha_conversation_memory
-                    SET access_count = access_count + 1,
-                        last_accessed_at = now()
-                    WHERE id = ANY($1::uuid[])
+                        cosine_sim,
+                        -- Recency: exponential decay, 0.995^hours since last access
+                        POWER(0.995, EXTRACT(EPOCH FROM (now() - last_accessed_at)) / 3600.0)
+                            AS recency_score,
+                        -- Final weighted score (Stanford formula)
+                        (
+                            0.3 * POWER(0.995, EXTRACT(EPOCH FROM (now() - last_accessed_at)) / 3600.0)
+                          + 0.4 * importance_score
+                          + 0.3 * cosine_sim
+                        ) AS retrieval_score
+                    FROM candidates
+                    WHERE cosine_sim > 0.3
+                    ORDER BY retrieval_score DESC
+                    LIMIT $3
                     """,
-                    ids,
+                    str(user_id),
+                    str(embedding),
+                    EPISODIC_LIMIT,
                 )
+
+                # Bump access tracking on retrieved rows (fire and forget)
+                if rows:
+                    ids = [r["id"] for r in rows]
+                    await conn.execute(
+                        """
+                        UPDATE alpha_conversation_memory
+                        SET access_count = access_count + 1,
+                            last_accessed_at = now()
+                        WHERE id = ANY($1::uuid[])
+                        """,
+                        ids,
+                    )
 
         return [dict(r) for r in rows]
 
@@ -252,28 +254,29 @@ class MemoryService:
 
         tier = "episodic" if persistent else "working"
         async with self.pool.acquire() as conn:
-            await conn.execute(
-                "SELECT set_config('jarvis.current_user', $1, true)",
-                str(user_id),
-            )
-            await conn.execute(
-                """
-                INSERT INTO alpha_conversation_memory
-                  (user_id, session_id, role, content, summary, memory_type,
-                   embedding, tier, persistent, importance_score)
-                VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8, $9, $10)
-                """,
-                str(user_id),
-                session_id,
-                role,
-                summary,
-                summary,
-                role,
-                str(embedding),
-                tier,
-                persistent,
-                importance,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('jarvis.current_user', $1, true)",
+                    str(user_id),
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO alpha_conversation_memory
+                      (user_id, session_id, role, content, summary, memory_type,
+                       embedding, tier, persistent, importance_score)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8, $9, $10)
+                    """,
+                    str(user_id),
+                    session_id,
+                    role,
+                    summary,
+                    summary,
+                    role,
+                    str(embedding),
+                    tier,
+                    persistent,
+                    importance,
+                )
 
     # ------------------------------------------------------------------
     # EXPLICIT SAVE — user says "remember this"
@@ -287,26 +290,27 @@ class MemoryService:
         category: str,
     ) -> dict:
         async with self.pool.acquire() as conn:
-            await conn.execute(
-                "SELECT set_config('jarvis.current_user', $1, true)",
-                str(user_id),
-            )
-            count = await conn.fetchval(
-                "SELECT COUNT(*) FROM alpha_semantic_memory WHERE user_id = $1",
-                user_id,
-            )
-            if count >= SEMANTIC_CAP:
-                return {"error": f"Semantic memory cap ({SEMANTIC_CAP}) reached"}
-            await conn.execute(
-                """
-                INSERT INTO alpha_semantic_memory
-                  (user_id, fact, category, source)
-                VALUES ($1, $2, $3, 'explicit')
-                """,
-                user_id,
-                fact,
-                category,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('jarvis.current_user', $1, true)",
+                    str(user_id),
+                )
+                count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM alpha_semantic_memory WHERE user_id = $1",
+                    user_id,
+                )
+                if count >= SEMANTIC_CAP:
+                    return {"error": f"Semantic memory cap ({SEMANTIC_CAP}) reached"}
+                await conn.execute(
+                    """
+                    INSERT INTO alpha_semantic_memory
+                      (user_id, fact, category, source)
+                    VALUES ($1, $2, $3, 'explicit')
+                    """,
+                    user_id,
+                    fact,
+                    category,
+                )
         return {"saved": True, "fact": fact, "category": category}
 
     # ------------------------------------------------------------------
@@ -315,46 +319,47 @@ class MemoryService:
 
     async def promote_to_semantic(self, user_id: UUID) -> dict:
         async with self.pool.acquire() as conn:
-            await conn.execute(
-                "SELECT set_config('jarvis.current_user', $1, true)",
-                str(user_id),
-            )
-            cap_check = await conn.fetchval(
-                "SELECT COUNT(*) FROM alpha_semantic_memory WHERE user_id = $1",
-                user_id,
-            )
-            if cap_check >= SEMANTIC_CAP:
-                return {"promoted": 0, "reason": "cap_reached"}
-
-            candidates = await conn.fetch(
-                """
-                SELECT id, summary
-                FROM alpha_conversation_memory
-                WHERE user_id = $1
-                  AND tier = 'episodic'
-                  AND importance_score >= $2
-                  AND access_count >= $3
-                LIMIT $4
-                """,
-                str(user_id),
-                PROMOTION_SCORE_THRESHOLD,
-                PROMOTION_ACCESS_THRESHOLD,
-                SEMANTIC_CAP - cap_check,
-            )
-
-            promoted = 0
-            for row in candidates:
+            async with conn.transaction():
                 await conn.execute(
-                    """
-                    INSERT INTO alpha_semantic_memory
-                      (user_id, fact, category, source)
-                    VALUES ($1, $2, 'project', 'promoted')
-                    ON CONFLICT DO NOTHING
-                    """,
-                    user_id,
-                    row["summary"],
+                    "SELECT set_config('jarvis.current_user', $1, true)",
+                    str(user_id),
                 )
-                promoted += 1
+                cap_check = await conn.fetchval(
+                    "SELECT COUNT(*) FROM alpha_semantic_memory WHERE user_id = $1",
+                    user_id,
+                )
+                if cap_check >= SEMANTIC_CAP:
+                    return {"promoted": 0, "reason": "cap_reached"}
+
+                candidates = await conn.fetch(
+                    """
+                    SELECT id, summary
+                    FROM alpha_conversation_memory
+                    WHERE user_id = $1
+                      AND tier = 'episodic'
+                      AND importance_score >= $2
+                      AND access_count >= $3
+                    LIMIT $4
+                    """,
+                    str(user_id),
+                    PROMOTION_SCORE_THRESHOLD,
+                    PROMOTION_ACCESS_THRESHOLD,
+                    SEMANTIC_CAP - cap_check,
+                )
+
+                promoted = 0
+                for row in candidates:
+                    await conn.execute(
+                        """
+                        INSERT INTO alpha_semantic_memory
+                          (user_id, fact, category, source)
+                        VALUES ($1, $2, 'project', 'promoted')
+                        ON CONFLICT DO NOTHING
+                        """,
+                        user_id,
+                        row["summary"],
+                    )
+                    promoted += 1
 
         return {"promoted": promoted, "user_id": str(user_id)}
 
