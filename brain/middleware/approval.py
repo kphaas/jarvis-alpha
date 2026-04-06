@@ -20,6 +20,7 @@ Phase 2 (next session):
 import hashlib
 from uuid import uuid4
 
+from asyncpg.exceptions import UniqueViolationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -209,38 +210,52 @@ class ApprovalMiddleware(BaseHTTPMiddleware):
             return None
 
         async with pool.acquire() as conn:
-            async with conn.transaction():
-                nonce = uuid4().hex
-                description = f"{method} {path}"
-                queue_id = await conn.fetchval(
-                    """INSERT INTO alpha_approval_queue
-                       (action_class, risk_tier, actor_sub, actor_type, description,
-                        parameters_hash, nonce, status, requested_at, expires_at)
-                       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW(), NOW() + INTERVAL '10 minutes')
-                       RETURNING id""",
-                    action_classes,
-                    tier,
+            nonce = uuid4().hex
+            description = f"{method} {path}"
+            try:
+                async with conn.transaction():
+                    queue_id = await conn.fetchval(
+                        """INSERT INTO alpha_approval_queue
+                           (action_class, risk_tier, actor_sub, actor_type, description,
+                            parameters_hash, nonce, status, requested_at, expires_at)
+                           VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW(), NOW() + INTERVAL '10 minutes')
+                           RETURNING id""",
+                        action_classes,
+                        tier,
+                        actor_sub,
+                        actor_type,
+                        description,
+                        parameters_hash,
+                        nonce,
+                    )
+                    await conn.execute(
+                        """INSERT INTO alpha_approval_audit
+                           (approval_id, action_class, risk_tier, actor_sub, actor_type,
+                            description, parameters_hash, nonce, decision, decided_by, overnight)
+                           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'auto', $4, false)""",
+                        queue_id,
+                        action_classes,
+                        tier,
+                        actor_sub,
+                        actor_type,
+                        description,
+                        parameters_hash,
+                        nonce,
+                    )
+                return str(queue_id)
+            except UniqueViolationError:
+                existing = await conn.fetchval(
+                    """SELECT id FROM alpha_approval_queue
+                       WHERE actor_sub = $1
+                         AND parameters_hash = $2
+                         AND status = 'pending'
+                       LIMIT 1""",
                     actor_sub,
-                    actor_type,
-                    description,
                     parameters_hash,
-                    nonce,
                 )
-                await conn.execute(
-                    """INSERT INTO alpha_approval_audit
-                       (approval_id, action_class, risk_tier, actor_sub, actor_type,
-                        description, parameters_hash, nonce, decision, decided_by, overnight)
-                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'auto', $4, false)""",
-                    queue_id,
-                    action_classes,
-                    tier,
-                    actor_sub,
-                    actor_type,
-                    description,
-                    parameters_hash,
-                    nonce,
-                )
-        return str(queue_id)
+                if existing:
+                    return str(existing)
+                return None
 
     async def _write_audit(
         self,
