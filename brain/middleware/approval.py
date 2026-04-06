@@ -44,24 +44,66 @@ class ApprovalMiddleware(BaseHTTPMiddleware):
         if request.url.path in SKIP_PATHS:
             return await call_next(request)
 
+        async def receive_body():
+            body = b""
+            while True:
+                message = await request.receive()
+                body += message.get("body", b"")
+                if not message.get("more_body", False):
+                    break
+            return body
+
+        body_bytes = await receive_body()
+        parameters_hash = hashlib.sha256(body_bytes or b"").hexdigest()
+        replay_sent = False
+
+        async def new_receive():
+            nonlocal replay_sent
+            if replay_sent:
+                return {"type": "http.request", "body": b"", "more_body": False}
+            replay_sent = True
+            return {"type": "http.request", "body": body_bytes, "more_body": False}
+
+        replay_request = Request(request.scope, receive=new_receive)
+
+        actor_sub = (
+            getattr(request.state, "user_sub", None)
+            or getattr(request.state, "user_id", None)
+            or getattr(request.state, "sub", None)
+            or "unknown"
+        )
+        actor_type = getattr(request.state, "actor_type", "user")
+
+        approved_queue_id = await self._get_approved_queue_id(
+            actor_sub=actor_sub,
+            parameters_hash=parameters_hash,
+        )
+        if approved_queue_id:
+            response = await call_next(replay_request)
+            await self._consume_approved_queue(approved_queue_id)
+            return response
+
         # Classify
         action_classes = classify_route(request.method, request.url.path)
         risk_tier = determine_risk_tier(action_classes)
+        action_class_str = ",".join(action_classes)
 
         # Attach to request.state for downstream use
-        request.state.action_classes = action_classes
-        request.state.risk_tier = risk_tier
+        replay_request.state.action_classes = action_classes
+        replay_request.state.risk_tier = risk_tier
 
         # T1 — execute, no audit
         if risk_tier == "T1":
-            return await call_next(request)
+            return await call_next(replay_request)
 
         # T2 — execute + audit
         if risk_tier == "T2":
-            response = await call_next(request)
+            response = await call_next(replay_request)
             # Fire-and-forget audit (don't block response)
             try:
-                await self._write_audit(request, action_classes, risk_tier, "auto")
+                await self._write_audit(
+                    replay_request, action_classes, risk_tier, "auto"
+                )
             except Exception:
                 logger.error(
                     "audit write failed for T2 request %s %s",
@@ -73,10 +115,10 @@ class ApprovalMiddleware(BaseHTTPMiddleware):
 
         # T3 — execute + audit + mark for notification
         if risk_tier == "T3":
-            response = await call_next(request)
+            response = await call_next(replay_request)
             try:
                 await self._write_audit(
-                    request, action_classes, risk_tier, "auto", notify=True
+                    replay_request, action_classes, risk_tier, "auto", notify=True
                 )
             except Exception:
                 logger.error(
@@ -87,19 +129,111 @@ class ApprovalMiddleware(BaseHTTPMiddleware):
                 )
             return response
 
-        # T4/T5/unclassified — BLOCK (placeholder for next session)
-        # In Phase 2: T4 queues for approval, T5 queues for PIN
-        # For now: return 403 so we catch unclassified routes immediately
+        # T4/T5/unclassified — BLOCK and queue for approval
+        queue_id = await self._queue_for_approval(
+            actor_sub=actor_sub,
+            actor_type=actor_type,
+            method=request.method,
+            path=request.url.path,
+            parameters_hash=parameters_hash,
+            tier=risk_tier,
+            action_classes=action_classes,
+        )
+        if not queue_id:
+            return JSONResponse(
+                status_code=500, content={"detail": "approval_queue_failed"}
+            )
+
         return JSONResponse(
             status_code=403,
             content={
-                "error": "approval_required",
-                "risk_tier": risk_tier,
-                "action_classes": action_classes,
-                "message": f"This action requires approval (tier {risk_tier}). "
-                f"Approval gateway T4/T5 flow not yet implemented.",
+                "detail": "approval_required",
+                "queue_id": queue_id,
+                "tier": risk_tier,
+                "action_class": action_class_str,
             },
         )
+
+    async def _get_approved_queue_id(
+        self, actor_sub: str, parameters_hash: str
+    ) -> str | None:
+        pool = get_pool()
+        if not pool:
+            logger.error("no DB pool available for approval queue read")
+            return None
+
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT id
+                   FROM alpha_approval_queue
+                   WHERE actor_sub = $1
+                     AND parameters_hash = $2
+                     AND status = 'approved'
+                     AND expires_at > NOW()
+                   ORDER BY requested_at DESC
+                   LIMIT 1""",
+                actor_sub,
+                parameters_hash,
+            )
+
+        return str(row["id"]) if row else None
+
+    async def _consume_approved_queue(self, queue_id: str) -> None:
+        pool = get_pool()
+        if not pool:
+            logger.error("no DB pool available for approval consume write")
+            return
+
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE alpha_approval_queue
+                   SET status = 'executed',
+                       executed_at = NOW()
+                   WHERE id = $1""",
+                queue_id,
+            )
+
+    async def _queue_for_approval(
+        self,
+        actor_sub: str,
+        actor_type: str,
+        method: str,
+        path: str,
+        parameters_hash: str,
+        tier: str,
+        action_classes: list[str],
+    ) -> str | None:
+        pool = get_pool()
+        if not pool:
+            logger.error("no DB pool available for approval queue write")
+            return None
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                nonce = uuid4().hex
+                description = f"{method} {path}"
+                queue_id = await conn.fetchval(
+                    """INSERT INTO alpha_approval_queue
+                       (action_class, risk_tier, actor_sub, actor_type, description,
+                        parameters_hash, nonce, status, requested_at, expires_at)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW(), NOW() + INTERVAL '10 minutes')
+                       RETURNING id""",
+                    action_classes,
+                    tier,
+                    actor_sub,
+                    actor_type,
+                    description,
+                    parameters_hash,
+                    nonce,
+                )
+                await conn.execute(
+                    """INSERT INTO alpha_approval_audit
+                       (approval_id, action, actor_sub, created_at)
+                       VALUES ($1, 'queued', $2, NOW())""",
+                    queue_id,
+                    actor_sub,
+                )
+        return str(queue_id)
 
     async def _write_audit(
         self,
