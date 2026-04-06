@@ -17,27 +17,6 @@ from brain.db.pool import get_pool
 
 router = APIRouter()
 
-CERTS = [
-    {
-        "node": "Brain",
-        "domain": "jarvis-brain.tail40ed36.ts.net",
-        "cert_path": os.path.expanduser("~/jarvis/certs/brain.crt"),
-        "expires": "2026-06-18",
-    },
-    {
-        "node": "Gateway",
-        "domain": "jarvis-gateway.tail40ed36.ts.net",
-        "cert_path": None,
-        "expires": "2026-06-18",
-    },
-    {
-        "node": "Endpoint",
-        "domain": "jarvis-endpoint.tail40ed36.ts.net",
-        "cert_path": None,
-        "expires": "2026-06-18",
-    },
-]
-
 _CRITICAL_NODE_NAMES = frozenset({"brain", "gateway", "endpoint"})
 _NON_CRITICAL_NAMES = frozenset({"unraid", "air", "udmpro"})
 _MOBILE_NAMES = frozenset({"iphone"})
@@ -58,14 +37,6 @@ def _ping_node(ip: str) -> dict:
         return {"reachable": False, "latency_ms": None}
     except Exception:
         return {"reachable": False, "latency_ms": None}
-
-
-def _cert_days_remaining(expires_str: str) -> int:
-    try:
-        expiry = datetime.strptime(expires_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        return (expiry - datetime.now(timezone.utc)).days
-    except Exception:
-        return -1
 
 
 def _naive_utc(dt: datetime | None) -> datetime | None:
@@ -235,35 +206,82 @@ async def get_mesh_status():
 
 
 @router.get("/v1/mesh/certs")
-def get_cert_status():
+async def get_cert_status():
+    """
+    Cert expiry data, sourced from alpha_node_registry.
+    For Brain (or any node where the cert file is local), reads the actual
+    cert from disk for ground truth. Otherwise uses cert_expires_at from the DB.
+
+    Add a node to this endpoint by inserting into alpha_node_registry with
+    cert_expires_at populated — no code changes required.
+    """
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT name, display_name, tailscale_ip, health_endpoint,
+                   cert_issued_at, cert_expires_at
+            FROM alpha_node_registry
+            WHERE node_type = 'service'
+              AND is_active = true
+              AND cert_expires_at IS NOT NULL
+            ORDER BY name
+            """
+        )
+
+    # Local cert overrides — when running on a node, prefer reading the actual
+    # cert file from disk over the DB value (catches mid-cycle renewals).
+    LOCAL_CERT_PATHS = {
+        "brain": os.path.expanduser("~/jarvis/certs/brain.crt"),
+    }
+
     result = []
-    for cert in CERTS:
-        expires_str = cert["expires"]
-        if cert["node"] == "Brain" and cert["cert_path"]:
+    for row in rows:
+        node_name = row["name"]
+        domain = _extract_domain(row["health_endpoint"]) or row["tailscale_ip"] or ""
+        expires_dt: datetime | None = row["cert_expires_at"]
+        source = "registry"
+
+        # If we have a local cert file for this node, prefer its on-disk truth
+        cert_path = LOCAL_CERT_PATHS.get(node_name)
+        if cert_path and os.path.exists(cert_path):
             try:
                 out = subprocess.run(
-                    ["openssl", "x509", "-enddate", "-noout", "-in", cert["cert_path"]],
+                    ["openssl", "x509", "-enddate", "-noout", "-in", cert_path],
                     capture_output=True,
                     text=True,
                     timeout=5,
                 )
                 if out.returncode == 0:
                     raw = out.stdout.strip().replace("notAfter=", "")
-                    dt = datetime.strptime(raw, "%b %d %H:%M:%S %Y %Z")
-                    expires_str = dt.strftime("%Y-%m-%d")
+                    expires_dt = datetime.strptime(raw, "%b %d %H:%M:%S %Y %Z").replace(
+                        tzinfo=timezone.utc
+                    )
+                    source = "disk"
             except Exception:
                 pass
-        days = _cert_days_remaining(expires_str)
+
+        if expires_dt is None:
+            continue
+
+        days = (expires_dt - datetime.now(timezone.utc)).days
         result.append(
             {
-                "node": cert["node"],
-                "domain": cert["domain"],
-                "expires": expires_str,
+                "node": row["display_name"],
+                "domain": domain,
+                "expires": expires_dt.strftime("%Y-%m-%d"),
                 "days_remaining": days,
                 "status": "critical" if days < 14 else "warning" if days < 30 else "ok",
-                "source": "disk"
-                if cert["node"] == "Brain" and cert["cert_path"]
-                else "config",
+                "source": source,
             }
         )
+
     return result
+
+
+def _extract_domain(health_endpoint: str | None) -> str | None:
+    """Extract hostname from a https://host:port/path URL."""
+    if not health_endpoint:
+        return None
+    match = re.match(r"https?://([^:/]+)", health_endpoint)
+    return match.group(1) if match else None
