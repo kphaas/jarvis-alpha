@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import date, datetime
 from typing import Any, Literal
@@ -125,8 +126,8 @@ async def ingest_briefing(
                 body.briefing_date,
                 body.started_at,
                 body.source,
-                body.summary,
-                body.results,
+                json.dumps(body.summary),
+                json.dumps(body.results),
                 body.markdown,
             )
     except UniqueViolationError:
