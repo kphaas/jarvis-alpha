@@ -20,6 +20,10 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/unifi/summary": ["read"],
     "GET /v1/tasks/graphs": ["read"],
     "GET /v1/approval": ["read"],
+    "GET /v1/security/status": ["read", "security_read"],
+    "GET /v1/security/audit": ["read", "security_read"],
+    "GET /v1/mesh/certs": ["read"],
+    "GET /v1/logs/query": ["read", "security_read"],
     # Writes — T2
     "POST /v1/tasks/ingest": ["write"],
     "POST /v1/memory": ["write"],
@@ -67,6 +71,7 @@ TIER_RULES: list[tuple[set[str], str]] = [
     ({"cost_incurring"}, "T3"),
     ({"external_call"}, "T2"),
     ({"write"}, "T2"),
+    ({"security_read"}, "T2"),
     ({"read"}, "T1"),
 ]
 
