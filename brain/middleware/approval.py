@@ -27,6 +27,7 @@ from starlette.responses import JSONResponse
 
 from brain.db.pool import get_pool
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
+from brain.services.approval_notifier import send_approval_notification
 from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
@@ -126,6 +127,20 @@ class ApprovalMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 status_code=500, content={"detail": "approval_queue_failed"}
             )
+
+        # Notify — fire and forget
+        try:
+            await send_approval_notification(
+                queue_id=queue_id,
+                tier=risk_tier,
+                action_classes=action_classes,
+                method=request.method,
+                path=request.url.path,
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+            )
+        except Exception:
+            logger.error("approval notification failed", exc_info=True)
 
         return JSONResponse(
             status_code=403,
