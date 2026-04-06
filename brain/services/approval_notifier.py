@@ -9,7 +9,7 @@ Gateway is sole internet egress — when Pushover is added, Brain will
 POST to Gateway which forwards to Pushover API.
 """
 
-
+import json
 from brain.db.pool import get_pool
 from jarvis_common.logging_config import get_logger
 
@@ -150,7 +150,7 @@ async def send_approval_notification(
                     notif["title"],
                     notif["body"],
                     notif["priority"],
-                    notif["payload"],
+                    json.dumps(notif["payload"]),
                 )
         except Exception:
             logger.error("Failed to write approval buddy event", exc_info=True)
