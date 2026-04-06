@@ -60,4 +60,11 @@ if [ -f "$BRAIN_PLIST" ]; then
     echo "⚠️  Alpha Brain health check failed — check logs"
     tail -5 "${REPO_DIR}/logs/alpha_brain_error.log" 2>/dev/null
   fi
+
+  echo ""
+  echo "Restarting Buddy Agent..."
+  launchctl unload ~/Library/LaunchAgents/com.jarvis.alpha.buddy.plist 2>/dev/null
+  sleep 1
+  launchctl load ~/Library/LaunchAgents/com.jarvis.alpha.buddy.plist
+  echo "✅ Buddy agent restarted"
 fi
