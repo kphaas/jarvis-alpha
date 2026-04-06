@@ -1,35 +1,32 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCw, Cpu, Cloud, Loader2, Sparkles } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { RefreshCw, Loader2, Sparkles } from "lucide-react";
 import { apiFetch } from "../lib/apiFetch";
+import { useLogs } from "../hooks/useLogs";
 import type {
   ErrorLogEntry as LogEntry,
-  QueryResponse,
   DiagnoseResponse,
   AnalyzePatternsApiResponse,
   PatternPanelState,
 } from "../types/errors";
 import {
   isPatternAnalyzeTimeout,
-  patternSeverityBarClass,
   entryToPayload,
   gatherContextEntries,
-  showDiagnoseActions,
-  renderDiagnosisBody,
   describeActiveFilters,
-  parseEntryTime,
-  formatTimestamp,
-  levelBadgeClass,
   NODES,
   LEVELS,
   SERVICES,
-  SINCE_OPTIONS,
-  MSG_PREVIEW,
   PATTERN_FETCH_MS,
   type Since,
+  FilterBar,
+  PatternPanel,
+  LogTable,
 } from "../components/errors";
 
 export default function Errors({ theme }: { theme: "dark" | "light" }) {
   const isDark = theme === "dark";
+  const queryClient = useQueryClient();
   const [since, setSince] = useState<Since>("1h");
   const [selectedNodes, setSelectedNodes] = useState<Set<string>>(
     () => new Set(NODES)
@@ -40,10 +37,6 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
   const [service, setService] = useState<(typeof SERVICES)[number]>("all");
   const [textSearch, setTextSearch] = useState("");
   const [autoRefresh, setAutoRefresh] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [fetchError, setFetchError] = useState<string | null>(null);
-  const [entries, setEntries] = useState<LogEntry[]>([]);
-  const [count, setCount] = useState(0);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [diagnoseLoading, setDiagnoseLoading] = useState<{
     rowKey: string;
@@ -59,70 +52,22 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
 
   const showDate = since === "7d";
   const patternLoading = patternPanel?.phase === "loading";
+  const { entries, count, isLoading, error, refetch } = useLogs(
+    {
+      since,
+      selectedNodes,
+      selectedLevels,
+      service,
+      textSearch,
+    },
+    autoRefresh
+  );
 
   const filterSummary = useMemo(
     () =>
       describeActiveFilters(selectedNodes, selectedLevels, service, textSearch),
     [selectedNodes, selectedLevels, service, textSearch]
   );
-
-  const fetchLogs = useCallback(async () => {
-    setLoading(true);
-    setFetchError(null);
-    try {
-      const params = new URLSearchParams();
-      const allNodes = NODES.length === selectedNodes.size;
-      if (!allNodes) {
-        params.set("nodes", Array.from(selectedNodes).join(","));
-      }
-      const allLevels = LEVELS.length === selectedLevels.size;
-      // HTTP query uses level=ERROR,CRITICAL style params, not LogQL; Brain builds the pipeline.
-      if (!allLevels && selectedLevels.size > 0) {
-        params.set("level", Array.from(selectedLevels).join(",")); // ?level= in request URL
-      }
-      if (service !== "all") {
-        params.set("service", service);
-      }
-      const t = textSearch.trim();
-      if (t) {
-        params.set("search", t);
-      }
-      params.set("limit", "500");
-      params.set("since", since);
-      const res = await apiFetch(`/v1/logs/query?${params.toString()}`);
-      const data = (await res.json()) as QueryResponse;
-      if (!res.ok) {
-        setFetchError(data.error || `HTTP ${res.status}`);
-        setEntries([]);
-        setCount(0);
-        return;
-      }
-      if (data.status === "error") {
-        setFetchError(data.error || "Query failed");
-        setEntries([]);
-        setCount(0);
-        return;
-      }
-      setEntries(data.entries ?? []);
-      setCount(data.count ?? 0);
-    } catch (e) {
-      setFetchError(String(e));
-      setEntries([]);
-      setCount(0);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedNodes, selectedLevels, service, textSearch, since]);
-
-  useEffect(() => {
-    void fetchLogs();
-  }, [fetchLogs]);
-
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const id = setInterval(() => void fetchLogs(), 30_000);
-    return () => clearInterval(id);
-  }, [autoRefresh, fetchLogs]);
 
   const toggleNode = (n: string) => {
     setSelectedNodes((prev) => {
@@ -212,20 +157,18 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
         return;
       }
       setPatternPanel({ phase: "done", at: new Date(), data });
+      void queryClient.invalidateQueries({ queryKey: ["logs", "query"] });
     } catch (e) {
       const message = isPatternAnalyzeTimeout(e)
         ? "Analysis timed out — try a shorter time range"
         : String(e);
       setPatternPanel({ phase: "error", at: new Date(), message });
     }
-  }, [since, selectedNodes]);
+  }, [since, selectedNodes, queryClient]);
 
   const border = isDark ? "border-white/10" : "border-[#141414]/15";
   const panel = isDark ? "bg-[#0F0F0F]" : "bg-white";
   const muted = isDark ? "text-zinc-500" : "text-zinc-600";
-  const text = isDark ? "text-[#E4E3E0]" : "text-[#141414]";
-  const inputBg = isDark ? "bg-[#0A0A0A]" : "bg-zinc-50";
-  const rowEven = isDark ? "bg-white/[0.03]" : "bg-zinc-50/80";
 
   return (
     <div className={`min-h-full ${isDark ? "text-[#E4E3E0]" : "text-[#141414]"}`}>
@@ -238,15 +181,15 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
           <span
             className={`rounded-full border px-3 py-1 text-xs font-mono ${border} ${panel}`}
           >
-            {loading ? "…" : count} entries
+            {isLoading ? "…" : count} entries
           </span>
           <button
             type="button"
-            onClick={() => void fetchLogs()}
-            disabled={loading}
+            onClick={() => refetch()}
+            disabled={isLoading}
             className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${border} ${panel} hover:opacity-90 disabled:opacity-40`}
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
             Refresh
           </button>
           <button
@@ -274,477 +217,52 @@ export default function Errors({ theme }: { theme: "dark" | "light" }) {
         </div>
       </div>
 
-      {/* Filters */}
-      <div
-        className={`mb-4 flex flex-col gap-4 rounded-xl border p-4 ${border} ${panel}`}
-      >
-        <div className="flex flex-wrap items-end gap-4">
-          <label className="flex flex-col gap-1">
-            <span className={`text-[10px] font-mono uppercase tracking-wider ${muted}`}>
-              Time range
-            </span>
-            <select
-              value={since}
-              onChange={(e) => setSince(e.target.value as Since)}
-              className={`rounded-lg border px-3 py-2 text-sm ${border} ${inputBg} ${text}`}
-            >
-              {SINCE_OPTIONS.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </label>
+      <FilterBar
+        isDark={isDark}
+        since={since}
+        setSince={(v) => setSince(v as Since)}
+        service={service}
+        setService={(v) => setService(v as (typeof SERVICES)[number])}
+        textSearch={textSearch}
+        setTextSearch={setTextSearch}
+        autoRefresh={autoRefresh}
+        setAutoRefresh={setAutoRefresh}
+        selectedNodes={selectedNodes}
+        toggleNode={toggleNode}
+        selectedLevels={selectedLevels}
+        toggleLevel={toggleLevel}
+        filterSummary={filterSummary}
+      />
 
-          <label className="flex flex-col gap-1">
-            <span className={`text-[10px] font-mono uppercase tracking-wider ${muted}`}>
-              Service
-            </span>
-            <select
-              value={service}
-              onChange={(e) =>
-                setService(e.target.value as (typeof SERVICES)[number])
-              }
-              className={`rounded-lg border px-3 py-2 text-sm ${border} ${inputBg} ${text}`}
-            >
-              {SERVICES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="flex min-w-[200px] flex-1 flex-col gap-1">
-            <span className={`text-[10px] font-mono uppercase tracking-wider ${muted}`}>
-              Text search
-            </span>
-            <input
-              type="search"
-              value={textSearch}
-              onChange={(e) => setTextSearch(e.target.value)}
-              placeholder='e.g. error text or trace id'
-              className={`rounded-lg border px-3 py-2 text-sm ${border} ${inputBg} ${text} placeholder:opacity-40`}
-            />
-          </label>
-
-          <label className="flex cursor-pointer items-center gap-2 self-end pb-2">
-            <input
-              type="checkbox"
-              checked={autoRefresh}
-              onChange={(e) => setAutoRefresh(e.target.checked)}
-              className="rounded border-zinc-500"
-            />
-            <span className={`text-xs ${text}`}>Auto-refresh (30s)</span>
-          </label>
-        </div>
-
-        <div>
-          <span className={`mb-2 block text-[10px] font-mono uppercase tracking-wider ${muted}`}>
-            Node
-          </span>
-          <div className="flex flex-wrap gap-2">
-            {NODES.map((n) => (
-              <button
-                key={n}
-                type="button"
-                onClick={() => toggleNode(n)}
-                className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${border} ${
-                  selectedNodes.has(n)
-                    ? isDark
-                      ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
-                      : "border-emerald-600 bg-emerald-50 text-emerald-900"
-                    : `${inputBg} opacity-50`
-                }`}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <span className={`mb-2 block text-[10px] font-mono uppercase tracking-wider ${muted}`}>
-            Level
-          </span>
-          <div className="flex flex-wrap gap-2">
-            {LEVELS.map((l) => (
-              <button
-                key={l}
-                type="button"
-                onClick={() => toggleLevel(l)}
-                className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${border} ${
-                  selectedLevels.has(l)
-                    ? isDark
-                      ? "border-sky-500/40 bg-sky-500/10 text-sky-200"
-                      : "border-sky-500 bg-sky-50 text-sky-900"
-                    : `${inputBg} opacity-50`
-                }`}
-              >
-                {l}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <p className={`text-[10px] leading-relaxed ${muted}`}>
-          Active filters: <span className={`font-medium ${text}`}>{filterSummary}</span>
-        </p>
-      </div>
-
-      {fetchError && (
+      {error && (
         <div
           className={`mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-400`}
         >
-          {fetchError}
+          {error}
         </div>
       )}
 
       {patternPanel && (
-        <div
-          className={`mb-4 overflow-hidden rounded-xl border ${border} ${panel}`}
-        >
-          <div
-            className={`flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3 ${border}`}
-          >
-            <div>
-              <h2 className={`text-sm font-semibold ${text}`}>Pattern Analysis</h2>
-              <p className={`text-[10px] font-mono ${muted}`}>
-                {patternPanel.phase === "loading"
-                  ? `Started ${patternPanel.startedAt.toLocaleString()}`
-                  : patternPanel.phase === "done" || patternPanel.phase === "error"
-                    ? patternPanel.at.toLocaleString()
-                    : ""}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setPatternPanel(null)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium ${isDark ? "hover:bg-white/10" : "hover:bg-zinc-100"}`}
-            >
-              Close
-            </button>
-          </div>
-
-          <div className="space-y-4 p-4">
-            {patternPanel.phase === "loading" && (
-              <div className={`flex flex-col items-center gap-3 py-8 ${muted}`}>
-                <Loader2 className="h-8 w-8 animate-spin text-emerald-500" />
-                <p className={`text-center text-sm ${text}`}>
-                  Analyzing patterns…
-                </p>
-                <p className="max-w-md text-center text-xs">
-                  Ollama inference can take 30–60 seconds. This request times out after 90s.
-                </p>
-              </div>
-            )}
-
-            {patternPanel.phase === "error" && (
-              <div
-                className={`rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm ${isDark ? "text-red-200" : "text-red-900"}`}
-              >
-                {patternPanel.message}
-              </div>
-            )}
-
-            {patternPanel.phase === "done" && (() => {
-              const analysis = patternPanel.data.analysis;
-              const rows = analysis?.patterns ?? [];
-              const summary = analysis?.summary ?? "";
-              const hasStructured = rows.length > 0;
-
-              return (
-                <>
-                  {hasStructured ? (
-                    <>
-                      {summary && (
-                        <p className={`text-sm leading-relaxed ${text}`}>{summary}</p>
-                      )}
-                      {patternPanel.data.raw_log_count != null && (
-                        <p className={`text-[11px] ${muted}`}>
-                          {patternPanel.data.raw_log_count} log lines ·{" "}
-                          {patternPanel.data.pattern_count ?? rows.length} pattern groups
-                          (top 10 sent to model)
-                        </p>
-                      )}
-                      <div className="space-y-3">
-                        {rows.map((p, i) => (
-                          <div
-                            key={`${p.title ?? "p"}-${i}`}
-                            className={`flex overflow-hidden rounded-lg border ${border} ${isDark ? "bg-[#0A0A0A]" : "bg-zinc-50"}`}
-                          >
-                            <div
-                              className={`w-1 shrink-0 ${patternSeverityBarClass(p.severity ?? "", isDark)}`}
-                              aria-hidden
-                            />
-                            <div className="min-w-0 flex-1 p-4">
-                              <div className="mb-2 flex flex-wrap items-center gap-2">
-                                <span className={`font-semibold ${text}`}>
-                                  {p.title ?? "Pattern"}
-                                </span>
-                                {p.count != null && (
-                                  <span
-                                    className={`rounded-full border px-2 py-0.5 text-[10px] font-mono ${border} ${muted}`}
-                                  >
-                                    ×{p.count}
-                                  </span>
-                                )}
-                                {(p.nodes ?? []).map((n) => (
-                                  <span
-                                    key={n}
-                                    className={`rounded border px-2 py-0.5 text-[10px] font-mono ${border} ${muted}`}
-                                  >
-                                    {n}
-                                  </span>
-                                ))}
-                              </div>
-                              {p.root_cause && (
-                                <p className={`mb-3 text-sm leading-relaxed ${muted}`}>
-                                  {p.root_cause}
-                                </p>
-                              )}
-                              {p.fix && (
-                                <pre
-                                  className={`whitespace-pre-wrap rounded-lg p-3 font-mono text-xs leading-relaxed ${isDark ? "bg-zinc-900/80 text-zinc-200" : "bg-zinc-200/80 text-zinc-900"}`}
-                                >
-                                  {p.fix}
-                                </pre>
-                              )}
-                              {p.related_to != null && p.related_to !== "" && (
-                                <p className={`mt-2 text-xs ${muted}`}>
-                                  Related to:{" "}
-                                  <span className={text}>{String(p.related_to)}</span>
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  ) : summary ? (
-                    <div className={`text-sm ${text}`}>
-                      {renderDiagnosisBody(summary, isDark)}
-                    </div>
-                  ) : null}
-                </>
-              );
-            })()}
-          </div>
-        </div>
+        <PatternPanel
+          isDark={isDark}
+          patternPanel={patternPanel}
+          onClose={() => setPatternPanel(null)}
+        />
       )}
 
-      {/* Table */}
-      <div className={`overflow-hidden rounded-xl border ${border} ${panel}`}>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1024px] border-collapse text-left text-sm">
-            <thead>
-              <tr className={`border-b ${border} ${isDark ? "bg-black/20" : "bg-zinc-100"}`}>
-                <th className={`px-3 py-2.5 text-[10px] font-mono uppercase tracking-wider ${muted}`}>
-                  Timestamp
-                </th>
-                <th className={`px-3 py-2.5 text-[10px] font-mono uppercase tracking-wider ${muted}`}>
-                  Level
-                </th>
-                <th className={`px-3 py-2.5 text-[10px] font-mono uppercase tracking-wider ${muted}`}>
-                  Service
-                </th>
-                <th className={`px-3 py-2.5 text-[10px] font-mono uppercase tracking-wider ${muted}`}>
-                  Node
-                </th>
-                <th className={`px-3 py-2.5 text-[10px] font-mono uppercase tracking-wider ${muted}`}>
-                  Trace ID
-                </th>
-                <th className={`px-3 py-2.5 text-[10px] font-mono uppercase tracking-wider ${muted}`}>
-                  Message
-                </th>
-                <th className={`px-3 py-2.5 text-[10px] font-mono uppercase tracking-wider ${muted}`}>
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && entries.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className={`px-4 py-16 text-center ${muted}`}>
-                    Loading…
-                  </td>
-                </tr>
-              ) : entries.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className={`px-4 py-16 text-center ${muted}`}>
-                    No logs found
-                  </td>
-                </tr>
-              ) : (
-                entries.map((entry, idx) => {
-                  const rowKey = `${entry.ts_ns}-${idx}`;
-                  const d = parseEntryTime(entry);
-                  const msg = entry.message || entry.raw;
-                  const expanded = expandedKey === rowKey;
-                  const short =
-                    msg.length > MSG_PREVIEW && !expanded
-                      ? `${msg.slice(0, MSG_PREVIEW)}…`
-                      : msg;
-                  const severe = showDiagnoseActions(entry.level);
-                  const load = diagnoseLoading;
-                  const loadingHere =
-                    load?.rowKey === rowKey;
-                  const panelHere = diagnosePanel?.rowKey === rowKey;
-
-                  return (
-                    <Fragment key={rowKey}>
-                      <tr
-                        className={`border-b ${border} ${idx % 2 === 1 ? rowEven : ""}`}
-                      >
-                        <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
-                          {formatTimestamp(d, showDate)}
-                        </td>
-                        <td className="px-3 py-2">
-                          <span className={levelBadgeClass(entry.level, isDark)}>
-                            {entry.level}
-                          </span>
-                        </td>
-                        <td className={`px-3 py-2 font-mono text-xs ${text}`}>
-                          {entry.service}
-                        </td>
-                        <td className={`px-3 py-2 font-mono text-xs ${muted}`}>
-                          {entry.node}
-                        </td>
-                        <td className="px-3 py-2 font-mono text-xs">
-                          {entry.trace_id ? (
-                            <button
-                              type="button"
-                              onClick={() => setTextSearch(entry.trace_id)}
-                              className={
-                                isDark
-                                  ? "text-sky-400 underline decoration-sky-500/50 hover:text-sky-300"
-                                  : "text-sky-700 underline hover:text-sky-900"
-                              }
-                            >
-                              {entry.trace_id}
-                            </button>
-                          ) : (
-                            <span className={muted}>—</span>
-                          )}
-                        </td>
-                        <td className={`max-w-md px-3 py-2 text-xs ${text}`}>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setExpandedKey(expanded ? null : rowKey)
-                            }
-                            className="w-full text-left"
-                          >
-                            <span className="break-words">{short}</span>
-                          </button>
-                        </td>
-                        <td className="whitespace-nowrap px-2 py-2 align-top">
-                          {severe ? (
-                            loadingHere ? (
-                              <div className="flex items-center gap-1 py-0.5">
-                                <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
-                                <span className={`text-[10px] ${muted}`}>
-                                  {load?.provider === "local"
-                                    ? "Local…"
-                                    : "Claude…"}
-                                </span>
-                              </div>
-                            ) : (
-                              <div className="flex flex-wrap items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    void runDiagnose(rowKey, idx, entry, "local")
-                                  }
-                                  className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-medium ${border} ${isDark ? "hover:bg-white/5" : "hover:bg-zinc-100"}`}
-                                  title="Diagnose with Ollama (local)"
-                                >
-                                  <Cpu className="h-3 w-3 shrink-0 opacity-70" />
-                                  Local
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    void runDiagnose(rowKey, idx, entry, "claude")
-                                  }
-                                  className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-medium ${border} ${isDark ? "hover:bg-white/5" : "hover:bg-zinc-100"}`}
-                                  title="Diagnose with Claude (gateway)"
-                                >
-                                  <Cloud className="h-3 w-3 shrink-0 opacity-70" />
-                                  Claude
-                                </button>
-                              </div>
-                            )
-                          ) : (
-                            <span className={muted}>—</span>
-                          )}
-                        </td>
-                      </tr>
-                      {panelHere && diagnosePanel && (
-                        <tr
-                          className={`border-b ${border} ${idx % 2 === 1 ? rowEven : ""}`}
-                        >
-                          <td colSpan={7} className="px-0 pb-4 pt-0">
-                            <div
-                              className={`mx-3 overflow-hidden rounded-lg border text-left shadow-lg transition-all ${border} ${
-                                diagnosePanel.isError
-                                  ? isDark
-                                    ? "border-red-500/50 bg-red-950/40"
-                                    : "border-red-300 bg-red-50"
-                                  : isDark
-                                    ? "bg-[#0A0A0A]"
-                                    : "bg-zinc-50"
-                              }`}
-                            >
-                              <div
-                                className={`flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2 ${border}`}
-                              >
-                                <span
-                                  className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                                    diagnosePanel.provider === "local"
-                                      ? isDark
-                                        ? "bg-blue-500/25 text-blue-300"
-                                        : "bg-blue-100 text-blue-800"
-                                      : isDark
-                                        ? "bg-violet-500/25 text-violet-300"
-                                        : "bg-violet-100 text-violet-800"
-                                  }`}
-                                >
-                                  {diagnosePanel.provider === "local"
-                                    ? "Local LLM"
-                                    : "Claude"}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => setDiagnosePanel(null)}
-                                  className={`rounded px-3 py-1 text-xs font-medium ${isDark ? "hover:bg-white/10" : "hover:bg-zinc-200"}`}
-                                >
-                                  Close
-                                </button>
-                              </div>
-                              <div
-                                className={`max-h-[min(70vh,28rem)] overflow-y-auto px-4 py-3 ${diagnosePanel.isError ? (isDark ? "text-red-200" : "text-red-900") : text}`}
-                              >
-                                {diagnosePanel.isError ? (
-                                  <p className="whitespace-pre-wrap text-sm">
-                                    {diagnosePanel.text}
-                                  </p>
-                                ) : (
-                                  renderDiagnosisBody(diagnosePanel.text, isDark)
-                                )}
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <LogTable
+        isDark={isDark}
+        entries={entries}
+        isLoading={isLoading}
+        expandedKey={expandedKey}
+        setExpandedKey={setExpandedKey}
+        setTextSearch={setTextSearch}
+        diagnoseLoading={diagnoseLoading}
+        diagnosePanel={diagnosePanel}
+        onDiagnose={runDiagnose}
+        onCloseDiagnose={() => setDiagnosePanel(null)}
+        showDate={showDate}
+      />
     </div>
   );
 }
