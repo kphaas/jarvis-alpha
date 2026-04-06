@@ -385,18 +385,18 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
         </div>
         <div style={{ padding: "14px 16px" }}>
           {(() => {
-            const known = ['brain', 'executor', 'watchdog', 'buddy', 'power_sampler'] as const;
-            const agentMap = new Map((agents ?? []).map((a) => [agentShortLabel(a.label), a]));
+            const agentList = agents ?? [];
             return (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
-                {known.map((name) => {
-                  const match = agentMap.get(name) ?? agentMap.get(`alpha_${name}`);
-                  const colors = match
-                    ? agentBadgeColors(match.status, isDark)
-                    : { bg: isDark ? 'rgba(107,114,128,0.25)' : 'rgba(148,163,184,0.35)', fg: isDark ? '#9ca3af' : '#64748b' };
-                  const label = match ? match.status.replace('_', ' ') : 'status check pending';
-                  const pid = match?.pid;
-                  return (
+                {agentList.length === 0 ? (
+                  <div style={{ color: muted, fontSize: 12 }}>Loading agents...</div>
+                ) : (
+                  agentList.map((match) => {
+                    const name = agentShortLabel(match.label);
+                    const colors = agentBadgeColors(match.status, isDark);
+                    const label = match.status.replace('_', ' ');
+                    const pid = match.pid;
+                    return (
                     <div
                       key={name}
                       style={{
@@ -429,8 +429,9 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
                         </div>
                       )}
                     </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </div>
             );
           })()}
