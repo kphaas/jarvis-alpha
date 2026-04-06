@@ -1,55 +1,20 @@
-import { useEffect, useMemo, useState } from 'react'
-import { apiJson } from '../../lib/apiFetch'
+import { useMemo } from 'react'
+import { useCostsSummary } from '../../hooks/useCosts'
 import { SectionSkeleton } from '../shared/SectionSkeleton'
 import { SectionError } from '../shared/SectionError'
-import type { CostsSummary } from '../../types/costs'
 import { fmtMoney } from '../../types/costs'
-
-type LoadDeltaFn = (delta: number) => void
 
 export function HeroSection({
   isDark,
   border,
   subtle,
-  refreshKey,
-  onLoadDelta,
 }: {
   isDark: boolean
   border: string
   subtle: string
-  refreshKey: number
-  onLoadDelta?: LoadDeltaFn
 }) {
-  const [data, setData] = useState<CostsSummary | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [err, setErr] = useState<string | null>(null)
-
-  useEffect(() => {
-    let a = true
-    onLoadDelta?.(1)
-    setLoading(true)
-    setErr(null)
-    apiJson<CostsSummary>('/v1/costs/summary')
-      .then((d) => {
-        if (a) {
-          setData(d)
-          setErr(null)
-        }
-      })
-      .catch(() => {
-        if (a) {
-          setData(null)
-          setErr('Could not load summary.')
-        }
-      })
-      .finally(() => {
-        if (a) setLoading(false)
-        onLoadDelta?.(-1)
-      })
-    return () => {
-      a = false
-    }
-  }, [refreshKey, onLoadDelta])
+  const { data, isLoading, error } = useCostsSummary()
+  const err = error ? 'Could not load summary.' : null
 
   const monthMeta = useMemo(() => {
     const now = new Date()
@@ -68,13 +33,13 @@ export function HeroSection({
 
   return (
     <section className="space-y-6">
-      {loading && <SectionSkeleton />}
-      {!loading && err && (
+      {isLoading && <SectionSkeleton />}
+      {!isLoading && err && (
         <div className={`${cardBase} ${subtle}`}>
           <SectionError message={err} />
         </div>
       )}
-      {!loading && !err && data && (
+      {!isLoading && !err && data && (
         <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
             <div className={cardBase}>

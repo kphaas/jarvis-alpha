@@ -1,78 +1,32 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Check, Pencil, X } from 'lucide-react'
 import { apiJson } from '../../lib/apiFetch'
+import { useCostsPower, usePowerLive } from '../../hooks/useCosts'
 import { SectionSkeleton } from '../shared/SectionSkeleton'
 import { SectionError } from '../shared/SectionError'
-import type { PowerPayload, HardwarePayload } from '../../types/costs'
 import { fmtMoney } from '../../types/costs'
-
-type LoadDeltaFn = (delta: number) => void
 
 export function PowerSection({
   isDark,
   border,
   subtle,
-  refreshKey,
-  onLoadDelta,
 }: {
   isDark: boolean
   border: string
   subtle: string
-  refreshKey: number
-  onLoadDelta?: LoadDeltaFn
 }) {
-  const [power, setPower] = useState<PowerPayload | null>(null)
-  const [hw, setHw] = useState<HardwarePayload | null>(null)
-  const [loading, setLoading] = useState(true)
+  const qc = useQueryClient()
+  const costsPower = useCostsPower()
+  const power = costsPower.data?.power ?? null
+  const hw = costsPower.data?.hardware ?? null
+  const liveQuery = usePowerLive()
+  const live = liveQuery.data
+  const loading = costsPower.isLoading
   const [err, setErr] = useState<string | null>(null)
   const [editingRate, setEditingRate] = useState(false)
   const [rateInput, setRateInput] = useState('')
   const [savingRate, setSavingRate] = useState(false)
-  const [live, setLive] = useState<any>(null)
-  const [rate, setRate] = useState<number>(0.13)
-
-  const load = useCallback(() => {
-    onLoadDelta?.(1)
-    setErr(null)
-    Promise.all([apiJson<PowerPayload>('/v1/costs/power'), apiJson<HardwarePayload>('/v1/costs/hardware')])
-      .then(([p, h]) => {
-        setPower(p)
-        setHw(h)
-        setRateInput(String(p.rate_per_kwh))
-        setRate(p.rate_per_kwh)
-        setErr(null)
-      })
-      .catch(() => {
-        setPower(null)
-        setHw(null)
-        setErr('Could not load power or hardware.')
-      })
-      .finally(() => {
-        onLoadDelta?.(-1)
-      })
-  }, [onLoadDelta])
-
-  useEffect(() => {
-    setLoading(true)
-    setErr(null)
-    Promise.all([
-      apiJson<any>('/v1/metrics/power/current').catch(() => null),
-      apiJson<any>('/v1/costs/power').catch(() => null),
-      apiJson<HardwarePayload>('/v1/costs/hardware').catch(() => null),
-    ]).then(([liveData, costData, hwData]) => {
-      setLive(liveData)
-      setRate(costData?.rate_per_kwh ?? 0.13)
-      if (costData) {
-        setPower(costData as PowerPayload)
-        setRateInput(String((costData as PowerPayload).rate_per_kwh))
-      } else {
-        setPower(null)
-      }
-      setHw(hwData)
-      if (!costData || !hwData) setErr('Could not load power or hardware.')
-      else setErr(null)
-    }).finally(() => setLoading(false))
-  }, [refreshKey])
 
   const saveRate = async () => {
     if (!power) return
@@ -83,7 +37,7 @@ export function PowerSection({
         body: JSON.stringify({ rate_per_kwh: parseFloat(rateInput) }),
       })
       setEditingRate(false)
-      load()
+      await qc.invalidateQueries({ queryKey: ['costs', 'power'] })
     } catch {
       setErr('Rate update failed.')
     } finally {
@@ -117,9 +71,9 @@ export function PowerSection({
     <section>
       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-40 mb-4">Power + hardware (true TCO)</p>
       {loading && <SectionSkeleton />}
-      {!loading && err && (!power || !hw) && (
+      {!loading && (err || costsPower.error) && (!power || !hw) && (
         <div className={`p-8 ${card}`}>
-          <SectionError message={err} />
+          <SectionError message={err ?? 'Could not load power or hardware.'} />
         </div>
       )}
       {!loading && power && hw && (
@@ -131,12 +85,12 @@ export function PowerSection({
                   type="button"
                   onClick={() => {
                     setEditingRate(true)
-                    setRateInput(String(power?.rate_per_kwh ?? rate))
+                    setRateInput(String(power?.rate_per_kwh ?? 0.13))
                   }}
                   className={`inline-flex items-center gap-2 text-xs font-mono px-3 py-1.5 rounded-full border ${border}`}
                 >
                   <Pencil className="w-3.5 h-3.5" />
-                  {(power?.rate_per_kwh ?? rate).toFixed(4)} $/kWh
+                  {(power?.rate_per_kwh ?? 0.13).toFixed(4)} $/kWh
                 </button>
               ) : (
                 <div className="flex items-center gap-2">
@@ -159,7 +113,7 @@ export function PowerSection({
                     type="button"
                     onClick={() => {
                       setEditingRate(false)
-                      setRateInput(String(power?.rate_per_kwh ?? rate))
+                      setRateInput(String(power?.rate_per_kwh ?? 0.13))
                     }}
                     className="p-1.5 rounded-xl border border-white/10"
                   >
@@ -230,7 +184,9 @@ export function PowerSection({
                 </tfoot>
               </table>
             </div>
-            {err && <p className="text-xs text-rose-500 p-3 border-t border-white/5">{err}</p>}
+            {(err || costsPower.error || liveQuery.error) && (
+              <p className="text-xs text-rose-500 p-3 border-t border-white/5">{err ?? 'Could not load power or hardware.'}</p>
+            )}
           </div>
 
           <div className={card}>

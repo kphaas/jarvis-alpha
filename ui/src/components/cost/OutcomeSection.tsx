@@ -1,55 +1,22 @@
-import { useEffect, useMemo, useState } from 'react'
-import { apiJson } from '../../lib/apiFetch'
+import { useMemo } from 'react'
+import { useCostsOutcomes } from '../../hooks/useCosts'
 import { SectionSkeleton } from '../shared/SectionSkeleton'
 import { SectionError } from '../shared/SectionError'
 import type { OutcomeRow } from '../../types/costs'
 import { fmtMoney } from '../../types/costs'
 
-type LoadDeltaFn = (delta: number) => void
-
 export function OutcomeSection({
   isDark,
   border,
   subtle,
-  refreshKey,
-  onLoadDelta,
 }: {
   isDark: boolean
   border: string
   subtle: string
-  refreshKey: number
-  onLoadDelta?: LoadDeltaFn
 }) {
-  const [rows, setRows] = useState<OutcomeRow[] | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [err, setErr] = useState<string | null>(null)
-
-  useEffect(() => {
-    let a = true
-    onLoadDelta?.(1)
-    setLoading(true)
-    setErr(null)
-    apiJson<OutcomeRow[]>('/v1/costs/outcomes')
-      .then((d) => {
-        if (a) {
-          setRows(d)
-          setErr(null)
-        }
-      })
-      .catch(() => {
-        if (a) {
-          setRows(null)
-          setErr('Could not load outcomes.')
-        }
-      })
-      .finally(() => {
-        if (a) setLoading(false)
-        onLoadDelta?.(-1)
-      })
-    return () => {
-      a = false
-    }
-  }, [refreshKey, onLoadDelta])
+  const { data, isLoading, error } = useCostsOutcomes()
+  const rows = data ?? null
+  const err = error ? 'Could not load outcomes.' : null
 
   const map = useMemo(() => {
     const m: Record<string, OutcomeRow> = {}
@@ -71,13 +38,13 @@ export function OutcomeSection({
   return (
     <section>
       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-40 mb-4">Cost per outcome</p>
-      {loading && <SectionSkeleton />}
-      {!loading && err && !rows && (
+      {isLoading && <SectionSkeleton />}
+      {!isLoading && err && !rows && (
         <div className={`p-8 ${cardCls}`}>
           <SectionError message={err} />
         </div>
       )}
-      {!loading && rows && (
+      {!isLoading && rows && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {cards.map((c) => (
             <div key={c.key} className={cardCls}>

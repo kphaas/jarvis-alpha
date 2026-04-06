@@ -1,56 +1,22 @@
-import { useEffect, useMemo, useState } from 'react'
-import { apiJson } from '../../lib/apiFetch'
+import { useMemo } from 'react'
+import { useCostsPower, useCostsSummary } from '../../hooks/useCosts'
 import { SectionSkeleton } from '../shared/SectionSkeleton'
 import { SectionError } from '../shared/SectionError'
 import { DonutChart } from './DonutChart'
-import type { CostsSummary, PowerPayload, HardwarePayload } from '../../types/costs'
+import type { CostsSummary } from '../../types/costs'
 import { fmtMoney } from '../../types/costs'
-
-type LoadDeltaFn = (delta: number) => void
 
 export function PieSection({
   isDark,
   border,
   subtle,
-  refreshKey,
-  onLoadDelta,
 }: {
   isDark: boolean
   border: string
   subtle: string
-  refreshKey: number
-  onLoadDelta?: LoadDeltaFn
 }) {
-  const [data, setData] = useState<CostsSummary | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [err, setErr] = useState<string | null>(null)
-
-  useEffect(() => {
-    let a = true
-    onLoadDelta?.(1)
-    setLoading(true)
-    setErr(null)
-    apiJson<CostsSummary>('/v1/costs/summary')
-      .then((d) => {
-        if (a) {
-          setData(d)
-          setErr(null)
-        }
-      })
-      .catch(() => {
-        if (a) {
-          setData(null)
-          setErr('Could not load charts.')
-        }
-      })
-      .finally(() => {
-        if (a) setLoading(false)
-        onLoadDelta?.(-1)
-      })
-    return () => {
-      a = false
-    }
-  }, [refreshKey, onLoadDelta])
+  const { data, isLoading, error } = useCostsSummary()
+  const err = error ? 'Could not load charts.' : null
 
   const alphaSlices = useMemo(() => {
     if (!data) return []
@@ -74,13 +40,13 @@ export function PieSection({
 
   return (
     <section>
-      {loading && <SectionSkeleton />}
-      {!loading && err && (
+      {isLoading && <SectionSkeleton />}
+      {!isLoading && err && (
         <div className={wrap}>
           <SectionError message={err} />
         </div>
       )}
-      {!loading && !err && data && (
+      {!isLoading && !err && data && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className={wrap}>
             <p className="text-center text-xs font-semibold uppercase tracking-[0.25em] opacity-40 mb-6">Alpha</p>
@@ -107,8 +73,6 @@ export function PieSection({
             border={border}
             subtle={subtle}
             summary={data}
-            refreshKey={refreshKey}
-            onLoadDelta={onLoadDelta}
           />
         </div>
       )}
@@ -121,41 +85,15 @@ function ForgePieHalf({
   border,
   subtle,
   summary,
-  refreshKey,
-  onLoadDelta,
 }: {
   isDark: boolean
   border: string
   subtle: string
   summary: CostsSummary
-  refreshKey: number
-  onLoadDelta?: LoadDeltaFn
 }) {
-  const [power, setPower] = useState<PowerPayload | null>(null)
-  const [hw, setHw] = useState<HardwarePayload | null>(null)
-
-  useEffect(() => {
-    let a = true
-    onLoadDelta?.(1)
-    Promise.all([apiJson<PowerPayload>('/v1/costs/power'), apiJson<HardwarePayload>('/v1/costs/hardware')])
-      .then(([p, h]) => {
-        if (!a) return
-        setPower(p)
-        setHw(h)
-      })
-      .catch(() => {
-        if (a) {
-          setPower(null)
-          setHw(null)
-        }
-      })
-      .finally(() => {
-        onLoadDelta?.(-1)
-      })
-    return () => {
-      a = false
-    }
-  }, [refreshKey, onLoadDelta])
+  const costsPower = useCostsPower()
+  const power = costsPower.data?.power
+  const hw = costsPower.data?.hardware
 
   const sbPower = power?.nodes.find((n) => n.name === 'Sandbox')?.cost_monthly ?? 0
   const sbHw = hw?.nodes.find((n) => n.node_name === 'Sandbox')?.monthly_usd ?? 0

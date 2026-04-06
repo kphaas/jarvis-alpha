@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { RefreshCw } from 'lucide-react'
 import { useAppStore } from '../store'
 import {
@@ -12,31 +13,22 @@ import {
   SavingsCard,
 } from '../components/cost'
 
-type LoadDeltaFn = (delta: number) => void
-
 export default function CostCenter() {
   const { theme } = useAppStore()
   const isDark = theme === 'dark'
   const border = isDark ? 'border-white/[0.08]' : 'border-[#141414]/10'
   const subtle = isDark ? 'bg-white/[0.02]' : 'bg-white/40'
+  const qc = useQueryClient()
+  const [spinning, setSpinning] = useState(false)
 
-  const [refreshKey, setRefreshKey] = useState(0)
-  const loadCountRef = useRef(0)
-  const [, bump] = useState(0)
-  const onLoadDelta = useCallback<LoadDeltaFn>((d) => {
-    loadCountRef.current = Math.max(0, loadCountRef.current + d)
-    bump((x) => x + 1)
-  }, [])
-  const spinning = loadCountRef.current > 0
-
-  const doRefresh = useCallback(() => {
-    setRefreshKey((k) => k + 1)
-  }, [])
-
-  useEffect(() => {
-    const id = window.setInterval(doRefresh, 3600000)
-    return () => window.clearInterval(id)
-  }, [doRefresh])
+  const doRefresh = async () => {
+    setSpinning(true)
+    try {
+      await qc.invalidateQueries({ queryKey: ['costs'] })
+    } finally {
+      setSpinning(false)
+    }
+  }
 
   return (
     <div className="space-y-16 max-w-6xl pb-24">
@@ -54,14 +46,14 @@ export default function CostCenter() {
         </button>
       </header>
 
-      <SavingsCard isDark={isDark} border={border} refreshKey={refreshKey} onLoadDelta={onLoadDelta} />
-      <HeroSection isDark={isDark} border={border} subtle={subtle} refreshKey={refreshKey} onLoadDelta={onLoadDelta} />
-      <PieSection isDark={isDark} border={border} subtle={subtle} refreshKey={refreshKey} onLoadDelta={onLoadDelta} />
-      <ApiSpendSection isDark={isDark} border={border} subtle={subtle} refreshKey={refreshKey} onLoadDelta={onLoadDelta} />
-      <OutcomeSection isDark={isDark} border={border} subtle={subtle} refreshKey={refreshKey} onLoadDelta={onLoadDelta} />
-      <SubscriptionSection isDark={isDark} border={border} subtle={subtle} refreshKey={refreshKey} onLoadDelta={onLoadDelta} />
-      <PowerSection isDark={isDark} border={border} subtle={subtle} refreshKey={refreshKey} onLoadDelta={onLoadDelta} />
-      <ForgeSection isDark={isDark} border={border} subtle={subtle} refreshKey={refreshKey} onLoadDelta={onLoadDelta} />
+      <SavingsCard isDark={isDark} border={border} />
+      <HeroSection isDark={isDark} border={border} subtle={subtle} />
+      <PieSection isDark={isDark} border={border} subtle={subtle} />
+      <ApiSpendSection isDark={isDark} border={border} subtle={subtle} />
+      <OutcomeSection isDark={isDark} border={border} subtle={subtle} />
+      <SubscriptionSection isDark={isDark} border={border} subtle={subtle} />
+      <PowerSection isDark={isDark} border={border} subtle={subtle} />
+      <ForgeSection isDark={isDark} border={border} subtle={subtle} />
     </div>
   )
 }

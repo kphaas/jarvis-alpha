@@ -1,29 +1,27 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Bot, Check, Cloud, Pencil, Sparkles, X } from 'lucide-react'
 import { apiJson } from '../../lib/apiFetch'
+import { useCostsBudget, useCostsPerplexity, useCostsSummary } from '../../hooks/useCosts'
 import { SectionSkeleton } from '../shared/SectionSkeleton'
 import { SectionError } from '../shared/SectionError'
-import type { CostsSummary, BudgetRow, PerplexityPayload } from '../../types/costs'
+import type { PerplexityPayload } from '../../types/costs'
 import { fmtMoney } from '../../types/costs'
-
-type LoadDeltaFn = (delta: number) => void
 
 export function ApiSpendSection({
   isDark,
   border,
   subtle,
-  refreshKey,
-  onLoadDelta,
 }: {
   isDark: boolean
   border: string
   subtle: string
-  refreshKey: number
-  onLoadDelta?: LoadDeltaFn
 }) {
-  const [summary, setSummary] = useState<CostsSummary | null>(null)
-  const [budget, setBudget] = useState<BudgetRow[] | null>(null)
-  const [loading, setLoading] = useState(true)
+  const summaryQuery = useCostsSummary()
+  const budgetQuery = useCostsBudget()
+  const perplexityQuery = useCostsPerplexity()
+  const summary = summaryQuery.data ?? null
+  const budget = budgetQuery.data ?? null
+  const loading = summaryQuery.isLoading || budgetQuery.isLoading
   const [err, setErr] = useState<string | null>(null)
   const [editProv, setEditProv] = useState<string | null>(null)
   const [limitInput, setLimitInput] = useState('')
@@ -32,52 +30,14 @@ export function ApiSpendSection({
   const [pxForm, setPxForm] = useState({ balance_usd: '', spent_usd: '' })
   const [pxSaving, setPxSaving] = useState(false)
 
-  const load = useCallback(() => {
-    onLoadDelta?.(1)
-    setLoading(true)
-    setErr(null)
-    Promise.all([apiJson<CostsSummary>('/v1/costs/summary'), apiJson<BudgetRow[]>('/v1/costs/budget')])
-      .then(([s, b]) => {
-        setSummary(s)
-        setBudget(b)
-        if (s.perplexity) {
-          setPxForm({
-            balance_usd: String(s.perplexity.balance_usd),
-            spent_usd: String(s.perplexity.spent_usd),
-          })
-        }
-        setErr(null)
-      })
-      .catch(() => {
-        setSummary(null)
-        setBudget(null)
-        setErr('Could not load budget or summary.')
-      })
-      .finally(() => {
-        setLoading(false)
-        onLoadDelta?.(-1)
-      })
-  }, [onLoadDelta])
-
   useEffect(() => {
-    load()
-  }, [refreshKey, load])
-
-  const loadPx = useCallback(() => {
-    onLoadDelta?.(1)
-    apiJson<PerplexityPayload>('/v1/costs/perplexity')
-      .then((p) => {
-        setPxForm({ balance_usd: String(p.balance_usd), spent_usd: String(p.spent_usd) })
+    if (perplexityQuery.data) {
+      setPxForm({
+        balance_usd: String(perplexityQuery.data.balance_usd),
+        spent_usd: String(perplexityQuery.data.spent_usd),
       })
-      .catch(() => {})
-      .finally(() => {
-        onLoadDelta?.(-1)
-      })
-  }, [onLoadDelta])
-
-  useEffect(() => {
-    loadPx()
-  }, [refreshKey, loadPx])
+    }
+  }, [perplexityQuery.data])
 
   const saveLimit = async (provider: string) => {
     setSaving(true)
@@ -88,7 +48,8 @@ export function ApiSpendSection({
         body: JSON.stringify({ monthly_limit_usd: v }),
       })
       setEditProv(null)
-      load()
+      await budgetQuery.refetch()
+      await summaryQuery.refetch()
     } catch {
       setErr('Failed to update limit.')
     } finally {
@@ -107,8 +68,9 @@ export function ApiSpendSection({
         }),
       })
       setPxEdit(false)
-      loadPx()
-      load()
+      await perplexityQuery.refetch()
+      await summaryQuery.refetch()
+      await budgetQuery.refetch()
     } catch {
       setErr('Perplexity save failed.')
     } finally {
@@ -122,9 +84,9 @@ export function ApiSpendSection({
     <section>
       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-40 mb-4">Cloud API spend</p>
       {loading && <SectionSkeleton />}
-      {!loading && err && !summary && (
+      {!loading && (err || summaryQuery.error || budgetQuery.error) && !summary && (
         <div className={`p-8 ${wrap}`}>
-          <SectionError message={err} />
+          <SectionError message={err ?? 'Could not load budget or summary.'} />
         </div>
       )}
       {!loading && summary && budget && (
@@ -369,7 +331,9 @@ export function ApiSpendSection({
               })()}
             </div>
           </div>
-          {err && summary && <p className="text-xs text-rose-500 p-4">{err}</p>}
+          {(err || summaryQuery.error || budgetQuery.error || perplexityQuery.error) && summary && (
+            <p className="text-xs text-rose-500 p-4">{err ?? 'Could not load budget or summary.'}</p>
+          )}
         </div>
       )}
     </section>

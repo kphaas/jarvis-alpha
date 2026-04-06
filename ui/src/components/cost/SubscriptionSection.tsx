@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ExternalLink, Plus, Trash2 } from 'lucide-react'
 import { apiJson } from '../../lib/apiFetch'
+import { useCostsSubscriptions } from '../../hooks/useCosts'
 import { SectionSkeleton } from '../shared/SectionSkeleton'
 import { SectionError } from '../shared/SectionError'
 import type { SubscriptionRow } from '../../types/costs'
 import { fmtMoney } from '../../types/costs'
-
-type LoadDeltaFn = (delta: number) => void
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -36,17 +36,14 @@ export function SubscriptionSection({
   isDark,
   border,
   subtle,
-  refreshKey,
-  onLoadDelta,
 }: {
   isDark: boolean
   border: string
   subtle: string
-  refreshKey: number
-  onLoadDelta?: LoadDeltaFn
 }) {
-  const [rows, setRows] = useState<SubscriptionRow[] | null>(null)
-  const [loading, setLoading] = useState(true)
+  const qc = useQueryClient()
+  const { data, isLoading, error } = useCostsSubscriptions()
+  const rows = data ?? null
   const [err, setErr] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -58,29 +55,6 @@ export function SubscriptionSection({
     billing: 'monthly' as 'monthly' | 'yearly',
     next_renewal: '',
   })
-
-  const load = useCallback(() => {
-    onLoadDelta?.(1)
-    setLoading(true)
-    setErr(null)
-    apiJson<SubscriptionRow[]>('/v1/costs/subscriptions')
-      .then((d) => {
-        setRows(d)
-        setErr(null)
-      })
-      .catch(() => {
-        setRows(null)
-        setErr('Could not load subscriptions.')
-      })
-      .finally(() => {
-        setLoading(false)
-        onLoadDelta?.(-1)
-      })
-  }, [onLoadDelta])
-
-  useEffect(() => {
-    load()
-  }, [refreshKey, load])
 
   const year = new Date().getFullYear()
   const { totals, tips } = useMemo(
@@ -104,7 +78,7 @@ export function SubscriptionSection({
       })
       setModalOpen(false)
       setForm({ name: '', url: '', cost_usd: '', billing: 'monthly', next_renewal: '' })
-      load()
+      await qc.invalidateQueries({ queryKey: ['costs', 'subscriptions'] })
     } catch {
       setErr('Failed to add subscription.')
     } finally {
@@ -116,7 +90,7 @@ export function SubscriptionSection({
     if (!window.confirm('Delete this subscription?')) return
     try {
       await apiJson(`/v1/costs/subscriptions/${id}`, { method: 'DELETE' })
-      load()
+      await qc.invalidateQueries({ queryKey: ['costs', 'subscriptions'] })
     } catch {
       setErr('Delete failed.')
     }
@@ -148,13 +122,13 @@ export function SubscriptionSection({
   return (
     <section>
       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-40 mb-4">Subscriptions</p>
-      {loading && <SectionSkeleton />}
-      {!loading && err && !rows && (
+      {isLoading && <SectionSkeleton />}
+      {!isLoading && (err || error) && !rows && (
         <div className={`p-8 ${card}`}>
-          <SectionError message={err} />
+          <SectionError message={err ?? 'Could not load subscriptions.'} />
         </div>
       )}
-      {!loading && rows && (
+      {!isLoading && rows && (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           <div className={card}>
             <div className="flex justify-end p-4 border-b border-white/5">
@@ -221,7 +195,9 @@ export function SubscriptionSection({
                 </tbody>
               </table>
             </div>
-            {err && rows.length >= 0 && <p className="text-xs text-rose-500 p-4 border-t border-white/5">{err}</p>}
+            {(err || error) && rows.length >= 0 && (
+              <p className="text-xs text-rose-500 p-4 border-t border-white/5">{err ?? 'Could not load subscriptions.'}</p>
+            )}
           </div>
           <div className={`${card} p-6`}>
             <p className="text-xs font-semibold uppercase tracking-wider opacity-50 mb-6">{year} cash view</p>

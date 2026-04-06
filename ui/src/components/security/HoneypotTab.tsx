@@ -61,7 +61,7 @@ export function HoneypotTab({ isDark, border, subtle, muted, honeypotData, loadH
               <SectionSkeleton border={border} subtle={subtle} />
             ) : errHoneypot || !honeypotData ? (
               <SectionUnavailable border={border} subtle={subtle} />
-            ) : honeypotData.events.length === 0 ? (
+            ) : (!honeypotData.events || honeypotData.events.length === 0) ? (
               <div
                 className={`rounded-2xl border ${border} ${subtle} p-10 flex flex-col items-center gap-3 text-center`}
               >
@@ -90,7 +90,7 @@ export function HoneypotTab({ isDark, border, subtle, muted, honeypotData, loadH
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {honeypotData.events.map((ev, i) => {
+                    {(honeypotData.events ?? []).map((ev, i) => {
                       const m = (ev.method || "GET").toUpperCase();
                       const methodBadge =
                         m === "POST"
