@@ -60,6 +60,100 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # Honeypot
     "POST /v1/honeypot": ["write"],
     "GET /v1/honeypot": ["read"],
+    # --- Metrics (system internal) — T1 read ---
+    "POST /v1/metrics/power": ["read"],
+    "GET /v1/metrics/power/current": ["read"],
+    "GET /v1/metrics/power/history": ["read"],
+    "GET /v1/metrics/power/rate": ["read"],
+    "GET /v1/metrics/power/rollup": ["read"],
+    # --- Security panel — T2 security_read ---
+    "GET /v1/security/jwt-check": ["read", "security_read"],
+    "GET /v1/security/rls-status": ["read", "security_read"],
+    "GET /v1/security/secrets-audit": ["read", "security_read"],
+    "GET /v1/security/perimeter": ["read", "security_read"],
+    "GET /v1/security/rotatable-keys": ["read", "security_read"],
+    "POST /v1/security/rotate-key": ["admin"],
+    # --- Logs — T2 security_read ---
+    "GET /v1/logs/analyze-patterns": ["read", "security_read"],
+    "GET /v1/logs/diagnose": ["read", "security_read"],
+    # --- Tasks — reads T1, writes T2, step approve/deny T4 ---
+    "GET /v1/tasks/events": ["read"],
+    "GET /v1/tasks/graphs/{graph_id}": ["read"],
+    "GET /v1/tasks/graphs/{graph_id}/status": ["read"],
+    "GET /v1/tasks/graphs/{graph_id}/steps": ["read"],
+    "GET /v1/tasks/pending-approvals": ["read"],
+    "POST /v1/tasks/submit": ["write"],
+    "POST /v1/tasks/{graph_id}/cancel": ["write"],
+    "POST /v1/tasks/steps/{step_id}/approve": ["admin"],
+    "POST /v1/tasks/steps/{step_id}/deny": ["admin"],
+    # --- Threads — reads T1, writes T2, delete T5 ---
+    "GET /v1/threads": ["read"],
+    "GET /v1/threads/{thread_id}": ["read"],
+    "GET /v1/threads/{thread_id}/messages": ["read"],
+    "POST /v1/threads": ["write"],
+    "POST /v1/threads/{thread_id}/messages": ["write"],
+    "POST /v1/threads/{thread_id}/escalate": ["write"],
+    "DELETE /v1/threads/{thread_id}": ["destructive"],
+    # --- Memory reads — T1 ---
+    "GET /v1/memory": ["read"],
+    "GET /v1/memory/search": ["read"],
+    # --- Rotation — T2 security_read ---
+    "GET /v1/rotation": ["read", "security_read"],
+    # --- Dev — T5 admin ---
+    "POST /v1/dev": ["admin"],
+    # --- Diagnose — T2 security_read ---
+    "GET /v1/diagnose": ["read", "security_read"],
+    # --- Health agents — T1 read ---
+    "GET /v1/health/agents": ["read"],
+    # --- Honeypot events — T1 read ---
+    "GET /v1/honeypot/events": ["read"],
+    # --- Honeypot traps — T1 read (they just log) ---
+    "GET /wp-login.php": ["read"],
+    "POST /wp-login.php": ["read"],
+    "GET /.env": ["read"],
+    "GET /.git/config": ["read"],
+    "GET /phpmyadmin": ["read"],
+    "GET /phpmyadmin/": ["read"],
+    "GET /api/v1/debug": ["read"],
+    # --- Vault — T2 write ---
+    "POST /v1/vault/upload": ["write"],
+    "POST /v1/vault/ingest/pdf": ["write"],
+    "POST /v1/vault/ingest/excel": ["write"],
+    # --- Chat completions (OpenAI compat) ---
+    "POST /v1/chat/completions": ["write", "external_call", "cost_incurring"],
+    # --- Buddy events mark read — T2 write ---
+    "POST /v1/buddy/events/{event_id}/read": ["write"],
+    "POST /v1/buddy/events/read-all": ["write"],
+    # --- MCP registry — T1 read, write T2 ---
+    "GET /v1/mcp/registry": ["read"],
+    "POST /v1/mcp/registry": ["write"],
+    # --- Dream sessions ---
+    "GET /v1/dream/sessions": ["read"],
+    "GET /v1/dream/sessions/{session_id}": ["read"],
+    "POST /v1/dream/sessions/{session_id}/start": [
+        "write",
+        "external_call",
+        "cost_incurring",
+    ],
+    "POST /v1/dream/sessions/{session_id}/next-step": [
+        "write",
+        "external_call",
+        "cost_incurring",
+    ],
+    "POST /v1/dream/sessions/{session_id}/complete": ["write"],
+    "POST /v1/dream/sessions/{session_id}/kill": ["write"],
+    # --- Pipeline ---
+    "GET /v1/dream/pipeline": ["read"],
+    "POST /v1/dream/pipeline/{pipeline_id}/confirm": ["write"],
+    # --- Dream outcomes/subscriptions ---
+    "GET /v1/dream/outcomes": ["read"],
+    "GET /v1/dream/subscriptions": ["read"],
+    "POST /v1/dream/subscriptions": ["write"],
+    "DELETE /v1/dream/subscriptions/{sub_id}": ["destructive"],
+    # --- Dream budget ---
+    "GET /v1/dream/budget": ["read"],
+    "POST /v1/dream/budget/{provider}": ["write", "cost_incurring"],
+    "POST /v1/dream/credit": ["admin"],
 }
 
 
