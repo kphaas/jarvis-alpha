@@ -34,7 +34,7 @@ export function PieSection({
 
   const alphaTotal = alphaSlices.reduce((s, x) => s + x.value, 0)
 
-  const wrap = `rounded-3xl border p-8 ${border} ${subtle} ${
+  const wrap = `rounded-2xl border p-5 ${border} ${subtle} ${
     isDark ? 'bg-white/[0.03]' : 'bg-white/60'
   }`
 
@@ -47,16 +47,16 @@ export function PieSection({
         </div>
       )}
       {!isLoading && !err && data && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className={wrap}>
-            <p className="text-center text-xs font-semibold uppercase tracking-[0.25em] opacity-40 mb-6">Alpha</p>
+            <p className="text-center text-xs font-semibold uppercase tracking-[0.25em] opacity-40 mb-3">Alpha</p>
             <DonutChart
               slices={alphaSlices}
               centerLabel="Total"
               centerValue={fmtMoney(alphaTotal)}
               isDark={isDark}
             />
-            <ul className="mt-6 space-y-2 max-w-xs mx-auto">
+            <ul className="mt-4 space-y-1 max-w-xs mx-auto">
               {alphaSlices.map((s) => (
                 <li key={s.key} className="flex items-center justify-between text-sm gap-3">
                   <span className="flex items-center gap-2 min-w-0">
@@ -108,13 +108,13 @@ function ForgePieHalf({
   }, [summary.forge_monthly_usd, sbPower, sbHw])
 
   const total = slices.reduce((s, x) => s + x.value, 0)
-  const wrap = `rounded-3xl border p-8 ${border} ${subtle} ${isDark ? 'bg-white/[0.03]' : 'bg-white/60'}`
+  const wrap = `rounded-2xl border p-5 ${border} ${subtle} ${isDark ? 'bg-white/[0.03]' : 'bg-white/60'}`
 
   return (
     <div className={wrap}>
-      <p className="text-center text-xs font-semibold uppercase tracking-[0.25em] opacity-40 mb-6">Forge</p>
+      <p className="text-center text-xs font-semibold uppercase tracking-[0.25em] opacity-40 mb-3">Forge</p>
       <DonutChart slices={slices} centerLabel="Total" centerValue={fmtMoney(total)} isDark={isDark} />
-      <ul className="mt-6 space-y-2 max-w-xs mx-auto">
+      <ul className="mt-4 space-y-1 max-w-xs mx-auto">
         {slices.map((s) => (
           <li key={s.key} className="flex items-center justify-between text-sm gap-3">
             <span className="flex items-center gap-2 min-w-0">

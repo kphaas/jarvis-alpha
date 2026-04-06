@@ -33,7 +33,7 @@ export function DonutChart({
   centerLabel,
   centerValue,
   isDark,
-  size = 200,
+  size = 150,
 }: {
   slices: DonutSlice[]
   centerLabel: string

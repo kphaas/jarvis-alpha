@@ -31,7 +31,7 @@ export default function CostCenter() {
   }
 
   return (
-    <div className="space-y-16 max-w-6xl pb-24">
+    <div className="space-y-8 max-w-6xl pb-12">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-4xl sm:text-5xl font-semibold tracking-tight">Cost Center</h1>
         <button
