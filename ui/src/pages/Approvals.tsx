@@ -1,50 +1,51 @@
 import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { ShieldCheck, ShieldX, Clock, AlertTriangle } from 'lucide-react'
-import { apiJson, apiFetch } from '../lib/apiFetch'
+import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock } from 'lucide-react'
+import { apiJson } from '../lib/apiFetch'
 import { useAppStore } from '../store'
 
-interface PendingApproval {
-  step_id: string
-  step_name: string
-  step_type: string
-  input: Record<string, unknown> | null
-  graph_id: string
-  graph_title: string
-  content_tier: string
-  user_type: string
-  priority: number
-  created_at: string
+interface QueueItem {
+  id: string
+  action_class: string[]
+  risk_tier: string
+  actor_sub: string
+  actor_type: string
+  description: string
+  status: string
+  requested_at: string
+  expires_at: string
+  overnight: boolean
 }
 
 interface PendingResponse {
-  pending: PendingApproval[]
+  pending: QueueItem[]
   count: number
 }
 
-const REFRESH_MS = 30_000
+interface DecideResponse {
+  queue_id: string
+  decision: string
+  description: string
+  expires_at: string | null
+}
 
-function priorityBadge(p: number) {
-  const color =
-    p <= 2
-      ? 'text-rose-400 bg-rose-500/15 border-rose-500/30'
-      : p <= 5
-        ? 'text-amber-400 bg-amber-500/15 border-amber-500/30'
-        : 'text-zinc-400 bg-zinc-500/15 border-zinc-500/30'
-  return (
-    <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${color}`}>
-      P{p}
-    </span>
-  )
+const REFRESH_MS = 10_000
+
+const TIER_COLORS: Record<string, string> = {
+  T4: 'text-amber-400 bg-amber-500/15 border-amber-500/30',
+  T5: 'text-rose-400 bg-rose-500/15 border-rose-500/30',
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  destructive: 'Permanently deletes data',
+  admin: 'Changes system config or permissions',
+  deploy: 'Deploys to a live node',
+  child_facing: 'Affects content for Ryleigh or Sloane',
+  unclassified: 'No classification — blocked by default',
 }
 
 function tierBadge(tier: string) {
-  const map: Record<string, string> = {
-    unrestricted: 'text-zinc-400 bg-zinc-500/15 border-zinc-500/30',
-    filtered: 'text-yellow-400 bg-yellow-500/15 border-yellow-500/30',
-    child_safe: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30',
-  }
-  const cls = map[tier] ?? map.unrestricted
+  const cls = TIER_COLORS[tier] ?? 'text-zinc-400 bg-zinc-500/15 border-zinc-500/30'
   return (
     <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${cls}`}>
       {tier}
@@ -52,22 +53,28 @@ function tierBadge(tier: string) {
   )
 }
 
-function userTypeBadge(ut: string) {
-  const cls =
-    ut === 'child'
-      ? 'text-blue-400 bg-blue-500/15 border-blue-500/30'
-      : 'text-zinc-400 bg-zinc-500/15 border-zinc-500/30'
+function actionBadge(ac: string) {
+  const colors: Record<string, string> = {
+    destructive: 'text-rose-400 bg-rose-500/15 border-rose-500/30',
+    admin: 'text-purple-400 bg-purple-500/15 border-purple-500/30',
+    deploy: 'text-blue-400 bg-blue-500/15 border-blue-500/30',
+    child_facing: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30',
+    unclassified: 'text-zinc-400 bg-zinc-500/15 border-zinc-500/30',
+  }
+  const cls = colors[ac] ?? colors.unclassified
   return (
-    <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${cls}`}>
-      {ut}
+    <span key={ac} className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${cls}`}>
+      {ac}
     </span>
   )
 }
 
-function truncateJson(obj: Record<string, unknown> | null, maxLen = 200): string {
-  if (!obj) return '{}'
-  const s = JSON.stringify(obj, null, 2)
-  return s.length > maxLen ? s.slice(0, maxLen) + '...' : s
+function timeLeft(expiresAt: string): string {
+  const ms = new Date(expiresAt).getTime() - Date.now()
+  if (ms <= 0) return 'Expired'
+  const mins = Math.floor(ms / 60000)
+  const secs = Math.floor((ms % 60000) / 1000)
+  return `${mins}m ${secs}s left`
 }
 
 export default function Approvals() {
@@ -80,10 +87,18 @@ export default function Approvals() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [acting, setActing] = useState<string | null>(null)
+  const [approvalToken, setApprovalToken] = useState<string | null>(null)
+  const [tokenExpiry, setTokenExpiry] = useState<number>(0)
+  const [pinInput, setPinInput] = useState('')
+  const [showPinModal, setShowPinModal] = useState(false)
+  const [pinError, setPinError] = useState<string | null>(null)
+  const [actionResult, setActionResult] = useState<{ id: string; decision: string } | null>(null)
+
+  const isUnlocked = approvalToken && Date.now() < tokenExpiry
 
   const load = useCallback(async () => {
     try {
-      const res = await apiJson<PendingResponse>('/v1/tasks/pending-approvals')
+      const res = await apiJson<PendingResponse>('/v1/approvals/pending')
       setData(res)
       setError(null)
     } catch (e) {
@@ -99,14 +114,52 @@ export default function Approvals() {
     return () => clearInterval(id)
   }, [load])
 
-  const handleAction = async (stepId: string, action: 'approve' | 'deny') => {
-    setActing(stepId)
+  const handleUnlock = async () => {
+    setPinError(null)
     try {
-      await apiFetch(`/v1/tasks/steps/${stepId}/${action}`, { method: 'POST' })
-      await load()
+      const res = await apiJson<{ approval_token: string; expires_in: number }>(
+        '/v1/approvals/unlock',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: pinInput }),
+        }
+      )
+      setApprovalToken(res.approval_token)
+      setTokenExpiry(Date.now() + res.expires_in * 1000)
+      setShowPinModal(false)
+      setPinInput('')
     } catch {
-      // refresh anyway
+      setPinError('Invalid PIN')
+    }
+  }
+
+  const handleDecide = async (queueId: string, decision: 'approved' | 'denied') => {
+    if (!isUnlocked) {
+      setShowPinModal(true)
+      return
+    }
+    setActing(queueId)
+    setActionResult(null)
+    try {
+      const res = await apiJson<DecideResponse>(
+        `/v1/approvals/${queueId}/decide`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Approval-Token': approvalToken!,
+          },
+          body: JSON.stringify({ decision }),
+        }
+      )
+      setActionResult({ id: queueId, decision: res.decision })
       await load()
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('403')) {
+        setApprovalToken(null)
+        setShowPinModal(true)
+      }
     } finally {
       setActing(null)
     }
@@ -117,14 +170,81 @@ export default function Approvals() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 max-w-4xl">
-      <div className="flex items-center gap-3">
-        <h1 className="font-serif italic text-3xl">Pending Approvals</h1>
-        {count > 0 && (
-          <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
-            {count}
-          </span>
-        )}
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3">
+          <h1 className="font-serif italic text-3xl">Approvals</h1>
+          {count > 0 && (
+            <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+              {count}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => isUnlocked ? setApprovalToken(null) : setShowPinModal(true)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors border ${
+            isUnlocked
+              ? 'bg-emerald-600/20 border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30'
+              : 'bg-zinc-600/20 border-zinc-500/30 text-zinc-400 hover:bg-zinc-600/30'
+          }`}
+        >
+          {isUnlocked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+          {isUnlocked ? 'Unlocked' : 'Locked'}
+        </button>
       </div>
+
+      {/* PIN Modal */}
+      {showPinModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className={`p-6 rounded-2xl border ${border} ${isDark ? 'bg-zinc-900' : 'bg-white'} w-80 space-y-4`}>
+            <div className="flex items-center gap-2">
+              <Lock className="w-5 h-5 text-amber-400" />
+              <h2 className="font-bold text-lg">Enter PIN to Approve</h2>
+            </div>
+            <p className="text-xs opacity-60">Unlocks approve/deny for 5 minutes.</p>
+            <input
+              type="password"
+              autoFocus
+              value={pinInput}
+              onChange={(e) => setPinInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
+              placeholder="PIN"
+              className={`w-full px-3 py-2 rounded-lg border text-center text-lg tracking-widest font-mono ${border} ${isDark ? 'bg-black/30' : 'bg-black/5'}`}
+            />
+            {pinError && <p className="text-xs text-rose-400">{pinError}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setShowPinModal(false); setPinInput(''); setPinError(null) }}
+                className={`flex-1 px-3 py-2 rounded-lg text-xs font-bold border ${border} hover:opacity-80`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUnlock}
+                className="flex-1 px-3 py-2 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white"
+              >
+                Unlock
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Action result toast */}
+      {actionResult && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`flex items-center gap-2 p-3 rounded-xl text-sm ${
+            actionResult.decision === 'approved'
+              ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+              : 'bg-rose-500/10 border border-rose-500/20 text-rose-400'
+          }`}
+        >
+          {actionResult.decision === 'approved' ? <ShieldCheck className="w-4 h-4" /> : <ShieldX className="w-4 h-4" />}
+          Request {actionResult.decision}
+        </motion.div>
+      )}
 
       {loading && <p className="text-sm opacity-40">Loading...</p>}
 
@@ -142,46 +262,60 @@ export default function Approvals() {
         </div>
       )}
 
+      {/* Pending items */}
       {pending.map((item) => (
-        <div key={item.step_id} className={`p-5 rounded-2xl border ${border} ${subtle} space-y-3`}>
+        <div key={item.id} className={`p-5 rounded-2xl border ${border} ${subtle} space-y-3`}>
           <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-bold">{item.graph_title}</span>
-                {priorityBadge(item.priority)}
+                <span className="text-sm font-bold font-mono">{item.description}</span>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-mono opacity-60">{item.step_name}</span>
-                <span className="text-[10px] font-mono opacity-40">{item.step_type}</span>
+                {tierBadge(item.risk_tier)}
+                {item.action_class.map(ac => actionBadge(ac))}
+                {item.overnight && (
+                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border text-indigo-400 bg-indigo-500/15 border-indigo-500/30">
+                    overnight
+                  </span>
+                )}
               </div>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              {tierBadge(item.content_tier)}
-              {userTypeBadge(item.user_type)}
             </div>
           </div>
 
-          <div className={`p-3 rounded-lg text-xs font-mono whitespace-pre-wrap break-all ${isDark ? 'bg-black/30' : 'bg-black/5'} opacity-70`}>
-            {truncateJson(item.input)}
+          {/* Risk context */}
+          <div className={`p-3 rounded-lg text-xs space-y-1 ${isDark ? 'bg-black/30' : 'bg-black/5'}`}>
+            {item.action_class.map(ac => {
+              const label = ACTION_LABELS[ac]
+              return label ? (
+                <div key={ac} className="flex items-start gap-2 opacity-70">
+                  <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-amber-400" />
+                  <span><strong>{ac}:</strong> {label}</span>
+                </div>
+              ) : null
+            })}
           </div>
 
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="flex items-center gap-1.5 text-xs opacity-40">
-              <Clock className="w-3 h-3" />
-              {new Date(item.created_at).toLocaleString()}
+            <div className="flex items-center gap-3 text-xs opacity-40">
+              <div className="flex items-center gap-1.5">
+                <Clock className="w-3 h-3" />
+                {new Date(item.requested_at).toLocaleString()}
+              </div>
+              <span className="font-mono">{timeLeft(item.expires_at)}</span>
+              <span className="font-mono opacity-60">by {item.actor_sub}</span>
             </div>
             <div className="flex items-center gap-2">
               <button
-                disabled={acting === item.step_id}
-                onClick={() => handleAction(item.step_id, 'approve')}
+                disabled={acting === item.id}
+                onClick={() => handleDecide(item.id, 'approved')}
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-40"
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
                 Approve
               </button>
               <button
-                disabled={acting === item.step_id}
-                onClick={() => handleAction(item.step_id, 'deny')}
+                disabled={acting === item.id}
+                onClick={() => handleDecide(item.id, 'denied')}
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition-colors disabled:opacity-40"
               >
                 <ShieldX className="w-3.5 h-3.5" />
