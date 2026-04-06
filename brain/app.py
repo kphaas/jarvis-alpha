@@ -9,6 +9,7 @@ from brain.middleware.rate_limit_middleware import RateLimitMiddleware
 from brain.middleware.approval import ApprovalMiddleware
 from brain.middleware.log_middleware import LogMiddleware
 from brain.middleware.trace_id import TraceIdMiddleware
+from brain.middleware.approval_audit import audit_route_classifications
 from brain.db.pool import init_pool, close_pool
 from brain.core.config import ALPHA_DB_DSN
 from brain.tasks.executor import recover_stuck_graphs
@@ -45,6 +46,7 @@ logger = get_logger("alpha_brain")
 async def lifespan(app: FastAPI):
     db_pool = await init_pool(ALPHA_DB_DSN)
     await recover_stuck_graphs(db_pool)
+    audit_route_classifications(app)
     # Secret audit trail
     import asyncio
 
