@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Upload, CheckCircle2, Clock, FileText, Database, AlertTriangle } from 'lucide-react'
-import { getPipeline, confirmPipeline } from '../api'
+import { apiJson, apiFetch } from '../lib/apiFetch'
 import { useAppStore } from '../store'
 import type { PipelineRow } from '../types'
 
@@ -40,7 +40,7 @@ export default function Vault() {
 
   const { data: pipeline = [] } = useQuery({
     queryKey: ['pipeline'],
-    queryFn: getPipeline,
+    queryFn: () => apiJson<PipelineRow[]>('/v1/vault/pipeline'),
     refetchInterval: 30000,
   })
 
@@ -66,7 +66,7 @@ export default function Vault() {
   const handleConfirm = async (id: string) => {
     setConfirming(id)
     try {
-      await confirmPipeline(id)
+      await apiFetch('/v1/vault/pipeline/' + id + '/confirm', { method: 'POST' })
       qc.invalidateQueries({ queryKey: ['pipeline'] })
     } finally { setConfirming(null) }
   }

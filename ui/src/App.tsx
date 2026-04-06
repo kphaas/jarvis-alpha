@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Layout } from './components/Layout'
 import { PinGate } from './components/PinGate'
+import { ErrorBoundary } from './components/shared'
 import { useAppStore } from './store'
 import { Suspense, lazy } from 'react'
 
@@ -30,27 +31,29 @@ export default function App() {
       <QueryClientProvider client={qc}>
         <BrowserRouter>
           <Layout theme={theme}>
-            <Suspense fallback={<div className="flex items-center justify-center h-screen text-zinc-500">Loading...</div>}>
-              <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/ask" element={<Ask />} />
-              <Route path="/vault" element={<Vault />} />
-              <Route path="/space/:slug" element={<Space />} />
-              <Route path="/briefing"   element={<Placeholder label="Briefing"    phase="Next session" />} />
-              <Route path="/mesh"       element={<Mesh theme={theme} token={brainToken} />} />
-              <Route path="/health"     element={<Health theme={theme} token={brainToken} />} />
-              <Route path="/errors"     element={<Errors theme={theme} />} />
-              <Route path="/agents"     element={<Placeholder label="Agents"      phase="Next session" />} />
-              <Route path="/ops"        element={<Placeholder label="Ops"         phase="Next session" />} />
-              <Route path="/approvals"  element={<Approvals />} />
-              <Route path="/security"   element={<Security />} />
-              <Route path="/governance" element={<Placeholder label="Governance"  phase="Next session" />} />
-              <Route path="/cost"       element={<Navigate to="/costs" replace />} />
-              <Route path="/costs"      element={<CostCenter />} />
-              <Route path="/documents"  element={<Placeholder label="Documents"   phase="Next session" />} />
-              <Route path="/settings"   element={<Placeholder label="Settings"    phase="Next session" />} />
-            </Routes>
+            <ErrorBoundary>
+              <Suspense fallback={<div className="flex items-center justify-center h-screen text-zinc-500">Loading...</div>}>
+                <Routes>
+                  <Route path="/" element={<Home />} />
+                  <Route path="/ask" element={<Ask />} />
+                  <Route path="/vault" element={<Vault />} />
+                  <Route path="/space/:slug" element={<Space />} />
+                  <Route path="/briefing" element={<Placeholder label="Briefing" phase="Next session" />} />
+                  <Route path="/mesh" element={<Mesh theme={theme} token={brainToken} />} />
+                  <Route path="/health" element={<Health theme={theme} token={brainToken} />} />
+                  <Route path="/errors" element={<Errors theme={theme} />} />
+                  <Route path="/agents" element={<Placeholder label="Agents" phase="Next session" />} />
+                  <Route path="/ops" element={<Placeholder label="Ops" phase="Next session" />} />
+                  <Route path="/approvals" element={<Approvals />} />
+                  <Route path="/security" element={<Security />} />
+                  <Route path="/governance" element={<Placeholder label="Governance" phase="Next session" />} />
+                  <Route path="/cost" element={<Navigate to="/costs" replace />} />
+                  <Route path="/costs" element={<CostCenter />} />
+                  <Route path="/documents" element={<Placeholder label="Documents" phase="Next session" />} />
+                  <Route path="/settings" element={<Placeholder label="Settings" phase="Next session" />} />
+                </Routes>
               </Suspense>
+            </ErrorBoundary>
           </Layout>
         </BrowserRouter>
       </QueryClientProvider>
