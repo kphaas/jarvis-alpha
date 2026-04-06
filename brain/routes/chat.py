@@ -26,8 +26,8 @@ from brain.routing.router import route
 
 router = APIRouter(tags=["chat"])
 
-MAX_PERSONAL_THREADS = 7
-MAX_PROJECT_THREADS = 5
+MAX_PERSONAL_THREADS = 20
+MAX_PROJECT_THREADS = 10
 
 
 async def _set_rls_user(conn, user_id: str, request: Request | None = None) -> None:
@@ -129,7 +129,8 @@ async def _get_or_create_thread(
                     )
                     if count >= MAX_PROJECT_THREADS:
                         raise HTTPException(
-                            429, f"Max {MAX_PROJECT_THREADS} threads per project"
+                            409,
+                            detail=f"thread_limit: Max {MAX_PROJECT_THREADS} threads per project",
                         )
                 else:
                     count = await conn.fetchval(
@@ -138,7 +139,8 @@ async def _get_or_create_thread(
                     )
                     if count >= MAX_PERSONAL_THREADS:
                         raise HTTPException(
-                            429, f"Max {MAX_PERSONAL_THREADS} personal threads"
+                            409,
+                            detail=f"thread_limit: Max {MAX_PERSONAL_THREADS} personal threads",
                         )
 
                 new_id = uuid4()

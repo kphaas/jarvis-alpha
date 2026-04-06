@@ -170,7 +170,13 @@ export function ChatWindow({ threadId, selectedModels, showCouncil, onThreadCrea
         setMessages(prev => {
           const next = [...prev];
           const idx  = next.findLastIndex(m => m.role === "assistant" && m.streaming);
-          if (idx >= 0) next[idx] = { ...next[idx], streaming: false, content: `Error: ${err}` };
+          if (idx >= 0) next[idx] = {
+            ...next[idx],
+            streaming: false,
+            content: err === 'thread_limit'
+              ? '⚠️ Thread limit reached — archive or delete old conversations to start new ones.'
+              : `Error: ${err}`,
+          };
           return next;
         });
         setStreaming(false);

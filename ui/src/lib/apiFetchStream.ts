@@ -33,7 +33,16 @@ export async function apiFetchStream(
   }
 
   if (!response.ok) {
-    onError(`HTTP ${response.status}`);
+    let errorMsg = `HTTP ${response.status}`;
+    try {
+      const errBody = await response.json();
+      if (errBody?.detail && typeof errBody.detail === 'string' && errBody.detail.startsWith('thread_limit:')) {
+        errorMsg = 'thread_limit';
+      } else if (errBody?.detail) {
+        errorMsg = String(errBody.detail);
+      }
+    } catch {}
+    onError(errorMsg);
     return;
   }
 
