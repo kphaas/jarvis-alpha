@@ -19,6 +19,15 @@ router = APIRouter(prefix="/v1/briefings", tags=["briefings"])
 BATCH_RUN_ID_RE = re.compile(r"^[0-9]{8}_[0-9]{4}_[a-f0-9]{4}$")
 
 
+def _parse_jsonb(value: Any) -> Any:
+    """asyncpg returns JSONB as string — parse if needed."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
 def _check_read_scope(request: Request) -> None:
     """Check briefings.read scope or admin wildcard."""
     check_scopes(request, "briefings.read")
@@ -86,8 +95,8 @@ def _record_to_full(row: asyncpg.Record) -> BriefingFull:
         briefing_date=row["briefing_date"],
         started_at=row["started_at"],
         source=row["source"],
-        summary=row["summary"] if isinstance(row["summary"], dict) else {},
-        results=row["results"] if isinstance(row["results"], list) else [],
+        summary=_parse_jsonb(row["summary"]) or {},
+        results=_parse_jsonb(row["results"]) or [],
         markdown=row["markdown"],
         created_at=row["created_at"],
     )
@@ -100,7 +109,7 @@ def _record_to_list_item(row: asyncpg.Record) -> BriefingListItem:
         briefing_date=row["briefing_date"],
         started_at=row["started_at"],
         source=row["source"],
-        summary=row["summary"] if isinstance(row["summary"], dict) else {},
+        summary=_parse_jsonb(row["summary"]) or {},
         created_at=row["created_at"],
     )
 
