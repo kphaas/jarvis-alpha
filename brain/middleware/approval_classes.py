@@ -124,6 +124,12 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Buddy events mark read — T2 write ---
     "POST /v1/buddy/events/{event_id}/read": ["write"],
     "POST /v1/buddy/events/read-all": ["write"],
+    # --- Briefings — JWT scopes in route handlers: briefings.ingest (POST ingest),
+    #     briefings.read or admin on GETs. T2 write / T1 read; service-to-service ingest.
+    "POST /v1/briefings/ingest": ["write"],
+    "GET /v1/briefings": ["read"],
+    "GET /v1/briefings/latest": ["read"],
+    "GET /v1/briefings/{batch_run_id}": ["read"],
     # --- MCP registry — T1 read, write T2 ---
     "GET /v1/mcp/registry": ["read"],
     "POST /v1/mcp/registry": ["write"],
