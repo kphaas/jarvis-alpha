@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import { Loader2, Cpu, Globe, Monitor, FlaskConical, Server, Router } from "lucide-react";
 import { apiFetch, apiJson } from "../lib/apiFetch";
+import { WatchdogPanel } from "../components/mesh/WatchdogPanel";
 
 const REFRESH_MS = 30_000;
 
@@ -684,6 +685,8 @@ export default function Mesh({ theme, token }: { theme: "dark" | "light"; token:
       </div>
 
       <RequestTicker theme={theme} />
+
+      <WatchdogPanel theme={theme} />
 
       <CertBadgeRow nodes={mesh.nodes} theme={theme} />
     </div>
