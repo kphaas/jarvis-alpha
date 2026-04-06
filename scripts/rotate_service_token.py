@@ -194,8 +194,8 @@ def alert_failure(
         payload_json = json.dumps(payload_obj)
         escaped = payload_json.replace("'", "''")
         sql = (
-            "INSERT INTO alpha_buddy_events (event_type, severity, source, payload, created_at) "
-            f"VALUES ('token_rotation_failed', 'critical', 'rotate_service_token', '{escaped}', NOW());"
+            "INSERT INTO alpha_buddy_events (event_type, source, payload, created_at) "
+            f"VALUES ('alert', 'token_rotation', '{escaped}', NOW());"
         )
         try:
             subprocess.run(
@@ -224,9 +224,8 @@ def alert_failure(
 
     body = json.dumps(
         {
-            "event_type": "token_rotation_failed",
-            "severity": "critical",
-            "source": "rotate_service_token",
+            "event_type": "alert",
+            "source": "token_rotation",
             "payload": payload_obj,
         }
     )
