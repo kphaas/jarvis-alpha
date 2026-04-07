@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { DollarSign, FileText } from 'lucide-react'
+import { DollarSign } from 'lucide-react'
 import { apiJson } from '../lib/apiFetch'
-import { useLatestBriefing } from '../hooks/useBriefings'
+import { formatRelativeTime } from '../lib/time'
+import { BriefingCard } from '../components/home/BriefingCard'
 import { useAppStore } from '../store'
 
 interface HealthPayload {
@@ -48,23 +49,6 @@ function formatUptime(total: number): string {
   return `${h}h ${m}m`
 }
 
-function formatRelativeTime(iso: string): string {
-  const t = new Date(iso).getTime()
-  if (Number.isNaN(t)) return iso
-  let diffSec = Math.floor((Date.now() - t) / 1000)
-  if (diffSec < 0) diffSec = 0
-  if (diffSec < 45) return 'just now'
-  if (diffSec < 90) return '1 minute ago'
-  const minutes = Math.floor(diffSec / 60)
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`
-  const days = Math.floor(hours / 24)
-  if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`
-  const months = Math.floor(days / 30)
-  return `${months} month${months === 1 ? '' : 's'} ago`
-}
-
 export default function Home() {
   const { theme } = useAppStore()
   const isDark = theme === 'dark'
@@ -85,8 +69,6 @@ export default function Home() {
 
   const [meshStatus, setMeshStatus] = useState<MeshStatusPayload | null>(null)
   const [meshLoading, setMeshLoading] = useState(true)
-  const { data: latestBriefing, isLoading: latestBriefingLoading, error: latestBriefingError } = useLatestBriefing()
-
   useEffect(() => {
     let alive = true
     setHealthLoading(true)
@@ -287,51 +269,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Last Briefing */}
-      <section>
-        <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest mb-3">Last Briefing</p>
-        <div className={`p-4 rounded-2xl border ${border} ${subtle}`}>
-          <div className="flex items-center gap-2 mb-3">
-            <FileText className="w-3.5 h-3.5 opacity-40" />
-            <p className="text-[10px] font-mono uppercase opacity-40">Latest run summary</p>
-          </div>
-          {latestBriefingLoading && <p className="text-sm opacity-40">Loading...</p>}
-          {!latestBriefingLoading && latestBriefingError && (
-            <p className="text-xs text-rose-500">Failed to load</p>
-          )}
-          {!latestBriefingLoading && !latestBriefingError && latestBriefing === null && (
-            <p className="text-sm opacity-40">No briefings yet</p>
-          )}
-          {!latestBriefingLoading && !latestBriefingError && latestBriefing && (
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className={`text-xs font-mono font-bold px-2 py-1 rounded-md border ${border}`}>
-                  {latestBriefing.source.toUpperCase()}
-                </span>
-                <span className="text-sm opacity-70">{formatRelativeTime(latestBriefing.started_at)}</span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-mono font-bold px-2 py-1 rounded-md border border-emerald-500/30 text-emerald-500">
-                  pass {latestBriefing.summary.pass}
-                </span>
-                <span className="text-xs font-mono font-bold px-2 py-1 rounded-md border border-rose-500/30 text-rose-500">
-                  fail {latestBriefing.summary.fail}
-                </span>
-                <span className="text-xs font-mono font-bold px-2 py-1 rounded-md border border-amber-500/30 text-amber-500">
-                  skip {latestBriefing.summary.skip}
-                </span>
-              </div>
-              <p className="text-sm">
-                ${latestBriefing.summary.total_cost_usd.toFixed(2)}{' '}
-                <span className="opacity-40">of ${(latestBriefing.summary.per_batch_usd ?? 0).toFixed(2)} budget</span>
-              </p>
-              <button type="button" className="text-sm font-mono opacity-70 hover:opacity-100 transition-opacity">
-                View full briefing →
-              </button>
-            </div>
-          )}
-        </div>
-      </section>
+      <BriefingCard border={border} subtle={subtle} />
 
       {/* Service Map */}
       <section>

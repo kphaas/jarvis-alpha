@@ -17,6 +17,7 @@ const Errors = lazy(() => import('./pages/Errors'))
 const Mesh = lazy(() => import('./pages/Mesh'))
 const Approvals = lazy(() => import('./pages/Approvals'))
 const Security = lazy(() => import('./pages/Security'))
+const BriefingDetail = lazy(() => import('./pages/BriefingDetail'))
 
 const qc = new QueryClient({
   defaultOptions: { queries: { staleTime: 15 * 60 * 1000, retry: 1 } },
@@ -39,6 +40,7 @@ export default function App() {
                   <Route path="/vault" element={<Vault />} />
                   <Route path="/space/:slug" element={<Space />} />
                   <Route path="/briefing" element={<Placeholder label="Briefing" phase="Next session" />} />
+                  <Route path="/briefings/:batchRunId" element={<BriefingDetail />} />
                   <Route path="/mesh" element={<Mesh theme={theme} token={brainToken} />} />
                   <Route path="/health" element={<Health theme={theme} token={brainToken} />} />
                   <Route path="/errors" element={<Errors theme={theme} />} />

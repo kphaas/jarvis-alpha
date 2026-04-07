@@ -17,6 +17,7 @@ export interface BriefingResult {
   outcome_display: string
   cost_usd: number
   iterations_used: number
+  iterations_max?: number
   duration_seconds: number
   error_message?: string
 }
@@ -45,6 +46,23 @@ export function useLatestBriefing() {
         throw err
       }
     },
+    staleTime: 60 * 1000,
+  })
+}
+
+export function useBriefingByBatchRunId(batchRunId: string | undefined) {
+  return useQuery<BriefingFull | null>({
+    queryKey: ['briefings', 'detail', batchRunId],
+    queryFn: async () => {
+      if (!batchRunId) return null
+      try {
+        return await apiJson<BriefingFull>(`/v1/briefings/${batchRunId}`)
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message === 'HTTP 404') return null
+        throw err
+      }
+    },
+    enabled: !!batchRunId,
     staleTime: 60 * 1000,
   })
 }
