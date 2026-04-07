@@ -34,9 +34,9 @@ error_box() {
   local title="$1"
   shift
   printf '%b\n' "${RED}${BOLD}╔════════════════════════════════════════════════════════╗${RESET}" >&2
-  printf '%b %-54s %b\n' "${RED}${BOLD}║${RESET}" "${RED}${BOLD}❌ ${title}${RESET}" "${RED}${BOLD}║${RESET}" >&2
+  printf '%b%b ❌ %s%b\n' "${RED}${BOLD}║${RESET}" "${RED}${BOLD}" "$title" "${RESET}" >&2
   for line in "$@"; do
-    printf '%b %-54s %b\n' "${RED}${BOLD}║${RESET}" "   $line" "${RED}${BOLD}║${RESET}" >&2
+    printf '%b   %s\n' "${RED}${BOLD}║${RESET}" "$line" >&2
   done
   printf '%b\n' "${RED}${BOLD}╚════════════════════════════════════════════════════════╝${RESET}" >&2
 }
