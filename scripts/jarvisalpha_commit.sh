@@ -26,7 +26,7 @@ status_line() {
   local icon="$1"
   local label="$2"
   local detail="$3"
-  printf '%s  %-12s %s\n' "$icon" "$label" "$detail"
+  printf '%b  %-12s %b\n' "$icon" "$label" "$detail"
 }
 
 # ── Helper: error box (bold red, only on failure) ─────────
