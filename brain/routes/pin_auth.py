@@ -69,6 +69,20 @@ async def authenticate_pin(req: PinRequest):
             logger.warning("AUTH_FAIL reason=bad_pin profile=%s", req.profile_id)
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    # Look up the user's primary workspace (single workspace today, defer multi-workspace)
+    async with pool.acquire() as conn:
+        workspace_row = await conn.fetchrow(
+            """
+            SELECT workspace_id
+            FROM alpha_workspace_users
+            WHERE user_id = $1
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
+            req.profile_id,
+        )
+    workspace_id = workspace_row["workspace_id"] if workspace_row else None
+
     key_path = os.environ.get("ALPHA_JWT_PRIVATE_KEY", _DEFAULT_KEY)
     pem_path = Path(key_path).expanduser()
     private_key = pem_path.read_text(encoding="utf-8")
@@ -80,6 +94,7 @@ async def authenticate_pin(req: PinRequest):
         "iss": "user",
         "role": profile["role"],
         "profile_id": profile["id"],
+        "workspace_id": workspace_id,
         "display_name": profile["display_name"],
         "actor_type": "user",
         "max_rating": profile["max_rating"],

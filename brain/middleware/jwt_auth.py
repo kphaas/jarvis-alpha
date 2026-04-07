@@ -97,11 +97,20 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             iss = unverified.get("iss")
             public_key = _get_public_key(iss)
             payload = jwt.decode(token, public_key, algorithms=["RS256"])
-            request.state.user_id = payload.get("sub", "unknown")
+            # Decoded — propagate ALL claims to request.state
+            # Canonical name is user_id; sub is set as an alias for backward compat
+            sub_value = payload.get("sub", "unknown")
+            request.state.user_id = sub_value
+            request.state.sub = sub_value  # alias — DO NOT use in new code
+            request.state.profile_id = payload.get("profile_id", sub_value)
+            request.state.workspace_id = payload.get("workspace_id")
+            request.state.display_name = payload.get("display_name")
             request.state.role = payload.get("role", "user")
             request.state.actor_type = payload.get("actor_type", "user")
             request.state.scopes = payload.get("scopes", [])
             request.state.iss = payload.get("iss", "user")
+            request.state.max_rating = payload.get("max_rating", "all_ages")
+            request.state.child_age = payload.get("child_age")
         except jwt.ExpiredSignatureError:
             return JSONResponse(status_code=401, content={"error": "Token expired"})
         except jwt.InvalidTokenError as e:
