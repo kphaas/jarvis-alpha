@@ -35,12 +35,14 @@ fi
 
 # ── Step 2 — UI build ─────────────────────────────────────
 if [[ -d "$REPO_DIR/ui/src" ]]; then
-  echo "Building UI..."
-  (cd "$REPO_DIR/ui" && npm run build --silent) || {
-    echo -e "${RED}UI build failed — aborting commit${RESET}" >&2
+  printf '%s' "Building UI... "
+  ui_build_output=$( (cd "$REPO_DIR/ui" && npm run build --silent) 2>&1 ) || {
+    printf '%b\n' "${RED}FAILED${RESET}" >&2
+    printf '%s\n' "$ui_build_output" >&2
     exit 1
   }
-  echo "UI build ✅"
+  ui_build_summary=$(printf '%s\n' "$ui_build_output" | grep -E "built in|modules transformed" | tail -1)
+  printf '%b %s\n' "${GREEN}✅${RESET}" "$ui_build_summary"
 fi
 
 # ── Step 3 — Commit and push (hardened) ───────────────────
@@ -207,9 +209,4 @@ fi
 # ── Step 9 — Footer ───────────────────────────────────────
 COMMIT_HASH=$(git -C "$REPO_DIR" rev-parse --short HEAD)
 COMMIT_LINE=$(git -C "$REPO_DIR" log -1 --format=%s)
-echo ""
-echo -e "${CYAN}── ALPHA COMMIT COMPLETE ────────────────────────────────${RESET}"
-echo "Commit: $COMMIT_HASH — $COMMIT_LINE"
-echo "Air → GitHub ✅"
-echo "Sandbox: $sandbox_footer"
-echo -e "${CYAN}─────────────────────────────────────────────────────────${RESET}"
+printf "\n%b ${CYAN}%s${RESET} — %s | sandbox: %s\n" "${GREEN}ALPHA ✅${RESET}" "$COMMIT_HASH" "$COMMIT_LINE" "$sandbox_footer"
