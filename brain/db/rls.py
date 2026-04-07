@@ -82,24 +82,35 @@ async def rls_connection(request: Request):
     pool = get_pool()
     async with pool.acquire() as conn:
         await conn.execute("SET ROLE jarvis_alpha_app")
-        # app.* convention (used by majority of policies)
-        await conn.execute("SELECT set_config('app.user_id', $1, true)", user_id)
-        await conn.execute("SELECT set_config('app.profile_id', $1, true)", user_id)
-        await conn.execute(
-            "SELECT set_config('app.profile_role', $1, true)", profile_role
-        )
-        await conn.execute("SELECT set_config('app.max_rating', $1, true)", max_rating)
-        await conn.execute(
-            "SELECT set_config('app.workspace_id', $1, true)", workspace_id
-        )
-        # jarvis.* convention (legacy — used by alpha_memory_isolation)
-        await conn.execute(
-            "SELECT set_config('jarvis.current_user', $1, true)", user_id
-        )
-        await conn.execute("SELECT set_config('jarvis.role', $1, true)", jarvis_role)
-        # rls.* convention (legacy — used by chat policies, watchdog ingest)
-        await conn.execute("SELECT set_config('rls.user_id', $1, true)", user_id)
         try:
-            yield conn
+            async with conn.transaction():
+                # app.* convention (used by majority of policies)
+                await conn.execute(
+                    "SELECT set_config('app.user_id', $1, true)", user_id
+                )
+                await conn.execute(
+                    "SELECT set_config('app.profile_id', $1, true)", user_id
+                )
+                await conn.execute(
+                    "SELECT set_config('app.profile_role', $1, true)", profile_role
+                )
+                await conn.execute(
+                    "SELECT set_config('app.max_rating', $1, true)", max_rating
+                )
+                await conn.execute(
+                    "SELECT set_config('app.workspace_id', $1, true)", workspace_id
+                )
+                # jarvis.* convention (legacy — used by alpha_memory_isolation)
+                await conn.execute(
+                    "SELECT set_config('jarvis.current_user', $1, true)", user_id
+                )
+                await conn.execute(
+                    "SELECT set_config('jarvis.role', $1, true)", jarvis_role
+                )
+                # rls.* convention (legacy — used by chat policies, watchdog ingest)
+                await conn.execute(
+                    "SELECT set_config('rls.user_id', $1, true)", user_id
+                )
+                yield conn
         finally:
             await conn.execute("RESET ROLE")

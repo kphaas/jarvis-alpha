@@ -308,12 +308,12 @@ def _forge_curl_sync() -> dict:
         proc = subprocess.run(
             [
                 "curl",
-                "-sS",
+                "-sSk",
                 "--max-time",
                 "15",
                 "-w",
                 "\n%{http_code}",
-                "http://100.124.172.14:5001/api/costs/report",
+                "https://jarvis-forge.tail40ed36.ts.net:5001/api/costs/report",
             ],
             capture_output=True,
             text=True,
