@@ -62,7 +62,7 @@ flowchart LR
 **Stack:** FastAPI, `asyncpg` pool (`brain/db/pool.py`), lifespan hook initializes DB and **`recover_stuck_graphs`** on startup.
 
 **Middleware order (LIFO / last added runs first on request):**  
-`CORSMiddleware` → `JWTAuthMiddleware` → `AuthMiddleware` → `RLSMiddleware` → `RateLimitMiddleware` → `LogMiddleware`.
+`TraceIdMiddleware` → `CORSMiddleware` → `JWTAuthMiddleware` → `ApprovalMiddleware` → `RateLimitMiddleware` → `LogMiddleware`.
 
 - **CORS:** `allow_origins` locked to the Endpoint Tailscale UI origin (`brain/app.py`).
 - **JWT:** RS256 validation via `ALPHA_JWT_PUBLIC_KEY_PATH`; `SKIP_PATHS` includes `/health`, OpenAPI paths, and **`/v1/auth/pin`**; **OPTIONS** bypasses JWT for preflight (`brain/middleware/jwt_auth.py`).
@@ -99,7 +99,7 @@ flowchart LR
 ## 6. Data & Persistence
 
 - **Database:** `jarvis_alpha` on Brain Postgres 16 (`ALPHA_DB_DSN` / `brain/core/config.py`).
-- **RLS:** `RLSMiddleware` participates in row-level patterns for multi-tenant / profile use cases (implementation detail in `brain/middleware/rls_middleware.py`).
+- **RLS:** Set per-connection in `brain.db.rls.rls_connection()` (not via middleware); there is no `RLSMiddleware` or duplicate `AuthMiddleware`.
 
 ---
 
