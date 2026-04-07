@@ -43,15 +43,58 @@ if [[ -d "$REPO_DIR/ui/src" ]]; then
   echo "UI build ✅"
 fi
 
-# ── Step 3 — Commit and push ──────────────────────────────
-git add -A
-if git diff --cached --quiet; then
-  echo -e "${YELLOW}Nothing to commit${RESET}"
+# ── Step 3 — Commit and push (hardened) ───────────────────
+# Hard fail on empty index. Override with ALLOW_EMPTY_DEPLOY=1
+# Tech debt tracked: TD-7 (shellcheck), TD-8 (refactor to functions), TD-9 (pin SHA on remote)
+
+printf '\n%b\n' "${CYAN}── PRE-STAGE STATUS ─────────────────────────────────────${RESET}"
+printf '%s\n' "Host:   $(hostname -s)"
+printf '%s\n' "Branch: $(git branch --show-current)"
+printf '%s\n' "HEAD:   $(git rev-parse --short HEAD) — $(git log -1 --format=%s)"
+printf '\n'
+PRE_STATUS=$(git status --short)
+if [[ -z "$PRE_STATUS" ]]; then
+  printf '%b\n' "${YELLOW}Working tree CLEAN — no local changes detected${RESET}"
 else
-  git commit -m "$COMMIT_MSG"
+  printf '%s\n' "Working tree changes:"
+  printf '%s\n' "$PRE_STATUS" | sed 's/^/  /'
 fi
-git pull origin main --rebase
-git push origin main
+printf '%b\n\n' "${CYAN}─────────────────────────────────────────────────────────${RESET}"
+
+head_before=$(git rev-parse HEAD) || { printf '%b\n' "${RED}ERROR: git rev-parse HEAD failed${RESET}" >&2; exit 1; }
+
+git add -A || { printf '%b\n' "${RED}ERROR: git add -A failed${RESET}" >&2; exit 1; }
+
+if git diff --cached --quiet; then
+  if [[ "${ALLOW_EMPTY_DEPLOY:-0}" != "1" ]]; then
+    printf '%b\n' "${RED}ERROR: No staged changes on $(hostname -s) — refusing to push${RESET}" >&2
+    printf '%b\n' "${RED}       Your expected work may be on a DIFFERENT MACHINE${RESET}" >&2
+    printf '%b\n' "${RED}       HEAD remains: ${head_before}${RESET}" >&2
+    printf '%b\n' "${YELLOW}       To intentionally redeploy current HEAD, re-run with:${RESET}" >&2
+    printf '%b\n' "${YELLOW}         ALLOW_EMPTY_DEPLOY=1 bash $0 \"$COMMIT_MSG\"${RESET}" >&2
+    exit 1
+  fi
+  printf '%b\n' "${YELLOW}WARNING: REDEPLOYING EXISTING COMMIT ${head_before}${RESET}" >&2
+  printf '%b\n' "${YELLOW}         (ALLOW_EMPTY_DEPLOY=1 set — proceeding without new commit)${RESET}" >&2
+else
+  printf '%b\n' "${GREEN}Staged for commit:${RESET}"
+  git diff --cached --name-only | sed 's/^/  /'
+  git commit -m "$COMMIT_MSG" || { printf '%b\n' "${RED}ERROR: git commit failed${RESET}" >&2; exit 1; }
+  head_after=$(git rev-parse HEAD) || { printf '%b\n' "${RED}ERROR: git rev-parse HEAD failed after commit${RESET}" >&2; exit 1; }
+  if [[ "$head_after" == "$head_before" ]]; then
+    printf '%b\n' "${RED}ERROR: git commit reported success but HEAD did not advance${RESET}" >&2
+    printf '%b\n' "${RED}       HEAD: ${head_before} (unchanged)${RESET}" >&2
+    exit 1
+  fi
+  printf '%b\n' "${GREEN}✅ Commit created: ${head_after}${RESET}"
+fi
+
+printf '\n%s\n' "Pulling rebased main..."
+git pull origin main --rebase || { printf '%b\n' "${RED}ERROR: git pull --rebase failed — resolve conflicts and retry${RESET}" >&2; exit 1; }
+
+printf '%s\n' "Pushing to origin/main..."
+git push origin main || { printf '%b\n' "${RED}ERROR: git push failed${RESET}" >&2; exit 1; }
+printf '%b\n' "${GREEN}✅ Pushed to origin/main${RESET}"
 
 # ── Step 4 — Detect changed files ─────────────────────────
 CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git show --name-only --format="" HEAD)
