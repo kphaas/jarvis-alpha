@@ -49,7 +49,6 @@ class AskRequest(BaseModel):
     )
     session_id: str = "default"
     workspace_id: str | None = None
-    user_id: str = "anon"
     persistent: bool = False
 
 
@@ -113,7 +112,7 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
         check_scopes(request, "memory.write", "admin")
         topic = body.prompt.strip()[7:].strip()
         pool = get_pool()
-        uid = _user_uuid(body.user_id)
+        uid = _user_uuid(getattr(request.state, "user_id", None) or "anon")
         async with pool.acquire() as conn:
             await _set_rls(conn, str(uid), request)
             try:
@@ -156,7 +155,7 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
         memory = MemoryService(pool)
 
         embedding = await _embed(body.prompt)
-        uid = _user_uuid(body.user_id)
+        uid = _user_uuid(getattr(request.state, "user_id", None) or "anon")
 
         context = await memory.build_context(
             user_id=uid,
@@ -192,7 +191,7 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
         )
 
         await _log_ask(
-            user_id=body.user_id,
+            user_id=(getattr(request.state, "user_id", None) or "anon"),
             start_time=start_time,
             status_code=200,
             result_dict=result_dict,
@@ -203,7 +202,7 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
         err = str(e)
         try:
             await _log_ask(
-                user_id=body.user_id,
+                user_id=(getattr(request.state, "user_id", None) or "anon"),
                 status_code=500,
                 start_time=start_time,
                 result_dict={"mode": body.mode, "error": err},
