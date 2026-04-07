@@ -372,3 +372,52 @@ tail -20 ~/jarvis-alpha/logs/alpha_brain.log | grep ERROR
 ---
 
 *Updated after Approval Gateway Phase 2 session — April 6, 2026*
+
+---
+
+## 11. Cursor Discipline
+
+### str_replace can be a no-op — always verify with git diff
+
+Cursor's str_replace tool returns success when the file content is already in the target state. The replace happens, but it changes nothing. This is dangerous: verification gates downstream of the edit will pass (because the file IS in the target state — it just was already that way), and you proceed thinking your edit landed when it didn't.
+
+This bit us on 2026-04-07 when an F-137 fix was applied to a file that already contained the fix from an earlier commit. All five verification gates passed. The file was correct. But git status was clean — no edit had occurred. We only noticed during deploy investigation 30 minutes later.
+
+**Rule:** After EVERY str_replace, run `git diff path/to/file`. If diff is empty, STOP and investigate before proceeding. Either:
+
+1. The file was already in the target state (good — but you need to know this, because it changes what "deploy" means)
+2. The str_replace silently failed (bad — fix the prompt and retry)
+
+```bash
+# After every str_replace
+git diff path/to/edited/file
+
+# If empty, do not proceed. Investigate first.
+```
+
+### Verify file writes with size + line count + grep
+
+Cursor sometimes writes verification phrases as literal file content. After every file create or write, run all three:
+
+```bash
+ls -la path/to/file        # exists, reasonable size
+wc -l path/to/file         # line count matches expectation
+grep "expected_string" path/to/file  # critical content present
+```
+
+### YAML files — rewrite, never patch
+
+Never use sed, `cat >>`, or incremental str_replace on YAML files when the structure is changing. Always rewrite the full file with a heredoc. YAML is whitespace-sensitive and partial edits silently corrupt the document.
+
+### Cursor prompts must be scoped to repo root
+
+Every Cursor prompt MUST start with: "IMPORTANT: The repo is at /Users/swetagurnani/REPO_NAME/ — all file paths must use ~/REPO_NAME/ as the root." Without this, Cursor sometimes operates against the wrong working directory.
+
+### Verification commands belong AFTER the prompt body, not as file content
+
+End every Cursor prompt with: "Run each command and paste the raw terminal output directly. Do not describe or summarize the expected output. Do NOT include the verification instructions as file content — they are for you to run after writing the file."
+
+### Surgical fixes vs delegated edits
+
+- **Single-line fix in a known-good file** → Claude does it directly with str_replace, no Cursor needed.
+- **Multi-line, multi-file, or unfamiliar territory** → Cursor prompt with full context.
