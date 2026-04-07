@@ -3,17 +3,16 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, AsyncIterator, Literal
+from typing import Any, Literal
 from uuid import UUID
 
-import asyncpg
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 
 from brain.db.pool import get_pool
+from brain.db.rls import rls_connection
 from brain.tasks.executor import TaskGraphExecutor
 from brain.tasks.executor import recover_stuck_graphs  # noqa: F401
 
@@ -27,44 +26,6 @@ def _get_executor() -> TaskGraphExecutor:
     if _executor is None:
         _executor = TaskGraphExecutor(get_pool(), max_concurrent=3)
     return _executor
-
-
-@asynccontextmanager
-async def _rls_conn(request: Request) -> AsyncIterator[asyncpg.Connection]:
-    pool = get_pool()
-    user_id = getattr(request.state, "user_id", "anon")
-    role = getattr(request.state, "role", "user")
-    profile_id = getattr(request.state, "sub", user_id) or user_id
-    profile_role = getattr(request.state, "role", "child") or "child"
-    max_rating = getattr(request.state, "max_rating", "all_ages") or "all_ages"
-
-    async with pool.acquire() as conn:
-        await conn.execute("SET ROLE jarvis_alpha_app")
-        try:
-            async with conn.transaction():
-                await conn.execute(
-                    "SELECT set_config('jarvis.current_user', $1, true)",
-                    user_id,
-                )
-                await conn.execute(
-                    "SELECT set_config('jarvis.role', $1, true)",
-                    role,
-                )
-                await conn.execute(
-                    "SELECT set_config('app.user_id', $1, true)", user_id
-                )
-                await conn.execute(
-                    "SELECT set_config('app.profile_id', $1, true)", profile_id
-                )
-                await conn.execute(
-                    "SELECT set_config('app.profile_role', $1, true)", profile_role
-                )
-                await conn.execute(
-                    "SELECT set_config('app.max_rating', $1, true)", max_rating
-                )
-                yield conn
-        finally:
-            await conn.execute("RESET ROLE")
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -90,7 +51,7 @@ class CreateStepBody(BaseModel):
 @tasks_router.post("/v1/tasks/graphs")
 async def post_graph(request: Request, body: CreateGraphBody) -> dict[str, str]:
     user_id = getattr(request.state, "user_id", "anon")
-    async with _rls_conn(request) as conn:
+    async with rls_connection(request) as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO alpha_task_graphs (
@@ -114,7 +75,7 @@ async def list_graphs(
     request: Request,
     status: str | None = Query(default=None),
 ) -> list[dict[str, Any]]:
-    async with _rls_conn(request) as conn:
+    async with rls_connection(request) as conn:
         rows = await conn.fetch(
             """
             SELECT g.id, g.title, g.graph_type, g.status, g.priority,
@@ -148,7 +109,7 @@ async def list_graphs(
 
 @tasks_router.get("/v1/tasks/graphs/{graph_id}")
 async def get_graph(request: Request, graph_id: str) -> dict[str, Any]:
-    async with _rls_conn(request) as conn:
+    async with rls_connection(request) as conn:
         graph = await conn.fetchrow(
             """
             SELECT id, title, created_by, source, status, ci_required, ci_passed,
@@ -202,7 +163,7 @@ async def post_step(
             raise HTTPException(
                 status_code=400, detail=f"invalid depends_on uuid: {d}"
             ) from e
-    async with _rls_conn(request) as conn:
+    async with rls_connection(request) as conn:
         ok = await conn.fetchval(
             "SELECT 1 FROM alpha_task_graphs WHERE id = $1::uuid",
             graph_id,
@@ -231,7 +192,7 @@ async def post_step(
 
 @tasks_router.post("/v1/tasks/graphs/{graph_id}/approve")
 async def approve_graph(request: Request, graph_id: str) -> dict[str, str]:
-    async with _rls_conn(request) as conn:
+    async with rls_connection(request) as conn:
         row = await conn.fetchrow(
             """
             SELECT ci_required, ci_passed
@@ -262,7 +223,7 @@ async def approve_graph(request: Request, graph_id: str) -> dict[str, str]:
 
 @tasks_router.get("/v1/tasks/graphs/{graph_id}/status")
 async def graph_status(request: Request, graph_id: str) -> dict[str, Any]:
-    async with _rls_conn(request) as conn:
+    async with rls_connection(request) as conn:
         graph = await conn.fetchrow(
             """
             SELECT id, status
@@ -301,7 +262,7 @@ async def get_task_buddy_events(
     limit: int = Query(default=20, ge=1, le=500),
     mark_read: bool = Query(default=False),
 ) -> list[dict[str, Any]]:
-    async with _rls_conn(request) as conn:
+    async with rls_connection(request) as conn:
         rows = await conn.fetch(
             """
             SELECT id, event_type, graph_id, step_id, message, severity, read, created_at
@@ -382,7 +343,7 @@ async def submit_graph(request: Request):
     if not steps_data:
         return JSONResponse({"error": "No steps provided"}, status_code=400)
 
-    async with _rls_conn(request) as conn:
+    async with rls_connection(request) as conn:
         graph_id = await conn.fetchval(
             """
             INSERT INTO alpha_task_graphs
@@ -456,7 +417,7 @@ async def submit_graph(request: Request):
 @tasks_router.post("/v1/tasks/steps/{step_id}/approve")
 async def approve_step(step_id: str, request: Request):
     user_id = getattr(request.state, "user_id", "anon")
-    async with _rls_conn(request) as conn:
+    async with rls_connection(request) as conn:
         await conn.execute(
             """
             UPDATE alpha_task_steps
@@ -486,7 +447,7 @@ async def approve_step(step_id: str, request: Request):
 @tasks_router.post("/v1/tasks/steps/{step_id}/deny")
 async def deny_step(step_id: str, request: Request):
     user_id = getattr(request.state, "user_id", "anon")
-    async with _rls_conn(request) as conn:
+    async with rls_connection(request) as conn:
         await conn.execute(
             """
             UPDATE alpha_task_steps
@@ -518,7 +479,7 @@ async def deny_step(step_id: str, request: Request):
 
 @tasks_router.post("/v1/tasks/{graph_id}/cancel")
 async def cancel_graph(graph_id: str, request: Request):
-    async with _rls_conn(request) as conn:
+    async with rls_connection(request) as conn:
         await conn.execute(
             """
             UPDATE alpha_task_graphs
@@ -545,7 +506,7 @@ async def cancel_graph(graph_id: str, request: Request):
 
 @tasks_router.get("/v1/tasks/pending-approvals")
 async def pending_approvals(request: Request):
-    async with _rls_conn(request) as conn:
+    async with rls_connection(request) as conn:
         rows = await conn.fetch(
             """
             SELECT s.id AS step_id, s.step_name, s.step_type,

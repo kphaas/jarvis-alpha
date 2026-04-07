@@ -5,30 +5,10 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from brain.core.config import ALPHA_NODE, OLLAMA_URL
 from brain.core.models import EMBED_MODEL
-from brain.db.session import get_db
 from brain.db.pool import get_pool
+from brain.db.rls import rls_connection
 from brain.memory.memory import MemoryService
 from brain.routing.router import route
-
-
-async def _set_rls(conn, user_id: str, request: Request | None = None) -> None:
-    await conn.execute("SET ROLE jarvis_alpha_app")
-    await conn.execute("SELECT set_config('app.user_id', $1, true)", user_id)
-    if request:
-        profile_id = getattr(request.state, "sub", user_id) or user_id
-        profile_role = getattr(request.state, "role", "child") or "child"
-        max_rating = getattr(request.state, "max_rating", "all_ages") or "all_ages"
-    else:
-        profile_id = user_id
-        profile_role = "admin"
-        max_rating = "adult"
-    await conn.execute("SELECT set_config('app.profile_id', $1, true)", profile_id)
-    await conn.execute("SELECT set_config('app.profile_role', $1, true)", profile_role)
-    await conn.execute("SELECT set_config('app.max_rating', $1, true)", max_rating)
-
-
-async def _reset_rls(conn) -> None:
-    await conn.execute("RESET ROLE")
 
 
 router = APIRouter(prefix="/v1", tags=["ask"])
@@ -78,13 +58,14 @@ async def _embed(text: str) -> list[float]:
 
 async def _log_ask(
     *,
+    request: Request,
     user_id: str,
     start_time: float,
     status_code: int,
     result_dict: dict,
 ) -> None:
     latency_ms = int((time.monotonic() - start_time) * 1000)
-    async with get_db(user_id) as conn:
+    async with rls_connection(request) as conn:
         await conn.execute(
             """
             INSERT INTO jarvis_request_log
@@ -111,43 +92,38 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
 
         check_scopes(request, "memory.write", "admin")
         topic = body.prompt.strip()[7:].strip()
-        pool = get_pool()
         uid = _user_uuid(getattr(request.state, "user_id", None) or "anon")
-        async with pool.acquire() as conn:
-            await _set_rls(conn, str(uid), request)
-            try:
-                if topic:
-                    result = await conn.execute(
-                        """
-                        DELETE FROM alpha_conversation_memory
-                        WHERE user_id = $1
-                          AND tier != 'semantic'
-                          AND (
-                            content ILIKE $2
-                            OR summary ILIKE $2
-                          )
-                        """,
-                        str(uid),
-                        f"%{topic}%",
-                    )
-                    return AskResponse(
-                        mode="system",
-                        result=f"🗑️ Forgot memories related to '{topic}'. ({result})",
-                    )
-                else:
-                    result = await conn.execute(
-                        """
-                        DELETE FROM alpha_conversation_memory
-                        WHERE user_id = $1 AND tier = 'working'
-                        """,
-                        str(uid),
-                    )
-                    return AskResponse(
-                        mode="system",
-                        result=f"🗑️ Cleared all working memory. ({result})",
-                    )
-            finally:
-                await _reset_rls(conn)
+        async with rls_connection(request) as conn:
+            if topic:
+                result = await conn.execute(
+                    """
+                    DELETE FROM alpha_conversation_memory
+                    WHERE user_id = $1
+                      AND tier != 'semantic'
+                      AND (
+                        content ILIKE $2
+                        OR summary ILIKE $2
+                      )
+                    """,
+                    str(uid),
+                    f"%{topic}%",
+                )
+                return AskResponse(
+                    mode="system",
+                    result=f"🗑️ Forgot memories related to '{topic}'. ({result})",
+                )
+            else:
+                result = await conn.execute(
+                    """
+                    DELETE FROM alpha_conversation_memory
+                    WHERE user_id = $1 AND tier = 'working'
+                    """,
+                    str(uid),
+                )
+                return AskResponse(
+                    mode="system",
+                    result=f"🗑️ Cleared all working memory. ({result})",
+                )
 
     start_time = time.monotonic()
     try:
@@ -191,6 +167,7 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
         )
 
         await _log_ask(
+            request=request,
             user_id=(getattr(request.state, "user_id", None) or "anon"),
             start_time=start_time,
             status_code=200,
@@ -202,6 +179,7 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
         err = str(e)
         try:
             await _log_ask(
+                request=request,
                 user_id=(getattr(request.state, "user_id", None) or "anon"),
                 status_code=500,
                 start_time=start_time,

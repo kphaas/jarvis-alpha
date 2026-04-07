@@ -3,10 +3,11 @@ from typing import Optional
 
 import httpx
 import pdfplumber
+from fastapi import Request
 
 from jarvis_common.logging_config import get_logger
 from brain.core.config import OLLAMA_URL
-from brain.db.session import get_db
+from brain.db.rls import rls_connection
 
 CHUNK_SIZE = 512
 CHUNK_OVERLAP = 50
@@ -56,6 +57,7 @@ def _chunk_text(text: str) -> list[str]:
 async def ingest_pdf(
     file_bytes: bytes,
     doc_id: str,
+    request: Request,
     workspace_id: Optional[str] = None,
 ) -> dict:
     """
@@ -89,7 +91,7 @@ async def ingest_pdf(
             else:
                 emb_param = _vector_literal(embedding)
                 embedded_count += 1
-            async with get_db("anon") as db:
+            async with rls_connection(request) as db:
                 await db.execute(
                     """
                     INSERT INTO vault_chunks

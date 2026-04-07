@@ -55,6 +55,7 @@ async def rls_connection(request: Request):
         app.workspace_id   — primary workspace from JWT claim
         jarvis.current_user — same as user_id (legacy alias)
         jarvis.role        — 'platform_admin' if admin else 'user'
+        rls.user_id        — same as user_id (legacy alias for chat/watchdog)
 
     Raises:
         HTTPException(401): if request.state has no user_id (auth failed
@@ -96,6 +97,8 @@ async def rls_connection(request: Request):
             "SELECT set_config('jarvis.current_user', $1, true)", user_id
         )
         await conn.execute("SELECT set_config('jarvis.role', $1, true)", jarvis_role)
+        # rls.* convention (legacy — used by chat policies, watchdog ingest)
+        await conn.execute("SELECT set_config('rls.user_id', $1, true)", user_id)
         try:
             yield conn
         finally:

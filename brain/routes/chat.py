@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from brain.core.config import OLLAMA_URL
 from brain.core.models import EMBED_MODEL, LOCAL_CHAT
 from brain.db.pool import get_pool
+from brain.db.rls import rls_connection
 from brain.memory.memory import MemoryService
 from brain.routing.router import route
 
@@ -28,32 +29,6 @@ router = APIRouter(tags=["chat"])
 
 MAX_PERSONAL_THREADS = 20
 MAX_PROJECT_THREADS = 10
-
-
-async def _set_rls_user(conn, user_id: str, request: Request | None = None) -> None:
-    """Set RLS session variables for connection. Must call _reset_rls(conn) when done."""
-    await conn.execute("SET ROLE jarvis_alpha_app")
-    await conn.execute("SELECT set_config('rls.user_id', $1, true)", user_id)
-    await conn.execute("SELECT set_config('app.user_id', $1, true)", user_id)
-
-    if request:
-        profile_id = getattr(request.state, "sub", user_id) or user_id
-        profile_role = getattr(request.state, "role", "child") or "child"
-        max_rating = getattr(request.state, "max_rating", "all_ages") or "all_ages"
-    else:
-        # Fallback for internal/service calls without request
-        profile_id = user_id
-        profile_role = "admin"
-        max_rating = "adult"
-
-    await conn.execute("SELECT set_config('app.profile_id', $1, true)", profile_id)
-    await conn.execute("SELECT set_config('app.profile_role', $1, true)", profile_role)
-    await conn.execute("SELECT set_config('app.max_rating', $1, true)", max_rating)
-
-
-async def _reset_rls(conn) -> None:
-    """Reset role back to connection owner after RLS-scoped query."""
-    await conn.execute("RESET ROLE")
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -102,62 +77,56 @@ async def _embed(text: str) -> list[float]:
 
 
 async def _get_or_create_thread(
-    pool,
+    request: Request,
     user_id: str,
     thread_id: str | None,
     project_id: int | None,
-    request: Request | None = None,
 ) -> str:
-    async with pool.acquire() as conn:
-        try:
-            async with conn.transaction():
-                await _set_rls_user(conn, user_id, request)
-                if thread_id:
-                    row = await conn.fetchrow(
-                        "SELECT id FROM chat_threads WHERE id=$1 AND user_id=$2 AND archived_at IS NULL",
-                        UUID(thread_id),
-                        user_id,
-                    )
-                    if row:
-                        return str(row["id"])
+    async with rls_connection(request) as conn:
+        if thread_id:
+            row = await conn.fetchrow(
+                "SELECT id FROM chat_threads WHERE id=$1 AND user_id=$2 AND archived_at IS NULL",
+                UUID(thread_id),
+                user_id,
+            )
+            if row:
+                return str(row["id"])
 
-                if project_id:
-                    count = await conn.fetchval(
-                        "SELECT COUNT(*) FROM chat_threads WHERE user_id=$1 AND project_id=$2 AND archived_at IS NULL",
-                        user_id,
-                        project_id,
-                    )
-                    if count >= MAX_PROJECT_THREADS:
-                        raise HTTPException(
-                            409,
-                            detail=f"thread_limit: Max {MAX_PROJECT_THREADS} threads per project",
-                        )
-                else:
-                    count = await conn.fetchval(
-                        "SELECT COUNT(*) FROM chat_threads WHERE user_id=$1 AND project_id IS NULL AND archived_at IS NULL",
-                        user_id,
-                    )
-                    if count >= MAX_PERSONAL_THREADS:
-                        raise HTTPException(
-                            409,
-                            detail=f"thread_limit: Max {MAX_PERSONAL_THREADS} personal threads",
-                        )
-
-                new_id = uuid4()
-                await conn.execute(
-                    """INSERT INTO chat_threads (id, user_id, project_id)
-                       VALUES ($1, $2, $3)""",
-                    new_id,
-                    user_id,
-                    project_id,
+        if project_id:
+            count = await conn.fetchval(
+                "SELECT COUNT(*) FROM chat_threads WHERE user_id=$1 AND project_id=$2 AND archived_at IS NULL",
+                user_id,
+                project_id,
+            )
+            if count >= MAX_PROJECT_THREADS:
+                raise HTTPException(
+                    409,
+                    detail=f"thread_limit: Max {MAX_PROJECT_THREADS} threads per project",
                 )
-                return str(new_id)
-        finally:
-            await _reset_rls(conn)
+        else:
+            count = await conn.fetchval(
+                "SELECT COUNT(*) FROM chat_threads WHERE user_id=$1 AND project_id IS NULL AND archived_at IS NULL",
+                user_id,
+            )
+            if count >= MAX_PERSONAL_THREADS:
+                raise HTTPException(
+                    409,
+                    detail=f"thread_limit: Max {MAX_PERSONAL_THREADS} personal threads",
+                )
+
+        new_id = uuid4()
+        await conn.execute(
+            """INSERT INTO chat_threads (id, user_id, project_id)
+               VALUES ($1, $2, $3)""",
+            new_id,
+            user_id,
+            project_id,
+        )
+        return str(new_id)
 
 
 async def _save_message(
-    pool,
+    request: Request,
     thread_id: str,
     user_id: str,
     role: str,
@@ -166,39 +135,32 @@ async def _save_message(
     council_detail: dict | None = None,
     memory_injected: bool = False,
     latency_ms: int | None = None,
-    request: Request | None = None,
 ) -> None:
-    async with pool.acquire() as conn:
-        try:
-            async with conn.transaction():
-                await _set_rls_user(conn, user_id, request)
-                await conn.execute(
-                    """INSERT INTO chat_messages
-                       (thread_id, role, content, model_used, council_detail, memory_injected, latency_ms)
-                       VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7)""",
-                    UUID(thread_id),
-                    role,
-                    content,
-                    model_used,
-                    json.dumps(council_detail) if council_detail else None,
-                    memory_injected,
-                    latency_ms,
-                )
-                await conn.execute(
-                    "UPDATE chat_threads SET updated_at=now(), model_used=$1 WHERE id=$2",
-                    model_used,
-                    UUID(thread_id),
-                )
-        finally:
-            await _reset_rls(conn)
+    async with rls_connection(request) as conn:
+        await conn.execute(
+            """INSERT INTO chat_messages
+               (thread_id, role, content, model_used, council_detail, memory_injected, latency_ms)
+               VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7)""",
+            UUID(thread_id),
+            role,
+            content,
+            model_used,
+            json.dumps(council_detail) if council_detail else None,
+            memory_injected,
+            latency_ms,
+        )
+        await conn.execute(
+            "UPDATE chat_threads SET updated_at=now(), model_used=$1 WHERE id=$2",
+            model_used,
+            UUID(thread_id),
+        )
 
 
 async def _auto_name_thread(
-    pool,
+    request: Request,
     thread_id: str,
     user_id: str,
     first_prompt: str,
-    request: Request | None = None,
 ) -> None:
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -216,17 +178,12 @@ async def _auto_name_thread(
             )
             title = r.json().get("response", "").strip()[:80]
             if title:
-                async with pool.acquire() as conn:
-                    try:
-                        async with conn.transaction():
-                            await _set_rls_user(conn, user_id, request)
-                            await conn.execute(
-                                "UPDATE chat_threads SET title=$1, updated_at=now() WHERE id=$2",
-                                title,
-                                UUID(thread_id),
-                            )
-                    finally:
-                        await _reset_rls(conn)
+                async with rls_connection(request) as conn:
+                    await conn.execute(
+                        "UPDATE chat_threads SET title=$1, updated_at=now() WHERE id=$2",
+                        title,
+                        UUID(thread_id),
+                    )
     except Exception:
         pass
 
@@ -348,7 +305,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
     memory = MemoryService(pool)
 
     thread_id = await _get_or_create_thread(
-        pool, user_id, body.thread_id, body.project_id, request
+        request, user_id, body.thread_id, body.project_id
     )
 
     user_msg = next(
@@ -369,13 +326,11 @@ async def chat_completions(body: CompletionRequest, request: Request):
         f"Context from memory:\n{context}\n\nUser: {user_msg}" if context else user_msg
     )
 
-    await _save_message(pool, thread_id, user_id, "user", user_msg, request=request)
+    await _save_message(request, thread_id, user_id, "user", user_msg)
 
     is_new = body.thread_id is None
     if is_new:
-        asyncio.create_task(
-            _auto_name_thread(pool, thread_id, user_id, user_msg, request)
-        )
+        asyncio.create_task(_auto_name_thread(request, thread_id, user_id, user_msg))
 
     delta_parts: list[str] = []
 
@@ -399,7 +354,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
 
         asyncio.create_task(
             _save_message(
-                pool,
+                request,
                 thread_id,
                 user_id,
                 "assistant",
@@ -408,7 +363,6 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 council_detail=council_raw,
                 memory_injected=memory_injected,
                 latency_ms=latency,
-                request=request,
             )
         )
         asyncio.create_task(
@@ -428,41 +382,29 @@ async def chat_completions(body: CompletionRequest, request: Request):
 @router.get("/v1/threads")
 async def list_threads(request: Request):
     user_id = _user_id(request)
-    pool = get_pool()
     rows = []
-    async with pool.acquire() as conn:
-        try:
-            async with conn.transaction():
-                await _set_rls_user(conn, user_id, request)
-                rows = await conn.fetch(
-                    """SELECT id, title, mode, model_used, project_id, created_at, updated_at
-                       FROM chat_threads
-                       WHERE user_id=$1 AND archived_at IS NULL
-                       ORDER BY updated_at DESC LIMIT 50""",
-                    user_id,
-                )
-        finally:
-            await _reset_rls(conn)
+    async with rls_connection(request) as conn:
+        rows = await conn.fetch(
+            """SELECT id, title, mode, model_used, project_id, created_at, updated_at
+               FROM chat_threads
+               WHERE user_id=$1 AND archived_at IS NULL
+               ORDER BY updated_at DESC LIMIT 50""",
+            user_id,
+        )
     return [dict(r) for r in rows]
 
 
 @router.patch("/v1/threads/{thread_id}")
 async def rename_thread(thread_id: str, body: ThreadPatch, request: Request):
     user_id = _user_id(request)
-    pool = get_pool()
     result = ""
-    async with pool.acquire() as conn:
-        try:
-            async with conn.transaction():
-                await _set_rls_user(conn, user_id, request)
-                result = await conn.execute(
-                    "UPDATE chat_threads SET title=$1, updated_at=now() WHERE id=$2 AND user_id=$3",
-                    body.title[:80],
-                    UUID(thread_id),
-                    user_id,
-                )
-        finally:
-            await _reset_rls(conn)
+    async with rls_connection(request) as conn:
+        result = await conn.execute(
+            "UPDATE chat_threads SET title=$1, updated_at=now() WHERE id=$2 AND user_id=$3",
+            body.title[:80],
+            UUID(thread_id),
+            user_id,
+        )
     if result == "UPDATE 0":
         raise HTTPException(404, "Thread not found")
     return {"ok": True}
@@ -471,19 +413,13 @@ async def rename_thread(thread_id: str, body: ThreadPatch, request: Request):
 @router.delete("/v1/threads/{thread_id}")
 async def archive_thread(thread_id: str, request: Request):
     user_id = _user_id(request)
-    pool = get_pool()
     result = ""
-    async with pool.acquire() as conn:
-        try:
-            async with conn.transaction():
-                await _set_rls_user(conn, user_id, request)
-                result = await conn.execute(
-                    "UPDATE chat_threads SET archived_at=now() WHERE id=$1 AND user_id=$2",
-                    UUID(thread_id),
-                    user_id,
-                )
-        finally:
-            await _reset_rls(conn)
+    async with rls_connection(request) as conn:
+        result = await conn.execute(
+            "UPDATE chat_threads SET archived_at=now() WHERE id=$1 AND user_id=$2",
+            UUID(thread_id),
+            user_id,
+        )
     if result == "UPDATE 0":
         raise HTTPException(404, "Thread not found")
     return {"ok": True}
@@ -491,23 +427,16 @@ async def archive_thread(thread_id: str, request: Request):
 
 @router.get("/v1/threads/{thread_id}/messages")
 async def get_thread_messages(thread_id: str, request: Request):
-    user_id = _user_id(request)
-    pool = get_pool()
     rows = []
-    async with pool.acquire() as conn:
-        try:
-            async with conn.transaction():
-                await _set_rls_user(conn, user_id, request)
-                rows = await conn.fetch(
-                    """SELECT id, role, content, model_used, council_detail,
-                              memory_injected, latency_ms, created_at
-                       FROM chat_messages
-                       WHERE thread_id=$1
-                       ORDER BY created_at ASC""",
-                    UUID(thread_id),
-                )
-        finally:
-            await _reset_rls(conn)
+    async with rls_connection(request) as conn:
+        rows = await conn.fetch(
+            """SELECT id, role, content, model_used, council_detail,
+                      memory_injected, latency_ms, created_at
+               FROM chat_messages
+               WHERE thread_id=$1
+               ORDER BY created_at ASC""",
+            UUID(thread_id),
+        )
     return [dict(r) for r in rows]
 
 
@@ -516,50 +445,45 @@ async def escalate_to_overnight(
     thread_id: str, body: EscalateRequest, request: Request
 ):
     user_id = _user_id(request)
-    pool = get_pool()
     created_by_uuid = uuid5(NAMESPACE_DNS, user_id)
     graph_id = uuid4()
-    async with pool.acquire() as conn:
-        try:
-            async with conn.transaction():
-                await _set_rls_user(conn, user_id, request)
-                thread = await conn.fetchrow(
-                    "SELECT title FROM chat_threads WHERE id=$1 AND user_id=$2",
-                    UUID(thread_id),
-                    user_id,
-                )
-                if not thread:
-                    raise HTTPException(404, "Thread not found")
+    async with rls_connection(request) as conn:
+        async with conn.transaction():
+            thread = await conn.fetchrow(
+                "SELECT title FROM chat_threads WHERE id=$1 AND user_id=$2",
+                UUID(thread_id),
+                user_id,
+            )
+            if not thread:
+                raise HTTPException(404, "Thread not found")
 
-                messages = await conn.fetch(
-                    "SELECT role, content FROM chat_messages WHERE thread_id=$1 ORDER BY created_at ASC",
-                    UUID(thread_id),
-                )
-                context_summary = "\n".join(
-                    f"{r['role']}: {r['content'][:300]}" for r in messages[-10:]
-                )
+            messages = await conn.fetch(
+                "SELECT role, content FROM chat_messages WHERE thread_id=$1 ORDER BY created_at ASC",
+                UUID(thread_id),
+            )
+            context_summary = "\n".join(
+                f"{r['role']}: {r['content'][:300]}" for r in messages[-10:]
+            )
 
-                await conn.execute(
-                    """INSERT INTO alpha_task_graphs
-                       (id, title, status, created_by, metadata)
-                       VALUES ($1, $2, 'pending', $3, $4::jsonb)""",
-                    graph_id,
-                    f"Overnight: {thread['title']}",
-                    created_by_uuid,
-                    json.dumps(
-                        {
-                            "source": "chat_escalation",
-                            "thread_id": thread_id,
-                            "reason": body.reason,
-                            "context_summary": context_summary,
-                        }
-                    ),
-                )
-                await conn.execute(
-                    "UPDATE chat_threads SET mode='overnight', updated_at=now() WHERE id=$1",
-                    UUID(thread_id),
-                )
-        finally:
-            await _reset_rls(conn)
+            await conn.execute(
+                """INSERT INTO alpha_task_graphs
+                   (id, title, status, created_by, metadata)
+                   VALUES ($1, $2, 'pending', $3, $4::jsonb)""",
+                graph_id,
+                f"Overnight: {thread['title']}",
+                created_by_uuid,
+                json.dumps(
+                    {
+                        "source": "chat_escalation",
+                        "thread_id": thread_id,
+                        "reason": body.reason,
+                        "context_summary": context_summary,
+                    }
+                ),
+            )
+            await conn.execute(
+                "UPDATE chat_threads SET mode='overnight', updated_at=now() WHERE id=$1",
+                UUID(thread_id),
+            )
 
     return {"ok": True, "task_graph_id": str(graph_id)}

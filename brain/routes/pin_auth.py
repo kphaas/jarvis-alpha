@@ -100,7 +100,7 @@ async def authenticate_pin(req: PinRequest):
         "max_rating": profile["max_rating"],
         "scopes": ["*"]
         if profile["role"] == "admin"
-        else ["ask", "chat.read", "health.read"],
+        else ["ask", "chat.read", "health.read", "vault.read"],
         "jti": str(uuid.uuid4()),
         "iat": now,
         "exp": now + (30 * 86400),  # 30 days
