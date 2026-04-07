@@ -191,7 +191,7 @@ pull_ok=0
 sandbox_footer=""
 
 pull_output=$(ssh "${SSH_OPTS[@]}" "$SANDBOX" bash -s 2>&1 <<'REMOTE'
-cd ~/jarvis-alpha && git pull origin main --rebase && git rev-parse --short HEAD
+cd ~/jarvis-alpha && git pull origin main --rebase --quiet && git rev-parse --short HEAD
 REMOTE
 )
 pull_ec=$?
