@@ -143,13 +143,14 @@ async def send_approval_notification(
     if pool:
         try:
             async with pool.acquire() as conn:
-                await conn.execute(
-                    """INSERT INTO alpha_buddy_events
-                       (event_type, title, body, priority, source, payload)
-                       VALUES ('alert', $1, $2, $3, 'approval_gateway', $4)""",
+                await conn.fetchval(
+                    "SELECT public.record_buddy_event($1, $2, $3, $4, $5, $6, $7)",
+                    "system",
+                    "alert",
                     notif["title"],
                     notif["body"],
                     notif["priority"],
+                    "approval_gateway",
                     json.dumps(notif["payload"]),
                 )
         except Exception:
