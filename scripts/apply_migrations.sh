@@ -15,7 +15,7 @@
 # Loud failure semantics:
 #   - Any psql error → exit 1 with error_box
 #   - Checksum mismatch → exit 1 with error_box
-#   - SSH failure to Brain → exit 1
+#   - Local DB failure → exit 1
 #
 # Override: ALLOW_FORCE_REAPPLY=1 will re-apply a file even if checksum matches
 #           (still aborts on mismatch). Use only for emergency rollback testing.
@@ -25,13 +25,15 @@
 set -uo pipefail
 
 # ── Config ────────────────────────────────────────────────
-BRAIN="jarvisbrain@100.64.166.22"
-SSH_KEY="${HOME}/.ssh/macair_jarvis"
-SSH_OPTS=(-i "$SSH_KEY" -o IdentitiesOnly=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no)
 PSQL_PATH="/opt/homebrew/Cellar/postgresql@16/16.13/bin/psql"
 DB="jarvis_alpha"
 MIGRATIONS_DIR="${HOME}/jarvis-alpha/brain/db/migrations"
 ADVISORY_LOCK_KEY=2026040701  # Arbitrary 64-bit int — must be stable across runs
+
+if [ "$(hostname -s)" != "jarvis-brain" ]; then
+  echo "❌ apply_migrations.sh must run on Brain (jarvis-brain). Current host: $(hostname -s)"
+  exit 1
+fi
 
 # ── Colors ────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -60,30 +62,25 @@ error_box() {
   printf '%b\n' "${RED}${BOLD}╚════════════════════════════════════════════════════════╝${RESET}" >&2
 }
 
-# Run a SQL command on Brain. Returns stdout. Aborts on non-zero.
+# Run a SQL command locally. Returns stdout. Aborts on non-zero.
 psql_exec() {
   local sql="$1"
-  ssh "${SSH_OPTS[@]}" "$BRAIN" "$PSQL_PATH -d $DB -X -A -t -v ON_ERROR_STOP=1 -c \"$sql\""
+  "$PSQL_PATH" -d "$DB" -X -A -t -v ON_ERROR_STOP=1 -c "$sql"
 }
 
-# Apply a SQL file on Brain. Returns nothing. Aborts on non-zero.
+# Apply a SQL file locally. Returns nothing. Aborts on non-zero.
 psql_apply_file() {
-  local local_path="$1"
-  local remote_path="/tmp/$(basename "$local_path")"
-  scp "${SSH_OPTS[@]}" "$local_path" "$BRAIN:$remote_path" >/dev/null 2>&1 || {
-    error_box "scp failed" "Could not copy $local_path to Brain"
-    return 1
-  }
-  ssh "${SSH_OPTS[@]}" "$BRAIN" "$PSQL_PATH -d $DB -X -v ON_ERROR_STOP=1 -1 -f $remote_path && rm $remote_path"
+  local file="$1"
+  "$PSQL_PATH" -d "$DB" -X -v ON_ERROR_STOP=1 -1 -f "$file"
 }
 
 # ── Pre-flight ────────────────────────────────────────────
 printf '\n%b── MIGRATION RUNNER ─────────────────────────────────────%b\n' "${CYAN}" "${RESET}"
 printf '%s\n' "Host:           $(hostname -s)"
-printf '%s\n' "Target:         $BRAIN"
 printf '%s\n' "Database:       $DB"
 printf '%s\n' "Migrations dir: $MIGRATIONS_DIR"
-printf '%b─────────────────────────────────────────────────────────%b\n\n' "${CYAN}" "${RESET}"
+printf '%s\n' "─────────────────────────────────────────────────────────"
+printf '\n'
 
 # Verify migrations dir exists
 if [[ ! -d "$MIGRATIONS_DIR" ]]; then
@@ -91,9 +88,9 @@ if [[ ! -d "$MIGRATIONS_DIR" ]]; then
   exit 1
 fi
 
-# Verify SSH connectivity
-if ! ssh "${SSH_OPTS[@]}" "$BRAIN" "echo ok" >/dev/null 2>&1; then
-  error_box "SSH to Brain failed" "Host: $BRAIN" "Check Tailscale + SSH key"
+# Verify local psql connectivity
+if ! "$PSQL_PATH" -d "$DB" -X -A -t -c "SELECT 1;" >/dev/null 2>&1; then
+  echo "❌ Cannot connect to local Postgres database: $DB"
   exit 1
 fi
 
