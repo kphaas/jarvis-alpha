@@ -7,8 +7,8 @@ Phase 1 (this file):
 - Classifies every request by action class
 - Determines risk tier
 - T1: execute, minimal log (no DB write)
-- T2: execute, INSERT audit record
-- T3: execute, INSERT audit record, mark for notification
+- T2: execute, no DB audit (access logs only)
+- T3: execute, log cost-incurring marker, no DB audit
 - T4/T5: BLOCK with 403 + message "Approval required" (placeholder until next session)
 - Unclassified: BLOCK with 403
 
@@ -54,38 +54,22 @@ class ApprovalMiddleware(BaseHTTPMiddleware):
             request.state.risk_tier = risk_tier
             return await call_next(request)
 
-        # T2 — pass through + audit after
+        # T2 — pass through, no audit (T2 is tracked via standard access logs)
         if risk_tier == "T2":
             request.state.action_classes = action_classes
             request.state.risk_tier = risk_tier
-            response = await call_next(request)
-            try:
-                await self._write_audit(request, action_classes, risk_tier, "auto")
-            except Exception:
-                logger.error(
-                    "audit write failed for T2 request %s %s",
-                    request.method,
-                    request.url.path,
-                    exc_info=True,
-                )
-            return response
+            return await call_next(request)
 
-        # T3 — pass through + audit + notification marker
+        # T3 — pass through + log notification marker (no DB audit)
         if risk_tier == "T3":
             request.state.action_classes = action_classes
             request.state.risk_tier = risk_tier
             response = await call_next(request)
-            try:
-                await self._write_audit(
-                    request, action_classes, risk_tier, "auto", notify=True
-                )
-            except Exception:
-                logger.error(
-                    "audit write failed for T3 request %s %s",
-                    request.method,
-                    request.url.path,
-                    exc_info=True,
-                )
+            logger.info(
+                "T3 cost-incurring request: %s %s",
+                request.method,
+                request.url.path,
+            )
             return response
 
         # --- T4/T5 only below this line — safe to read body ---
