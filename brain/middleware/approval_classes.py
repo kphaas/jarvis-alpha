@@ -66,6 +66,9 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/metrics/power/history": ["read"],
     "GET /v1/metrics/power/rate": ["read"],
     "GET /v1/metrics/power/rollup": ["read"],
+    "POST /v1/metrics/power/rollup": [
+        "write"
+    ],  # Scheduled hourly rollup — writes to alpha_power_hourly/daily
     # --- Security panel — T2 security_read ---
     "GET /v1/security/jwt-check": ["read", "security_read"],
     "GET /v1/security/rls-status": ["read", "security_read"],
@@ -100,6 +103,10 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Rotation — T2 security_read ---
     "GET /v1/rotation": ["read", "security_read"],
     # --- Dev — T5 admin ---
+    "POST /v1/dev/analyze": [
+        "write",
+        "external_call",
+    ],  # Code analysis via local Ollama + GitHub API — no DB write, no cloud cost
     "POST /v1/dev": ["admin"],
     # --- Diagnose — T2 security_read ---
     "GET /v1/diagnose": ["read", "security_read"],
@@ -202,6 +209,9 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Watchdog — T1 read (monitoring events) ---
     "GET /v1/watchdog/events": ["read"],
     "GET /v1/watchdog/status": ["read"],
+    "POST /v1/watchdog/event": [
+        "write"
+    ],  # Node watchdog event ingestion — service-to-service telemetry
     # --- Admin panel ---
     "GET /admin": ["admin"],
     "POST /admin": ["admin"],
