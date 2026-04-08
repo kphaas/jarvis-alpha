@@ -15,6 +15,22 @@ from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
 
+
+def _notif_priority_int(priority: object) -> int:
+    if isinstance(priority, int):
+        return priority
+    if priority is None:
+        return 2
+    p = str(priority).strip().lower()
+    if p == "low":
+        return 1
+    if p in ("normal", "medium"):
+        return 2
+    if p in ("high", "critical"):
+        return 3
+    return 2
+
+
 # Risk context templates — explain WHY this tier matters
 TIER_CONTEXT = {
     "T4": "This action may affect system behavior or child-facing content. It requires your approval before execution.",
@@ -149,7 +165,7 @@ async def send_approval_notification(
                     "alert",
                     notif["title"],
                     notif["body"],
-                    notif["priority"],
+                    _notif_priority_int(notif["priority"]),
                     "approval_gateway",
                     json.dumps(notif["payload"]),
                 )

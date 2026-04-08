@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import uuid
 from datetime import datetime, timezone
 
 import asyncpg
@@ -14,6 +15,32 @@ logger = get_logger("alpha_buddy")
 BUDDY_INTERVAL = int(os.environ.get("BUDDY_INTERVAL_SECONDS", "60"))
 ALERT_THRESHOLD_HOURS = 20
 
+_VALID_BUDDY_EVENT_TYPES = frozenset({"alert", "reminder", "suggestion", "system"})
+
+
+def _normalize_buddy_event_type(event_type: str) -> str:
+    et = (event_type or "").strip().lower()
+    if et in _VALID_BUDDY_EVENT_TYPES:
+        return et
+    if et in ("eviction", "promotion", "maintenance"):
+        return "system"
+    return "system"
+
+
+def _normalize_buddy_priority(priority: int | str | None) -> int:
+    if priority is None:
+        return 2
+    if isinstance(priority, int):
+        return priority
+    p = str(priority).strip().lower()
+    if p in ("info", "low"):
+        return 1
+    if p in ("normal", "medium", ""):
+        return 2
+    if p in ("high", "alert", "critical", "warn", "warning"):
+        return 3
+    return 2
+
 
 async def _write_event(
     pool: asyncpg.Pool,
@@ -22,22 +49,25 @@ async def _write_event(
     event_type: str,
     title: str,
     body: str = "",
-    priority: int = 2,
+    priority: int | str | None = 2,
     source: str = "buddy_agent",
     payload: dict | list | str | None = None,
-) -> int:
+) -> uuid.UUID:
     payload_json = "{}" if payload is None else payload
     if not isinstance(payload_json, str):
         payload_json = json.dumps(payload_json)
+
+    p_priority = _normalize_buddy_priority(priority)
+    p_event_type = _normalize_buddy_event_type(event_type)
 
     async with pool.acquire() as conn:
         return await conn.fetchval(
             "SELECT public.record_buddy_event($1, $2, $3, $4, $5, $6, $7)",
             user_id if user_id else "system",
-            event_type,
+            p_event_type,
             title,
             body,
-            str(priority),
+            p_priority,
             source,
             payload_json,
         )

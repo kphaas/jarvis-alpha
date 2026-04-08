@@ -62,23 +62,23 @@ echo "TEST 4: record_buddy_event via jarvisbrain (sentinel 'system')"
 TEST_ID=$("$PSQL" -U jarvisbrain -d jarvis_alpha -tAc "
   SELECT public.record_buddy_event(
     'system',
-    'smoke_test',
+    'system',
     'Stage 3 smoke test',
     'Testing SECURITY DEFINER function',
-    'info',
+    1,
     'smoke_test',
     '{\"test\": true}'::jsonb
   );
 ")
 echo "Inserted event id: $TEST_ID"
-echo "Expected: a positive integer"
+echo "Expected: a UUID string"
 echo ""
 
-# Test 5: record_buddy_event rejects NULL user_id
-echo "TEST 5: NULL user_id rejected"
+# Test 5: invalid event_type rejected by CHECK constraint
+echo "TEST 5: Invalid event_type rejected by CHECK constraint"
 "$PSQL" -U jarvisbrain -d jarvis_alpha -tAc "
-  SELECT public.record_buddy_event(NULL, 'x', 'x', 'x', 'info', 'x', '{}'::jsonb);
-" 2>&1 | grep -q "p_user_id must be non-null" && echo "✅ NULL rejected as expected" || echo "❌ NULL validation failed"
+  SELECT public.record_buddy_event('system', 'bogus_type', 'x', 'x', 2, 'smoke_test', '{}'::jsonb);
+" 2>&1 | grep -q "violates check constraint" && echo "✅ Invalid event_type rejected" || echo "❌ CHECK constraint bypass"
 echo ""
 
 # Test 6: evict_expired_working_memory returns integer
@@ -101,23 +101,23 @@ export PGPASSWORD="$PASSWORD"
 WRITER_ID=$("$PSQL" -h localhost -U jarvis_alpha_writer -d jarvis_alpha -tAc "
   SELECT public.record_buddy_event(
     'system',
-    'smoke_test_writer',
+    'system',
     'Stage 3 writer test',
     'Testing writer role execution',
-    'info',
+    1,
     'smoke_test',
     '{\"writer\": true}'::jsonb
   );
 ")
 unset PGPASSWORD
 echo "Inserted event id as writer: $WRITER_ID"
-echo "Expected: a positive integer (writer role can execute via GRANT)"
+echo "Expected: a UUID string (writer role can execute via GRANT)"
 echo ""
 
 # Test 9: Cleanup smoke test events
 echo "TEST 9: Cleanup smoke test events"
 "$PSQL" -U jarvisbrain -d jarvis_alpha -tAc "
-  DELETE FROM alpha_buddy_events WHERE source = 'smoke_test' RETURNING id;
+  DELETE FROM alpha_buddy_events WHERE source LIKE 'smoke_test%' RETURNING id;
 "
 echo ""
 
