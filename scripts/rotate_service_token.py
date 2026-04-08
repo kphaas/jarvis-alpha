@@ -102,6 +102,24 @@ def read_secret_value(secrets_file: str, secret_key: str) -> str | None:
     return None
 
 
+def days_remaining(secrets_file: str, secret_key: str) -> float | None:
+    """Decode current token and return days until exp. None if missing or undecodable."""
+    current = read_secret_value(secrets_file, secret_key)
+    if not current:
+        return None
+    try:
+        import base64
+
+        payload_b64 = current.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        exp = payload.get("exp", 0)
+        now = datetime.now(timezone.utc).timestamp()
+        return (exp - now) / 86400.0
+    except Exception:
+        return None
+
+
 def generate_token(
     iss: str,
     actor_type: str,
@@ -310,6 +328,17 @@ def main() -> int:
         action="store_true",
         help="Show actions and generate token only; do not write or verify",
     )
+    parser.add_argument(
+        "--min-days-remaining",
+        type=float,
+        default=2.0,
+        help="Skip rotation if current token has more than this many days remaining (default: 2.0)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rotate even if token still has more than min_days_remaining left",
+    )
     args = parser.parse_args()
 
     node = args.node
@@ -330,6 +359,8 @@ def main() -> int:
         "iss": iss,
         "actor_type": actor_type,
         "secret_key": secret_key,
+        "min_days_remaining": args.min_days_remaining,
+        "force": args.force,
         "secrets_file": str(Path(secrets_file).expanduser()),
         "private_key_path": str(Path(private_key_path).expanduser()),
         "private_key_exists": Path(private_key_path).expanduser().is_file(),
@@ -360,6 +391,19 @@ def main() -> int:
             )
             log_json("info", "rotation complete (dry-run)", node)
             return 0
+
+        # Guard: skip if token is not near expiry
+        if not args.dry_run and not args.force:
+            remaining = days_remaining(secrets_file, secret_key)
+            if remaining is not None and remaining > args.min_days_remaining:
+                log_json(
+                    "info",
+                    "rotation skipped — token still valid",
+                    node,
+                    days_remaining=round(remaining, 2),
+                    min_days_remaining=args.min_days_remaining,
+                )
+                return 0
 
         token = generate_token(iss, actor_type, private_key_path, scopes)
         log_json("info", "token generated", node, token_length=len(token))

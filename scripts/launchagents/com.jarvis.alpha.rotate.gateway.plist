@@ -12,13 +12,13 @@
 <string>gateway</string>
 </array>
 <key>StartInterval</key>
-<integer>432000</integer>
+<integer>86400</integer>
 <key>StandardOutPath</key>
 <string>/Users/infranet/jarvis-alpha/logs/token_rotation.log</string>
 <key>StandardErrorPath</key>
 <string>/Users/infranet/jarvis-alpha/logs/token_rotation_error.log</string>
 <key>RunAtLoad</key>
-<false/>
+<true/>
 <key>KeepAlive</key>
 <false/>
 </dict>
