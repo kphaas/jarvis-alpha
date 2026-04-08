@@ -3,6 +3,8 @@
 Reference for anyone writing code against jarvis-alpha. Read before your first PR.
 Updated: April 6, 2026
 
+> **Cross-repo standards:** [github.com/kphaas/jarvis-standards](https://github.com/kphaas/jarvis-standards). See especially [LOGGING.md](https://github.com/kphaas/jarvis-standards/blob/main/docs/LOGGING.md).
+
 ---
 
 ## 1. asyncpg + Postgres
