@@ -102,6 +102,29 @@ if git diff --cached --quiet; then
   printf '%b\n' "${YELLOW}WARNING: REDEPLOYING EXISTING COMMIT ${head_before}${RESET}" >&2
   printf '%b\n' "${YELLOW}         (ALLOW_EMPTY_DEPLOY=1 set — proceeding without new commit)${RESET}" >&2
 else
+  # Pre-commit guard — block forbidden staged paths
+  forbidden_staged=()
+  while IFS= read -r staged_path; do
+    [[ -z "$staged_path" ]] && continue
+    case "$staged_path" in
+      .cursor_tmp_venv|.cursor_tmp_venv/*|.venv|.venv/*|venv|venv/*|env|env/*|node_modules|node_modules/*|__pycache__|__pycache__/*|*.pyc|.DS_Store|*/.DS_Store)
+        forbidden_staged+=("$staged_path")
+        ;;
+    esac
+  done < <(git diff --cached --name-only)
+
+  if (( ${#forbidden_staged[@]} > 0 )); then
+    printf '%b\n' "${RED}❌ Forbidden paths staged for commit:${RESET}"
+    for p in "${forbidden_staged[@]}"; do
+      printf '%b\n' "${RED}${p}${RESET}"
+    done
+    printf '\n%s\n%s\n' \
+      "Run: git rm -r --cached <path> && echo '<path>/' >> .gitignore" \
+      "Then re-run the commit script."
+    exit 1
+  fi
+  printf '%b\n' "${GREEN}✅ pre-commit guard passed${RESET}"
+
   printf '%b\n' "${GREEN}Staged for commit:${RESET}"
   git diff --cached --name-only | sed 's/^/  /'
   git commit -m "$COMMIT_MSG" || { error_box "git commit failed" "Check pre-commit hooks or commit message"; exit 1; }
