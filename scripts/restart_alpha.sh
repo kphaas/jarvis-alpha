@@ -57,7 +57,13 @@ spinner $! "Waiting for port to clear"
 echo ""
 
 echo "Running database migrations..."
-cd ~/jarvis-alpha && JARVIS_ALPHA_DB_DSN=$(grep "^JARVIS_ALPHA_DB_DSN=" ~/jarvis/.secrets | cut -d= -f2-) ~/jarvis-alpha/.venv/bin/alembic upgrade head
+if ! bash ~/jarvis-alpha/scripts/apply_migrations.sh; then
+  echo ""
+  echo "❌ MIGRATION FAILED — aborting restart."
+  echo "   Services NOT loaded. Fix migration before retrying."
+  exit 1
+fi
+echo ""
 
 echo "[5/6] Loading Alpha Brain + Buddy..."
 launchctl load ~/Library/LaunchAgents/${BRAIN_PLIST}.plist

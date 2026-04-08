@@ -43,6 +43,17 @@ echo ""
 echo "✅ jarvis-alpha pulled — $SHORT"
 echo "─────────────────────────────────────────────────────────"
 
+echo ""
+echo "Running database migrations..."
+if ! bash "${REPO_DIR}/scripts/apply_migrations.sh"; then
+  echo ""
+  echo "❌ MIGRATION FAILED — aborting pull deploy."
+  echo "   Services NOT restarted. Fix migration before retrying."
+  exit 1
+fi
+echo "✅ Migrations applied"
+echo ""
+
 BRAIN_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.brain.plist"
 if [ -f "$BRAIN_PLIST" ]; then
   echo ""
