@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from uuid import UUID
 
 import asyncpg
@@ -18,9 +19,6 @@ PROMOTION_ACCESS_THRESHOLD = 3
 
 
 class MemoryService:
-    def __init__(self, pool: asyncpg.Pool):
-        self.pool = pool
-
     # ------------------------------------------------------------------
     # IMPORTANCE SCORER — heuristic, no LLM call
     # Stanford/Mem0 pattern: score at write time, use at retrieval
@@ -93,15 +91,16 @@ class MemoryService:
 
     async def build_context(
         self,
+        conn: asyncpg.Connection,
         user_id: UUID,
         prompt: str,
         session_id: str,
         embedding: list[float],
     ) -> str:
         semantic, episodic, working = await asyncio.gather(
-            self._get_semantic(user_id),
-            self._get_episodic(user_id, embedding),
-            self._get_working(session_id),
+            self._get_semantic(conn, user_id),
+            self._get_episodic(conn, user_id, embedding),
+            self._get_working(conn, session_id),
         )
 
         parts = []
@@ -124,93 +123,83 @@ class MemoryService:
     # TIER 1 — SEMANTIC (always injected, full read, no search)
     # ------------------------------------------------------------------
 
-    async def _get_semantic(self, user_id: UUID) -> list[dict]:
-        async with self.pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    "SELECT set_config('jarvis.current_user', $1, true)",
-                    str(user_id),
-                )
-                rows = await conn.fetch(
-                    """
-                    SELECT fact, category
-                    FROM alpha_semantic_memory
-                    WHERE user_id = $1
-                    ORDER BY created_at DESC
-                    LIMIT $2
-                    """,
-                    user_id,
-                    SEMANTIC_CAP,
-                )
+    async def _get_semantic(
+        self, conn: asyncpg.Connection, user_id: UUID
+    ) -> list[dict]:
+        rows = await conn.fetch(
+            """
+            SELECT fact, category
+            FROM alpha_semantic_memory
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            user_id,
+            SEMANTIC_CAP,
+        )
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
     # TIER 2 — EPISODIC (vector search, context-triggered)
     # ------------------------------------------------------------------
 
-    async def _get_episodic(self, user_id: UUID, embedding: list[float]) -> list[dict]:
+    async def _get_episodic(
+        self,
+        conn: asyncpg.Connection,
+        user_id: UUID,
+        embedding: list[float],
+    ) -> list[dict]:
         """
         Weighted retrieval: Stanford Generative Agents pattern.
         score = 0.3 * recency + 0.4 * importance + 0.3 * relevance
         All factors normalized to [0, 1].
         """
-        async with self.pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    "SELECT set_config('jarvis.current_user', $1, true)",
-                    str(user_id),
-                )
-                rows = await conn.fetch(
-                    """
-                    WITH candidates AS (
-                        SELECT
-                            id,
-                            summary,
-                            importance_score,
-                            last_accessed_at,
-                            access_count,
-                            1 - (embedding <=> $2::vector) AS cosine_sim
-                        FROM alpha_conversation_memory
-                        WHERE user_id = $1
-                          AND tier = 'episodic'
-                    )
-                    SELECT
-                        id,
-                        summary,
-                        importance_score,
-                        access_count,
-                        cosine_sim,
-                        -- Recency: exponential decay, 0.995^hours since last access
-                        POWER(0.995, EXTRACT(EPOCH FROM (now() - last_accessed_at)) / 3600.0)
-                            AS recency_score,
-                        -- Final weighted score (Stanford formula)
-                        (
-                            0.3 * POWER(0.995, EXTRACT(EPOCH FROM (now() - last_accessed_at)) / 3600.0)
-                          + 0.4 * importance_score
-                          + 0.3 * cosine_sim
-                        ) AS retrieval_score
-                    FROM candidates
-                    WHERE cosine_sim > 0.3
-                    ORDER BY retrieval_score DESC
-                    LIMIT $3
-                    """,
-                    str(user_id),
-                    str(embedding),
-                    EPISODIC_LIMIT,
-                )
+        rows = await conn.fetch(
+            """
+            WITH candidates AS (
+                SELECT
+                    id,
+                    summary,
+                    importance_score,
+                    last_accessed_at,
+                    access_count,
+                    1 - (embedding <=> $2::vector) AS cosine_sim
+                FROM alpha_conversation_memory
+                WHERE user_id = $1
+                  AND tier = 'episodic'
+            )
+            SELECT
+                id,
+                summary,
+                importance_score,
+                access_count,
+                cosine_sim,
+                -- Recency: exponential decay, 0.995^hours since last access
+                POWER(0.995, EXTRACT(EPOCH FROM (now() - last_accessed_at)) / 3600.0)
+                    AS recency_score,
+                -- Final weighted score (Stanford formula)
+                (
+                    0.3 * POWER(0.995, EXTRACT(EPOCH FROM (now() - last_accessed_at)) / 3600.0)
+                  + 0.4 * importance_score
+                  + 0.3 * cosine_sim
+                ) AS retrieval_score
+            FROM candidates
+            WHERE cosine_sim > 0.3
+            ORDER BY retrieval_score DESC
+            LIMIT $3
+            """,
+            str(user_id),
+            str(embedding),
+            EPISODIC_LIMIT,
+        )
 
-                # Bump access tracking on retrieved rows (fire and forget)
-                if rows:
-                    ids = [r["id"] for r in rows]
-                    await conn.execute(
-                        """
-                        UPDATE alpha_conversation_memory
-                        SET access_count = access_count + 1,
-                            last_accessed_at = now()
-                        WHERE id = ANY($1::uuid[])
-                        """,
-                        ids,
-                    )
+        # Bump access tracking (do not block on result value)
+        if rows:
+            ids = [r["id"] for r in rows]
+            await conn.execute(
+                "SELECT public.bump_memory_access($1::uuid[])",
+                ids,
+            )
 
         return [dict(r) for r in rows]
 
@@ -218,20 +207,21 @@ class MemoryService:
     # TIER 3 — WORKING (last N turns this session)
     # ------------------------------------------------------------------
 
-    async def _get_working(self, session_id: str) -> list[dict]:
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT summary, memory_type as role
-                FROM alpha_conversation_memory
-                WHERE session_id = $1
-                  AND tier = 'working'
-                ORDER BY created_at DESC
-                LIMIT $2
-                """,
-                session_id,
-                WORKING_LIMIT,
-            )
+    async def _get_working(
+        self, conn: asyncpg.Connection, session_id: str
+    ) -> list[dict]:
+        rows = await conn.fetch(
+            """
+            SELECT summary, memory_type as role
+            FROM alpha_conversation_memory
+            WHERE session_id = $1
+              AND tier = 'working'
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            session_id,
+            WORKING_LIMIT,
+        )
         return list(reversed([dict(r) for r in rows]))
 
     # ------------------------------------------------------------------
@@ -240,6 +230,7 @@ class MemoryService:
 
     async def store(
         self,
+        conn: asyncpg.Connection,
         user_id: UUID,
         session_id: str,
         summary: str,
@@ -253,30 +244,21 @@ class MemoryService:
             return
 
         tier = "episodic" if persistent else "working"
-        async with self.pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    "SELECT set_config('jarvis.current_user', $1, true)",
-                    str(user_id),
-                )
-                await conn.execute(
-                    """
-                    INSERT INTO alpha_conversation_memory
-                      (user_id, session_id, role, content, summary, memory_type,
-                       embedding, tier, persistent, importance_score)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8, $9, $10)
-                    """,
-                    str(user_id),
-                    session_id,
-                    role,
-                    summary,
-                    summary,
-                    role,
-                    str(embedding),
-                    tier,
-                    persistent,
-                    importance,
-                )
+        await conn.fetchval(
+            """
+            SELECT public.store_conversation_memory(
+              $1, $2, $3, $4, $5::vector(768), $6, $7, $8
+            )
+            """,
+            str(user_id),
+            session_id,
+            role,
+            summary,
+            str(embedding),
+            tier,
+            persistent,
+            importance,
+        )
 
     # ------------------------------------------------------------------
     # EXPLICIT SAVE — user says "remember this"
@@ -285,95 +267,38 @@ class MemoryService:
 
     async def save_semantic(
         self,
+        conn: asyncpg.Connection,
         user_id: UUID,
         fact: str,
         category: str,
     ) -> dict:
-        async with self.pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    "SELECT set_config('jarvis.current_user', $1, true)",
-                    str(user_id),
-                )
-                count = await conn.fetchval(
-                    "SELECT COUNT(*) FROM alpha_semantic_memory WHERE user_id = $1",
-                    user_id,
-                )
-                if count >= SEMANTIC_CAP:
-                    return {"error": f"Semantic memory cap ({SEMANTIC_CAP}) reached"}
-                await conn.execute(
-                    """
-                    INSERT INTO alpha_semantic_memory
-                      (user_id, fact, category, source)
-                    VALUES ($1, $2, $3, 'explicit')
-                    """,
-                    user_id,
-                    fact,
-                    category,
-                )
-        return {"saved": True, "fact": fact, "category": category}
+        payload = await conn.fetchval(
+            """
+            SELECT public.save_semantic_memory($1::uuid, $2, $3)
+            """,
+            user_id,
+            fact,
+            category,
+        )
+        if isinstance(payload, str):
+            return json.loads(payload)
+        return dict(payload)
 
-    # ------------------------------------------------------------------
-    # BUDDY NIGHTLY PROMOTION — called by buddy_agent
-    # ------------------------------------------------------------------
-
-    async def promote_to_semantic(self, user_id: UUID) -> dict:
-        async with self.pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    "SELECT set_config('jarvis.current_user', $1, true)",
-                    str(user_id),
-                )
-                cap_check = await conn.fetchval(
-                    "SELECT COUNT(*) FROM alpha_semantic_memory WHERE user_id = $1",
-                    user_id,
-                )
-                if cap_check >= SEMANTIC_CAP:
-                    return {"promoted": 0, "reason": "cap_reached"}
-
-                candidates = await conn.fetch(
-                    """
-                    SELECT id, summary
-                    FROM alpha_conversation_memory
-                    WHERE user_id = $1
-                      AND tier = 'episodic'
-                      AND importance_score >= $2
-                      AND access_count >= $3
-                    LIMIT $4
-                    """,
-                    str(user_id),
-                    PROMOTION_SCORE_THRESHOLD,
-                    PROMOTION_ACCESS_THRESHOLD,
-                    SEMANTIC_CAP - cap_check,
-                )
-
-                promoted = 0
-                for row in candidates:
-                    await conn.execute(
-                        """
-                        INSERT INTO alpha_semantic_memory
-                          (user_id, fact, category, source)
-                        VALUES ($1, $2, 'project', 'promoted')
-                        ON CONFLICT DO NOTHING
-                        """,
-                        user_id,
-                        row["summary"],
-                    )
-                    promoted += 1
-
-        return {"promoted": promoted, "user_id": str(user_id)}
-
-    # ------------------------------------------------------------------
-    # EVICTION — 24hr TTL on working tier (called nightly by Buddy)
-    # ------------------------------------------------------------------
-
-    async def evict_working(self) -> dict:
-        async with self.pool.acquire() as conn:
-            result = await conn.execute(
-                """
-                DELETE FROM alpha_conversation_memory
-                WHERE tier = 'working'
-                  AND created_at < now() - interval '24 hours'
-                """
+    async def forget_by_topic(
+        self, conn: asyncpg.Connection, user_id: UUID, topic: str
+    ) -> int:
+        return int(
+            await conn.fetchval(
+                "SELECT public.forget_memory_by_topic($1, $2)",
+                str(user_id),
+                topic,
             )
-        return {"evicted": result}
+        )
+
+    async def forget_working(self, conn: asyncpg.Connection, user_id: UUID) -> int:
+        return int(
+            await conn.fetchval(
+                "SELECT public.forget_working_memory($1)",
+                str(user_id),
+            )
+        )

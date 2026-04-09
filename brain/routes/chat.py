@@ -301,8 +301,7 @@ def _append_sse_delta(delta_parts: list[str], chunk: str) -> None:
 async def chat_completions(body: CompletionRequest, request: Request):
     start = time.monotonic()
     user_id = _user_id(request)
-    pool = get_pool()
-    memory = MemoryService(pool)
+    memory = MemoryService()
 
     thread_id = await _get_or_create_thread(
         request, user_id, body.thread_id, body.project_id
@@ -315,12 +314,14 @@ async def chat_completions(body: CompletionRequest, request: Request):
     embedding = await _embed(user_msg)
     uid = uuid5(NAMESPACE_DNS, user_id)
 
-    context = await memory.build_context(
-        user_id=uid,
-        prompt=user_msg,
-        session_id=thread_id,
-        embedding=embedding,
-    )
+    async with rls_connection(request) as conn:
+        context = await memory.build_context(
+            conn=conn,
+            user_id=uid,
+            prompt=user_msg,
+            session_id=thread_id,
+            embedding=embedding,
+        )
     memory_injected = bool(context)
     enriched = (
         f"Context from memory:\n{context}\n\nUser: {user_msg}" if context else user_msg
@@ -365,18 +366,24 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 latency_ms=latency,
             )
         )
-        asyncio.create_task(
-            memory.store(
-                user_id=uid,
-                session_id=thread_id,
-                summary=full_text,
-                role="assistant",
-                embedding=await _embed(full_text),
-                persistent=False,
-            )
-        )
+        asyncio.create_task(_store_memory_bg(uid, thread_id, full_text))
 
     return StreamingResponse(_generator(), media_type="text/event-stream")
+
+
+async def _store_memory_bg(uid, thread_id, full_text):
+    pool = get_pool()
+    memory = MemoryService()
+    async with pool.acquire() as conn:
+        await memory.store(
+            conn=conn,
+            user_id=uid,
+            session_id=thread_id,
+            summary=full_text,
+            role="assistant",
+            embedding=await _embed(full_text),
+            persistent=False,
+        )
 
 
 @router.get("/v1/threads")

@@ -5,7 +5,6 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from brain.core.config import ALPHA_NODE, OLLAMA_URL
 from brain.core.models import EMBED_MODEL
-from brain.db.pool import get_pool
 from brain.db.rls import rls_connection
 from brain.memory.memory import MemoryService
 from brain.routing.router import route
@@ -86,6 +85,8 @@ async def _log_ask(
 
 @router.post("/ask", response_model=AskResponse)
 async def ask(body: AskRequest, request: Request) -> AskResponse:
+    memory = MemoryService()
+
     # Handle /forget command
     if body.prompt.strip().lower().startswith("/forget"):
         from brain.middleware.scopes import check_scopes
@@ -95,76 +96,61 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
         uid = _user_uuid(getattr(request.state, "user_id", None) or "anon")
         async with rls_connection(request) as conn:
             if topic:
-                result = await conn.execute(
-                    """
-                    DELETE FROM alpha_conversation_memory
-                    WHERE user_id = $1
-                      AND tier != 'semantic'
-                      AND (
-                        content ILIKE $2
-                        OR summary ILIKE $2
-                      )
-                    """,
-                    str(uid),
-                    f"%{topic}%",
-                )
+                deleted = await memory.forget_by_topic(conn, uid, topic)
                 return AskResponse(
                     mode="system",
-                    result=f"🗑️ Forgot memories related to '{topic}'. ({result})",
+                    result=f"🗑️ Forgot memories related to '{topic}'. (DELETE {deleted})",
                 )
             else:
-                result = await conn.execute(
-                    """
-                    DELETE FROM alpha_conversation_memory
-                    WHERE user_id = $1 AND tier = 'working'
-                    """,
-                    str(uid),
-                )
+                deleted = await memory.forget_working(conn, uid)
                 return AskResponse(
                     mode="system",
-                    result=f"🗑️ Cleared all working memory. ({result})",
+                    result=f"🗑️ Cleared all working memory. (DELETE {deleted})",
                 )
 
     start_time = time.monotonic()
     try:
-        pool = get_pool()
-        memory = MemoryService(pool)
-
         embedding = await _embed(body.prompt)
         uid = _user_uuid(getattr(request.state, "user_id", None) or "anon")
 
-        context = await memory.build_context(
-            user_id=uid,
-            prompt=body.prompt,
-            session_id=body.session_id,
-            embedding=embedding,
-        )
+        async with rls_connection(request) as conn:
+            context = await memory.build_context(
+                conn=conn,
+                user_id=uid,
+                prompt=body.prompt,
+                session_id=body.session_id,
+                embedding=embedding,
+            )
 
-        enriched_prompt = body.prompt
-        if context:
-            enriched_prompt = f"Context from memory:\n{context}\n\nUser: {body.prompt}"
+            enriched_prompt = body.prompt
+            if context:
+                enriched_prompt = (
+                    f"Context from memory:\n{context}\n\nUser: {body.prompt}"
+                )
 
-        result_dict = await route(enriched_prompt, body.mode)
+            result_dict = await route(enriched_prompt, body.mode)
 
-        result_text = result_dict.get("result", "")
-        result_embedding = await _embed(result_text) if result_text else []
+            result_text = result_dict.get("result", "")
+            result_embedding = await _embed(result_text) if result_text else []
 
-        await memory.store(
-            user_id=uid,
-            session_id=body.session_id,
-            summary=body.prompt,
-            role="user",
-            embedding=embedding,
-            persistent=body.persistent,
-        )
-        await memory.store(
-            user_id=uid,
-            session_id=body.session_id,
-            summary=result_text,
-            role="assistant",
-            embedding=result_embedding,
-            persistent=body.persistent,
-        )
+            await memory.store(
+                conn=conn,
+                user_id=uid,
+                session_id=body.session_id,
+                summary=body.prompt,
+                role="user",
+                embedding=embedding,
+                persistent=body.persistent,
+            )
+            await memory.store(
+                conn=conn,
+                user_id=uid,
+                session_id=body.session_id,
+                summary=result_text,
+                role="assistant",
+                embedding=result_embedding,
+                persistent=body.persistent,
+            )
 
         await _log_ask(
             request=request,
