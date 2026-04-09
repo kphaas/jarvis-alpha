@@ -73,6 +73,8 @@ async def _write_event(
         )
 
 
+# TD: alpha_approval_queue/audit writes are bare DML. Wrap in SECDEF when those
+# tables get FORCE RLS. See Stage 5c handoff.
 async def _expire_pending_approvals(pool: asyncpg.Pool) -> None:
     try:
         async with pool.acquire() as conn:
@@ -125,7 +127,7 @@ async def _run_cycle(pool: asyncpg.Pool) -> None:
 
     async with pool.acquire() as conn:
         users = await conn.fetch(
-            "SELECT DISTINCT user_id FROM alpha_conversation_memory"
+            "SELECT unnest(public.list_active_memory_users()) AS user_id"
         )
 
     for row in users:
@@ -149,19 +151,8 @@ async def _run_cycle(pool: asyncpg.Pool) -> None:
             )
 
             async with pool.acquire() as conn:
-                await conn.execute(
-                    "SELECT set_config('jarvis.current_user', $1, true)",
-                    str(user_id),
-                )
                 aging = await conn.fetch(
-                    """
-                    SELECT id, summary
-                    FROM alpha_conversation_memory
-                    WHERE user_id = $1
-                      AND tier = 'working'
-                      AND created_at < now() - interval '20 hours'
-                    LIMIT 5
-                    """,
+                    "SELECT id, summary FROM public.get_buddy_promotion_candidates($1)",
                     str(user_id),
                 )
 
@@ -184,12 +175,9 @@ async def _run_cycle(pool: asyncpg.Pool) -> None:
 async def run_buddy() -> None:
     logger.info("Buddy agent starting — interval %ss", BUDDY_INTERVAL)
 
-    dsn = os.environ.get("ALPHA_DB_DSN")
-    if not dsn:
-        logger.error("ALPHA_DB_DSN not set — exiting")
-        return
+    from brain.core.config import ALPHA_DB_DSN_BUDDY
 
-    pool = await asyncpg.create_pool(dsn, min_size=1, max_size=3)
+    pool = await asyncpg.create_pool(ALPHA_DB_DSN_BUDDY, min_size=1, max_size=3)
     logger.info("Buddy DB pool ready")
 
     while True:
