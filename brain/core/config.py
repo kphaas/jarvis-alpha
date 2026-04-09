@@ -1,6 +1,7 @@
 import os
 
 ALPHA_DB_DSN: str = os.environ["ALPHA_DB_DSN"]
+ALPHA_DB_DSN_WRITER: str = os.environ["ALPHA_DB_DSN_WRITER"]
 
 ALPHA_PORT = int(os.getenv("ALPHA_PORT", "8186"))
 ALPHA_NODE = os.getenv("ALPHA_NODE", "brain")

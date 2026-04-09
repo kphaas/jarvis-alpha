@@ -9,7 +9,7 @@ from brain.middleware.log_middleware import LogMiddleware
 from brain.middleware.trace_id import TraceIdMiddleware
 from brain.middleware.approval_audit import audit_route_classifications
 from brain.db.pool import init_pool, close_pool
-from brain.core.config import ALPHA_DB_DSN
+from brain.core.config import ALPHA_DB_DSN_WRITER
 from brain.tasks.executor import recover_stuck_graphs
 from brain.routes.ask import router as ask_router
 from brain.routes.chat import router as chat_router
@@ -44,7 +44,8 @@ logger = get_logger("alpha_brain")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db_pool = await init_pool(ALPHA_DB_DSN)
+    db_pool = await init_pool(ALPHA_DB_DSN_WRITER)
+    logger.info("FastAPI DB pool initialized on writer role (Stage 5b)")
     await recover_stuck_graphs(db_pool)
     audit_route_classifications(app)
     # Secret audit trail
