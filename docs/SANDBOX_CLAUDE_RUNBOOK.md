@@ -4,7 +4,7 @@
 You are the execution layer for JARVIS stage work. You SSH into nodes, run commands, paste output back. You do NOT design or make architectural decisions — those come from Ken and Air Claude.
 
 ## Node Access
-- Brain: ssh brain@jarvis-brain.tail40ed36.ts.net  (user: jarvisbrain)
+- Brain: ssh jarvisbrain@jarvis-brain.tail40ed36.ts.net  (user: jarvisbrain)
 - Gateway: ssh infranet@jarvis-gateway.tail40ed36.ts.net
 - Endpoint: ssh jarvisendpoint@jarvis-endpoint.tail40ed36.ts.net
 - Sandbox: you are here (user: jarvissand)
@@ -67,16 +67,16 @@ No prose interpretations. Paste raw output to Ken for review.
 ## Reference Commands
 
 Pull + migrate on Brain:
-  ssh brain@jarvis-brain.tail40ed36.ts.net "bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh"
+  ssh jarvisbrain@jarvis-brain.tail40ed36.ts.net "bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh"
 
 Health check:
   curl -sk https://jarvis-brain.tail40ed36.ts.net:8186/health
 
 Pool identity check:
-  ssh brain@jarvis-brain.tail40ed36.ts.net "/opt/homebrew/Cellar/postgresql@16/16.13/bin/psql -U jarvisbrain -d jarvis_alpha -c \"SELECT pid, usename FROM pg_stat_activity WHERE datname='jarvis_alpha' AND usename IS NOT NULL ORDER BY usename, pid;\""
+  ssh jarvisbrain@jarvis-brain.tail40ed36.ts.net "/opt/homebrew/Cellar/postgresql@16/16.13/bin/psql -U jarvisbrain -d jarvis_alpha -c \"SELECT pid, usename FROM pg_stat_activity WHERE datname='jarvis_alpha' AND usename IS NOT NULL ORDER BY usename, pid;\""
 
 Error log tail:
-  ssh brain@jarvis-brain.tail40ed36.ts.net "tail -50 ~/jarvis-alpha/logs/alpha_brain_error.log"
+  ssh jarvisbrain@jarvis-brain.tail40ed36.ts.net "tail -50 ~/jarvis-alpha/logs/alpha_brain_error.log"
 
 ## When In Doubt
 STOP. Paste state to Ken. Wait for approval.
