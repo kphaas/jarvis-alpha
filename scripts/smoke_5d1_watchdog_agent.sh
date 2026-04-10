@@ -57,8 +57,7 @@ TEST_ID=$("$PSQL" -X "$ALPHA_DB_DSN_WATCHDOG_AGENT" -tAc "
   )
   SELECT id::text FROM ins;
   COMMIT;
-")
-TEST_ID=$(echo "$TEST_ID" | tr -d '[:space:]')
+" | grep -E '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$' | head -1)
 if [[ -z "$TEST_ID" ]]; then
   echo "❌ INSERT failed" >&2
   exit 1
