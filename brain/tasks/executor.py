@@ -486,7 +486,7 @@ class TaskGraphExecutor:
         graph_id: str,
         step_id: str | None = None,
         message: str = "",
-        priority: str = "normal",
+        severity: str = "normal",
     ) -> None:
         try:
             async with self.pool.acquire() as conn:
@@ -495,7 +495,7 @@ class TaskGraphExecutor:
                 await conn.execute(
                     """
                     INSERT INTO alpha_task_events (
-                        event_type, graph_id, step_id, message, priority
+                        event_type, graph_id, step_id, message, severity
                     )
                     VALUES ($1, $2::uuid, $3, $4, $5)
                     """,
@@ -503,10 +503,21 @@ class TaskGraphExecutor:
                     graph_id,
                     sid,
                     message,
-                    priority,
+                    severity,
                 )
         except Exception as exc:
-            print(f"notify failed: {exc}", flush=True)
+            log.error(
+                json.dumps(
+                    {
+                        "event": "task_event_insert_failed",
+                        "service": "executor",
+                        "error_class": type(exc).__name__,
+                        "error_message": str(exc),
+                        "graph_id": str(graph_id) if graph_id else None,
+                        "step_id": str(step_id) if step_id else None,
+                    }
+                )
+            )
 
     async def resolve_ready_steps(self, graph_id: str) -> list[str]:
         async with self.pool.acquire() as conn:
@@ -619,7 +630,7 @@ class TaskGraphExecutor:
             if should_retry:
                 await self.notify("step_retrying", graph_id, step_id, err, "normal")
             elif should_fail:
-                await self.notify("step_failed", graph_id, step_id, err, "high")
+                await self.notify("step_failed", graph_id, step_id, err, "warning")
             return
         async with self.pool.acquire() as conn:
             await self._bind_worker_rls(conn)
@@ -698,7 +709,7 @@ class TaskGraphExecutor:
                     graph_id,
                     None,
                     "One or more steps halted or failed",
-                    "high",
+                    "warning",
                 )
 
 

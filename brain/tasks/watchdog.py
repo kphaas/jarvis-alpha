@@ -69,7 +69,7 @@ async def check_stuck(pool: asyncpg.Pool) -> None:
                     retry_count,
                 )
                 evt_type = "step_retrying"
-                pri = "high"
+                pri = "warning"
             else:
                 await conn.execute(
                     """
@@ -109,7 +109,7 @@ async def check_stuck(pool: asyncpg.Pool) -> None:
                 await conn.execute(
                     """
                     INSERT INTO alpha_task_events (
-                        event_type, graph_id, step_id, message, priority
+                        event_type, graph_id, step_id, message, severity
                     )
                     VALUES ($1, $2, $3, $4, $5)
                     """,
@@ -120,7 +120,18 @@ async def check_stuck(pool: asyncpg.Pool) -> None:
                     pri,
                 )
             except Exception as exc:
-                log.warning("Watchdog: could not write alpha_task_events: %s", exc)
+                log.error(
+                    json.dumps(
+                        {
+                            "event": "task_event_insert_failed",
+                            "service": "watchdog",
+                            "error_class": type(exc).__name__,
+                            "error_message": str(exc),
+                            "graph_id": str(row.get("graph_id")) if row else None,
+                            "step_id": str(step_id) if step_id else None,
+                        }
+                    )
+                )
 
         orphaned = await conn.fetch(
             """
