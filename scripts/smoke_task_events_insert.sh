@@ -17,7 +17,7 @@ echo ""
 
 delete_by_id() {
   local id="$1"
-  "$PSQL" -U jarvisbrain -d jarvis_alpha -v ON_ERROR_STOP=1 -c \
+  "$PSQL" -X -U jarvisbrain -d jarvis_alpha -v ON_ERROR_STOP=1 -c \
     "DELETE FROM alpha_task_events WHERE id = '${id}'::uuid;"
 }
 
@@ -25,10 +25,13 @@ insert_verify_delete() {
   local severity_val="$1"
   local detail="$2"
   local id
-  id=$("$PSQL" -U jarvisbrain -d jarvis_alpha -tAc "
-    INSERT INTO alpha_task_events (event_type, graph_id, step_id, message, severity)
-    VALUES ('step_retrying', NULL, NULL, '${detail}', '${severity_val}')
-    RETURNING id;
+  id=$("$PSQL" -X -U jarvisbrain -d jarvis_alpha -tAc "
+    WITH ins AS (
+      INSERT INTO alpha_task_events (event_type, graph_id, step_id, message, severity)
+      VALUES ('step_retrying', NULL, NULL, '${detail}', '${severity_val}')
+      RETURNING id
+    )
+    SELECT id::text FROM ins;
   ")
   if [[ -z "${id// /}" ]]; then
     echo "❌ INSERT failed for severity=${severity_val}" >&2
@@ -37,7 +40,7 @@ insert_verify_delete() {
   id=$(echo "$id" | tr -d '[:space:]')
   echo "Inserted id=${id} (severity=${severity_val})"
   local cnt
-  cnt=$("$PSQL" -U jarvisbrain -d jarvis_alpha -tAc \
+  cnt=$("$PSQL" -X -U jarvisbrain -d jarvis_alpha -tAc \
     "SELECT count(*)::text FROM alpha_task_events WHERE id = '${id}'::uuid;")
   if [[ "$cnt" != "1" ]]; then
     echo "❌ Confirm failed: expected 1 row, got ${cnt}" >&2
@@ -53,10 +56,13 @@ insert_verify_delete critical "smoke_task_events_insert: critical path"
 
 echo "TEST: legacy severity value 'high' must be REJECTED by CHECK constraint"
 set +e
-OUT=$("$PSQL" -U jarvisbrain -d jarvis_alpha -tAc "
-  INSERT INTO alpha_task_events (event_type, graph_id, step_id, message, severity)
-  VALUES ('step_retrying', NULL, NULL, 'smoke_task_events_insert: negative high', 'high')
-  RETURNING id;
+OUT=$("$PSQL" -X -U jarvisbrain -d jarvis_alpha -tAc "
+  WITH ins AS (
+    INSERT INTO alpha_task_events (event_type, graph_id, step_id, message, severity)
+    VALUES ('step_retrying', NULL, NULL, 'smoke_task_events_insert: negative high', 'high')
+    RETURNING id
+  )
+  SELECT id::text FROM ins;
 " 2>&1)
 RC=$?
 set -e
