@@ -51,8 +51,8 @@ TEST_ID=$("$PSQL" -X "$ALPHA_DB_DSN_WATCHDOG_AGENT" -tAc "
   BEGIN;
   SELECT set_config('rls.user_id', 'system', true);
   WITH ins AS (
-    INSERT INTO alpha_watchdog_events (node, event_type, message)
-    VALUES ('brain', 'smoke_test', 'smoke_5d1_watchdog_agent test row')
+    INSERT INTO alpha_watchdog_events (service_name, node, event_type, error_message, action_taken)
+    VALUES ('smoke_5d1_test', 'brain', 'check_error', 'smoke_5d1_watchdog_agent test row', 'none')
     RETURNING id
   )
   SELECT id::text FROM ins;
@@ -81,8 +81,8 @@ echo ""
 echo "Test 5 (NEGATIVE): INSERT without rls.user_id must be REJECTED by RLS"
 set +e
 OUT=$("$PSQL" -X "$ALPHA_DB_DSN_WATCHDOG_AGENT" -tAc "
-  INSERT INTO alpha_watchdog_events (node, event_type, message)
-  VALUES ('brain', 'smoke_test', 'smoke_5d1 negative test')
+  INSERT INTO alpha_watchdog_events (service_name, node, event_type, error_message, action_taken)
+  VALUES ('smoke_5d1_test', 'brain', 'check_error', 'smoke_5d1 negative test', 'none')
   RETURNING id;
 " 2>&1)
 RC=$?
@@ -93,7 +93,7 @@ if [[ "$RC" -eq 0 ]]; then
   echo "Output: $OUT" >&2
   # Try to clean up the leaked row
   "$PSQL" -X -U jarvisbrain -d jarvis_alpha -c "
-    DELETE FROM alpha_watchdog_events WHERE message = 'smoke_5d1 negative test';
+    DELETE FROM alpha_watchdog_events WHERE error_message = 'smoke_5d1 negative test';
   " > /dev/null 2>&1 || true
   exit 1
 fi
