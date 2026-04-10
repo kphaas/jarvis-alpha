@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 
 import asyncpg
 
+from brain.config.secrets import get_secret
 from jarvis_common.logging_config import get_logger, new_trace_id
 
 logger = get_logger("alpha_watchdog")
@@ -355,7 +356,7 @@ async def watchdog_loop(pool: asyncpg.Pool) -> None:
 
 
 async def main() -> None:
-    dsn = os.environ["ALPHA_DB_DSN"]
+    dsn = get_secret("ALPHA_DB_DSN_WATCHDOG_AGENT")
     pool = await asyncpg.create_pool(dsn, min_size=1, max_size=3)
     try:
         await watchdog_loop(pool)
