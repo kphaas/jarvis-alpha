@@ -11,6 +11,9 @@ fi
 
 PSQL="/opt/homebrew/Cellar/postgresql@16/16.13/bin/psql"
 
+# Admin connection for cleanup (writer cannot DELETE from alpha_watchdog_events by design)
+PSQL_ADMIN=("$PSQL" -X -U jarvisbrain -d jarvis_alpha)
+
 # Source the secrets file to get the DSN
 set -a
 source ~/jarvis/.secrets
@@ -65,15 +68,20 @@ fi
 echo "OK: inserted id=$TEST_ID"
 echo ""
 
-# Test 4: DELETE the test row (with rls.user_id='system')
-echo "Test 4: DELETE test row"
-"$PSQL" -X "$ALPHA_DB_DSN_WATCHDOG_AGENT" -c "
-  BEGIN;
-  SELECT set_config('rls.user_id', 'system', true);
-  DELETE FROM alpha_watchdog_events WHERE id = '$TEST_ID'::uuid;
-  COMMIT;
-" > /dev/null
-echo "OK: deleted $TEST_ID"
+echo "Test 4: DELETE test row (via admin — writer has no DELETE policy)"
+DELETE_COUNT=$("${PSQL_ADMIN[@]}" -tAc "
+  WITH del AS (
+    DELETE FROM alpha_watchdog_events WHERE id = '$TEST_ID'::uuid
+    RETURNING id
+  )
+  SELECT count(*)::text FROM del;
+")
+DELETE_COUNT=$(echo "$DELETE_COUNT" | tr -d '[:space:]')
+if [[ "$DELETE_COUNT" != "1" ]]; then
+  echo "❌ DELETE affected $DELETE_COUNT rows (expected 1)" >&2
+  exit 1
+fi
+echo "OK: deleted $TEST_ID (rows affected: $DELETE_COUNT)"
 echo ""
 
 # Test 5: Negative — INSERT WITHOUT setting rls.user_id must FAIL
@@ -91,9 +99,7 @@ if [[ "$RC" -eq 0 ]]; then
   echo "❌ FATAL: INSERT without rls.user_id succeeded — RLS NOT enforced!" >&2
   echo "Output: $OUT" >&2
   # Try to clean up the leaked row
-  "$PSQL" -X -U jarvisbrain -d jarvis_alpha -c "
-    DELETE FROM alpha_watchdog_events WHERE error_message = 'smoke_5d1 negative test';
-  " > /dev/null 2>&1 || true
+  "${PSQL_ADMIN[@]}" -c "DELETE FROM alpha_watchdog_events WHERE error_message = 'smoke_5d1 negative test';" > /dev/null 2>&1 || true
   exit 1
 fi
 echo "OK: RLS rejected the insert (psql exit $RC)"
