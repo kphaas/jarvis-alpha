@@ -1,11 +1,6 @@
-#!/opt/homebrew/bin/bash
+#!/usr/bin/env bash
 # smoke_task_events_insert.sh — verify alpha_task_events INSERT + severity CHECK (TD-49)
 # Runs on Brain only.
-
-PSQL="/opt/homebrew/Cellar/postgresql@16/16.13/bin/psql"
-# shellcheck source=scripts/smoke_lib.sh
-# shellcheck disable=SC1091
-source "$(dirname "$0")/smoke_lib.sh"
 
 set -euo pipefail
 
@@ -14,8 +9,7 @@ if [[ "$(hostname -s)" != "jarvis-brain" ]]; then
   exit 1
 fi
 
-# shellcheck disable=SC2034
-JARVIS_ADMIN=( "$PSQL" -X -U jarvisbrain -d jarvis_alpha )
+PSQL="/opt/homebrew/Cellar/postgresql@16/16.13/bin/psql"
 
 echo ""
 echo "=== Smoke Test — alpha_task_events (severity column + CHECK) ==="
@@ -23,14 +17,15 @@ echo ""
 
 delete_by_id() {
   local id="$1"
-  psql_admin "DELETE FROM alpha_task_events WHERE id = '${id}'::uuid;"
+  "$PSQL" -X -U jarvisbrain -d jarvis_alpha -v ON_ERROR_STOP=1 -c \
+    "DELETE FROM alpha_task_events WHERE id = '${id}'::uuid;"
 }
 
 insert_verify_delete() {
   local severity_val="$1"
   local detail="$2"
   local id
-  id=$(psql_capture_uuid JARVIS_ADMIN "
+  id=$("$PSQL" -X -U jarvisbrain -d jarvis_alpha -tAc "
     WITH ins AS (
       INSERT INTO alpha_task_events (event_type, graph_id, step_id, message, severity)
       VALUES ('step_retrying', NULL, NULL, '${detail}', '${severity_val}')
@@ -42,11 +37,15 @@ insert_verify_delete() {
     echo "❌ INSERT failed for severity=${severity_val}" >&2
     return 1
   fi
+  id=$(echo "$id" | tr -d '[:space:]')
   echo "Inserted id=${id} (severity=${severity_val})"
-  assert_row_count JARVIS_ADMIN \
-    "SELECT count(*)::text FROM alpha_task_events WHERE id = '${id}'::uuid;" \
-    "1" \
-    "Confirm failed: expected 1 row"
+  local cnt
+  cnt=$("$PSQL" -X -U jarvisbrain -d jarvis_alpha -tAc \
+    "SELECT count(*)::text FROM alpha_task_events WHERE id = '${id}'::uuid;")
+  if [[ "$cnt" != "1" ]]; then
+    echo "❌ Confirm failed: expected 1 row, got ${cnt}" >&2
+    return 1
+  fi
   delete_by_id "$id"
   echo "Deleted test row ${id}"
   echo ""

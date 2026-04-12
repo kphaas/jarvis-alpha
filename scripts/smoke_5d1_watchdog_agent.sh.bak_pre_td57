@@ -1,11 +1,6 @@
-#!/opt/homebrew/bin/bash
+#!/usr/bin/env bash
 # smoke_5d1_watchdog_agent.sh — verify watchdog_agent writer cutover (Stage 5d.1)
 # Runs on Brain only.
-
-PSQL="/opt/homebrew/Cellar/postgresql@16/16.13/bin/psql"
-# shellcheck source=scripts/smoke_lib.sh
-# shellcheck disable=SC1091
-source "$(dirname "$0")/smoke_lib.sh"
 
 set -euo pipefail
 
@@ -14,9 +9,13 @@ if [[ "$(hostname -s)" != "jarvis-brain" ]]; then
   exit 1
 fi
 
+PSQL="/opt/homebrew/Cellar/postgresql@16/16.13/bin/psql"
+
+# Admin connection for cleanup (writer cannot DELETE from alpha_watchdog_events by design)
+PSQL_ADMIN=("$PSQL" -X -U jarvisbrain -d jarvis_alpha)
+
 # Source the secrets file to get the DSN
 set -a
-# shellcheck source=/dev/null
 source ~/jarvis/.secrets
 set +a
 
@@ -24,11 +23,6 @@ if [[ -z "${ALPHA_DB_DSN_WATCHDOG_AGENT:-}" ]]; then
   echo "❌ ALPHA_DB_DSN_WATCHDOG_AGENT not set in ~/jarvis/.secrets" >&2
   exit 1
 fi
-
-# shellcheck disable=SC2034
-WRITER=( "$PSQL" -X "$ALPHA_DB_DSN_WATCHDOG_AGENT" )
-# shellcheck disable=SC2034
-JARVIS_ADMIN=( "$PSQL" -X -U jarvisbrain -d jarvis_alpha )
 
 echo ""
 echo "=== Smoke Test — Stage 5d.1 watchdog_agent cutover ==="
@@ -56,7 +50,7 @@ echo ""
 
 # Test 3: INSERT alpha_watchdog_events with rls.user_id='system' set
 echo "Test 3: INSERT alpha_watchdog_events with rls.user_id='system'"
-TEST_ID=$(psql_capture_uuid WRITER "
+TEST_ID=$("$PSQL" -X "$ALPHA_DB_DSN_WATCHDOG_AGENT" -tAc "
   BEGIN;
   SELECT set_config('rls.user_id', 'system', true);
   WITH ins AS (
@@ -66,7 +60,7 @@ TEST_ID=$(psql_capture_uuid WRITER "
   )
   SELECT id::text FROM ins;
   COMMIT;
-")
+" | grep -E '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$' | head -1)
 if [[ -z "$TEST_ID" ]]; then
   echo "❌ INSERT failed" >&2
   exit 1
@@ -75,14 +69,18 @@ echo "OK: inserted id=$TEST_ID"
 echo ""
 
 echo "Test 4: DELETE test row (via admin — writer has no DELETE policy)"
-assert_row_count JARVIS_ADMIN "
+DELETE_COUNT=$("${PSQL_ADMIN[@]}" -tAc "
   WITH del AS (
     DELETE FROM alpha_watchdog_events WHERE id = '$TEST_ID'::uuid
     RETURNING id
   )
   SELECT count(*)::text FROM del;
-" "1" "DELETE_rowcount"
-DELETE_COUNT="1"
+")
+DELETE_COUNT=$(echo "$DELETE_COUNT" | tr -d '[:space:]')
+if [[ "$DELETE_COUNT" != "1" ]]; then
+  echo "❌ DELETE affected $DELETE_COUNT rows (expected 1)" >&2
+  exit 1
+fi
 echo "OK: deleted $TEST_ID (rows affected: $DELETE_COUNT)"
 echo ""
 
@@ -101,7 +99,7 @@ if [[ "$RC" -eq 0 ]]; then
   echo "❌ FATAL: INSERT without rls.user_id succeeded — RLS NOT enforced!" >&2
   echo "Output: $OUT" >&2
   # Try to clean up the leaked row
-  psql_admin "DELETE FROM alpha_watchdog_events WHERE error_message = 'smoke_5d1 negative test';" > /dev/null 2>&1 || true
+  "${PSQL_ADMIN[@]}" -c "DELETE FROM alpha_watchdog_events WHERE error_message = 'smoke_5d1 negative test';" > /dev/null 2>&1 || true
   exit 1
 fi
 echo "OK: RLS rejected the insert (psql exit $RC)"
