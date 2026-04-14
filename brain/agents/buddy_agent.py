@@ -78,47 +78,11 @@ async def _write_event(
 async def _expire_pending_approvals(pool: asyncpg.Pool) -> None:
     try:
         async with pool.acquire() as conn:
-            expired_rows = await conn.fetch(
-                """
-                UPDATE alpha_approval_queue
-                SET status = 'expired'
-                WHERE status = 'pending' AND expires_at < NOW()
-                RETURNING id, actor_sub, description, risk_tier
-                """
-            )
-
-            if not expired_rows:
-                return
-
-            expired_ids = [row["id"] for row in expired_rows]
-            await conn.execute(
-                """
-                INSERT INTO alpha_approval_audit
-                (approval_id, action_class, risk_tier, actor_sub, actor_type,
-                 description, parameters_hash, nonce, decision, decided_by, overnight)
-                SELECT q.id, q.action_class, q.risk_tier, q.actor_sub, q.actor_type,
-                       q.description, q.parameters_hash, gen_random_uuid()::text, 'expired', 'system', false
-                FROM alpha_approval_queue q
-                WHERE q.id = ANY($1::uuid[])
-                """,
-                expired_ids,
-            )
-
-            count = len(expired_rows)
-            comma_separated_ids = ",".join(
-                str(expired_id) for expired_id in expired_ids
-            )
-            await _write_event(
-                pool,
-                user_id=None,
-                event_type="system",
-                title=f"{count} approval request(s) expired",
-                body=f"Expired queue IDs: {comma_separated_ids}",
-                priority=2,
-            )
-            logger.info("Expired %s pending approval(s)", count)
-    except Exception:
-        logger.error("Failed to expire pending approvals", exc_info=True)
+            count = await conn.fetchval("SELECT public.expire_pending_approvals()")
+            if count:
+                logger.info("buddy_expire_approvals expired=%d", count)
+    except Exception as exc:
+        logger.warning("buddy_expire_approvals error: %s", exc)
 
 
 async def _run_cycle(pool: asyncpg.Pool) -> None:

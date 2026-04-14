@@ -119,30 +119,22 @@ async def _log_event(
 ) -> None:
     try:
         async with pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute("SELECT set_config('rls.user_id', 'system', true)")
-                await conn.execute(
-                    """
-                    INSERT INTO alpha_watchdog_events
-                        (service_name, node, event_type, previous_state, current_state,
-                         consecutive_failures, latency_ms, http_status, error_message,
-                         action_taken, trace_id)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                    """,
-                    svc.name,
-                    svc.node,
-                    event_type,
-                    previous_state,
-                    current_state,
-                    svc.consecutive_failures,
-                    latency_ms,
-                    http_status,
-                    error_message,
-                    action_taken,
-                    uuid.uuid5(uuid.NAMESPACE_DNS, f"watchdog:{svc.trace_id}")
-                    if svc.trace_id
-                    else None,
-                )
+            await conn.execute(
+                "SELECT public.record_watchdog_event($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                svc.name,
+                svc.node,
+                event_type,
+                previous_state,
+                current_state,
+                svc.consecutive_failures,
+                latency_ms,
+                http_status,
+                error_message,
+                action_taken,
+                uuid.uuid5(uuid.NAMESPACE_DNS, f"watchdog:{svc.trace_id}")
+                if svc.trace_id
+                else None,
+            )
         logger.info(
             "watchdog_event service=%s node=%s type=%s prev=%s curr=%s action=%s",
             svc.name,
