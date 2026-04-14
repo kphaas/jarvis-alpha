@@ -3,9 +3,9 @@
 -- Stage 6a — GUC namespace canonicalization.
 --
 -- Eliminates legacy GUC families app.profile_role, app.profile_id, and
--- rls.user_id from every live RLS policy. After this migration, the only
--- identity GUCs read by any policy are jarvis.current_user and jarvis.role
--- ('platform_admin' | 'user').
+-- rls.user_id from every live RLS policy that still references them.
+-- After this migration, the only identity GUCs read by any policy are
+-- jarvis.current_user and jarvis.role ('platform_admin' | 'user').
 --
 -- Coordinated with Python-side changes in this same commit:
 --   brain/db/rls.py          — stops setting the three legacy GUCs
@@ -15,8 +15,14 @@
 -- Also returns uuid from record_watchdog_event() so the ingest route can
 -- echo the inserted id to its caller.
 --
+-- Policies that were already canonical in the live DB are NOT touched:
+--   task_graph_isolation    (alpha_task_graphs)
+--   task_step_isolation     (alpha_task_steps)
+--   task_events_read        (alpha_task_events)
+--   child_memory_rating     (alpha_conversation_memory — uses app.max_rating, OOS)
+--   child_memory_write      (alpha_conversation_memory)
+--
 -- Frozen migrations 006/008b/009/012/014/015 are NOT touched.
--- All policy rewrites live here and only here.
 --
 -- Note on app.max_rating / app.workspace_id: explicitly OUT of scope. Those
 -- two app.* GUCs continue to be set by rls.py and read by the content-rating
@@ -92,117 +98,84 @@ GRANT EXECUTE ON FUNCTION public.record_watchdog_event(
 ) TO jarvis_alpha_writer;
 
 -- ============================================================
--- 2. alpha_task_graphs — was 006_task_graphs.sql + 009_child_profiles.sql
+-- 2. alpha_task_graphs — child_task_isolation only
+--    task_graph_isolation already canonical; leave alone.
 -- ============================================================
 
-ALTER TABLE alpha_task_graphs ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS task_graphs_isolation ON alpha_task_graphs;
-DROP POLICY IF EXISTS child_task_isolation  ON alpha_task_graphs;
-
-CREATE POLICY task_graphs_isolation ON alpha_task_graphs
-    FOR ALL
-    USING (
-        current_setting('jarvis.role', TRUE) = 'platform_admin'
-        OR created_by = current_setting('jarvis.current_user', TRUE)
-    )
-    WITH CHECK (
-        current_setting('jarvis.role', TRUE) = 'platform_admin'
-        OR created_by = current_setting('jarvis.current_user', TRUE)
-    );
+DROP POLICY IF EXISTS child_task_isolation ON alpha_task_graphs;
+CREATE POLICY child_task_isolation ON alpha_task_graphs
+    USING (current_setting('jarvis.role', TRUE) = 'platform_admin');
 
 -- ============================================================
--- 3. alpha_task_steps — was 006_task_graphs.sql
+-- 3. alpha_dream_sessions — child_dream_isolation
 -- ============================================================
 
-ALTER TABLE alpha_task_steps ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS task_steps_isolation ON alpha_task_steps;
-
-CREATE POLICY task_steps_isolation ON alpha_task_steps
-    FOR ALL
-    USING (
-        current_setting('jarvis.role', TRUE) = 'platform_admin'
-        OR graph_id IN (
-            SELECT id FROM alpha_task_graphs
-            WHERE created_by = current_setting('jarvis.current_user', TRUE)
-        )
-    )
-    WITH CHECK (
-        current_setting('jarvis.role', TRUE) = 'platform_admin'
-        OR graph_id IN (
-            SELECT id FROM alpha_task_graphs
-            WHERE created_by = current_setting('jarvis.current_user', TRUE)
-        )
-    );
+DROP POLICY IF EXISTS child_dream_isolation ON alpha_dream_sessions;
+CREATE POLICY child_dream_isolation ON alpha_dream_sessions
+    USING (current_setting('jarvis.role', TRUE) = 'platform_admin');
 
 -- ============================================================
--- 4. alpha_task_events — was 008b_task_events.sql
---    Original policy compared jarvis.current_user to literal 'admin' which
---    is a user_id field, not a role — effectively dead. Fix it.
+-- 4. alpha_dream_steps — child_dream_step_isolation
 -- ============================================================
 
-ALTER TABLE alpha_task_events ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS task_events_isolation ON alpha_task_events;
-
-CREATE POLICY task_events_isolation ON alpha_task_events
-    FOR ALL
-    USING (current_setting('jarvis.role', TRUE) = 'platform_admin')
-    WITH CHECK (current_setting('jarvis.role', TRUE) = 'platform_admin');
+DROP POLICY IF EXISTS child_dream_step_isolation ON alpha_dream_steps;
+CREATE POLICY child_dream_step_isolation ON alpha_dream_steps
+    USING (current_setting('jarvis.role', TRUE) = 'platform_admin');
 
 -- ============================================================
--- 5. chat_threads — was 009 + 015
+-- 5. chat_threads — chat_threads_isolation + child_thread_isolation
 -- ============================================================
-
-ALTER TABLE chat_threads ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS chat_threads_isolation ON chat_threads;
-DROP POLICY IF EXISTS child_thread_isolation  ON chat_threads;
-
 CREATE POLICY chat_threads_isolation ON chat_threads
-    FOR ALL
+    USING (user_id = current_setting('jarvis.current_user', TRUE))
+    WITH CHECK (user_id = current_setting('jarvis.current_user', TRUE));
+
+DROP POLICY IF EXISTS child_thread_isolation ON chat_threads;
+CREATE POLICY child_thread_isolation ON chat_threads
     USING (
         current_setting('jarvis.role', TRUE) = 'platform_admin'
-        OR user_id = current_setting('jarvis.current_user', TRUE)
         OR owner_profile = current_setting('jarvis.current_user', TRUE)
     )
     WITH CHECK (
         current_setting('jarvis.role', TRUE) = 'platform_admin'
-        OR user_id = current_setting('jarvis.current_user', TRUE)
         OR owner_profile = current_setting('jarvis.current_user', TRUE)
     );
 
 -- ============================================================
--- 6. chat_messages — was 009 + 015
---    content_rating policy still uses app.max_rating (out of scope).
+-- 6. chat_messages — chat_messages_isolation + child_message_isolation
+--                    + child_content_rating (app.max_rating OOS, kept)
 -- ============================================================
-
-ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS chat_messages_isolation ON chat_messages;
-DROP POLICY IF EXISTS child_message_isolation  ON chat_messages;
-DROP POLICY IF EXISTS child_content_rating     ON chat_messages;
-
 CREATE POLICY chat_messages_isolation ON chat_messages
-    FOR ALL
+    USING (thread_id IN (
+        SELECT id FROM chat_threads
+        WHERE user_id = current_setting('jarvis.current_user', TRUE)
+    ))
+    WITH CHECK (thread_id IN (
+        SELECT id FROM chat_threads
+        WHERE user_id = current_setting('jarvis.current_user', TRUE)
+    ));
+
+DROP POLICY IF EXISTS child_message_isolation ON chat_messages;
+CREATE POLICY child_message_isolation ON chat_messages
     USING (
         current_setting('jarvis.role', TRUE) = 'platform_admin'
         OR thread_id IN (
             SELECT id FROM chat_threads
-            WHERE user_id       = current_setting('jarvis.current_user', TRUE)
-               OR owner_profile = current_setting('jarvis.current_user', TRUE)
+            WHERE owner_profile = current_setting('jarvis.current_user', TRUE)
         )
     )
     WITH CHECK (
         current_setting('jarvis.role', TRUE) = 'platform_admin'
         OR thread_id IN (
             SELECT id FROM chat_threads
-            WHERE user_id       = current_setting('jarvis.current_user', TRUE)
-               OR owner_profile = current_setting('jarvis.current_user', TRUE)
+            WHERE owner_profile = current_setting('jarvis.current_user', TRUE)
         )
     );
 
+DROP POLICY IF EXISTS child_content_rating ON chat_messages;
 CREATE POLICY child_content_rating ON chat_messages
     FOR SELECT
     USING (
@@ -211,106 +184,45 @@ CREATE POLICY child_content_rating ON chat_messages
     );
 
 -- ============================================================
--- 7. alpha_conversation_memory — was 009
---    rating filter still uses app.max_rating (out of scope).
--- ============================================================
-
-ALTER TABLE alpha_conversation_memory ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS child_memory_rating ON alpha_conversation_memory;
-DROP POLICY IF EXISTS child_memory_write  ON alpha_conversation_memory;
-
-CREATE POLICY child_memory_rating ON alpha_conversation_memory
-    FOR SELECT
-    USING (
-        current_setting('jarvis.role', TRUE) = 'platform_admin'
-        OR rating_level(content_rating) <= rating_level(current_setting('app.max_rating', TRUE))
-    );
-
-CREATE POLICY child_memory_write ON alpha_conversation_memory
-    FOR INSERT
-    WITH CHECK (
-        current_setting('jarvis.role', TRUE) = 'platform_admin'
-    );
-
--- ============================================================
--- 8. alpha_dream_sessions / alpha_dream_steps — was 009
--- ============================================================
-
-ALTER TABLE alpha_dream_sessions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE alpha_dream_steps    ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS child_dream_isolation      ON alpha_dream_sessions;
-DROP POLICY IF EXISTS child_dream_step_isolation ON alpha_dream_steps;
-
-CREATE POLICY child_dream_isolation ON alpha_dream_sessions
-    FOR ALL
-    USING (current_setting('jarvis.role', TRUE) = 'platform_admin')
-    WITH CHECK (current_setting('jarvis.role', TRUE) = 'platform_admin');
-
-CREATE POLICY child_dream_step_isolation ON alpha_dream_steps
-    FOR ALL
-    USING (current_setting('jarvis.role', TRUE) = 'platform_admin')
-    WITH CHECK (current_setting('jarvis.role', TRUE) = 'platform_admin');
-
--- ============================================================
--- 9. vault_documents / vault_pipeline / vault_access_log — was 014
+-- 7. vault_documents / vault_pipeline / vault_access_log — was 014
 --    Map old 'admin' → 'platform_admin', old 'child' → 'user'.
 -- ============================================================
 
-ALTER TABLE vault_documents   ENABLE ROW LEVEL SECURITY;
-ALTER TABLE vault_documents   FORCE  ROW LEVEL SECURITY;
-ALTER TABLE vault_pipeline    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE vault_pipeline    FORCE  ROW LEVEL SECURITY;
-ALTER TABLE vault_access_log  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE vault_access_log  FORCE  ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS vault_documents_read  ON vault_documents;
-DROP POLICY IF EXISTS vault_documents_write ON vault_documents;
-DROP POLICY IF EXISTS vault_pipeline_admin  ON vault_pipeline;
-DROP POLICY IF EXISTS vault_access_log_admin ON vault_access_log;
-
+DROP POLICY IF EXISTS vault_documents_read ON vault_documents;
 CREATE POLICY vault_documents_read ON vault_documents
-    FOR SELECT
     USING (
-        classification != '50_SECRETS'
+        classification <> '50_SECRETS'
         AND (
             (current_setting('jarvis.role', TRUE) = 'platform_admin'
-             AND classification IN ('10_PUBLIC', '15_KIDS', '20_PROJECTS', '30_FINANCE', '40_PRIVATE'))
+             AND classification = ANY(ARRAY['10_PUBLIC','15_KIDS','20_PROJECTS','30_FINANCE','40_PRIVATE']))
             OR
             (current_setting('jarvis.role', TRUE) = 'user'
-             AND classification IN ('10_PUBLIC', '15_KIDS'))
+             AND classification = ANY(ARRAY['10_PUBLIC','15_KIDS']))
         )
     );
 
+DROP POLICY IF EXISTS vault_documents_write ON vault_documents;
 CREATE POLICY vault_documents_write ON vault_documents
-    FOR ALL
-    USING (current_setting('jarvis.role', TRUE) = 'platform_admin')
-    WITH CHECK (current_setting('jarvis.role', TRUE) = 'platform_admin');
+    USING (current_setting('jarvis.role', TRUE) = 'platform_admin');
 
+DROP POLICY IF EXISTS vault_pipeline_admin ON vault_pipeline;
 CREATE POLICY vault_pipeline_admin ON vault_pipeline
-    FOR ALL
-    USING (current_setting('jarvis.role', TRUE) = 'platform_admin')
-    WITH CHECK (current_setting('jarvis.role', TRUE) = 'platform_admin');
+    USING (current_setting('jarvis.role', TRUE) = 'platform_admin');
 
+DROP POLICY IF EXISTS vault_access_log_admin ON vault_access_log;
 CREATE POLICY vault_access_log_admin ON vault_access_log
-    FOR ALL
-    USING (current_setting('jarvis.role', TRUE) = 'platform_admin')
-    WITH CHECK (current_setting('jarvis.role', TRUE) = 'platform_admin');
+    USING (current_setting('jarvis.role', TRUE) = 'platform_admin');
 
 -- ============================================================
--- 10. alpha_watchdog_events — was 012
---     Writes now flow exclusively through public.record_watchdog_event()
---     SECURITY DEFINER. The legacy rls.user_id='system' GUC convention is
---     gone. Replace the write policy with a permissive WITH CHECK (true)
---     since the SECDEF wrapper is the only sanctioned write path and the
---     wrapper itself enforces validation.
+-- 8. alpha_watchdog_events — was 012
+--    Writes now flow exclusively through public.record_watchdog_event()
+--    SECURITY DEFINER. The legacy rls.user_id='system' GUC convention is
+--    gone. Replace the write policy with a permissive WITH CHECK (true)
+--    since the SECDEF wrapper is the only sanctioned write path and the
+--    wrapper itself enforces validation.
 -- ============================================================
-
-ALTER TABLE alpha_watchdog_events ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS watchdog_events_system_write ON alpha_watchdog_events;
-
 CREATE POLICY watchdog_events_system_write ON alpha_watchdog_events
     FOR INSERT
     WITH CHECK (true);
