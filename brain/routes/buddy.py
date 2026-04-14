@@ -3,7 +3,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
-from brain.db.pool import get_pool
 from brain.db.rls import rls_connection
 
 router = APIRouter(prefix="/v1/buddy", tags=["buddy"])
@@ -27,12 +26,12 @@ class BuddyEventsResponse(BaseModel):
 
 @router.get("/events", response_model=BuddyEventsResponse)
 async def get_events(
+    request: Request,
     user_id: str = Query(default="anon"),
     limit: int = Query(default=20, le=100),
     unread_only: bool = Query(default=False),
 ) -> BuddyEventsResponse:
-    pool = get_pool()
-    async with pool.acquire() as conn:
+    async with rls_connection(request) as conn:
         where = "WHERE (user_id = $1 OR user_id IS NULL)"
         if unread_only:
             where += " AND read = false"
