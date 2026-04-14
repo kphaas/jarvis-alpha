@@ -12,8 +12,8 @@ Pattern B: each node runs its own local watchdog. Brain centrally observes
 via this ingest endpoint, NOT by polling each node directly.
 
 Scope required for POST: watchdog.events.ingest (or admin role)
-RLS write policy on alpha_watchdog_events requires rls.user_id = 'system'
-which is set inside the transaction in ingest_event().
+Writes go through public.record_watchdog_event() SECURITY DEFINER wrapper —
+no GUC dance required.
 """
 
 from __future__ import annotations
@@ -218,43 +218,22 @@ async def ingest_event(
 
     pool = get_pool()
     async with pool.acquire() as conn:
-        # The RLS write policy requires rls.user_id = 'system'.
-        # set_config(..., true) is transaction-local, so we need conn.transaction().
-        async with conn.transaction():
-            await conn.execute("SELECT set_config('rls.user_id', 'system', true)")
-
-            row = await conn.fetchrow(
-                """
-                INSERT INTO alpha_watchdog_events (
-                    service_name,
-                    node,
-                    event_type,
-                    previous_state,
-                    current_state,
-                    consecutive_failures,
-                    latency_ms,
-                    http_status,
-                    error_message,
-                    action_taken,
-                    trace_id
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid)
-                RETURNING id::text
-                """,
-                body.service_name,
-                body.node,
-                body.event_type,
-                body.previous_state,
-                body.current_state,
-                body.consecutive_failures,
-                body.latency_ms,
-                body.http_status,
-                body.error_message,
-                body.action_taken,
-                body.trace_id,
-            )
+        new_id = await conn.fetchval(
+            "SELECT public.record_watchdog_event($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::uuid)",
+            body.service_name,
+            body.node,
+            body.event_type,
+            body.previous_state,
+            body.current_state,
+            body.consecutive_failures,
+            body.latency_ms,
+            body.http_status,
+            body.error_message,
+            body.action_taken,
+            body.trace_id,
+        )
 
     return WatchdogEventIngestResponse(
-        id=row["id"],
+        id=str(new_id) if new_id is not None else "",
         accepted=True,
     )

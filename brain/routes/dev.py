@@ -50,13 +50,14 @@ def _user_id(request: Request) -> str:
 async def _rls_dev(conn, request: Request) -> None:
     user_id = _user_id(request)
     role = getattr(request.state, "role", "user")
+    jarvis_role = "platform_admin" if role == "admin" else "user"
     await conn.execute(
         "SELECT set_config('jarvis.current_user', $1, true)",
         user_id,
     )
     await conn.execute(
         "SELECT set_config('jarvis.role', $1, true)",
-        role,
+        jarvis_role,
     )
 
 
@@ -268,13 +269,14 @@ async def dev_approve(
     async with pool.acquire() as conn:
         async with conn.transaction():
             role = getattr(request.state, "role", "user")
+            jarvis_role = "platform_admin" if role == "admin" else "user"
             await conn.execute(
                 "SELECT set_config('jarvis.current_user', $1, true)",
                 str(created_by),
             )
             await conn.execute(
                 "SELECT set_config('jarvis.role', $1, true)",
-                role,
+                jarvis_role,
             )
             await conn.execute(
                 """
