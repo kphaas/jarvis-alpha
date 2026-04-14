@@ -29,7 +29,7 @@ from brain.tasks.dispatch import (
 
 MAX_CONCURRENT_GRAPHS = 3
 POLL_INTERVAL_SECONDS = 10
-DB_DSN_KEY = "JARVIS_ALPHA_DB_DSN"
+DB_DSN_KEY = "ALPHA_DB_DSN_EXECUTOR"
 
 # --------------- logging ---------------
 
@@ -43,8 +43,10 @@ def _load_dsn() -> str:
 
 
 async def _bind_executor_rls(conn: asyncpg.Connection) -> None:
-    await conn.execute("SELECT set_config('jarvis.current_user', 'admin', true)")
-    await conn.execute("SELECT set_config('jarvis.role', 'admin', true)")
+    await conn.execute(
+        "SELECT set_config('jarvis.current_user', 'platform_admin', true)"
+    )
+    await conn.execute("SELECT set_config('jarvis.role', 'platform_admin', true)")
 
 
 def _step_dict_llm(step_input: dict[str, Any]) -> dict[str, Any]:
@@ -477,8 +479,10 @@ class TaskGraphExecutor:
 
     @staticmethod
     async def _bind_worker_rls(conn: asyncpg.Connection) -> None:
-        await conn.execute("SELECT set_config('jarvis.current_user', 'admin', true)")
-        await conn.execute("SELECT set_config('jarvis.role', 'admin', true)")
+        await conn.execute(
+            "SELECT set_config('jarvis.current_user', 'platform_admin', true)"
+        )
+        await conn.execute("SELECT set_config('jarvis.role', 'platform_admin', true)")
 
     async def notify(
         self,
