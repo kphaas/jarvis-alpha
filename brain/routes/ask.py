@@ -131,25 +131,26 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
         result_text = result_dict.get("result", "")
         result_embedding = await _embed(result_text) if result_text else []
 
-        async with rls_connection(request) as conn:
-            await memory.store(
-                conn=conn,
-                user_id=uid,
-                session_id=body.session_id,
-                summary=body.prompt,
-                role="user",
-                embedding=embedding,
-                persistent=body.persistent,
-            )
-            await memory.store(
-                conn=conn,
-                user_id=uid,
-                session_id=body.session_id,
-                summary=result_text,
-                role="assistant",
-                embedding=result_embedding,
-                persistent=body.persistent,
-            )
+        if result_text:
+            async with rls_connection(request) as conn:
+                await memory.store(
+                    conn=conn,
+                    user_id=uid,
+                    session_id=body.session_id,
+                    summary=body.prompt,
+                    role="user",
+                    embedding=embedding,
+                    persistent=body.persistent,
+                )
+                await memory.store(
+                    conn=conn,
+                    user_id=uid,
+                    session_id=body.session_id,
+                    summary=result_text,
+                    role="assistant",
+                    embedding=result_embedding,
+                    persistent=body.persistent,
+                )
 
         await _log_ask(
             request=request,
