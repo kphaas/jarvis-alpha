@@ -147,7 +147,9 @@ for file in "$MIGRATIONS_DIR"/*.sql; do
       fi
       printf '%b\n' "${YELLOW}⚠️  Force re-applying $basename (ALLOW_FORCE_REAPPLY=1)${RESET}"
     else
-      status_line "${CYAN}✓${RESET}" "$basename" "skipped (already applied)"
+      if [[ "${VERBOSE:-0}" == "1" ]]; then
+        status_line "${CYAN}✓${RESET}" "$basename" "skipped (already applied)"
+      fi
       SKIPPED=$((SKIPPED + 1))
       continue
     fi
