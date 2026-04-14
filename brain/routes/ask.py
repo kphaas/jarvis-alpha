@@ -122,17 +122,16 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
                 embedding=embedding,
             )
 
-            enriched_prompt = body.prompt
-            if context:
-                enriched_prompt = (
-                    f"Context from memory:\n{context}\n\nUser: {body.prompt}"
-                )
+        enriched_prompt = body.prompt
+        if context:
+            enriched_prompt = f"Context from memory:\n{context}\n\nUser: {body.prompt}"
 
-            result_dict = await route(enriched_prompt, body.mode)
+        result_dict = await route(enriched_prompt, body.mode)
 
-            result_text = result_dict.get("result", "")
-            result_embedding = await _embed(result_text) if result_text else []
+        result_text = result_dict.get("result", "")
+        result_embedding = await _embed(result_text) if result_text else []
 
+        async with rls_connection(request) as conn:
             await memory.store(
                 conn=conn,
                 user_id=uid,
