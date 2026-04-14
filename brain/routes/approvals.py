@@ -8,6 +8,7 @@ from jose import jwt, JWTError
 from pydantic import BaseModel
 
 from brain.db.pool import get_pool
+from brain.db.rls import rls_connection
 from brain.middleware.scopes import check_scopes
 from jarvis_common.logging_config import get_logger
 from jarvis_common.secrets import get_secret
@@ -156,28 +157,25 @@ async def decide_approval(queue_id: str, req: DecideRequest, request: Request):
     if payload.get("purpose") != "approval":
         raise HTTPException(status_code=403, detail="Token is not an approval token")
 
-    # Fetch the queue item
-    pool = get_pool()
-    async with pool.acquire() as conn:
+    actor_sub = getattr(request.state, "user_id", "unknown")
+    nonce = uuid4().hex
+
+    # Fetch + decide + audit under RLS (admin-only via jarvis.role='platform_admin')
+    async with rls_connection(request) as conn:
         row = await conn.fetchrow(
             "SELECT * FROM alpha_approval_queue WHERE id = $1",
             queue_id,
         )
 
-    if not row:
-        raise HTTPException(status_code=404, detail="Queue item not found")
+        if not row:
+            raise HTTPException(status_code=404, detail="Queue item not found")
 
-    if row["status"] != "pending":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Queue item already {row['status']}",
-        )
+        if row["status"] != "pending":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Queue item already {row['status']}",
+            )
 
-    actor_sub = getattr(request.state, "user_id", "unknown")
-    nonce = uuid4().hex
-
-    # Update queue + write audit in a single transaction
-    async with pool.acquire() as conn:
         async with conn.transaction():
             if req.decision == "approved":
                 await conn.execute(

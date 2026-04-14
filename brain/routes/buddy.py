@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
 from brain.db.pool import get_pool
+from brain.db.rls import rls_connection
 
 router = APIRouter(prefix="/v1/buddy", tags=["buddy"])
 
@@ -66,9 +67,8 @@ async def get_events(
 
 
 @router.post("/events/{event_id}/read")
-async def mark_read(event_id: str) -> dict:
-    pool = get_pool()
-    async with pool.acquire() as conn:
+async def mark_read(event_id: str, request: Request) -> dict:
+    async with rls_connection(request) as conn:
         await conn.execute(
             "UPDATE alpha_buddy_events SET read = true WHERE id = $1::uuid",
             event_id,
@@ -77,9 +77,10 @@ async def mark_read(event_id: str) -> dict:
 
 
 @router.post("/events/read-all")
-async def mark_all_read(user_id: str = Query(default="anon")) -> dict:
-    pool = get_pool()
-    async with pool.acquire() as conn:
+async def mark_all_read(
+    request: Request, user_id: str = Query(default="anon")
+) -> dict:
+    async with rls_connection(request) as conn:
         await conn.execute(
             """
             UPDATE alpha_buddy_events SET read = true

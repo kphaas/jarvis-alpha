@@ -168,10 +168,7 @@ class ApprovalMiddleware(BaseHTTPMiddleware):
 
         async with pool.acquire() as conn:
             await conn.execute(
-                """UPDATE alpha_approval_queue
-                   SET status = 'executed',
-                       executed_at = NOW()
-                   WHERE id = $1""",
+                "SELECT public.consume_approved_queue_item($1::uuid)",
                 queue_id,
             )
 
@@ -194,35 +191,18 @@ class ApprovalMiddleware(BaseHTTPMiddleware):
             nonce = uuid4().hex
             description = f"{method} {path}"
             try:
-                async with conn.transaction():
-                    queue_id = await conn.fetchval(
-                        """INSERT INTO alpha_approval_queue
-                           (action_class, risk_tier, actor_sub, actor_type, description,
-                            parameters_hash, nonce, status, requested_at, expires_at)
-                           VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW(), NOW() + INTERVAL '10 minutes')
-                           RETURNING id""",
-                        action_classes,
-                        tier,
-                        actor_sub,
-                        actor_type,
-                        description,
-                        parameters_hash,
-                        nonce,
-                    )
-                    await conn.execute(
-                        """INSERT INTO alpha_approval_audit
-                           (approval_id, action_class, risk_tier, actor_sub, actor_type,
-                            description, parameters_hash, nonce, decision, decided_by, overnight)
-                           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'auto', $4, false)""",
-                        queue_id,
-                        action_classes,
-                        tier,
-                        actor_sub,
-                        actor_type,
-                        description,
-                        parameters_hash,
-                        nonce,
-                    )
+                queue_id = await conn.fetchval(
+                    """SELECT public.enqueue_approval_request(
+                           $1::text[], $2, $3, $4, $5, $6, $7
+                       )""",
+                    action_classes,
+                    tier,
+                    actor_sub,
+                    actor_type,
+                    description,
+                    parameters_hash,
+                    nonce,
+                )
                 return str(queue_id)
             except UniqueViolationError:
                 existing = await conn.fetchval(
@@ -238,48 +218,3 @@ class ApprovalMiddleware(BaseHTTPMiddleware):
                     return str(existing)
                 return None
 
-    async def _write_audit(
-        self,
-        request: Request,
-        action_classes: list[str],
-        risk_tier: str,
-        decision: str,
-        notify: bool = False,
-    ) -> None:
-        """Write an audit record for T2/T3 actions."""
-        pool = get_pool()
-        if not pool:
-            logger.error("no DB pool available for audit write")
-            return
-
-        actor_sub = getattr(request.state, "sub", "unknown")
-        actor_type = getattr(request.state, "actor_type", "unknown")
-        nonce = uuid4().hex
-        params_str = f"{request.method} {request.url.path}"
-        params_hash = hashlib.sha256(params_str.encode()).hexdigest()
-
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """INSERT INTO alpha_approval_audit
-                   (action_class, risk_tier, actor_sub, actor_type,
-                    description, parameters_hash, nonce, decision, decided_by, overnight)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)""",
-                action_classes,
-                risk_tier,
-                actor_sub,
-                actor_type,
-                f"{request.method} {request.url.path}",
-                params_hash,
-                nonce,
-                decision,
-                "system",
-                False,
-            )
-
-        if notify:
-            logger.info(
-                "T3 notification pending: %s %s by %s",
-                request.method,
-                request.url.path,
-                actor_sub,
-            )
