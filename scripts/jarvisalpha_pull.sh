@@ -30,12 +30,21 @@ fi
 
 if [ ! -d "$REPO_DIR" ]; then
   echo "Cloning jarvis-alpha for first time..."
-  git clone https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git "$REPO_DIR"
+  if ! git clone https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git "$REPO_DIR"; then
+    echo ""
+    echo "❌ GIT CLONE FAILED — aborting."
+    exit 1
+  fi
 else
   cd "$REPO_DIR"
   git config credential.helper ""
   GIT_TERMINAL_PROMPT=0 git remote set-url origin https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git
-  GIT_TERMINAL_PROMPT=0 git pull origin main --rebase
+  if ! GIT_TERMINAL_PROMPT=0 git pull origin main --rebase; then
+    echo ""
+    echo "❌ GIT PULL FAILED — aborting."
+    echo "   Check: cd $REPO_DIR && git status"
+    exit 1
+  fi
 fi
 
 SHORT=$(git -C "$REPO_DIR" rev-parse --short HEAD)
