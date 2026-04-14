@@ -151,6 +151,9 @@ class MemoryService:
         score = 0.3 * recency + 0.4 * importance + 0.3 * relevance
         All factors normalized to [0, 1].
         """
+        if not embedding:
+            return []
+
         rows = await conn.fetch(
             """
             WITH candidates AS (
@@ -235,6 +238,9 @@ class MemoryService:
         embedding: list[float],
         persistent: bool = False,
     ) -> None:
+        if not embedding:
+            return
+
         # Write gate — skip noise (Mem0 intelligent filtering pattern)
         importance = self._score_importance(summary)
         if importance <= 0.1:

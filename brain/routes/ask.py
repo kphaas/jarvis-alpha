@@ -3,6 +3,7 @@ import httpx
 from uuid import NAMESPACE_DNS, UUID, uuid5
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
+from jarvis_common.logging_config import get_logger
 from brain.core.config import ALPHA_NODE, OLLAMA_URL
 from brain.core.models import EMBED_MODEL
 from brain.db.rls import rls_connection
@@ -11,6 +12,7 @@ from brain.routing.router import route
 
 
 router = APIRouter(prefix="/v1", tags=["ask"])
+logger = get_logger("alpha_brain")
 
 
 def _user_uuid(user_id: str) -> UUID:
@@ -44,14 +46,15 @@ class AskResponse(BaseModel):
 
 async def _embed(text: str) -> list[float]:
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 f"{OLLAMA_URL}/api/embeddings",
                 json={"model": EMBED_MODEL, "prompt": text},
             )
             resp.raise_for_status()
             return resp.json()["embedding"]
-    except Exception:
+    except Exception as e:
+        logger.warning("embedding failed: %s (len=%d)", e, len(text))
         return []
 
 
