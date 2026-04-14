@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from uuid import UUID
 
@@ -97,11 +96,9 @@ class MemoryService:
         session_id: str,
         embedding: list[float],
     ) -> str:
-        semantic, episodic, working = await asyncio.gather(
-            self._get_semantic(conn, user_id),
-            self._get_episodic(conn, user_id, embedding),
-            self._get_working(conn, session_id),
-        )
+        semantic = await self._get_semantic(conn, user_id)
+        episodic = await self._get_episodic(conn, user_id, embedding)
+        working = await self._get_working(conn, session_id)
 
         parts = []
 
