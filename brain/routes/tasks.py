@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 from datetime import datetime
@@ -11,21 +10,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 
-from brain.db.pool import get_pool
 from brain.db.rls import rls_connection
-from brain.tasks.executor import TaskGraphExecutor
-from brain.tasks.executor import recover_stuck_graphs  # noqa: F401
 
 tasks_router = APIRouter(tags=["tasks"])
-
-_executor: TaskGraphExecutor | None = None
-
-
-def _get_executor() -> TaskGraphExecutor:
-    global _executor
-    if _executor is None:
-        _executor = TaskGraphExecutor(get_pool(), max_concurrent=3)
-    return _executor
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -217,7 +204,10 @@ async def approve_graph(request: Request, graph_id: str) -> dict[str, str]:
             """,
             graph_id,
         )
-    asyncio.create_task(_get_executor().run_graph(graph_id))
+    async with rls_connection(request) as notify_conn:
+        await notify_conn.execute(
+            "SELECT pg_notify('graph_submitted', $1::text)", graph_id
+        )
     return {"status": "started", "graph_id": graph_id}
 
 
