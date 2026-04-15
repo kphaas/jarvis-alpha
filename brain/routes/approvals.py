@@ -95,8 +95,7 @@ async def list_pending(request: Request):
     """List all pending approval queue items."""
     check_scopes(request, "admin")
 
-    pool = get_pool()
-    async with pool.acquire() as conn:
+    async with rls_connection(request) as conn:
         rows = await conn.fetch(
             """SELECT id, action_class, risk_tier, actor_sub, actor_type,
                       description, status, requested_at, expires_at, overnight
@@ -160,62 +159,26 @@ async def decide_approval(queue_id: str, req: DecideRequest, request: Request):
     actor_sub = getattr(request.state, "user_id", "unknown")
     nonce = uuid4().hex
 
-    # Fetch + decide + audit under RLS (admin-only via jarvis.role='platform_admin')
-    async with rls_connection(request) as conn:
-        row = await conn.fetchrow(
-            "SELECT * FROM alpha_approval_queue WHERE id = $1",
-            queue_id,
-        )
-
-        if not row:
-            raise HTTPException(status_code=404, detail="Queue item not found")
-
-        if row["status"] != "pending":
-            raise HTTPException(
-                status_code=409,
-                detail=f"Queue item already {row['status']}",
-            )
-
-        async with conn.transaction():
-            if req.decision == "approved":
-                await conn.execute(
-                    """UPDATE alpha_approval_queue
-                       SET status = 'approved',
-                           decided_by = $1,
-                           decided_at = NOW(),
-                           expires_at = NOW() + INTERVAL '10 minutes'
-                       WHERE id = $2""",
-                    actor_sub,
-                    queue_id,
-                )
-            else:
-                await conn.execute(
-                    """UPDATE alpha_approval_queue
-                       SET status = 'denied',
-                           decided_by = $1,
-                           decided_at = NOW()
-                       WHERE id = $2""",
-                    actor_sub,
-                    queue_id,
-                )
-
-            await conn.execute(
-                """INSERT INTO alpha_approval_audit
-                   (approval_id, action_class, risk_tier, actor_sub, actor_type,
-                    description, parameters_hash, nonce, decision, decided_by, overnight)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)""",
-                row["id"],
-                row["action_class"],
-                row["risk_tier"],
-                actor_sub,
-                "user",
-                row["description"],
-                row["parameters_hash"],
-                nonce,
+    try:
+        async with rls_connection(request) as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM public.decide_approval($1::uuid, $2, $3, $4)",
+                queue_id,
                 req.decision,
                 actor_sub,
-                row["overnight"],
+                nonce,
             )
+    except Exception as e:
+        err = str(e)
+        if "APPROVAL_NOT_FOUND" in err:
+            raise HTTPException(status_code=404, detail="Queue item not found")
+        if "APPROVAL_ALREADY_DECIDED" in err:
+            raise HTTPException(status_code=409, detail="Queue item already decided")
+        raise
+
+    row = rows[0] if rows else None
+    if not row:
+        raise HTTPException(status_code=500, detail="decide_approval returned no rows")
 
     logger.info(
         "APPROVAL_DECIDE queue_id=%s decision=%s by=%s",
