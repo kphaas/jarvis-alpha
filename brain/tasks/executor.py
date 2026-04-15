@@ -489,7 +489,7 @@ async def main() -> None:
                 ),
                 timeout=POLL_INTERVAL_SECONDS,
             )
-        except (TimeoutError, asyncpg.PostgresConnectionStatusError):
+        except (TimeoutError, asyncpg.PostgresConnectionError):
             pass
         wake_event.clear()
 
