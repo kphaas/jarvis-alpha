@@ -11,6 +11,7 @@ const Ask = lazy(() => import('./pages/Ask'))
 const Vault = lazy(() => import('./pages/Vault'))
 const Space = lazy(() => import('./pages/Space'))
 const Placeholder = lazy(() => import('./pages/Placeholder'))
+const Settings = lazy(() => import('./pages/Settings'))
 const CostCenter = lazy(() => import('./pages/CostCenter'))
 const Health = lazy(() => import('./pages/Health'))
 const Errors = lazy(() => import('./pages/Errors'))
@@ -52,7 +53,7 @@ export default function App() {
                   <Route path="/cost" element={<Navigate to="/costs" replace />} />
                   <Route path="/costs" element={<CostCenter />} />
                   <Route path="/documents" element={<Placeholder label="Documents" phase="Next session" />} />
-                  <Route path="/settings" element={<Placeholder label="Settings" phase="Next session" />} />
+                  <Route path="/settings" element={<Settings />} />
                 </Routes>
               </Suspense>
             </ErrorBoundary>
