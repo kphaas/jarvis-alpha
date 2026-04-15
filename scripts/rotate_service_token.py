@@ -51,6 +51,13 @@ NODE_CONFIG = {
         "private_key_path": "~/jarvis/pki/services/buddy_private.pem",
         "secrets_file": "~/jarvis/.secrets",
     },
+    "brain_service": {
+        "iss": "brain",
+        "actor_type": "service",
+        "secret_key": "ALPHA_BRAIN_SERVICE_TOKEN",
+        "private_key_path": "~/jarvis/pki/services/brain_private.pem",
+        "secrets_file": "~/jarvis/.secrets",
+    },
     "gateway": {
         "iss": "gateway",
         "actor_type": "service",
@@ -64,6 +71,13 @@ NODE_CONFIG = {
         "secret_key": "ALPHA_SERVICE_TOKEN",
         "private_key_path": "~/pki/services/sandbox_private.pem",
         "secrets_file": "~/.secrets",
+    },
+    "endpoint": {
+        "iss": "endpoint",
+        "actor_type": "service",
+        "secret_key": "ALPHA_SERVICE_TOKEN",
+        "private_key_path": "~/jarvis/pki/services/endpoint_private.pem",
+        "secrets_file": "~/jarvis/.secrets",
     },
 }
 
@@ -320,7 +334,7 @@ def main() -> int:
     parser.add_argument(
         "--node",
         required=True,
-        choices=("brain", "gateway", "sandbox"),
+        choices=("brain", "brain_service", "gateway", "sandbox", "endpoint"),
         help="Target node",
     )
     parser.add_argument(
