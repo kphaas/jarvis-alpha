@@ -516,4 +516,12 @@ async def recover_stuck_graphs(db_pool: asyncpg.Pool) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as exc:
+        log.error(
+            "Executor crashed — unhandled exception: %s",
+            exc,
+            exc_info=True,
+        )
+        raise

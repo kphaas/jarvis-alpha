@@ -357,4 +357,12 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as exc:
+        logger.error(
+            "Watchdog agent crashed — unhandled exception: %s",
+            exc,
+            exc_info=True,
+        )
+        raise

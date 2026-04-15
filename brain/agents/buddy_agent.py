@@ -154,4 +154,12 @@ async def run_buddy() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(run_buddy())
+    try:
+        asyncio.run(run_buddy())
+    except Exception as exc:
+        logger.error(
+            "Buddy agent crashed — unhandled exception: %s",
+            exc,
+            exc_info=True,
+        )
+        raise
