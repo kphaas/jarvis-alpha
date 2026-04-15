@@ -1,6 +1,7 @@
 .secrets
 *.key
 *.pem
+!*_public.pem
 *.crt
 __pycache__/
 *.pyc
@@ -12,3 +13,19 @@ dist/
 .DS_Store
 .cursor_tmp_venv/
 *_tmp_venv/
+
+# PKI — private keys never in git
+*_private.pem
+
+# Logs
+logs/
+*.log
+
+# Backups
+*.backup-*
+
+# Vault storage
+vault_storage/
+
+# Python egg-info
+*.egg-info/
