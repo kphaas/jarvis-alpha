@@ -76,9 +76,7 @@ async def mark_read(event_id: str, request: Request) -> dict:
 
 
 @router.post("/events/read-all")
-async def mark_all_read(
-    request: Request, user_id: str = Query(default="anon")
-) -> dict:
+async def mark_all_read(request: Request, user_id: str = Query(default="anon")) -> dict:
     async with rls_connection(request) as conn:
         await conn.execute(
             """

@@ -217,4 +217,3 @@ class ApprovalMiddleware(BaseHTTPMiddleware):
                 if existing:
                     return str(existing)
                 return None
-

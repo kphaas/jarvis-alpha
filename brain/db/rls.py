@@ -70,7 +70,12 @@ async def rls_connection(request: Request):
     max_rating = getattr(request.state, "max_rating", "all_ages") or "all_ages"
     workspace_id = getattr(request.state, "workspace_id", None) or ""
 
-    jarvis_role = "platform_admin" if profile_role == "admin" else "user"
+    if profile_role == "admin":
+        jarvis_role = "platform_admin"
+    elif profile_role == "child":
+        jarvis_role = "child"
+    else:
+        jarvis_role = "user"
 
     pool = get_pool()
     async with pool.acquire() as conn:
