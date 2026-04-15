@@ -48,7 +48,8 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "PATCH /v1/dream": ["write"],
     "DELETE /v1/dream": ["write"],
     # Auth — admin
-    "POST /v1/auth/set-child-pin": ["admin"],
+    "POST /v1/auth/set-child-pin": ["write", "security_write"],
+    "POST /v1/auth/set-admin-pin": ["write", "security_write"],
     # Admin
     "POST /v1/admin": ["admin"],
     # Destructive
@@ -226,6 +227,7 @@ TIER_RULES: list[tuple[set[str], str]] = [
     # Compound high-risk first
     ({"approval_decide"}, "T2"),
     ({"approval_unlock"}, "T2"),
+    ({"security_write"}, "T2"),
     ({"deploy", "child_facing"}, "T5"),
     ({"unclassified"}, "T5"),
     ({"destructive"}, "T5"),

@@ -144,3 +144,53 @@ async def set_child_pin(request: Request, req: SetChildPinRequest):
         getattr(request.state, "iss", "unknown"),
     )
     return {"status": "ok", "profile_id": req.profile_id}
+
+
+class SetAdminPinRequest(BaseModel):
+    current_pin: str
+    new_pin: str
+
+
+@router.post("/set-admin-pin")
+async def set_admin_pin(request: Request, req: SetAdminPinRequest):
+    """Allow admin to update their own PIN. Requires valid current PIN."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        profile = await conn.fetchrow(
+            "SELECT * FROM alpha_profiles WHERE id = 'ken' AND active = true"
+        )
+
+    if not profile:
+        raise HTTPException(status_code=404, detail="Admin profile not found")
+
+    # Verify current PIN
+    if profile["pin_hash"] == "PLACEHOLDER_MIGRATE_FROM_ALPHA_PIN":
+        try:
+            alpha_pin = get_secret("ALPHA_PIN")
+        except KeyError:
+            raise HTTPException(status_code=500, detail="ALPHA_PIN not configured")
+        if req.current_pin != alpha_pin:
+            logger.warning("SET_ADMIN_PIN_FAIL reason=bad_current_pin")
+            raise HTTPException(status_code=401, detail="Invalid current PIN")
+    elif profile["pin_hash"].startswith("PLACEHOLDER"):
+        raise HTTPException(status_code=401, detail="PIN not configured")
+    else:
+        if not bcrypt.checkpw(
+            req.current_pin.encode("utf-8"),
+            profile["pin_hash"].encode("utf-8"),
+        ):
+            logger.warning("SET_ADMIN_PIN_FAIL reason=bad_current_pin")
+            raise HTTPException(status_code=401, detail="Invalid current PIN")
+
+    if len(req.new_pin) < 4:
+        raise HTTPException(status_code=400, detail="PIN must be at least 4 characters")
+
+    hashed = bcrypt.hashpw(req.new_pin.encode("utf-8"), bcrypt.gensalt()).decode()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = 'ken'",
+            hashed,
+        )
+
+    logger.info("SET_ADMIN_PIN_SUCCESS profile=ken")
+    return {"status": "ok", "profile_id": "ken"}
