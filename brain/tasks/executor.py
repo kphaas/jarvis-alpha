@@ -402,16 +402,35 @@ async def _run_graph_with_semaphore(
 # --------------- main loop ---------------
 
 
+async def _wait_for_wake(shutdown: asyncio.Event, wake: asyncio.Event) -> None:
+    """Return as soon as either shutdown or wake fires."""
+    done, pending = await asyncio.wait(
+        [
+            asyncio.ensure_future(shutdown.wait()),
+            asyncio.ensure_future(wake.wait()),
+        ],
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    for t in pending:
+        t.cancel()
+
+
 async def main() -> None:
     dsn = _load_dsn()
     pool = await asyncpg.create_pool(dsn, min_size=2, max_size=5)
+    # Dedicated connection for LISTEN — must be outside the pool
+    notify_conn = await asyncpg.connect(dsn)
+    wake_event = asyncio.Event()
+
+    def _on_graph_submitted(conn, pid, channel, payload):
+        log.info("pg_notify received — graph_id=%s", payload)
+        wake_event.set()
+
+    await notify_conn.add_listener("graph_submitted", _on_graph_submitted)
+    log.info("Listening on graph_submitted channel")
+
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_GRAPHS)
     shutdown = asyncio.Event()
-
-    async def _on_graph_submitted(conn, pid, channel, payload):
-        pass
-
-    await pool.execute("LISTEN graph_submitted")
 
     def handle_signal(sig, frame):
         log.info("Received signal %s — shutting down", sig)
@@ -462,12 +481,22 @@ async def main() -> None:
         except Exception as e:
             log.error("Executor loop error: %s", e)
 
+        # Wake on NOTIFY or poll interval — whichever comes first
         try:
-            await asyncio.wait_for(shutdown.wait(), timeout=POLL_INTERVAL_SECONDS)
+            await asyncio.wait_for(
+                asyncio.shield(
+                    asyncio.ensure_future(_wait_for_wake(shutdown, wake_event))
+                ),
+                timeout=POLL_INTERVAL_SECONDS,
+            )
         except (TimeoutError, asyncpg.PostgresConnectionStatusError):
             pass
+        wake_event.clear()
 
     await pool.close()
+    await notify_conn.remove_listener("graph_submitted", _on_graph_submitted)
+    await notify_conn.close()
+    log.info("Notify connection closed")
     log.info("Executor shutdown complete")
 
 
