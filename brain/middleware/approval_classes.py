@@ -154,6 +154,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     ],
     "POST /v1/dream/sessions/{session_id}/complete": ["write"],
     "POST /v1/dream/sessions/{session_id}/kill": ["write"],
+    "PATCH /v1/dream/steps/{step_id}": ["write", "cost_incurring"],
     # --- FastAPI built-in docs — T1 read ---
     "GET /docs": ["read"],
     "HEAD /docs": ["read"],
