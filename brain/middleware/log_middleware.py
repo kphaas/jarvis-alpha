@@ -1,13 +1,12 @@
 import time
-import uuid
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from brain.db.pool import get_pool
+from jarvis_common.logging_config import trace_id_var
 
 
 class LogMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        trace_id = uuid.uuid4()
         start = time.monotonic()
 
         response = await call_next(request)
@@ -31,7 +30,7 @@ class LogMiddleware(BaseHTTPMiddleware):
                            route, method, status_code, latency_ms)
                         VALUES ($1,$2,$3,'brain',$4,$5,$6,$7)
                         """,
-                        trace_id,
+                        trace_id_var.get("no-trace"),
                         workspace_id,
                         user_id,
                         request.url.path,

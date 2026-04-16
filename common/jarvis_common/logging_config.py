@@ -22,7 +22,7 @@ def set_trace_id(trace_id: str) -> None:
 
 
 def new_trace_id() -> str:
-    tid = uuid.uuid4().hex[:12]
+    tid = uuid.uuid4().hex
     set_trace_id(tid)
     return tid
 
