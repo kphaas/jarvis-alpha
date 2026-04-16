@@ -44,7 +44,6 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # Cloud calls — T3
     "POST /v1/cloud/call": ["external_call", "cost_incurring"],
     # Dream mode — controlled by scopes, but classify for audit
-    "PATCH /v1/dream": ["write"],
     # Auth — admin
     "POST /v1/auth/set-child-pin": ["write", "security_write"],
     "POST /v1/auth/set-admin-pin": ["write", "security_write"],
