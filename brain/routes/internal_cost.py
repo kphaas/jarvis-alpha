@@ -90,28 +90,33 @@ async def ingest_cost_event(request: Request, event: CostEvent):
             event.model,
         )
 
-    row = await pool.fetchrow(
-        """
-        INSERT INTO alpha_cloud_costs
-            (provider, model, prompt_tokens, completion_tokens, total_tokens,
-             cost_usd, session_type, key_name, intent,
-             executor, on_behalf_of, source_request_id, schema_version)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, 1)
-        RETURNING id, cost_usd, created_at
-        """,
-        event.provider,
-        event.model,
-        event.prompt_tokens,
-        event.completion_tokens,
-        event.total_tokens,
-        cost_usd,
-        event.session_type,
-        event.key_name,
-        event.intent,
-        event.executor,
-        event.on_behalf_of,
-        trace_id,
-    )
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('jarvis.role', 'platform_admin', true)"
+            )
+            row = await conn.fetchrow(
+                """
+                INSERT INTO alpha_cloud_costs
+                    (provider, model, prompt_tokens, completion_tokens, total_tokens,
+                     cost_usd, session_type, key_name, intent,
+                     executor, on_behalf_of, source_request_id, schema_version)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, 1)
+                RETURNING id, cost_usd, created_at
+                """,
+                event.provider,
+                event.model,
+                event.prompt_tokens,
+                event.completion_tokens,
+                event.total_tokens,
+                cost_usd,
+                event.session_type,
+                event.key_name,
+                event.intent,
+                event.executor,
+                event.on_behalf_of,
+                trace_id,
+            )
 
     return {
         "id": str(row["id"]),
