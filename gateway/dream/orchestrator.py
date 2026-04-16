@@ -295,6 +295,7 @@ async def run_session(session_file: Path, dry_run: bool = False):
         max_retries = step.get("max_retries", 3)
         success = False
 
+        result = None
         while retries <= max_retries:
             try:
                 breaker.increment()
@@ -320,7 +321,7 @@ async def run_session(session_file: Path, dry_run: bool = False):
                     await _curl_patch(f"/v1/dream/steps/{step_id}", {
                         "status": "failed",
                         "error_message": str(e)[:500],
-                        "cost_usd": result.get("cost_usd", 0) if "result" in dir() else 0,
+                        "cost_usd": result.get("cost_usd", 0) if result is not None else 0,
                     })
                     print(f"[DREAM]   ✗ Step {step_name} FAILED after {max_retries} retries: {e}")
                     break
