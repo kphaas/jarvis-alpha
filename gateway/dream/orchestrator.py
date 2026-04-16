@@ -142,49 +142,63 @@ async def _dispatch_canary(step: dict, dry_run: bool) -> dict:
 
 
 async def _dispatch_llm(step: dict, dry_run: bool) -> dict:
-    """Local Ollama call via Brain."""
+    """Local Ollama call via Brain's /v1/ask endpoint."""
     if dry_run:
         return {"output_summary": f"DRY_RUN: would run LLM step '{step['name']}'", "verification": "dry_run", "cost_usd": 0}
 
+    model = step.get("model", "llama3.1:8b")
     prompt = step.get("description") or f"Execute task: {step['name']}"
-    result = await _curl_post("/v1/cloud/call", {
-        "provider": "ollama",
-        "payload": {
-            "model": "llama3.1:8b",
-            "messages": [{"role": "user", "content": prompt}]
-        }
+    result = await _curl_post("/v1/ask", {
+        "message": prompt,
+        "model": model,
     })
-    output = str(result.get("result", ""))[:500]
+    output = str(result.get("response", result.get("reply", "")))[:500]
     return {
         "output_summary": output,
         "verification": "llm_response_received" if output else "empty_response",
-        "cost_usd": 0,
-        "model_used": "llama3.1:8b",
+        "cost_usd": 0,  # Local Ollama — zero cloud cost
+        "model_used": model,
     }
 
 
 async def _dispatch_cloud(step: dict, dry_run: bool) -> dict:
-    """Cloud LLM call via Gateway adapter (Claude/Perplexity/Gemini)."""
+    """Cloud LLM call via local Gateway adapter (Claude/Perplexity/Gemini)."""
     if dry_run:
         return {"output_summary": f"DRY_RUN: would run cloud step '{step['name']}'", "verification": "dry_run", "cost_usd": 0}
 
-    prompt = step.get("description") or f"Execute task: {step['name']}"
-    result = await _curl_post("/v1/cloud/call", {
-        "provider": "claude",
-        "payload": {
-            "model": "claude-haiku-4-5-20251001",
-            "system": "You are a task execution agent. Be concise.",
-            "messages": [{"role": "user", "content": prompt}]
-        }
-    })
-    output = str(result.get("result", ""))[:500]
-    cost = float(result.get("cost_usd", 0.005))
-    return {
-        "output_summary": output,
-        "verification": "cloud_response_received" if output else "empty_response",
-        "cost_usd": cost,
-        "model_used": "claude-haiku-4-5-20251001",
+    from gateway.adapters import ClaudeAdapter, PerplexityAdapter, GeminiAdapter
+
+    provider = step.get("provider", "claude")
+    adapters = {
+        "claude": ClaudeAdapter,
+        "perplexity": PerplexityAdapter,
+        "gemini": GeminiAdapter,
     }
+    adapter_cls = adapters.get(provider, ClaudeAdapter)
+    adapter = adapter_cls()
+
+    model = step.get("model", "claude-haiku-4-5-20251001")
+    prompt = step.get("description") or f"Execute task: {step['name']}"
+    payload = {
+        "model": model,
+        "max_tokens": step.get("max_tokens", 4096),
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if provider == "claude":
+        payload["system"] = "You are a task execution agent. Be concise."
+
+    try:
+        data = await adapter.call(payload)
+        output = str(data.get("content", data))[:500]
+        return {
+            "output_summary": output,
+            "verification": "cloud_response_received" if output else "empty_response",
+            "cost_usd": 0,  # Real cost tracked via cost_emitter automatically
+            "model_used": model,
+            "provider": provider,
+        }
+    except Exception as e:
+        raise RuntimeError(f"Cloud adapter ({provider}) failed: {e}")
 
 
 async def _dispatch_tool(step: dict, dry_run: bool) -> dict:
@@ -278,6 +292,16 @@ async def run_session(session_file: Path, dry_run: bool = False):
         step_name = step["name"]
         agent_type = step.get("agent_type", "llm")
         print(f"[DREAM] Running step {step['step_index']}: {step_name} ({agent_type})")
+
+        # Per-step cost pre-check: estimate and compare to remaining budget
+        if agent_type == "cloud" and not dry_run:
+            budget_check = await _curl_get(f"/v1/dream/sessions/{session_id}/next-step")
+            if budget_check.get("reason") == "cost budget exceeded":
+                print(f"[DREAM] Budget exceeded before step {step_name} — stopping")
+                await _curl_post(f"/v1/dream/sessions/{session_id}/kill", {
+                    "reason": "per-step cost pre-check: budget would be exceeded"
+                })
+                break
 
         # Mark step running
         await _curl_patch(f"/v1/dream/steps/{step_id}", {"status": "running"})
