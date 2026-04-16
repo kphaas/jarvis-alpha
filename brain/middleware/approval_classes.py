@@ -199,6 +199,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/watchdog/event": [
         "write"
     ],  # Node watchdog event ingestion — service-to-service telemetry
+    "POST /v1/internal/cost-event": ["write"],
     # --- Admin panel ---
     "GET /admin": ["admin"],
     "POST /admin": ["admin"],

@@ -15,7 +15,7 @@ VALID_ISS_ACTOR_PAIRS = {
 DEFAULT_SCOPES = {
     "brain":    ["service.internal", "health.read"],
     "buddy":    ["memory.evict", "memory.promote", "tasks.scan", "buddy.events.write", "health.read"],
-    "gateway":  ["dream.execute", "cloud.call", "dream.kill", "health.read"],
+    "gateway":  ["dream.execute", "cloud.call", "dream.kill", "cost.report", "health.read"],
     "sandbox": ["forge.deploy.submit", "forge.costs.report", "forge.llm.call", "health.read"],
     "endpoint": ["health.read"],
 }
