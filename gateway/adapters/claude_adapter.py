@@ -10,7 +10,7 @@ CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
 
 class ClaudeAdapter(BaseCloudAdapter):
     def provider_name(self) -> str:
-        return "claude"
+        return "anthropic"
 
     async def call(self, payload: dict) -> dict:
         api_key = get_secret("ANTHROPIC_API_KEY")
