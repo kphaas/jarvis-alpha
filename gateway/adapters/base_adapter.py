@@ -20,3 +20,31 @@ class BaseCloudAdapter(ABC):
 
     @abstractmethod
     async def call(self, payload: dict) -> dict: ...
+
+    def _emit_cost(
+        self,
+        model: str,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        total_tokens: int = 0,
+        session_type: str | None = None,
+        intent: str | None = None,
+        on_behalf_of: str | None = None,
+    ) -> None:
+        """Buffer a cost event. Never raises — fire-and-forget."""
+        try:
+            from gateway.cost_emitter import buffer_event
+
+            buffer_event(
+                provider=self.provider_name(),
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens or (prompt_tokens + completion_tokens),
+                session_type=session_type,
+                executor="gateway",
+                intent=intent,
+                on_behalf_of=on_behalf_of,
+            )
+        except Exception:
+            pass

@@ -18,7 +18,6 @@ class PerplexityAdapter(BaseCloudAdapter):
             "Authorization": f"Bearer {api_key}",
             "content-type": "application/json",
         }
-        # Inject JARVIS persona as system message
         if "messages" in payload:
             has_system = any(m.get("role") == "system" for m in payload["messages"])
             if not has_system:
@@ -37,5 +36,14 @@ class PerplexityAdapter(BaseCloudAdapter):
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.post(PERPLEXITY_API_URL, json=payload, headers=headers)
             resp.raise_for_status()
+            data = resp.json()
             logger.info("perplexity_adapter: status=%d", resp.status_code)
-            return resp.json()
+
+            usage = data.get("usage", {})
+            self._emit_cost(
+                model=payload.get("model", "unknown"),
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                total_tokens=usage.get("total_tokens", 0),
+            )
+            return data

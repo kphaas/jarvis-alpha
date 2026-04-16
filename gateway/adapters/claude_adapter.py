@@ -22,5 +22,13 @@ class ClaudeAdapter(BaseCloudAdapter):
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.post(CLAUDE_API_URL, json=payload, headers=headers)
             resp.raise_for_status()
+            data = resp.json()
             logger.info("claude_adapter: status=%d", resp.status_code)
-            return resp.json()
+
+            usage = data.get("usage", {})
+            self._emit_cost(
+                model=payload.get("model", "unknown"),
+                prompt_tokens=usage.get("input_tokens", 0),
+                completion_tokens=usage.get("output_tokens", 0),
+            )
+            return data

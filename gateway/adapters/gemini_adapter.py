@@ -21,5 +21,14 @@ class GeminiAdapter(BaseCloudAdapter):
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.post(url, json=payload, params={"key": api_key})
             resp.raise_for_status()
+            data = resp.json()
             logger.info("gemini_adapter: status=%d model=%s", resp.status_code, model)
-            return resp.json()
+
+            usage = data.get("usageMetadata", {})
+            self._emit_cost(
+                model=model,
+                prompt_tokens=usage.get("promptTokenCount", 0),
+                completion_tokens=usage.get("candidatesTokenCount", 0),
+                total_tokens=usage.get("totalTokenCount", 0),
+            )
+            return data
