@@ -44,9 +44,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # Cloud calls — T3
     "POST /v1/cloud/call": ["external_call", "cost_incurring"],
     # Dream mode — controlled by scopes, but classify for audit
-    "POST /v1/dream": ["write", "external_call", "cost_incurring"],
     "PATCH /v1/dream": ["write"],
-    "DELETE /v1/dream": ["write"],
     # Auth — admin
     "POST /v1/auth/set-child-pin": ["write", "security_write"],
     "POST /v1/auth/set-admin-pin": ["write", "security_write"],
@@ -156,18 +154,6 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     ],
     "POST /v1/dream/sessions/{session_id}/complete": ["write"],
     "POST /v1/dream/sessions/{session_id}/kill": ["write"],
-    # --- Pipeline ---
-    "GET /v1/dream/pipeline": ["read"],
-    "POST /v1/dream/pipeline/{pipeline_id}/confirm": ["write"],
-    # --- Dream outcomes/subscriptions ---
-    "GET /v1/dream/outcomes": ["read"],
-    "GET /v1/dream/subscriptions": ["read"],
-    "POST /v1/dream/subscriptions": ["write"],
-    "DELETE /v1/dream/subscriptions/{sub_id}": ["destructive"],
-    # --- Dream budget ---
-    "GET /v1/dream/budget": ["read"],
-    "POST /v1/dream/budget/{provider}": ["write", "cost_incurring"],
-    "POST /v1/dream/credit": ["admin"],
     # --- FastAPI built-in docs — T1 read ---
     "GET /docs": ["read"],
     "HEAD /docs": ["read"],
