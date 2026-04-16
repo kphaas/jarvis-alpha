@@ -149,7 +149,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "external_call",
         "cost_incurring",
     ],
-    "POST /v1/dream/sessions/{session_id}/next-step": [
+    "GET /v1/dream/sessions/{session_id}/next-step": [
         "write",
         "external_call",
         "cost_incurring",
