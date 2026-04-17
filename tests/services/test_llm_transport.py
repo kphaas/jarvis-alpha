@@ -26,10 +26,15 @@ async def test_missing_token_raises(monkeypatch):
         )
 
 
-async def test_success():
+async def test_success_claude_shape():
+    """Gateway returns {provider, result} envelope. Claude result has content[0].text."""
+    response_body = (
+        '{"provider":"claude",'
+        '"result":{"content":[{"type":"text","text":"hello world"}]}}'
+    )
     with patch(
         "brain.services.llm_transport._post_sync",
-        return_value=(0, '{"content":"hello world"}'),
+        return_value=(0, response_body),
     ):
         text = await call_gateway_cloud(
             provider="anthropic",
@@ -38,6 +43,25 @@ async def test_success():
             user_message="hi",
         )
     assert text == "hello world"
+
+
+async def test_success_gemini_shape():
+    """Gemini result shape: candidates[0].content.parts[0].text"""
+    response_body = (
+        '{"provider":"gemini",'
+        '"result":{"candidates":[{"content":{"parts":[{"text":"gemini reply"}]}}]}}'
+    )
+    with patch(
+        "brain.services.llm_transport._post_sync",
+        return_value=(0, response_body),
+    ):
+        text = await call_gateway_cloud(
+            provider="google",
+            model="gemini-flash",
+            system_prompt="sys",
+            user_message="hi",
+        )
+    assert text == "gemini reply"
 
 
 async def test_curl_failure():
@@ -68,10 +92,11 @@ async def test_non_json_response():
             )
 
 
-async def test_gateway_error_response():
+async def test_gateway_fastapi_error():
+    """FastAPI errors come back as {'detail': ...} with no 'result' field."""
     with patch(
         "brain.services.llm_transport._post_sync",
-        return_value=(0, '{"error":"rate limited"}'),
+        return_value=(0, '{"detail":"rate limited"}'),
     ):
         with pytest.raises(GatewayTransportError, match="rate limited"):
             await call_gateway_cloud(
@@ -82,12 +107,12 @@ async def test_gateway_error_response():
             )
 
 
-async def test_missing_text_field():
+async def test_missing_result_field():
     with patch(
         "brain.services.llm_transport._post_sync",
         return_value=(0, '{"status":"ok"}'),
     ):
-        with pytest.raises(GatewayTransportError, match="missing text"):
+        with pytest.raises(GatewayTransportError, match="missing result"):
             await call_gateway_cloud(
                 provider="anthropic",
                 model="x",
@@ -96,16 +121,17 @@ async def test_missing_text_field():
             )
 
 
-async def test_alternative_text_fields():
-    for field in ("content", "text", "completion"):
-        with patch(
-            "brain.services.llm_transport._post_sync",
-            return_value=(0, f'{{"{field}":"response"}}'),
-        ):
-            text = await call_gateway_cloud(
+async def test_extract_text_empty_claude_content():
+    """Claude result with empty content list → extract_text returns '' → error raised."""
+    response_body = '{"provider":"claude","result":{"content":[]}}'
+    with patch(
+        "brain.services.llm_transport._post_sync",
+        return_value=(0, response_body),
+    ):
+        with pytest.raises(GatewayTransportError, match="Could not extract text"):
+            await call_gateway_cloud(
                 provider="anthropic",
                 model="x",
                 system_prompt="",
                 user_message="",
             )
-            assert text == "response"
