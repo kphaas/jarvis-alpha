@@ -13,7 +13,7 @@ VALID_ISS_ACTOR_PAIRS = {
 }
 
 DEFAULT_SCOPES = {
-    "brain": ["service.internal", "health.read"],
+    "brain": ["service.internal", "health.read", "cloud.call"],
     "buddy": [
         "memory.evict",
         "memory.promote",
