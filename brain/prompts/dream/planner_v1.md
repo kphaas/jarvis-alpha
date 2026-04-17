@@ -30,7 +30,7 @@ Treat prior_lessons as strong guidance — these are patterns that have already 
 
 ## Output Format
 
-Output ONLY valid JSON matching this schema. No markdown, no prose before or after.
+Output ONLY valid JSON matching this schema. **CRITICAL: Do NOT wrap the JSON in markdown code fences (no ```json, no ```). Do NOT include any prose before or after. The response must start with `{` and end with `}`.**
 
 ```json
 {

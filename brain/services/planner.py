@@ -57,8 +57,27 @@ class IPlanner(ABC):
         ...
 
 
+def _strip_markdown_fences(raw: str) -> str:
+    """Strip ```json ... ``` or ``` ... ``` wrappers from LLM output.
+
+    Claude and other models frequently wrap JSON in markdown code fences
+    even when prompted not to. Strip defensively.
+    """
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        # Drop first line (```json or ```)
+        lines = lines[1:]
+        # Drop trailing ``` if present
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    return text
+
+
 def parse_plan_json(raw: str) -> DreamPlan:
     """Parse planner LLM JSON output into DreamPlan. Raises PlannerSchemaError on any issue."""
+    raw = _strip_markdown_fences(raw)
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:

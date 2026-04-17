@@ -147,6 +147,27 @@ def test_parse_cost_mismatch_rejected():
         parse_plan_json(json.dumps(d))
 
 
+def test_parse_strips_json_fence():
+    d = _valid_plan_dict()
+    raw = "```json\n" + json.dumps(d) + "\n```"
+    plan = parse_plan_json(raw)
+    assert plan.reasoning == "approach"
+
+
+def test_parse_strips_bare_fence():
+    d = _valid_plan_dict()
+    raw = "```\n" + json.dumps(d) + "\n```"
+    plan = parse_plan_json(raw)
+    assert plan.reasoning == "approach"
+
+
+def test_parse_handles_leading_whitespace():
+    d = _valid_plan_dict()
+    raw = "   \n  ```json\n" + json.dumps(d) + "\n```  \n"
+    plan = parse_plan_json(raw)
+    assert plan.reasoning == "approach"
+
+
 def test_claude_planner_stub_raises():
     planner = ClaudePlanner(model="claude-haiku-4-5-20251001", policy=_policy())
     assert planner.name == "claude:claude-haiku-4-5-20251001"
