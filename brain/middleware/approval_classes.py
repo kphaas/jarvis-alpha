@@ -140,6 +140,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/mcp/registry": ["write"],
     # --- Dream sessions ---
     "GET /v1/dream/sessions": ["read"],
+    "POST /v1/dream/sessions": ["write"],
     "GET /v1/dream/sessions/{session_id}": ["read"],
     "POST /v1/dream/sessions/{session_id}/start": [
         "write",
