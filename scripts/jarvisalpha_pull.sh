@@ -91,4 +91,32 @@ if [ -f "$BRAIN_PLIST" ]; then
   sleep 1
   launchctl load ~/Library/LaunchAgents/com.jarvis.alpha.buddy.plist
   echo "✅ Buddy agent restarted"
+
+  echo ""
+  echo "── TEST GATE ────────────────────────────────────────────"
+  VENV_PY="${REPO_DIR}/.venv/bin/python"
+  if [ ! -x "$VENV_PY" ]; then
+    echo "⚠️  No venv at $VENV_PY — skipping tests"
+  elif [ ! -d "${REPO_DIR}/tests" ]; then
+    echo "ℹ️  No tests/ directory — skipping"
+  else
+    cd "$REPO_DIR"
+    PYTEST_LOG=$(mktemp)
+    if "$VENV_PY" -m pytest tests/ -q --tb=short --no-header >"$PYTEST_LOG" 2>&1; then
+      PASS_LINE=$(grep -E "[0-9]+ passed" "$PYTEST_LOG" | tail -1)
+      echo "✅ Tests passed — $PASS_LINE"
+      rm -f "$PYTEST_LOG"
+    else
+      echo "❌ TESTS FAILED — details:"
+      echo "─────────────────────────────────────────────────────────"
+      cat "$PYTEST_LOG"
+      echo "─────────────────────────────────────────────────────────"
+      rm -f "$PYTEST_LOG"
+      echo ""
+      echo "⚠️  Services ARE running ($SHORT deployed). Tests flagged issues."
+      echo "   Fix tests before next deploy or revert commit."
+      exit 1
+    fi
+  fi
+  echo "─────────────────────────────────────────────────────────"
 fi
