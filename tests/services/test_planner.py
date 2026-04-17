@@ -161,9 +161,17 @@ async def test_claude_planner_plan_calls_gateway_and_parses(monkeypatch):
     planner = ClaudePlanner(model="claude-haiku", policy=_policy())
 
     fake_plan_json = _json.dumps(_valid_plan_dict())
+    gateway_response = _json.dumps(
+        {
+            "provider": "claude",
+            "result": {
+                "content": [{"type": "text", "text": fake_plan_json}],
+            },
+        }
+    )
     with patch(
         "brain.services.llm_transport._post_sync",
-        return_value=(0, _json.dumps({"content": fake_plan_json})),
+        return_value=(0, gateway_response),
     ):
         result = await planner.plan(
             goal="fix the bug", system_prompt="you are a planner"
