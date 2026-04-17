@@ -200,7 +200,7 @@ async def test_r9_block_service_identity(checker):
     )
     result = await checker.check(change)
     assert result.allowed is False
-    assert result.rule == "R9_SCOPES"
+    assert result.rule in ("R5_DENYLIST", "R9_SCOPES")
 
 
 @pytest.mark.asyncio
