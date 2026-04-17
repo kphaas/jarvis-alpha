@@ -222,13 +222,17 @@ async def rotate_key(
 
     fmt_error = _validate_key_format(req.key_name, req.new_value)
     if fmt_error:
-        raise HTTPException(status_code=400, detail=f"Format validation failed: {fmt_error}")
+        raise HTTPException(
+            status_code=400, detail=f"Format validation failed: {fmt_error}"
+        )
 
     if _rotation_lock.locked():
         raise HTTPException(status_code=409, detail="Another rotation is in progress")
 
     async with _rotation_lock:
-        logger.info("rotation_start key=%s rotation_id=%s", req.key_name, req.rotation_id)
+        logger.info(
+            "rotation_start key=%s rotation_id=%s", req.key_name, req.rotation_id
+        )
 
         old_value = None
         bak_path = None
@@ -263,7 +267,11 @@ async def rotate_key(
             if new_healthy:
                 if bak_path and os.path.exists(bak_path):
                     os.unlink(bak_path)
-                logger.info("rotation_success key=%s rotation_id=%s", req.key_name, req.rotation_id)
+                logger.info(
+                    "rotation_success key=%s rotation_id=%s",
+                    req.key_name,
+                    req.rotation_id,
+                )
                 return RotateKeyResponse(
                     status="success",
                     rotation_id=req.rotation_id,
@@ -271,7 +279,9 @@ async def rotate_key(
                     old_key_health=old_detail,
                     new_key_health=new_detail,
                 )
-            logger.warning("rotation_rollback key=%s reason=%s", req.key_name, new_detail)
+            logger.warning(
+                "rotation_rollback key=%s reason=%s", req.key_name, new_detail
+            )
             if bak_path and os.path.exists(bak_path):
                 _restore_from_backup(bak_path)
             if old_value:
@@ -295,5 +305,9 @@ async def rotate_key(
                     clear_cache(req.key_name)
                     logger.info("rotation emergency_rollback key=%s", req.key_name)
                 except Exception as re:
-                    logger.error("rotation rollback_also_failed key=%s error=%s", req.key_name, re)
+                    logger.error(
+                        "rotation rollback_also_failed key=%s error=%s",
+                        req.key_name,
+                        re,
+                    )
             raise HTTPException(status_code=500, detail=f"Rotation failed: {e}")

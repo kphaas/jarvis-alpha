@@ -41,7 +41,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-from service_identity import DEFAULT_SCOPES, TOKEN_LIFETIME_DAYS, VALID_ISS_ACTOR_PAIRS
+from service_identity import DEFAULT_SCOPES, TOKEN_LIFETIME_DAYS, VALID_ISS_ACTOR_PAIRS  # noqa: E402
 
 NODE_CONFIG = {
     "brain": {
@@ -330,7 +330,9 @@ def verify_gateway_sandbox(token: str) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Rotate JARVIS service JWT in secrets file")
+    parser = argparse.ArgumentParser(
+        description="Rotate JARVIS service JWT in secrets file"
+    )
     parser.add_argument(
         "--node",
         required=True,
@@ -423,7 +425,12 @@ def main() -> int:
         log_json("info", "token generated", node, token_length=len(token))
 
         atomic_update_secrets(secrets_file, secret_key, token)
-        log_json("info", "secrets file updated", node, path=str(Path(secrets_file).expanduser()))
+        log_json(
+            "info",
+            "secrets file updated",
+            node,
+            path=str(Path(secrets_file).expanduser()),
+        )
 
         if node == "brain":
             verify_brain()

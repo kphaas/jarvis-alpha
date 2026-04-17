@@ -16,6 +16,12 @@ Blocks applied in order (fail-fast):
     R7: No new pip/npm imports not already in requirements
     R8: No SQL strings without params (crude check — flags f-string / %-format with SELECT/INSERT/UPDATE/DELETE)
     R9: No modifications to brain/middleware/*, scripts/service_identity.py
+    R10: No shell command chaining (&&, ;, |, $(), ``)
+    R11: No agent config file modifications (.claude/*, tool_config*, .cursor/*, etc.)
+    R12: No prompt injection patterns in diff
+    R13: No inter-agent message spoofing
+    R14: No file writes larger than 10KB
+    R15: No CI/repo config tampering (.github/workflows/*, .gitignore, etc.)
 
 Every block writes a row to alpha_dream_blocked_writes.
 """
@@ -66,6 +72,49 @@ SQL_FSTRING_PATTERN = re.compile(
     r"(f[\"'].*(SELECT|INSERT|UPDATE|DELETE).*\{)|(%\s*\(.*\).*(SELECT|INSERT|UPDATE|DELETE))",
     re.IGNORECASE,
 )
+
+# --- R10: Command chaining (Claude Code CVE-2025-55284 bypass) ---
+COMMAND_CHAIN_PATTERN = re.compile(r"(&&|;\s*\w|\|\s*\w|\$\([^)]+\)|`[^`]+`)")
+
+# --- R11: Agent config tampering (Claude Code CVE-2025-54795) ---
+AGENT_CONFIG_PATHS = [
+    "*.claude/*",
+    "tool_config*",
+    "*mcp-config*",
+    ".cursor/*",
+    ".agent-config*",
+]
+
+# --- R12: Prompt injection in read content (OWASP Agentic A10) ---
+PROMPT_INJECTION_PATTERNS = [
+    re.compile(r"ignore\s+(?:previous|prior|all|above)\s+instructions?", re.IGNORECASE),
+    re.compile(r"you\s+are\s+now\s+(?:admin|root|system|god)", re.IGNORECASE),
+    re.compile(r"disregard\s+(?:safety|guardrails|rules|policy)", re.IGNORECASE),
+    re.compile(r"system\s*[:>]\s*override", re.IGNORECASE),
+    re.compile(r"<\|im_start\|>|<\|im_end\|>", re.IGNORECASE),
+]
+
+# --- R13: Inter-agent message spoofing (OWASP Agentic A07) ---
+AGENT_SPOOF_PATTERNS = [
+    re.compile(
+        r'"jsonrpc"\s*:\s*"2\.0".*"method"\s*:\s*"(?:tools/call|completion)"',
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(r'"role"\s*:\s*"system".*"content"', re.IGNORECASE | re.DOTALL),
+]
+
+# --- R14: Large file write threshold ---
+LARGE_WRITE_THRESHOLD_BYTES = 10_000
+
+# --- R15: CI/repo config tampering ---
+CI_CONFIG_PATHS = [
+    ".github/workflows/*",
+    ".gitignore",
+    ".gitattributes",
+    ".github/CODEOWNERS",
+    ".github/dependabot.yml",
+    "*.github/*",
+]
 
 
 @dataclass
@@ -192,6 +241,58 @@ class DreamInvariantChecker:
                 "Diff contains SQL with f-string or %-format — use parameterized queries",
                 "R8_SQL_INJECTION",
             )
+
+        # R10 — Command chaining
+        if COMMAND_CHAIN_PATTERN.search(change.diff):
+            return await self._block(
+                change,
+                "Diff contains shell command chaining (&&, ;, |, $(), ``) — bypass risk",
+                "R10_CMD_CHAIN",
+            )
+
+        # R11 — Agent config files
+        for agent_path in AGENT_CONFIG_PATHS:
+            if fnmatch.fnmatch(change.path, agent_path):
+                return await self._block(
+                    change,
+                    f"Path matches agent config denylist: {agent_path}",
+                    "R11_AGENT_CONFIG",
+                )
+
+        # R12 — Prompt injection patterns
+        for pattern in PROMPT_INJECTION_PATTERNS:
+            if pattern.search(change.diff):
+                return await self._block(
+                    change,
+                    "Diff contains prompt-injection pattern",
+                    "R12_PROMPT_INJECTION",
+                )
+
+        # R13 — Agent message spoofing
+        for pattern in AGENT_SPOOF_PATTERNS:
+            if pattern.search(change.diff):
+                return await self._block(
+                    change,
+                    "Diff contains inter-agent message spoof (JSON-RPC / system role)",
+                    "R13_AGENT_SPOOF",
+                )
+
+        # R14 — Large file write
+        if len(change.diff) > LARGE_WRITE_THRESHOLD_BYTES:
+            return await self._block(
+                change,
+                f"Diff size {len(change.diff)} bytes exceeds threshold {LARGE_WRITE_THRESHOLD_BYTES}",
+                "R14_LARGE_WRITE",
+            )
+
+        # R15 — CI config tampering
+        for ci_path in CI_CONFIG_PATHS:
+            if fnmatch.fnmatch(change.path, ci_path):
+                return await self._block(
+                    change,
+                    f"Path matches CI/repo config denylist: {ci_path}",
+                    "R15_CI_CONFIG",
+                )
 
         return CheckResult(allowed=True, reason="All invariants passed", rule="OK")
 

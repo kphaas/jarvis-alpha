@@ -19,7 +19,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 log = logging.getLogger(__name__)
 
@@ -104,7 +104,9 @@ class DeadLetterQueue:
         finally:
             conn.close()
 
-    def _enqueue_sync(self, payload_json: str, reason: str) -> tuple[int, Optional[dict]]:
+    def _enqueue_sync(
+        self, payload_json: str, reason: str
+    ) -> tuple[int, Optional[dict]]:
         evicted_item: Optional[dict] = None
         conn = self._connect()
         try:
@@ -133,7 +135,9 @@ class DeadLetterQueue:
                         "enqueued_at": evict_row["enqueued_at"],
                         "attempts": evict_row["attempts"],
                     }
-                    conn.execute("DELETE FROM dlq_items WHERE id = ?", (evict_row["id"],))
+                    conn.execute(
+                        "DELETE FROM dlq_items WHERE id = ?", (evict_row["id"],)
+                    )
 
             cursor = conn.execute(
                 """

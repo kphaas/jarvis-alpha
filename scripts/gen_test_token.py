@@ -9,6 +9,7 @@ Usage:
 The token mirrors the claims structure issued by /v1/auth/pin so that
 test tokens are functionally identical to real PIN-auth tokens.
 """
+
 from __future__ import annotations
 
 import os

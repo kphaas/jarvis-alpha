@@ -25,7 +25,6 @@ import json
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 # Use curl + asyncio.to_thread for all HTTP (httpx fails with Tailscale TLS)
@@ -73,10 +72,18 @@ def _load_config():
 
 # ── HTTP via curl (Tailscale TLS safe) ─────────────────────────
 
+
 async def _curl(method: str, path: str, body: dict | None = None) -> dict:
     """Make an authenticated request to Brain via curl."""
     url = f"{BRAIN_URL}{path}"
-    cmd = ["curl", "-sk", "-X", method, "-H", f"Authorization: Bearer {ALPHA_SERVICE_TOKEN}"]
+    cmd = [
+        "curl",
+        "-sk",
+        "-X",
+        method,
+        "-H",
+        f"Authorization: Bearer {ALPHA_SERVICE_TOKEN}",
+    ]
     if body is not None:
         cmd += ["-H", "Content-Type: application/json", "-d", json.dumps(body)]
     cmd.append(url)
@@ -105,6 +112,7 @@ async def _curl_patch(path: str, body: dict) -> dict:
 
 # ── Circuit Breaker ────────────────────────────────────────────
 
+
 class CircuitBreaker:
     """Tracks total API/LLM calls per session. Trips at MAX_CALLS_PER_SESSION."""
 
@@ -126,15 +134,24 @@ class CircuitBreaker:
 
 # ── Step Dispatchers ───────────────────────────────────────────
 
+
 async def _dispatch_canary(step: dict, dry_run: bool) -> dict:
     """Step 0 health probe — checks Brain is alive."""
     if dry_run:
-        return {"output_summary": "DRY_RUN: canary skipped", "verification": "dry_run", "cost_usd": 0}
+        return {
+            "output_summary": "DRY_RUN: canary skipped",
+            "verification": "dry_run",
+            "cost_usd": 0,
+        }
 
     try:
         result = await _curl_get("/health")
         if result.get("status") == "ok":
-            return {"output_summary": "Brain health OK", "verification": "health_check_passed", "cost_usd": 0}
+            return {
+                "output_summary": "Brain health OK",
+                "verification": "health_check_passed",
+                "cost_usd": 0,
+            }
         else:
             raise RuntimeError(f"Health check returned: {result}")
     except Exception as e:
@@ -144,14 +161,21 @@ async def _dispatch_canary(step: dict, dry_run: bool) -> dict:
 async def _dispatch_llm(step: dict, dry_run: bool) -> dict:
     """Local Ollama call via Brain's /v1/ask endpoint."""
     if dry_run:
-        return {"output_summary": f"DRY_RUN: would run LLM step '{step['name']}'", "verification": "dry_run", "cost_usd": 0}
+        return {
+            "output_summary": f"DRY_RUN: would run LLM step '{step['name']}'",
+            "verification": "dry_run",
+            "cost_usd": 0,
+        }
 
     model = step.get("model", "llama3.1:8b")
     prompt = step.get("description") or f"Execute task: {step['name']}"
-    result = await _curl_post("/v1/ask", {
-        "message": prompt,
-        "model": model,
-    })
+    result = await _curl_post(
+        "/v1/ask",
+        {
+            "message": prompt,
+            "model": model,
+        },
+    )
     output = str(result.get("response", result.get("reply", "")))[:500]
     return {
         "output_summary": output,
@@ -164,7 +188,11 @@ async def _dispatch_llm(step: dict, dry_run: bool) -> dict:
 async def _dispatch_cloud(step: dict, dry_run: bool) -> dict:
     """Cloud LLM call via local Gateway adapter (Claude/Perplexity/Gemini)."""
     if dry_run:
-        return {"output_summary": f"DRY_RUN: would run cloud step '{step['name']}'", "verification": "dry_run", "cost_usd": 0}
+        return {
+            "output_summary": f"DRY_RUN: would run cloud step '{step['name']}'",
+            "verification": "dry_run",
+            "cost_usd": 0,
+        }
 
     from gateway.adapters import ClaudeAdapter, PerplexityAdapter, GeminiAdapter
 
@@ -204,8 +232,16 @@ async def _dispatch_cloud(step: dict, dry_run: bool) -> dict:
 async def _dispatch_tool(step: dict, dry_run: bool) -> dict:
     """Tool agent — stub for now."""
     if dry_run:
-        return {"output_summary": f"DRY_RUN: would run tool step '{step['name']}'", "verification": "dry_run", "cost_usd": 0}
-    return {"output_summary": "tool_agent not yet implemented", "verification": "stub", "cost_usd": 0}
+        return {
+            "output_summary": f"DRY_RUN: would run tool step '{step['name']}'",
+            "verification": "dry_run",
+            "cost_usd": 0,
+        }
+    return {
+        "output_summary": "tool_agent not yet implemented",
+        "verification": "stub",
+        "cost_usd": 0,
+    }
 
 
 DISPATCHERS = {
@@ -218,6 +254,7 @@ DISPATCHERS = {
 
 
 # ── Post-Action Verification ──────────────────────────────────
+
 
 def _verify_output(result: dict, step: dict) -> bool:
     """Basic verification: output_summary must be non-empty and verification must be set."""
@@ -232,6 +269,7 @@ def _verify_output(result: dict, step: dict) -> bool:
 
 # ── Main Orchestrator Loop ────────────────────────────────────
 
+
 async def run_session(session_file: Path, dry_run: bool = False):
     """Main entry point: create session, execute steps, finalize."""
     _load_config()
@@ -245,14 +283,19 @@ async def run_session(session_file: Path, dry_run: bool = False):
     max_duration = session_def.get("max_duration_s", 14400)
 
     # Create session on Brain
-    create_resp = await _curl_post("/v1/dream/sessions", {
-        "trigger": trigger,
-        "cost_budget_usd": budget,
-        "max_duration_s": max_duration,
-        "steps": session_def["steps"],
-    })
+    create_resp = await _curl_post(
+        "/v1/dream/sessions",
+        {
+            "trigger": trigger,
+            "cost_budget_usd": budget,
+            "max_duration_s": max_duration,
+            "steps": session_def["steps"],
+        },
+    )
     session_id = create_resp["session_id"]
-    print(f"[DREAM] Session {session_id} created ({trigger}, budget=${budget}, max={max_duration}s)")
+    print(
+        f"[DREAM] Session {session_id} created ({trigger}, budget=${budget}, max={max_duration}s)"
+    )
 
     # Start session
     await _curl_post(f"/v1/dream/sessions/{session_id}/start")
@@ -267,17 +310,23 @@ async def run_session(session_file: Path, dry_run: bool = False):
         elapsed = time.monotonic() - start_time
         if elapsed >= max_duration:
             print(f"[DREAM] Wall-clock timeout ({max_duration}s) — killing session")
-            await _curl_post(f"/v1/dream/sessions/{session_id}/kill", {
-                "reason": f"wall-clock timeout after {int(elapsed)}s"
-            })
+            await _curl_post(
+                f"/v1/dream/sessions/{session_id}/kill",
+                {"reason": f"wall-clock timeout after {int(elapsed)}s"},
+            )
             break
 
         # Circuit breaker
         if breaker.tripped:
-            print(f"[DREAM] Circuit breaker tripped ({breaker.call_count} calls) — killing session")
-            await _curl_post(f"/v1/dream/sessions/{session_id}/kill", {
-                "reason": f"circuit breaker: {breaker.call_count} calls exceeded limit"
-            })
+            print(
+                f"[DREAM] Circuit breaker tripped ({breaker.call_count} calls) — killing session"
+            )
+            await _curl_post(
+                f"/v1/dream/sessions/{session_id}/kill",
+                {
+                    "reason": f"circuit breaker: {breaker.call_count} calls exceeded limit"
+                },
+            )
             break
 
         # Get next runnable step
@@ -298,9 +347,10 @@ async def run_session(session_file: Path, dry_run: bool = False):
             budget_check = await _curl_get(f"/v1/dream/sessions/{session_id}/next-step")
             if budget_check.get("reason") == "cost budget exceeded":
                 print(f"[DREAM] Budget exceeded before step {step_name} — stopping")
-                await _curl_post(f"/v1/dream/sessions/{session_id}/kill", {
-                    "reason": "per-step cost pre-check: budget would be exceeded"
-                })
+                await _curl_post(
+                    f"/v1/dream/sessions/{session_id}/kill",
+                    {"reason": "per-step cost pre-check: budget would be exceeded"},
+                )
                 break
 
         # Mark step running
@@ -309,21 +359,25 @@ async def run_session(session_file: Path, dry_run: bool = False):
         # Dispatch
         dispatcher = DISPATCHERS.get(agent_type)
         if not dispatcher:
-            await _curl_patch(f"/v1/dream/steps/{step_id}", {
-                "status": "failed",
-                "error_message": f"Unknown agent_type: {agent_type}",
-            })
+            await _curl_patch(
+                f"/v1/dream/steps/{step_id}",
+                {
+                    "status": "failed",
+                    "error_message": f"Unknown agent_type: {agent_type}",
+                },
+            )
             continue
 
         retries = 0
         max_retries = step.get("max_retries", 3)
-        success = False
 
         result = None
         while retries <= max_retries:
             try:
                 breaker.increment()
-                input_data = json.dumps({"name": step_name, "description": step.get("description")})
+                input_data = json.dumps(
+                    {"name": step_name, "description": step.get("description")}
+                )
                 input_hash = hashlib.sha256(input_data.encode()).hexdigest()[:16]
 
                 result = await dispatcher(step, dry_run)
@@ -333,41 +387,62 @@ async def run_session(session_file: Path, dry_run: bool = False):
                 if _verify_output(result, step):
                     result["status"] = "completed"
                     await _curl_patch(f"/v1/dream/steps/{step_id}", result)
-                    print(f"[DREAM]   ✓ Step {step_name} completed (cost=${result.get('cost_usd', 0):.4f})")
-                    success = True
+                    print(
+                        f"[DREAM]   ✓ Step {step_name} completed (cost=${result.get('cost_usd', 0):.4f})"
+                    )
                     break
                 else:
-                    raise RuntimeError(f"Verification failed: {result.get('verification', 'none')}")
+                    raise RuntimeError(
+                        f"Verification failed: {result.get('verification', 'none')}"
+                    )
 
             except Exception as e:
                 retries += 1
                 if retries > max_retries:
-                    await _curl_patch(f"/v1/dream/steps/{step_id}", {
-                        "status": "failed",
-                        "error_message": str(e)[:500],
-                        "cost_usd": result.get("cost_usd", 0) if result is not None else 0,
-                    })
-                    print(f"[DREAM]   ✗ Step {step_name} FAILED after {max_retries} retries: {e}")
+                    await _curl_patch(
+                        f"/v1/dream/steps/{step_id}",
+                        {
+                            "status": "failed",
+                            "error_message": str(e)[:500],
+                            "cost_usd": result.get("cost_usd", 0)
+                            if result is not None
+                            else 0,
+                        },
+                    )
+                    print(
+                        f"[DREAM]   ✗ Step {step_name} FAILED after {max_retries} retries: {e}"
+                    )
                     break
                 else:
                     backoff = RETRY_BACKOFF[min(retries - 1, len(RETRY_BACKOFF) - 1)]
-                    print(f"[DREAM]   ↻ Retry {retries}/{max_retries} in {backoff}s: {e}")
+                    print(
+                        f"[DREAM]   ↻ Retry {retries}/{max_retries} in {backoff}s: {e}"
+                    )
                     await asyncio.sleep(backoff)
 
         await asyncio.sleep(POLL_INTERVAL_S)
 
     # Finalize session
     final = await _curl_post(f"/v1/dream/sessions/{session_id}/complete")
-    print(f"[DREAM] Session {session_id} finished: {final.get('status')} — {final.get('summary')}")
+    print(
+        f"[DREAM] Session {session_id} finished: {final.get('status')} — {final.get('summary')}"
+    )
     return final
 
 
 # ── CLI Entry Point ───────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser(description="Dream Mode Orchestrator")
-    parser.add_argument("--session-file", required=True, help="Path to session definition JSON")
-    parser.add_argument("--dry-run", action="store_true", help="Simulate execution without real LLM calls")
+    parser.add_argument(
+        "--session-file", required=True, help="Path to session definition JSON"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simulate execution without real LLM calls",
+    )
     args = parser.parse_args()
 
     session_path = Path(args.session_file)

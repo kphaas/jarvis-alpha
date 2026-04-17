@@ -71,12 +71,21 @@ def upgrade() -> None:
         )
     """)
 
-
-    op.execute("CREATE INDEX IF NOT EXISTS idx_task_graphs_status   ON alpha_task_graphs(status)")
-    op.execute("CREATE INDEX IF NOT EXISTS idx_task_graphs_created_by ON alpha_task_graphs(created_by)")
-    op.execute("CREATE INDEX IF NOT EXISTS idx_task_steps_graph     ON alpha_task_steps(graph_id)")
-    op.execute("CREATE INDEX IF NOT EXISTS idx_task_steps_status    ON alpha_task_steps(status)")
-    op.execute("CREATE INDEX IF NOT EXISTS idx_task_steps_type      ON alpha_task_steps(step_type)")
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_graphs_status   ON alpha_task_graphs(status)"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_graphs_created_by ON alpha_task_graphs(created_by)"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_steps_graph     ON alpha_task_steps(graph_id)"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_steps_status    ON alpha_task_steps(status)"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_steps_type      ON alpha_task_steps(step_type)"
+    )
 
     op.execute("ALTER TABLE alpha_task_graphs ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE alpha_task_steps  ENABLE ROW LEVEL SECURITY")

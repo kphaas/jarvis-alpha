@@ -48,8 +48,18 @@ def seed():
     skipped = 0
 
     for row in PRICING_DATA:
-        (provider, model, inp, out, ctx_thresh, inp_long, out_long,
-         eff_from, source, notes) = row
+        (
+            provider,
+            model,
+            inp,
+            out,
+            ctx_thresh,
+            inp_long,
+            out_long,
+            eff_from,
+            source,
+            notes,
+        ) = row
 
         ctx_val = str(ctx_thresh) if ctx_thresh is not None else "NULL"
         inp_long_val = str(inp_long) if inp_long is not None else "NULL"
@@ -68,7 +78,8 @@ def seed():
 
         result = subprocess.run(
             [PSQL, "-d", DB, "-X", "-A", "-t", "-c", sql],
-            capture_output=True, text=True
+            capture_output=True,
+            text=True,
         )
 
         if result.returncode != 0:

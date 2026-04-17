@@ -48,7 +48,10 @@ def find_private_key(iss: str) -> Path:
 def generate_token(iss: str, actor_type: str, scopes: list[str], days: int = 7) -> str:
     """Generate and sign a service JWT."""
     if VALID_ISS_ACTOR_PAIRS.get(iss) != actor_type:
-        print(f"WARNING: ({iss}, {actor_type}) not in VALID_ISS_ACTOR_PAIRS", file=sys.stderr)
+        print(
+            f"WARNING: ({iss}, {actor_type}) not in VALID_ISS_ACTOR_PAIRS",
+            file=sys.stderr,
+        )
 
     key_path = find_private_key(iss)
     private_key = key_path.read_text()
@@ -70,11 +73,28 @@ def generate_token(iss: str, actor_type: str, scopes: list[str], days: int = 7) 
 
 def main():
     parser = argparse.ArgumentParser(description="Generate a JARVIS service JWT")
-    parser.add_argument("--iss", required=True, help="Issuer name (gateway, sandbox, buddy, endpoint)")
-    parser.add_argument("--actor-type", default=None, help="Actor type (service or agent). Auto-detected if omitted.")
-    parser.add_argument("--scopes", default=None, help="Comma-separated scopes. Uses defaults if omitted.")
-    parser.add_argument("--days", type=int, default=TOKEN_LIFETIME_DAYS, help="Token lifetime in days (default: 7)")
-    parser.add_argument("--json", action="store_true", help="Output full token details as JSON")
+    parser.add_argument(
+        "--iss", required=True, help="Issuer name (gateway, sandbox, buddy, endpoint)"
+    )
+    parser.add_argument(
+        "--actor-type",
+        default=None,
+        help="Actor type (service or agent). Auto-detected if omitted.",
+    )
+    parser.add_argument(
+        "--scopes",
+        default=None,
+        help="Comma-separated scopes. Uses defaults if omitted.",
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=TOKEN_LIFETIME_DAYS,
+        help="Token lifetime in days (default: 7)",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Output full token details as JSON"
+    )
     args = parser.parse_args()
 
     iss = args.iss.lower()

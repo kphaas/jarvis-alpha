@@ -1,6 +1,7 @@
 """
 Alpha Gateway UniFi proxy — talks to UDM Pro (local TLS, curl -sk).
 """
+
 import asyncio
 import json
 import os
@@ -24,7 +25,9 @@ _cookie_jar_path: str | None = None
 def _base_url() -> str:
     url = os.environ.get("UNIFI_BASE_URL", "")
     if not url:
-        raise RuntimeError("UNIFI_BASE_URL is not set in environment — check ~/jarvis/.secrets on Gateway")
+        raise RuntimeError(
+            "UNIFI_BASE_URL is not set in environment — check ~/jarvis/.secrets on Gateway"
+        )
     return url.rstrip("/")
 
 
@@ -37,7 +40,9 @@ def _cookie_jar() -> str:
     return _cookie_jar_path
 
 
-def _curl(args: list[str], *, timeout_sec: float = 15.0) -> subprocess.CompletedProcess[str]:
+def _curl(
+    args: list[str], *, timeout_sec: float = 15.0
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["curl", "-sk", *args],
         capture_output=True,
@@ -74,7 +79,9 @@ def _login_sync() -> None:
     )
     code = (proc.stdout or "").strip()
     if proc.returncode != 0 or not code.startswith("2"):
-        raise RuntimeError(f"UniFi login failed: http_code={code!r} stderr={proc.stderr!r}")
+        raise RuntimeError(
+            f"UniFi login failed: http_code={code!r} stderr={proc.stderr!r}"
+        )
 
 
 async def ensure_unifi_session() -> None:
@@ -134,8 +141,15 @@ async def unifi_wan() -> dict[str, Any]:
         jar = _cookie_jar()
 
         def _fetch() -> subprocess.CompletedProcess[str]:
-            return _curl(["-b", jar, "-c", jar,
-                          f"{base}/proxy/network/api/s/default/stat/health"])
+            return _curl(
+                [
+                    "-b",
+                    jar,
+                    "-c",
+                    jar,
+                    f"{base}/proxy/network/api/s/default/stat/health",
+                ]
+            )
 
         proc = await asyncio.to_thread(_fetch)
         data = json.loads(proc.stdout or "{}")
@@ -149,7 +163,9 @@ async def unifi_wan() -> dict[str, Any]:
         return {
             "wan_status": "up" if wan.get("status") == "ok" else "unknown",
             "wan_up_mbps": round(xput_up, 1) if speedtest_ok and xput_up else None,
-            "wan_down_mbps": round(xput_down, 1) if speedtest_ok and xput_down else None,
+            "wan_down_mbps": round(xput_down, 1)
+            if speedtest_ok and xput_down
+            else None,
             "latency_ms": www.get("latency"),
             "uptime_sec": www.get("uptime"),
             "speedtest_status": www.get("speedtest_status", "unknown"),
@@ -171,8 +187,9 @@ async def unifi_clients() -> dict[str, Any]:
         jar = _cookie_jar()
 
         def _fetch() -> subprocess.CompletedProcess[str]:
-            return _curl(["-b", jar, "-c", jar,
-                          f"{base}/proxy/network/api/s/default/stat/sta"])
+            return _curl(
+                ["-b", jar, "-c", jar, f"{base}/proxy/network/api/s/default/stat/sta"]
+            )
 
         proc = await asyncio.to_thread(_fetch)
         data = json.loads(proc.stdout or "{}")

@@ -7,7 +7,9 @@ import time
 import urllib.error
 import urllib.request
 
-BRAIN_URL = os.environ.get("JARVIS_ALPHA_BRAIN_URL", "https://jarvis-brain.tail40ed36.ts.net:8186")
+BRAIN_URL = os.environ.get(
+    "JARVIS_ALPHA_BRAIN_URL", "https://jarvis-brain.tail40ed36.ts.net:8186"
+)
 NODE_NAME = os.environ.get("JARVIS_NODE_NAME", "unknown")
 
 _COMBINED_MARKER = "combined power (cpu + gpu + ane):"
@@ -15,6 +17,7 @@ _COMBINED_MARKER = "combined power (cpu + gpu + ane):"
 
 def get_watts_psutil() -> tuple[float, float]:
     import psutil
+
     cpu_pct = float(psutil.cpu_percent(interval=2))
 
     if NODE_NAME == "Brain":

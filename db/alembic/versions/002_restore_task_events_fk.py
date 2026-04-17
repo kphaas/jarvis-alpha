@@ -35,5 +35,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("ALTER TABLE alpha_task_events DROP CONSTRAINT IF EXISTS alpha_task_events_graph_id_fkey")
-    op.execute("ALTER TABLE alpha_task_events DROP CONSTRAINT IF EXISTS alpha_task_events_step_id_fkey")
+    op.execute(
+        "ALTER TABLE alpha_task_events DROP CONSTRAINT IF EXISTS alpha_task_events_graph_id_fkey"
+    )
+    op.execute(
+        "ALTER TABLE alpha_task_events DROP CONSTRAINT IF EXISTS alpha_task_events_step_id_fkey"
+    )

@@ -12,6 +12,7 @@ config = context.config
 if config.config_file_name:
     fileConfig(config.config_file_name)
 
+
 def get_dsn() -> str:
     dsn = os.getenv("JARVIS_ALPHA_DB_DSN")
     if not dsn:
@@ -19,6 +20,7 @@ def get_dsn() -> str:
     if dsn.startswith("postgresql+asyncpg://"):
         dsn = dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
     return dsn
+
 
 def run_migrations_online() -> None:
     connectable = create_engine(
@@ -29,5 +31,6 @@ def run_migrations_online() -> None:
         context.configure(connection=connection, target_metadata=None)
         with context.begin_transaction():
             context.run_migrations()
+
 
 run_migrations_online()

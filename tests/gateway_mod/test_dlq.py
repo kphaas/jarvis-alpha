@@ -1,9 +1,5 @@
 """Unit tests for DeadLetterQueue — FIFO, eviction, flush, persistence."""
 
-import asyncio
-import tempfile
-from pathlib import Path
-
 import pytest
 
 from gateway.resilience.dlq import DeadLetterQueue

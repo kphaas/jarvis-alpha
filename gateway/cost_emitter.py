@@ -169,4 +169,3 @@ async def flush_loop() -> None:
             logger.error("flush_loop error: %s", exc)
 
         await asyncio.sleep(_FLUSH_INTERVAL_SEC)
-

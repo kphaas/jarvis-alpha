@@ -51,7 +51,9 @@ def test_pushover_priority_mapping():
 
 async def test_pushover_send_success_mocked():
     sink = PushoverSink(user_key="a" * 30, app_token="b" * 30)
-    with patch.object(sink, "_post_sync", return_value=(0, '{"status":1,"request":"abc"}')):
+    with patch.object(
+        sink, "_post_sync", return_value=(0, '{"status":1,"request":"abc"}')
+    ):
         ok = await sink.send(Severity.INFO, "title", "message")
     assert ok is True
 
@@ -98,9 +100,7 @@ async def test_composite_any_success_wins():
         async def send(self, severity, title, message, metadata=None):
             return False
 
-    ok = await CompositeSink([_FailSink(), NullSink()]).send(
-        Severity.INFO, "t", "m"
-    )
+    ok = await CompositeSink([_FailSink(), NullSink()]).send(Severity.INFO, "t", "m")
     assert ok is True
 
 
@@ -109,9 +109,7 @@ async def test_composite_all_fail():
         async def send(self, severity, title, message, metadata=None):
             return False
 
-    ok = await CompositeSink([_FailSink(), _FailSink()]).send(
-        Severity.INFO, "t", "m"
-    )
+    ok = await CompositeSink([_FailSink(), _FailSink()]).send(Severity.INFO, "t", "m")
     assert ok is False
 
 

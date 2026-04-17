@@ -4,9 +4,8 @@ Revision ID: 003
 Revises: 002
 Create Date: 2026-04-02
 """
+
 from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import UUID, JSONB
 
 revision = "003"
 down_revision = "002"
@@ -44,8 +43,12 @@ def upgrade() -> None:
         )
     """)
 
-    op.execute("CREATE INDEX IF NOT EXISTS idx_chat_threads_user ON chat_threads(user_id) WHERE archived_at IS NULL")
-    op.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(thread_id)")
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_threads_user ON chat_threads(user_id) WHERE archived_at IS NULL"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(thread_id)"
+    )
 
     op.execute("ALTER TABLE chat_threads ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY")

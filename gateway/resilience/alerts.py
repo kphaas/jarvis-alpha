@@ -227,7 +227,9 @@ def build_default_sink() -> IAlertSink:
             log.info("alert sink: PushoverSink configured")
             return sink
         except ValueError as e:
-            log.error("PushoverSink construction failed, falling back to NullSink: %s", e)
+            log.error(
+                "PushoverSink construction failed, falling back to NullSink: %s", e
+            )
 
     log.warning(
         "alert sink: PushoverSink not configured (missing/invalid PUSHOVER_* secrets) — using NullSink"
