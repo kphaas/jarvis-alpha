@@ -141,6 +141,8 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Dream sessions ---
     "GET /v1/dream/sessions": ["read"],
     "POST /v1/dream/sessions": ["write"],
+    "POST /v1/dream/plan": ["write", "external_call", "cost_incurring"],
+    "POST /v1/dream/review": ["write", "external_call", "cost_incurring"],
     "GET /v1/dream/sessions/{session_id}": ["read"],
     "POST /v1/dream/sessions/{session_id}/start": [
         "write",

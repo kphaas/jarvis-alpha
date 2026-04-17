@@ -32,6 +32,7 @@ from brain.routes.rotation import rotation_router
 from brain.routes.security import security_router
 from brain.routes.honeypot import honeypot_router
 from brain.routes.dream import dream_router
+from brain.routes.dream_planning import dream_planning_router
 from brain.routes.mcp_registry import mcp_router
 from brain.routes.prompts import router as prompts_router
 from brain.routes.approvals import router as approvals_router
@@ -87,6 +88,7 @@ app.include_router(pin_auth_router)
 app.include_router(health_router)
 app.include_router(honeypot_router)
 app.include_router(dream_router)
+app.include_router(dream_planning_router)
 app.include_router(logs_router)
 app.include_router(diagnose_router)
 app.include_router(patterns_router)

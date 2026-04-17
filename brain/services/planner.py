@@ -197,6 +197,25 @@ class ClaudePlanner(IPlanner):
         prior_lessons: Optional[str] = None,
         revision_hint: Optional[str] = None,
     ) -> DreamPlan:
-        raise NotImplementedError(
-            "ClaudePlanner.plan() is wired in D2-c — not yet callable"
+        from brain.services.llm_transport import call_gateway_cloud
+
+        user_msg_parts = [f"GOAL:\n{goal}"]
+        if recent_context:
+            user_msg_parts.append(f"\nRECENT_CONTEXT:\n{recent_context}")
+        if prior_lessons:
+            user_msg_parts.append(f"\nPRIOR_LESSONS:\n{prior_lessons}")
+        if revision_hint:
+            user_msg_parts.append(
+                f"\nREVISION_HINT (address this from prior reviewer rejection):\n{revision_hint}"
+            )
+        user_msg = "\n".join(user_msg_parts)
+
+        raw = await call_gateway_cloud(
+            provider=self._policy.planner_provider,
+            model=self._policy.planner_model,
+            system_prompt=system_prompt,
+            user_message=user_msg,
+            max_tokens=3000,
+            temperature=0.3,
         )
+        return parse_plan_json(raw)
