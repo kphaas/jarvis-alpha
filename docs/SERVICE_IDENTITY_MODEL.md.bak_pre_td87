@@ -219,22 +219,12 @@ Brain loads all `.pem` files from `brain/pki/` at startup. Adding a new service 
 
 ### 7.2 Gateway Scopes
 
-Gateway holds a single service token (`ALPHA_SERVICE_TOKEN`, iss=gateway) used for all outbound calls to Brain. Scopes reflect the capability-based model (blast radius differs → separate scopes per operation family).
-
 | Scope | Grants | Brain Route |
 |---|---|---|
-| `cloud.call` | General outbound cloud-LLM calls (Claude / Perplexity / Gemini) | POST /v1/cloud/call |
-| `dream.execute` | Dream session lifecycle — create, step, complete | /v1/dream/sessions/* |
-| `dream.plan` | Invoke Dream planner (cloud cost, no state mutation) | POST /v1/dream/plan |
-| `dream.review` | Invoke Dream reviewer (cloud cost, no state mutation) | POST /v1/dream/review |
-| `dream.kill` | Emergency kill switch — halts active session | POST /v1/dream/kill |
-| `cost.report` | Submit cost data to Brain aggregator | POST /v1/costs/ingest |
-| `health.read` | Read Brain health status | GET /health |
-| `unifi.proxy` | Proxy UDM Pro API calls (read-only) | /v1/unifi/* |
-
-**Rationale — split `dream.plan` + `dream.review` from `dream.execute`:** plan/review burn cloud budget but do not mutate session state. Execute mutates state. Different threat models → different scopes. Precedent: AWS IAM (`s3:GetObject` vs `s3:PutObject`), Stripe API scopes, Google Cloud IAM. One compromised scope should not imply the others.
-
-**Rationale — `cloud.call` not `gateway.cloud.call`:** scope names describe the *capability*, not the *holder*. Both Gateway (outbound via adapter) and Brain (outbound via Gateway proxy) may hold `cloud.call` in their respective tokens. Prefixing with actor name creates false coupling.
+| `gateway.llm.proxy` | Proxy cloud LLM calls (Claude/Perplexity/Gemini) | POST /v1/cloud/call |
+| `gateway.unifi.proxy` | Proxy UDM Pro API calls | /v1/unifi/* |
+| `gateway.cloud.call` | General outbound cloud calls | POST /v1/cloud/call |
+| `gateway.health.read` | Read Brain health status | GET /health |
 
 ### 7.3 Agent Scopes (Buddy)
 
@@ -268,31 +258,6 @@ Gateway holds a single service token (`ALPHA_SERVICE_TOKEN`, iss=gateway) used f
 | Scope | Grants | Audit Rule |
 |---|---|---|
 | `*` | Wildcard — full access to all routes | MUST log `scopes_used: ["*"]` — never silent bypass |
-
-### 7.7 Brain Service Scopes (Two-Token Pattern)
-
-Brain is unique — it both **serves** user-facing requests AND **calls out** to Gateway for cloud proxy. This requires two separate tokens, following the "one token per caller identity" principle (AWS IAM roles assume one role per service boundary).
-
-| Token | Env Var | Issuer (`iss`) | Purpose | Scopes |
-|---|---|---|---|---|
-| Brain Service Token | `ALPHA_BRAIN_SERVICE_TOKEN` | `brain` | Brain → Gateway outbound (service-to-service) | `service.internal`, `health.read`, `cloud.call` |
-| Brain User Token | `ALPHA_BRAIN_TOKEN` | `brain` | User → Brain inbound (issued post-PIN auth) | Per-user (admin / adult / child) |
-
-**Why two tokens, not one:**
-
-1. **Blast radius:** If the user-facing token is compromised, attacker cannot make outbound cloud calls (no `cloud.call` on that token). If the service token is compromised, attacker cannot impersonate a user.
-2. **Rotation cadence differs:** Service tokens rotate on a fixed schedule (90 days, TD-23). User tokens rotate on PIN re-auth + 30-day expiry.
-3. **Audit clarity:** Two tokens → two log streams → easy to attribute any given outbound call to "service loop" vs "user initiated."
-
-**Gateway analogue:** Gateway only calls out, never serves users → only needs one token (`ALPHA_SERVICE_TOKEN`).
-
-| Scope | Grants |
-|---|---|
-| `service.internal` | Brain-to-Gateway service-to-service identification — `iss=brain` enforced at Gateway |
-| `cloud.call` | Invoke Gateway `/v1/cloud/call` for Claude / Perplexity / Gemini |
-| `health.read` | Read Gateway health status |
-
-**Precedent:** AWS EC2 instances often hold both an instance-profile IAM role (for outbound AWS API calls) AND a service account (for application-level identity). Same pattern — different callers → different tokens.
 
 ---
 
