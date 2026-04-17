@@ -153,7 +153,36 @@ def test_claude_planner_stub_raises():
     assert planner.family == "claude"
 
 
-async def test_claude_planner_plan_raises_not_implemented():
+async def test_claude_planner_plan_calls_gateway_and_parses(monkeypatch):
+    from unittest.mock import patch
+    import json as _json
+
+    monkeypatch.setenv("ALPHA_BRAIN_SERVICE_TOKEN", "test-token")
     planner = ClaudePlanner(model="claude-haiku", policy=_policy())
-    with pytest.raises(NotImplementedError):
-        await planner.plan(goal="g", system_prompt="p")
+
+    fake_plan_json = _json.dumps(_valid_plan_dict())
+    with patch(
+        "brain.services.llm_transport._post_sync",
+        return_value=(0, _json.dumps({"content": fake_plan_json})),
+    ):
+        result = await planner.plan(
+            goal="fix the bug", system_prompt="you are a planner"
+        )
+
+    assert result.reasoning == "approach"
+    assert len(result.steps) == 2
+
+
+async def test_claude_planner_propagates_transport_error(monkeypatch):
+    from unittest.mock import patch
+    from brain.services.llm_transport import GatewayTransportError
+
+    monkeypatch.setenv("ALPHA_BRAIN_SERVICE_TOKEN", "test-token")
+    planner = ClaudePlanner(model="claude-haiku", policy=_policy())
+
+    with patch(
+        "brain.services.llm_transport._post_sync",
+        return_value=(7, ""),
+    ):
+        with pytest.raises(GatewayTransportError):
+            await planner.plan(goal="g", system_prompt="p")
