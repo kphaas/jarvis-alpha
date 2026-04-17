@@ -219,7 +219,10 @@ else
   $MANUAL_ENDPOINT && status_line "${YELLOW}⚠️${RESET}" "Endpoint" "${YELLOW}MANUAL pull required${RESET}"
   status_line "${GREEN}✅${RESET}" "Sandbox" "auto-pull"
   printf '\n'
-  printf '%bAuto-fan-out to each manual node will run below...%b\n' "${YELLOW}" "${RESET}"
+  printf '%bRun on each manual node:%b\n' "${YELLOW}" "${RESET}"
+  $MANUAL_BRAIN    && printf '  ssh jarvisbrain@100.64.166.22 "bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh"\n'
+  $MANUAL_GATEWAY  && printf '  ssh infranet@100.112.63.25 "bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh"\n'
+  $MANUAL_ENDPOINT && printf '  ssh jarvisendpoint@100.87.223.31 "bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh"\n'
   printf '%b─────────────────────────────────────────────────────────%b\n\n' "${CYAN}" "${RESET}"
 fi
 
@@ -268,48 +271,6 @@ if [[ $pull_ok -eq 1 ]]; then
     cat "$INTEL_LOG"
   fi
   rm -f "$INTEL_LOG"
-fi
-
-# ── Step 9a — SSH fan-out to Brain / Gateway / Endpoint (TD-88) ─
-FANOUT_NEEDED=false
-$NEEDS_BRAIN    && FANOUT_NEEDED=true
-$NEEDS_GATEWAY  && FANOUT_NEEDED=true
-$NEEDS_ENDPOINT && FANOUT_NEEDED=true
-
-if $FANOUT_NEEDED; then
-  printf '\n%b── SSH FAN-OUT (TD-88) ──────────────────────────────%b\n' "${CYAN}" "${RESET}"
-
-  fanout_run() {
-    local label="$1"
-    local host="$2"
-    local needed="$3"
-    if [[ "$needed" != "true" ]]; then
-      status_line "${DIM}—${RESET}" "$label" "${DIM}not affected by change${RESET}"
-      return 0
-    fi
-    printf '%bPulling %s...%b\n' "${CYAN}" "$label" "${RESET}"
-    if ssh "${SSH_OPTS[@]}" -o ServerAliveInterval=30 "$host" \
-        "bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh" 2>&1; then
-      local remote_head
-      remote_head=$(ssh "${SSH_OPTS[@]}" "$host" "git -C ~/jarvis-alpha rev-parse --short HEAD" 2>/dev/null | tr -d '\r\n')
-      status_line "${GREEN}✅${RESET}" "$label" "pulled + restarted — ${remote_head}"
-      return 0
-    else
-      status_line "${RED}❌${RESET}" "$label" "${RED}pull/restart FAILED${RESET}"
-      error_box "Fan-out halted — $label pull/restart failed" \
-        "State: Brain/Gateway/Endpoint may be partially deployed" \
-        "Check: ssh $label 'tail -30 ~/jarvis-alpha/logs/alpha_*_error.log'" \
-        "Retry: ssh $label 'bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh'" \
-        "Rollback: ssh $label 'cd ~/jarvis-alpha && git reset --hard HEAD~1'"
-      return 1
-    fi
-  }
-
-  fanout_run "Brain"    "$BRAIN"    "$NEEDS_BRAIN"    || exit 1
-  fanout_run "Gateway"  "$GATEWAY"  "$NEEDS_GATEWAY"  || exit 1
-  fanout_run "Endpoint" "$ENDPOINT" "$NEEDS_ENDPOINT" || exit 1
-
-  printf '%b─────────────────────────────────────────────────────%b\n' "${CYAN}" "${RESET}"
 fi
 
 # ── Step 9 — Footer ───────────────────────────────────────
