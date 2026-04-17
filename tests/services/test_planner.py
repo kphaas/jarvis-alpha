@@ -169,8 +169,8 @@ def test_parse_handles_leading_whitespace():
 
 
 def test_claude_planner_stub_raises():
-    planner = ClaudePlanner(model="claude-haiku-4-5-20251001", policy=_policy())
-    assert planner.name == "claude:claude-haiku-4-5-20251001"
+    planner = ClaudePlanner(model="claude-haiku", policy=_policy())
+    assert planner.name == "claude:claude-haiku"
     assert planner.family == "claude"
 
 
