@@ -134,7 +134,7 @@ def _plan_to_dict(plan: DreamPlan) -> dict:
 
 @dream_planning_router.post("/plan")
 async def create_plan(request: Request, req: PlanRequest):
-    check_scopes(request, "dream.execute")
+    check_scopes(request, "dream.plan")
     pool = get_pool()
     policy = await _load_policy(pool, req.goal_type)
 
@@ -181,7 +181,7 @@ def _plan_from_dict(d: dict) -> DreamPlan:
 
 @dream_planning_router.post("/review")
 async def create_review(request: Request, req: ReviewRequest):
-    check_scopes(request, "dream.execute")
+    check_scopes(request, "dream.review")
     pool = get_pool()
     policy = await _load_policy(pool, req.goal_type)
 

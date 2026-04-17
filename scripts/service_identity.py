@@ -23,6 +23,8 @@ DEFAULT_SCOPES = {
     ],
     "gateway": [
         "dream.execute",
+        "dream.plan",
+        "dream.review",
         "cloud.call",
         "dream.kill",
         "cost.report",
