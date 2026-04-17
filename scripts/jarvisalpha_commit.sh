@@ -49,10 +49,24 @@ if git ls-files -o --exclude-standard | grep -qE '\.py$'; then py_changed=true; 
 
 if [[ "$py_changed" == true ]]; then
   if command -v ruff &>/dev/null; then
-    echo "Running ruff format..."
-    ruff format brain/ --quiet || true
-    echo "Running ruff lint..."
-    ruff check brain/ --quiet --fix || true
+    RUFF_FMT_LOG=$(mktemp)
+    if ! ruff format . >"$RUFF_FMT_LOG" 2>&1; then
+      echo "❌ ruff format failed:"
+      cat "$RUFF_FMT_LOG"
+      rm -f "$RUFF_FMT_LOG"
+      exit 1
+    fi
+    rm -f "$RUFF_FMT_LOG"
+
+    RUFF_LINT_LOG=$(mktemp)
+    if ! ruff check . >"$RUFF_LINT_LOG" 2>&1; then
+      echo "❌ ruff lint failed:"
+      cat "$RUFF_LINT_LOG"
+      rm -f "$RUFF_LINT_LOG"
+      exit 1
+    fi
+    rm -f "$RUFF_LINT_LOG"
+    echo "ruff ✅"
   fi
 fi
 
@@ -73,11 +87,9 @@ fi
 # Hard fail on empty index. Override with ALLOW_EMPTY_DEPLOY=1
 # Tech debt tracked: TD-7 (shellcheck), TD-8 (refactor to functions), TD-9 (pin SHA on remote)
 
-printf '\n%b\n' "${CYAN}── PRE-STAGE STATUS ─────────────────────────────────────${RESET}"
-printf '%s\n' "Host:   $(hostname -s)"
-printf '%s\n' "Branch: $(git branch --show-current)"
-printf '%s\n' "HEAD:   $(git rev-parse --short HEAD) — $(git log -1 --format=%s)"
-printf '\n'
+echo ""
+echo "HEAD: $(git -C "$REPO_DIR" log -1 --pretty=format:'%h — %s')"
+echo ""
 PRE_STATUS=$(git status --short)
 if [[ -z "$PRE_STATUS" ]]; then
   printf '%b\n' "${YELLOW}Working tree CLEAN — no local changes detected${RESET}"
@@ -123,8 +135,6 @@ else
       "Then re-run the commit script."
     exit 1
   fi
-  printf '%b\n' "${GREEN}✅ pre-commit guard passed${RESET}"
-
   printf '%b\n' "${GREEN}Staged for commit:${RESET}"
   git diff --cached --name-only | sed 's/^/  /'
   git commit -m "$COMMIT_MSG" || { error_box "git commit failed" "Check pre-commit hooks or commit message"; exit 1; }
@@ -142,7 +152,14 @@ printf '\n%s\n' "Pulling rebased main..."
 git pull origin main --rebase || { error_box "git pull --rebase failed" "Resolve conflicts and retry"; exit 1; }
 
 printf '%s\n' "Pushing to origin/main..."
-git push origin main || { error_box "git push failed" "Check network and GitHub auth"; exit 1; }
+PUSH_LOG=$(mktemp)
+if ! git push origin main >"$PUSH_LOG" 2>&1; then
+  echo "❌ git push failed:"
+  cat "$PUSH_LOG"
+  rm -f "$PUSH_LOG"
+  exit 1
+fi
+rm -f "$PUSH_LOG"
 printf '%b\n' "${GREEN}✅ Pushed to origin/main${RESET}"
 
 # ── Step 4 — Detect changed files ─────────────────────────
@@ -245,12 +262,15 @@ fi
 # ── Step 9 — Intel refresh on Sandbox ─────────────────────
 if [[ $pull_ok -eq 1 ]]; then
   echo ""
-  echo "Triggering intel refresh for jarvis-alpha (project 65)..."
-  ssh "${SSH_OPTS[@]}" "$SANDBOX" \
+  INTEL_LOG=$(mktemp)
+  if ! ssh "${SSH_OPTS[@]}" "$SANDBOX" \
     "body=\$(curl -sk -X POST 'http://localhost:5001/api/intel/refresh?project_id=65' --max-time 30); \
      if [ -z \"\$body\" ]; then echo 'Intel refresh: forge offline — skipped'; \
-     else echo \"\$body\" | python3 -c \"import sys,json; d=json.load(sys.stdin); r=d.get('results',[{}])[0]; print('Intel:', r.get('symbols','?'), 'symbols' if 'symbols' in r else r.get('error','?'))\" 2>/dev/null || echo 'Intel refresh: unexpected response'; fi" \
-    || echo "Intel refresh skipped"
+     else echo \"\$body\" | python3 -c \"import sys,json; d=json.load(sys.stdin); r=d.get('results',[{}])[0]; print('Intel:', r.get('symbols','?'), 'symbols' if 'symbols' in r else r.get('error','?'))\" 2>/dev/null || echo 'Intel refresh: unexpected response'; fi" >"$INTEL_LOG" 2>&1; then
+    echo "⚠️  intel refresh:"
+    cat "$INTEL_LOG"
+  fi
+  rm -f "$INTEL_LOG"
 fi
 
 # ── Step 9 — Footer ───────────────────────────────────────

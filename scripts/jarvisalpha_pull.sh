@@ -37,6 +37,7 @@ if [ ! -d "$REPO_DIR" ]; then
   fi
 else
   cd "$REPO_DIR"
+  PREV_HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo "")
   git config credential.helper ""
   GIT_TERMINAL_PROMPT=0 git remote set-url origin https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git
   if ! GIT_TERMINAL_PROMPT=0 git pull origin main --rebase; then
@@ -47,9 +48,21 @@ else
   fi
 fi
 
-SHORT=$(git -C "$REPO_DIR" rev-parse --short HEAD)
+NEW_HEAD=$(git -C "$REPO_DIR" rev-parse --short HEAD)
+
+if [ -n "${PREV_HEAD:-}" ] && [ "$PREV_HEAD" != "$NEW_HEAD" ]; then
+  echo ""
+  echo "── INCOMING COMMITS ─────────────────────────────────────"
+  git -C "$REPO_DIR" log --no-merges --pretty=format:'%h  %s  (%an, %ar)' "${PREV_HEAD}..${NEW_HEAD}"
+  echo ""
+  echo ""
+  echo "── CHURN ────────────────────────────────────────────────"
+  git -C "$REPO_DIR" diff --shortstat "${PREV_HEAD}..${NEW_HEAD}"
+  git -C "$REPO_DIR" diff --stat "${PREV_HEAD}..${NEW_HEAD}" | tail -n +1 | head -n 20
+fi
+
 echo ""
-echo "✅ jarvis-alpha pulled — $SHORT"
+echo "✅ jarvis-alpha pulled — $NEW_HEAD"
 echo "─────────────────────────────────────────────────────────"
 
 echo ""
@@ -113,7 +126,7 @@ if [ -f "$BRAIN_PLIST" ]; then
       echo "─────────────────────────────────────────────────────────"
       rm -f "$PYTEST_LOG"
       echo ""
-      echo "⚠️  Services ARE running ($SHORT deployed). Tests flagged issues."
+      echo "⚠️  Services ARE running ($NEW_HEAD deployed). Tests flagged issues."
       echo "   Fix tests before next deploy or revert commit."
       exit 1
     fi
