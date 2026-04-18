@@ -29,3 +29,7 @@ vault_storage/
 
 # Python egg-info
 *.egg-info/
+
+# Script backups — local only, never committed
+scripts/*.bak_*
+scripts/*.bak
