@@ -10,7 +10,7 @@
 
 ---
 
-*Some sections reflect the state at initial V1 publication. Post-publication updates are tracked in the changelog at the bottom. Full regeneration is scoped as TD-99.*
+*Some sections reflect the state at initial V1 publication. For current state see `docs/JARVIS_Alpha_Phase_Status.md` (Addendum 2026-04-18). Post-publication updates tracked in the changelog at the bottom. Full regeneration scoped as TD-99.*
 
 ---
 
