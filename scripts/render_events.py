@@ -101,7 +101,10 @@ def render_event(evt):
         service = evt.get("service", "unknown")
         pid = evt.get("pid", 0)
         step = f"restart {service}"
-        if status == "fail":
+        if status == "skip":
+            reason = evt.get("reason", "skipped").replace("_", " ")
+            detail = f"{DIM}skipped — {reason}{RESET}"
+        elif status == "fail":
             detail = evt.get("error", "launchagent load failed")[:60]
         elif pid and pid != 0:
             detail = f"launchagent loaded · pid {pid}"
@@ -123,7 +126,10 @@ def render_event(evt):
         passed = evt.get("passed", 0)
         failed = evt.get("failed", 0)
         step = "test gate"
-        if status == "fail":
+        if status == "skip":
+            reason = evt.get("reason", "skipped").replace("_", " ")
+            detail = f"{DIM}skipped — {reason}{RESET}"
+        elif status == "fail":
             detail = evt.get("error", "tests failed")[:60]
         else:
             detail = f"{passed} passed · {failed} failed"
