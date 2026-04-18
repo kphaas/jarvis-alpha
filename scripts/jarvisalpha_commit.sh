@@ -42,8 +42,10 @@ DEPLOY_FAILED=0
 
 # ── Helpers ───────────────────────────────────────────────
 phase_header() {
-  printf '\n%b── %s %s%b\n' "$CYAN" "$1" "─────────────────────────────────────────────────────" "$RESET" | head -c 60
-  printf '\n'
+  # Fixed-width headers — pad/truncate by character count, not byte count,
+  # so multi-byte UTF-8 box-drawing chars aren't cut mid-character.
+  local label="$1"
+  printf '\n%b── %s %s%b\n' "$CYAN" "$label" "─────────────────────────────────────────────────────" "$RESET"
 }
 
 done_banner() {
@@ -186,7 +188,8 @@ remote_pull() {
     > "$tmp_out"
   render_ec=$?
 
-  cat "$tmp_out"
+  # Strip internal sentinels from displayed output (keep them in log for debugging)
+  grep -v '^##RENDER_DONE##\|^##RENDER_FAIL##' "$tmp_out"
 
   local dur=$((SECONDS - start))
   printf '  %s %s %s' "$node_label" "$(printf '%0.s.' $(seq 1 $((50 - ${#node_label}))))" "$(fmt_s $dur)"
