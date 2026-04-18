@@ -90,33 +90,12 @@ fi
 
 NEW_HEAD=$(git -C "$REPO_DIR" rev-parse --short HEAD)
 
-# Capture changed files list AND count (TD-107: used for restart classification)
+# Count files changed in this pull (0 if no-op pull)
 if [ -n "${PREV_HEAD:-}" ] && [ "$PREV_HEAD" != "$NEW_HEAD" ]; then
-  CHANGED_FILES=$(git -C "$REPO_DIR" diff --name-only "${PREV_HEAD}..${NEW_HEAD}")
-  FILE_COUNT=$(echo "$CHANGED_FILES" | wc -l | tr -d ' ')
+  FILE_COUNT=$(git -C "$REPO_DIR" diff --name-only "${PREV_HEAD}..${NEW_HEAD}" | wc -l | tr -d ' ')
 else
-  CHANGED_FILES=""
   FILE_COUNT=0
 fi
-
-# ── TD-107: Per-node restart classifier ──
-# Conservative default: RESTART (fail-safe). Only skip when sure nothing runtime-relevant.
-# Rules match existing commit-script classifier + node-specific paths.
-needs_restart_brain() {
-  [ -z "$CHANGED_FILES" ] && return 1
-  echo "$CHANGED_FILES" | grep -qE '(^brain/|^common/|^db/|^scripts/apply_migrations\.sh|\.py$|^scripts/start_alpha_brain\.sh$|^launchagents/com\.jarvis\.alpha\.(brain|buddy)\.plist$)'
-}
-
-needs_restart_gateway() {
-  [ -z "$CHANGED_FILES" ] && return 1
-  echo "$CHANGED_FILES" | grep -qE '(^gateway/|^common/|\.py$|^scripts/start_alpha_gateway\.sh$|^launchagents/com\.jarvis\.alpha\.gateway\.plist$)'
-}
-
-needs_restart_endpoint() {
-  [ -z "$CHANGED_FILES" ] && return 1
-  echo "$CHANGED_FILES" | grep -qE '(^endpoint/|^ui/dist/|^scripts/deploy_nginx_endpoint\.sh$)'
-}
-
 emit ok pull node="$NODE_SHORT" from_hash="${PREV_HEAD:-none}" to_hash="$NEW_HEAD" file_count="$FILE_COUNT" dur_ms="$PULL_DUR"
 
 if [ -n "${PREV_HEAD:-}" ] && [ "$PREV_HEAD" != "$NEW_HEAD" ]; then
@@ -164,12 +143,7 @@ fi
 echo ""
 
 BRAIN_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.brain.plist"
-if [ "$(hostname -s)" = "jarvis-brain" ] && ! needs_restart_brain; then
-  echo "ℹ️  Skipping Brain restart — no runtime-relevant files changed (TD-107)"
-  emit skip restart node="$NODE_SHORT" service="alpha-brain" reason="no_runtime_changes"
-  emit skip restart node="$NODE_SHORT" service="alpha-buddy" reason="no_runtime_changes"
-  emit skip tests node="$NODE_SHORT" reason="no_runtime_changes"
-elif [ -f "$BRAIN_PLIST" ]; then
+if [ -f "$BRAIN_PLIST" ]; then
   echo ""
   echo "Restarting Alpha Brain LaunchAgent..."
 
@@ -250,10 +224,7 @@ fi
 # ── Gateway branch (TD-88) ────────────────────────────────
 if [ "$(hostname -s)" = "jarvis-gateway" ]; then
   GATEWAY_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.gateway.plist"
-  if ! needs_restart_gateway; then
-    echo "ℹ️  Skipping Gateway restart — no runtime-relevant files changed (TD-107)"
-    emit skip restart node="$NODE_SHORT" service="alpha-gateway" reason="no_runtime_changes"
-  elif [ -f "$GATEWAY_PLIST" ]; then
+  if [ -f "$GATEWAY_PLIST" ]; then
     echo ""
     echo "Restarting Alpha Gateway LaunchAgent..."
 

@@ -359,8 +359,30 @@ if [ "$HANDOFF_ONLY" = "true" ]; then
   exit 0
 fi
 
-# ── Classification moved to pull script (TD-107) ──
-# Commit script is dumb orchestrator — pull script self-classifies restarts
+# ══════════════════════════════════════════════════════════
+# ── Classify changed files (which nodes need pull) ─
+# ══════════════════════════════════════════════════════════
+if [ "$HEAD_AFTER" != "$HEAD_BEFORE" ]; then
+  CHANGED=$(git diff --name-only "${HEAD_BEFORE}..${HEAD_AFTER}")
+else
+  CHANGED=""
+fi
+
+NEEDS_BRAIN=false
+NEEDS_GATEWAY=false
+NEEDS_ENDPOINT=false
+
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  if [[ "$f" == *.py || "$f" == *.yaml || "$f" == *.yml || "$f" == *.md || "$f" == *.sh ]]; then
+    NEEDS_BRAIN=true
+    NEEDS_GATEWAY=true
+    NEEDS_ENDPOINT=true
+  fi
+  if [[ "$f" == brain/* ]]; then NEEDS_BRAIN=true; fi
+  if [[ "$f" == gateway/* ]]; then NEEDS_GATEWAY=true; fi
+  if [[ "$f" == endpoint/* ]]; then NEEDS_ENDPOINT=true; fi
+done <<< "$CHANGED"
 
 # ══════════════════════════════════════════════════════════
 # ── FAN-OUT ─
@@ -396,10 +418,15 @@ else
 fi
 
 # SSH fan-out: Brain → Gateway → Endpoint (halt on failure)
-# TD-107: always pull all runtime nodes; pull script decides whether to restart
-if [ $DEPLOY_FAILED -eq 0 ]; then
+if $NEEDS_BRAIN && [ $DEPLOY_FAILED -eq 0 ]; then
   remote_pull "Brain" "$BRAIN" || exit 1
+fi
+
+if $NEEDS_GATEWAY && [ $DEPLOY_FAILED -eq 0 ]; then
   remote_pull "Gateway" "$GATEWAY" || exit 1
+fi
+
+if $NEEDS_ENDPOINT && [ $DEPLOY_FAILED -eq 0 ]; then
   remote_pull "Endpoint" "$ENDPOINT" || exit 1
 fi
 
