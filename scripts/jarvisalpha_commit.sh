@@ -1,4 +1,13 @@
 #!/bin/bash
+# jarvisalpha_commit.sh — Commit + push + fan-out deploy for jarvis-alpha.
+#
+# Verbosity (additive, Ansible-style):
+#   (default)   NORMAL — pretty event rendering via render_events.py
+#   VERBOSE=1   -v      — raw human output from pull script visible alongside events
+#   VERBOSE=2   -vv     — -v + raw ##EVT## JSON visible
+#
+# Full log always written to /tmp/jarvisalpha_commit_YYYYMMDD_HHMMSS.log
+
 set -uo pipefail
 
 # ── Config ────────────────────────────────────────────────
@@ -10,111 +19,269 @@ SSH_KEY="${HOME}/.ssh/macair_jarvis"
 SSH_OPTS=(-i "$SSH_KEY" -o IdentitiesOnly=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no)
 REPO_DIR="${HOME}/jarvis-alpha"
 COMMIT_MSG="${1:-update}"
+RENDERER="${REPO_DIR}/scripts/render_events.py"
+VERBOSE="${VERBOSE:-0}"
+
+# ── Log file ──────────────────────────────────────────────
+LOG_TS=$(date +%Y%m%d_%H%M%S)
+LOG_FILE="${LOG:-/tmp/jarvisalpha_commit_${LOG_TS}.log}"
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 # ── Colors ────────────────────────────────────────────────
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 CYAN='\033[0;36m'
-RESET='\033[0m'
-BOLD='\033[1m'
 DIM='\033[2m'
+BOLD='\033[1m'
+RESET='\033[0m'
 
-# ── Helper: aligned status line ───────────────────────────
-# Usage: status_line "✅" "Sandbox" "pulled — cb9670e"
-status_line() {
-  local icon="$1"
-  local label="$2"
-  local detail="$3"
-  printf '%b  %-12s %b\n' "$icon" "$label" "$detail"
+# ── Global state ──────────────────────────────────────────
+DEPLOY_START=$SECONDS
+DEPLOY_FAILED=0
+
+# ── Helpers ───────────────────────────────────────────────
+phase_header() {
+  printf '\n%b── %s %s%b\n' "$CYAN" "$1" "─────────────────────────────────────────────────────" "$RESET" | head -c 60
+  printf '\n'
 }
 
-# ── Helper: error box (bold red, only on failure) ─────────
-error_box() {
-  local title="$1"
-  shift
-  printf '%b\n' "${RED}${BOLD}╔════════════════════════════════════════════════════════╗${RESET}" >&2
-  printf '%b%b ❌ %s%b\n' "${RED}${BOLD}║${RESET}" "${RED}${BOLD}" "$title" "${RESET}" >&2
-  for line in "$@"; do
-    printf '%b   %s\n' "${RED}${BOLD}║${RESET}" "$line" >&2
-  done
-  printf '%b\n' "${RED}${BOLD}╚════════════════════════════════════════════════════════╝${RESET}" >&2
+done_banner() {
+  local hash="$1"
+  local dur="$2"
+  printf '\n%b══ DONE %s%b\n' "$BOLD$GREEN" "═════════════════════════════════════════════════════" "$RESET"
+  printf '  ALPHA %b✅%b %s deployed in %ds\n' "$GREEN" "$RESET" "$hash" "$dur"
+  printf '\n'
+  printf '  Log:   %s\n' "$LOG_FILE"
+  printf '  Undo:  git revert %s && bash %s "revert: %s"\n' "$hash" "$0" "$hash"
+  printf '\n'
 }
 
-# ── Step 1 — ruff format + lint ───────────────────────────
+# Render one pre-deploy step: "  ✅ name   detail   duration"
+step_ok() {
+  local step="$1"
+  local detail="$2"
+  local dur="${3:-}"
+  printf '  %b✅%b %-22s %-45s %s\n' "$GREEN" "$RESET" "$step" "$detail" "$dur"
+}
+
+step_fail() {
+  local step="$1"
+  local detail="$2"
+  printf '  %b❌%b %-22s %s\n' "$RED" "$RESET" "$step" "$detail" >&2
+}
+
+fmt_s() {
+  # Format seconds as "X.Xs" or integer for whole numbers
+  awk -v s="$1" 'BEGIN { if (s < 10) printf "%.1fs", s; else printf "%ds", s }'
+}
+
+# Time a command, capture stdout/stderr + exit code + duration
+# Usage: time_step "step name" "detail on success" COMMAND...
+time_step() {
+  local step="$1"; shift
+  local detail="$1"; shift
+  local start=$SECONDS
+  local output
+  local ec
+  output=$("$@" 2>&1) && ec=0 || ec=$?
+  local dur=$((SECONDS - start))
+  if [ $ec -eq 0 ]; then
+    step_ok "$step" "$detail" "$(fmt_s $dur)"
+  else
+    step_fail "$step" "failed (exit $ec)"
+    printf '%b%s%b\n' "$DIM" "$output" "$RESET" >&2
+    return $ec
+  fi
+}
+
+# Unified failure box — takes node + failure JSON + pulls diagnostics
+failure_box() {
+  local node_label="$1"
+  local node_host="$2"
+  local fail_json="$3"
+
+  # Parse the failure JSON via Python (same pattern as renderer)
+  local phase error http_code
+  phase=$(echo "$fail_json" | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(d.get("phase","unknown"))')
+  error=$(echo "$fail_json" | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(d.get("error","(no error text)"))')
+  http_code=$(echo "$fail_json" | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(d.get("http_code",""))' 2>/dev/null)
+
+  printf '\n%b╔════════════════════════════════════════════════════════╗%b\n' "$RED$BOLD" "$RESET" >&2
+  printf '%b║ ❌ FAN-OUT HALTED — %s %s failed%b\n' "$RED$BOLD" "$node_label" "$phase" "$RESET" >&2
+  printf '%b╠════════════════════════════════════════════════════════╣%b\n' "$RED$BOLD" "$RESET" >&2
+  printf '  Node:    %s (%s)\n' "$node_label" "$node_host" >&2
+  printf '  Phase:   %s\n' "$phase" >&2
+  printf '  Error:   %s\n' "$error" >&2
+  [ -n "$http_code" ] && [ "$http_code" != "0" ] && printf '  HTTP:    %s\n' "$http_code" >&2
+  printf '\n' >&2
+
+  # Fetch diagnostics from failing node (separate SSH, 10s timeout)
+  printf '%b── DIAGNOSTICS ──%b\n' "$BOLD" "$RESET" >&2
+  printf '\n  Last 20 lines of error log:\n' >&2
+
+  local service_log
+  case "$phase" in
+    restart|health)
+      case "$node_label" in
+        Brain) service_log="alpha_brain_error.log" ;;
+        Gateway) service_log="alpha_gateway_error.log" ;;
+        *) service_log="alpha_${node_label,,}_error.log" ;;
+      esac
+      ssh -o ConnectTimeout=10 "${SSH_OPTS[@]}" "$node_host" \
+        "tail -20 ~/jarvis-alpha/logs/$service_log 2>/dev/null || echo '(log file not readable)'" 2>&1 \
+        | sed 's/^/    /' >&2
+      ;;
+    tests)
+      ssh -o ConnectTimeout=10 "${SSH_OPTS[@]}" "$node_host" \
+        "tail -30 ~/jarvis-alpha/logs/alpha_brain_error.log 2>/dev/null | grep -iE 'error|traceback|assert' | head -15" 2>&1 \
+        | sed 's/^/    /' >&2
+      ;;
+    migration|pull)
+      ssh -o ConnectTimeout=10 "${SSH_OPTS[@]}" "$node_host" \
+        "cd ~/jarvis-alpha && git log -1 --oneline && git status --short" 2>&1 \
+        | sed 's/^/    /' >&2
+      ;;
+    *)
+      printf '    (no diagnostics available for phase=%s)\n' "$phase" >&2
+      ;;
+  esac
+
+  printf '\n  launchctl jarvis agents:\n' >&2
+  ssh -o ConnectTimeout=10 "${SSH_OPTS[@]}" "$node_host" \
+    "launchctl list | grep 'com.jarvis.alpha' || echo '(no matching agents)'" 2>&1 \
+    | sed 's/^/    /' >&2
+
+  printf '\n%b── RECOVERY ──%b\n' "$BOLD" "$RESET" >&2
+  printf '  Investigate:  ssh %s "tail -50 ~/jarvis-alpha/logs/alpha_*_error.log"\n' "${node_label,,}" >&2
+  printf '  Retry pull:   ssh %s "bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh"\n' "${node_label,,}" >&2
+  printf '  Rollback:     ssh %s "cd ~/jarvis-alpha && git reset --hard HEAD~1 && bash scripts/jarvisalpha_pull.sh"\n' "${node_label,,}" >&2
+  printf '\n  Full log: %s\n' "$LOG_FILE" >&2
+  printf '%b╚════════════════════════════════════════════════════════╝%b\n' "$RED$BOLD" "$RESET" >&2
+}
+
+# Run pull script on a remote node and pipe through renderer.
+# On any ##RENDER_FAIL## sentinel, capture the JSON and trigger failure box.
+remote_pull() {
+  local node_label="$1"
+  local node_host="$2"
+
+  local start=$SECONDS
+  local render_output
+  local render_ec
+
+  printf '\n  %s %s\n' "$node_label" "$(printf '%0.s.' $(seq 1 $((55 - ${#node_label}))))"
+
+  # Capture renderer output so we can detect RENDER_FAIL sentinel
+  local tmp_out
+  tmp_out=$(mktemp)
+  ssh "${SSH_OPTS[@]}" -o ServerAliveInterval=30 "$node_host" \
+    "bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh" 2>&1 \
+    | VERBOSE="$VERBOSE" python3 "$RENDERER" --node="${node_label,,}" \
+    > "$tmp_out"
+  render_ec=$?
+
+  cat "$tmp_out"
+
+  local dur=$((SECONDS - start))
+  printf '  %s %s %s' "$node_label" "$(printf '%0.s.' $(seq 1 $((50 - ${#node_label}))))" "$(fmt_s $dur)"
+
+  if [ $render_ec -eq 0 ]; then
+    printf ' %b✅%b\n' "$GREEN" "$RESET"
+    rm -f "$tmp_out"
+    return 0
+  else
+    printf ' %b❌%b\n' "$RED" "$RESET"
+    local fail_json
+    fail_json=$(grep "^##RENDER_FAIL##" "$tmp_out" | head -1 | sed 's/^##RENDER_FAIL##//')
+    rm -f "$tmp_out"
+    DEPLOY_FAILED=1
+    if [ -n "$fail_json" ]; then
+      failure_box "$node_label" "$node_host" "$fail_json"
+    else
+      printf '\n%b❌ %s pull failed (no structured failure event)%b\n' "$RED" "$node_label" "$RESET" >&2
+      printf '  See log: %s\n' "$LOG_FILE" >&2
+    fi
+    return 1
+  fi
+}
+
+# ══════════════════════════════════════════════════════════
+# ── Step 1: Ruff format + lint (only if .py files changed) ─
+# ══════════════════════════════════════════════════════════
 cd "$REPO_DIR"
 py_changed=false
 if git diff --name-only HEAD 2>/dev/null | grep -qE '\.py$'; then py_changed=true; fi
 if git ls-files -o --exclude-standard | grep -qE '\.py$'; then py_changed=true; fi
 
-if [[ "$py_changed" == true ]]; then
-  if command -v ruff &>/dev/null; then
-    RUFF_FMT_LOG=$(mktemp)
-    if ! ruff format . >"$RUFF_FMT_LOG" 2>&1; then
-      echo "❌ ruff format failed:"
-      cat "$RUFF_FMT_LOG"
-      rm -f "$RUFF_FMT_LOG"
-      exit 1
-    fi
-    rm -f "$RUFF_FMT_LOG"
+# ══════════════════════════════════════════════════════════
+# ── HEADER: commit + scope summary ─
+# ══════════════════════════════════════════════════════════
+HEAD_BEFORE=$(git rev-parse --short HEAD)
+HEAD_MSG=$(git log -1 --format=%s)
+printf '\n%b══ ALPHA DEPLOY %s%b\n' "$BOLD$CYAN" "═════════════════════════════════════════════════════" "$RESET"
+printf '  Commit:  (pending)\n'
+printf '  Message: %s\n' "$COMMIT_MSG"
+printf '  Start:   %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')"
+printf '  Log:     %s\n' "$LOG_FILE"
 
-    RUFF_LINT_LOG=$(mktemp)
-    if ! ruff check . >"$RUFF_LINT_LOG" 2>&1; then
-      echo "❌ ruff lint failed:"
-      cat "$RUFF_LINT_LOG"
-      rm -f "$RUFF_LINT_LOG"
-      exit 1
-    fi
-    rm -f "$RUFF_LINT_LOG"
-    echo "ruff ✅"
-  fi
-fi
+# ══════════════════════════════════════════════════════════
+# ── PRE-DEPLOY ─
+# ══════════════════════════════════════════════════════════
+phase_header "PRE-DEPLOY"
 
-# ── Step 2 — UI build ─────────────────────────────────────
-if [[ -d "$REPO_DIR/ui/src" ]]; then
-  printf '%s' "Building UI... "
-  ui_build_output=$( (cd "$REPO_DIR/ui" && npm run build --silent) 2>&1 ) || {
-    printf '%b\n' "${RED}FAILED${RESET}" >&2
-    error_box "UI build failed" "Vite returned non-zero" "See output below for details"
-    printf '%s\n' "$ui_build_output" >&2
+# Ruff (if needed)
+if [[ "$py_changed" == true ]] && command -v ruff &>/dev/null; then
+  ruff_start=$SECONDS
+  ruff_out=$(ruff format . 2>&1)
+  ruff_ec=$?
+  if [ $ruff_ec -ne 0 ]; then
+    step_fail "ruff format" "failed"
+    echo "$ruff_out" >&2
     exit 1
-  }
-  ui_build_summary=$(printf '%s\n' "$ui_build_output" | grep -E "built in|modules transformed" | tail -1)
-  printf '%b %s\n' "${GREEN}✅${RESET}" "$ui_build_summary"
-fi
+  fi
+  step_ok "ruff format" "clean" "$(fmt_s $((SECONDS - ruff_start)))"
 
-# ── Step 3 — Commit and push (hardened) ───────────────────
-# Hard fail on empty index. Override with ALLOW_EMPTY_DEPLOY=1
-# Tech debt tracked: TD-7 (shellcheck), TD-8 (refactor to functions), TD-9 (pin SHA on remote)
-
-echo ""
-echo "HEAD: $(git -C "$REPO_DIR" log -1 --pretty=format:'%h — %s')"
-echo ""
-PRE_STATUS=$(git status --short)
-if [[ -z "$PRE_STATUS" ]]; then
-  printf '%b\n' "${YELLOW}Working tree CLEAN — no local changes detected${RESET}"
+  lint_start=$SECONDS
+  lint_out=$(ruff check . 2>&1)
+  lint_ec=$?
+  if [ $lint_ec -ne 0 ]; then
+    step_fail "ruff lint" "failed"
+    echo "$lint_out" >&2
+    exit 1
+  fi
+  step_ok "ruff lint" "clean" "$(fmt_s $((SECONDS - lint_start)))"
 else
-  printf '%s\n' "Working tree changes:"
-  printf '%s\n' "$PRE_STATUS" | sed 's/^/  /'
+  step_ok "ruff" "skipped (no .py changes)"
 fi
-printf '%b\n\n' "${CYAN}─────────────────────────────────────────────────────────${RESET}"
 
-head_before=$(git rev-parse HEAD) || { printf '%b\n' "${RED}ERROR: git rev-parse HEAD failed${RESET}" >&2; exit 1; }
+# UI build
+if [[ -d "$REPO_DIR/ui/src" ]]; then
+  ui_start=$SECONDS
+  ui_output=$( (cd "$REPO_DIR/ui" && npm run build --silent) 2>&1 )
+  ui_ec=$?
+  if [ $ui_ec -ne 0 ]; then
+    step_fail "ui build" "vite failed"
+    echo "$ui_output" >&2
+    exit 1
+  fi
+  ui_summary=$(echo "$ui_output" | grep -E "built in|modules transformed" | tail -1 | sed 's/^[ \t]*//')
+  step_ok "ui build" "${ui_summary:-built}" "$(fmt_s $((SECONDS - ui_start)))"
+fi
 
-git add -A || { error_box "git add -A failed" "Working tree may be locked or corrupted"; exit 1; }
+# Git commit + push
+git add -A || { step_fail "git add" "failed"; exit 1; }
 
 if git diff --cached --quiet; then
   if [[ "${ALLOW_EMPTY_DEPLOY:-0}" != "1" ]]; then
-    error_box "No staged changes on $(hostname -s)" \
-      "Your expected work may be on a DIFFERENT MACHINE" \
-      "HEAD remains: ${head_before:0:12}" \
-      "To redeploy: ALLOW_EMPTY_DEPLOY=1 bash $0 \"$COMMIT_MSG\""
+    step_fail "git commit" "no staged changes — working tree may be on wrong machine"
+    printf '\n  To redeploy existing commit: ALLOW_EMPTY_DEPLOY=1 bash %s "%s"\n' "$0" "$COMMIT_MSG" >&2
     exit 1
   fi
-  printf '%b\n' "${YELLOW}WARNING: REDEPLOYING EXISTING COMMIT ${head_before}${RESET}" >&2
-  printf '%b\n' "${YELLOW}         (ALLOW_EMPTY_DEPLOY=1 set — proceeding without new commit)${RESET}" >&2
+  step_ok "git commit" "redeploy (no new changes)"
+  HEAD_AFTER="$HEAD_BEFORE"
 else
-  # Pre-commit guard — block forbidden staged paths
+  # Forbidden path check
   forbidden_staged=()
   while IFS= read -r staged_path; do
     [[ -z "$staged_path" ]] && continue
@@ -126,61 +293,53 @@ else
   done < <(git diff --cached --name-only)
 
   if (( ${#forbidden_staged[@]} > 0 )); then
-    printf '%b\n' "${RED}❌ Forbidden paths staged for commit:${RESET}"
-    for p in "${forbidden_staged[@]}"; do
-      printf '%b\n' "${RED}${p}${RESET}"
-    done
-    printf '\n%s\n%s\n' \
-      "Run: git rm -r --cached <path> && echo '<path>/' >> .gitignore" \
-      "Then re-run the commit script."
+    step_fail "git commit" "forbidden paths staged"
+    for p in "${forbidden_staged[@]}"; do printf '    %s\n' "$p" >&2; done
     exit 1
   fi
-  printf '%b\n' "${GREEN}Staged for commit:${RESET}"
-  git diff --cached --name-only | sed 's/^/  /'
-  git commit -m "$COMMIT_MSG" || { error_box "git commit failed" "Check pre-commit hooks or commit message"; exit 1; }
-  head_after=$(git rev-parse HEAD) || { error_box "git rev-parse HEAD failed after commit"; exit 1; }
-  if [[ "$head_after" == "$head_before" ]]; then
-    error_box "Commit reported success but HEAD did not advance" \
-      "HEAD: ${head_before:0:12} (unchanged)" \
-      "Possible cause: commit hook silently rejected the commit"
-    exit 1
-  fi
-  printf '%b\n' "${GREEN}✅ Commit created: ${head_after}${RESET}"
+
+  commit_start=$SECONDS
+  git commit -m "$COMMIT_MSG" >/dev/null 2>&1 || { step_fail "git commit" "commit failed"; exit 1; }
+  HEAD_AFTER=$(git rev-parse --short HEAD)
+  FILE_COUNT=$(git diff --name-only "${HEAD_BEFORE}..${HEAD_AFTER}" | wc -l | tr -d ' ')
+  step_ok "git commit" "$HEAD_AFTER · $FILE_COUNT file$([ $FILE_COUNT -ne 1 ] && echo 's')" "$(fmt_s $((SECONDS - commit_start)))"
 fi
 
-printf '\n%s\n' "Pulling rebased main..."
-git pull origin main --rebase || { error_box "git pull --rebase failed" "Resolve conflicts and retry"; exit 1; }
-
-printf '%s\n' "Pushing to origin/main..."
-PUSH_LOG=$(mktemp)
-if ! git push origin main >"$PUSH_LOG" 2>&1; then
-  echo "❌ git push failed:"
-  cat "$PUSH_LOG"
-  rm -f "$PUSH_LOG"
+# Pull rebase (silent unless fails)
+pull_start=$SECONDS
+if ! git pull origin main --rebase >/dev/null 2>&1; then
+  step_fail "git pull --rebase" "resolve conflicts and retry"
   exit 1
 fi
-rm -f "$PUSH_LOG"
-printf '%b\n' "${GREEN}✅ Pushed to origin/main${RESET}"
+step_ok "git pull --rebase" "up to date" "$(fmt_s $((SECONDS - pull_start)))"
 
-# ── Step 4 — Detect changed files ─────────────────────────
-CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git show --name-only --format="" HEAD)
+# Push
+push_start=$SECONDS
+push_log=$(mktemp)
+if ! git push origin main >"$push_log" 2>&1; then
+  step_fail "git push" "failed"
+  cat "$push_log" >&2
+  rm -f "$push_log"
+  exit 1
+fi
+rm -f "$push_log"
+step_ok "git push" "origin/main" "$(fmt_s $((SECONDS - push_start)))"
 
-# ── Step 5 — Classify changes ─────────────────────────────
+# ══════════════════════════════════════════════════════════
+# ── Classify changed files (which nodes need pull) ─
+# ══════════════════════════════════════════════════════════
+if [ "$HEAD_AFTER" != "$HEAD_BEFORE" ]; then
+  CHANGED=$(git diff --name-only "${HEAD_BEFORE}..${HEAD_AFTER}")
+else
+  CHANGED=""
+fi
+
 NEEDS_BRAIN=false
 NEEDS_GATEWAY=false
 NEEDS_ENDPOINT=false
-NEEDS_SANDBOX=true
-MANUAL_BRAIN=false
-MANUAL_GATEWAY=false
-MANUAL_ENDPOINT=false
 
 while IFS= read -r f; do
   [[ -z "$f" ]] && continue
-  case "$f" in
-    brain/services/*)   MANUAL_BRAIN=true ;;
-    gateway/services/*) MANUAL_GATEWAY=true ;;
-    endpoint/*)         MANUAL_ENDPOINT=true ;;
-  esac
   if [[ "$f" == *.py || "$f" == *.yaml || "$f" == *.yml || "$f" == *.md || "$f" == *.sh ]]; then
     NEEDS_BRAIN=true
     NEEDS_GATEWAY=true
@@ -191,128 +350,62 @@ while IFS= read -r f; do
   if [[ "$f" == endpoint/* ]]; then NEEDS_ENDPOINT=true; fi
 done <<< "$CHANGED"
 
-# ── Step 6 — Deploy plan (compact / expanded based on manual needs) ─
-HAS_MANUAL=false
-if $MANUAL_BRAIN || $MANUAL_GATEWAY || $MANUAL_ENDPOINT; then HAS_MANUAL=true; fi
+# ══════════════════════════════════════════════════════════
+# ── FAN-OUT ─
+# ══════════════════════════════════════════════════════════
+phase_header "FAN-OUT"
 
-if ! $HAS_MANUAL; then
-  # Compact one-liner — no manual action required
-  needs_list=""
-  $NEEDS_BRAIN    && needs_list="${needs_list}Brain "
-  $NEEDS_GATEWAY  && needs_list="${needs_list}Gateway "
-  $NEEDS_ENDPOINT && needs_list="${needs_list}Endpoint "
-  if [[ -n "$needs_list" ]]; then
-    printf '\n%bDeploy:%b Sandbox auto / pull required on: %s\n\n' "${CYAN}" "${RESET}" "$needs_list"
-  else
-    printf '\n%bDeploy:%b Sandbox auto / no other nodes affected\n\n' "${CYAN}" "${RESET}"
-  fi
+# Sandbox auto-pull
+sb_start=$SECONDS
+sb_out=$(ssh "${SSH_OPTS[@]}" "$SANDBOX" \
+  "cd ~/jarvis-alpha && git pull origin main --rebase --quiet && git rev-parse --short HEAD" 2>&1)
+sb_ec=$?
+sb_dur=$((SECONDS - sb_start))
+if [ $sb_ec -eq 0 ]; then
+  sb_hash=$(echo "$sb_out" | tail -1 | tr -d '\r\n')
+  step_ok "sandbox" "pulled — $sb_hash" "$(fmt_s $sb_dur)"
 else
-  # Expanded — manual deploy required, show full table
-  printf '\n%b── ALPHA DEPLOY PLAN ────────────────────────────────────%b\n' "${CYAN}" "${RESET}"
-  printf '%s\n' "Changed files:"
-  if [[ -n "$CHANGED" ]]; then
-    printf '%s\n' "$CHANGED" | sed 's/^/  /'
-  fi
-  printf '\n'
-  $MANUAL_BRAIN   && status_line "${YELLOW}⚠️${RESET}" "Brain"    "${YELLOW}MANUAL pull required${RESET}"
-  $MANUAL_GATEWAY && status_line "${YELLOW}⚠️${RESET}" "Gateway"  "${YELLOW}MANUAL pull required${RESET}"
-  $MANUAL_ENDPOINT && status_line "${YELLOW}⚠️${RESET}" "Endpoint" "${YELLOW}MANUAL pull required${RESET}"
-  status_line "${GREEN}✅${RESET}" "Sandbox" "auto-pull"
-  printf '\n'
-  printf '%bAuto-fan-out to each manual node will run below...%b\n' "${YELLOW}" "${RESET}"
-  printf '%b─────────────────────────────────────────────────────────%b\n\n' "${CYAN}" "${RESET}"
+  step_fail "sandbox" "pull failed"
+  echo "$sb_out" >&2
+  DEPLOY_FAILED=1
 fi
 
-# ── Step 7 — Sandbox auto-pull ────────────────────────────
-pull_ok=0
-sandbox_footer=""
-
-pull_output=$(ssh "${SSH_OPTS[@]}" "$SANDBOX" bash -s 2>&1 <<'REMOTE'
-cd ~/jarvis-alpha && git pull origin main --rebase --quiet && git rev-parse --short HEAD
-REMOTE
-)
-pull_ec=$?
-if [[ $pull_ec -eq 0 ]]; then
-  sandbox_short=$(echo "$pull_output" | tail -1 | tr -d '\r\n')
-  status_line "${GREEN}✅${RESET}" "Sandbox" "pulled — ${sandbox_short}"
-  sandbox_footer="pulled ✅ ($sandbox_short)"
-  pull_ok=1
-else
-  status_line "${RED}❌${RESET}" "Sandbox" "${RED}pull failed${RESET}"
-  error_box "Sandbox pull failed" "See output below"
-  echo "$pull_output" >&2
-  sandbox_footer="pull failed ❌"
-fi
-
-# ── Step 8 — SCP dist to Endpoint ────────────────────────
-ENDPOINT_HOST="jarvisendpoint@100.87.223.31"
-scp_output=$(scp "${SSH_OPTS[@]}" -r "$REPO_DIR/ui/dist" "$ENDPOINT_HOST:~/jarvis-alpha/ui/" 2>&1)
+# Endpoint SCP dist
+scp_start=$SECONDS
+scp_out=$(scp "${SSH_OPTS[@]}" -r "$REPO_DIR/ui/dist" "$ENDPOINT:~/jarvis-alpha/ui/" 2>&1)
 scp_ec=$?
-if [[ $scp_ec -eq 0 ]]; then
-  status_line "${GREEN}✅${RESET}" "Endpoint" "UI dist synced"
+scp_dur=$((SECONDS - scp_start))
+if [ $scp_ec -eq 0 ]; then
+  step_ok "endpoint (scp)" "ui dist synced" "$(fmt_s $scp_dur)"
 else
-  status_line "${RED}❌${RESET}" "Endpoint" "${RED}scp failed${RESET}"
-  error_box "UI dist scp to Endpoint failed" "See output below"
-  echo "$scp_output" >&2
+  step_fail "endpoint (scp)" "scp failed"
+  echo "$scp_out" >&2
+  DEPLOY_FAILED=1
 fi
 
-# ── Step 9 — Intel refresh on Sandbox ─────────────────────
-if [[ $pull_ok -eq 1 ]]; then
-  echo ""
-  INTEL_LOG=$(mktemp)
-  if ! ssh "${SSH_OPTS[@]}" "$SANDBOX" \
-    "body=\$(curl -sk -X POST 'http://localhost:5001/api/intel/refresh?project_id=65' --max-time 30); \
-     if [ -z \"\$body\" ]; then echo 'Intel refresh: forge offline — skipped'; \
-     else echo \"\$body\" | python3 -c \"import sys,json; d=json.load(sys.stdin); r=d.get('results',[{}])[0]; print('Intel:', r.get('symbols','?'), 'symbols' if 'symbols' in r else r.get('error','?'))\" 2>/dev/null || echo 'Intel refresh: unexpected response'; fi" >"$INTEL_LOG" 2>&1; then
-    echo "⚠️  intel refresh:"
-    cat "$INTEL_LOG"
-  fi
-  rm -f "$INTEL_LOG"
+# SSH fan-out: Brain → Gateway → Endpoint (halt on failure)
+if $NEEDS_BRAIN && [ $DEPLOY_FAILED -eq 0 ]; then
+  remote_pull "Brain" "$BRAIN" || exit 1
 fi
 
-# ── Step 9a — SSH fan-out to Brain / Gateway / Endpoint (TD-88) ─
-FANOUT_NEEDED=false
-$NEEDS_BRAIN    && FANOUT_NEEDED=true
-$NEEDS_GATEWAY  && FANOUT_NEEDED=true
-$NEEDS_ENDPOINT && FANOUT_NEEDED=true
-
-if $FANOUT_NEEDED; then
-  printf '\n%b── SSH FAN-OUT (TD-88) ──────────────────────────────%b\n' "${CYAN}" "${RESET}"
-
-  fanout_run() {
-    local label="$1"
-    local host="$2"
-    local needed="$3"
-    if [[ "$needed" != "true" ]]; then
-      status_line "${DIM}—${RESET}" "$label" "${DIM}not affected by change${RESET}"
-      return 0
-    fi
-    printf '%bPulling %s...%b\n' "${CYAN}" "$label" "${RESET}"
-    if ssh "${SSH_OPTS[@]}" -o ServerAliveInterval=30 "$host" \
-        "bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh" 2>&1; then
-      local remote_head
-      remote_head=$(ssh "${SSH_OPTS[@]}" "$host" "git -C ~/jarvis-alpha rev-parse --short HEAD" 2>/dev/null | tr -d '\r\n')
-      status_line "${GREEN}✅${RESET}" "$label" "pulled + restarted — ${remote_head}"
-      return 0
-    else
-      status_line "${RED}❌${RESET}" "$label" "${RED}pull/restart FAILED${RESET}"
-      error_box "Fan-out halted — $label pull/restart failed" \
-        "State: Brain/Gateway/Endpoint may be partially deployed" \
-        "Check: ssh $label 'tail -30 ~/jarvis-alpha/logs/alpha_*_error.log'" \
-        "Retry: ssh $label 'bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh'" \
-        "Rollback: ssh $label 'cd ~/jarvis-alpha && git reset --hard HEAD~1'"
-      return 1
-    fi
-  }
-
-  fanout_run "Brain"    "$BRAIN"    "$NEEDS_BRAIN"    || exit 1
-  fanout_run "Gateway"  "$GATEWAY"  "$NEEDS_GATEWAY"  || exit 1
-  fanout_run "Endpoint" "$ENDPOINT" "$NEEDS_ENDPOINT" || exit 1
-
-  printf '%b─────────────────────────────────────────────────────%b\n' "${CYAN}" "${RESET}"
+if $NEEDS_GATEWAY && [ $DEPLOY_FAILED -eq 0 ]; then
+  remote_pull "Gateway" "$GATEWAY" || exit 1
 fi
 
-# ── Step 9 — Footer ───────────────────────────────────────
-COMMIT_HASH=$(git -C "$REPO_DIR" rev-parse --short HEAD)
-COMMIT_LINE=$(git -C "$REPO_DIR" log -1 --format=%s)
-printf "\n%b ${CYAN}%s${RESET} — %s | sandbox: %s\n" "${GREEN}ALPHA ✅${RESET}" "$COMMIT_HASH" "$COMMIT_LINE" "$sandbox_footer"
+if $NEEDS_ENDPOINT && [ $DEPLOY_FAILED -eq 0 ]; then
+  remote_pull "Endpoint" "$ENDPOINT" || exit 1
+fi
+
+# ══════════════════════════════════════════════════════════
+# ── DONE ─
+# ══════════════════════════════════════════════════════════
+if [ $DEPLOY_FAILED -eq 0 ]; then
+  total_dur=$((SECONDS - DEPLOY_START))
+  done_banner "$HEAD_AFTER" "$total_dur"
+  exit 0
+else
+  printf '\n%b══ FAILED ═════════════════════════════════════════════%b\n' "$RED$BOLD" "$RESET" >&2
+  printf '  See diagnostics above.\n' >&2
+  printf '  Full log: %s\n' "$LOG_FILE" >&2
+  exit 1
+fi
