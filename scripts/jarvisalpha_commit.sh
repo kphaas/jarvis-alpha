@@ -71,6 +71,11 @@ step_fail() {
   printf '  %b❌%b %-22s %s\n' "$RED" "$RESET" "$step" "$detail" >&2
 }
 
+# Portable lowercase (bash 3.2 compatible — macOS /bin/bash is 3.2)
+lc() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 fmt_s() {
   # Format seconds as "X.Xs" or integer for whole numbers
   awk -v s="$1" 'BEGIN { if (s < 10) printf "%.1fs", s; else printf "%ds", s }'
@@ -126,7 +131,7 @@ failure_box() {
       case "$node_label" in
         Brain) service_log="alpha_brain_error.log" ;;
         Gateway) service_log="alpha_gateway_error.log" ;;
-        *) service_log="alpha_${node_label,,}_error.log" ;;
+        *) service_log="alpha_$(lc "$node_label")_error.log" ;;
       esac
       ssh -o ConnectTimeout=10 "${SSH_OPTS[@]}" "$node_host" \
         "tail -20 ~/jarvis-alpha/logs/$service_log 2>/dev/null || echo '(log file not readable)'" 2>&1 \
@@ -153,9 +158,9 @@ failure_box() {
     | sed 's/^/    /' >&2
 
   printf '\n%b── RECOVERY ──%b\n' "$BOLD" "$RESET" >&2
-  printf '  Investigate:  ssh %s "tail -50 ~/jarvis-alpha/logs/alpha_*_error.log"\n' "${node_label,,}" >&2
-  printf '  Retry pull:   ssh %s "bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh"\n' "${node_label,,}" >&2
-  printf '  Rollback:     ssh %s "cd ~/jarvis-alpha && git reset --hard HEAD~1 && bash scripts/jarvisalpha_pull.sh"\n' "${node_label,,}" >&2
+  printf '  Investigate:  ssh %s "tail -50 ~/jarvis-alpha/logs/alpha_*_error.log"\n' "$(lc "$node_label")" >&2
+  printf '  Retry pull:   ssh %s "bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh"\n' "$(lc "$node_label")" >&2
+  printf '  Rollback:     ssh %s "cd ~/jarvis-alpha && git reset --hard HEAD~1 && bash scripts/jarvisalpha_pull.sh"\n' "$(lc "$node_label")" >&2
   printf '\n  Full log: %s\n' "$LOG_FILE" >&2
   printf '%b╚════════════════════════════════════════════════════════╝%b\n' "$RED$BOLD" "$RESET" >&2
 }
@@ -177,7 +182,7 @@ remote_pull() {
   tmp_out=$(mktemp)
   ssh "${SSH_OPTS[@]}" -o ServerAliveInterval=30 "$node_host" \
     "bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh" 2>&1 \
-    | VERBOSE="$VERBOSE" python3 "$RENDERER" --node="${node_label,,}" \
+    | VERBOSE="$VERBOSE" python3 "$RENDERER" --node="$(lc "$node_label")" \
     > "$tmp_out"
   render_ec=$?
 
