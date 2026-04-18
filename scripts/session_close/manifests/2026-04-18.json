@@ -1,0 +1,151 @@
+{
+  "session_date": "2026-04-18",
+  "session_sequence": "01",
+  "session_commit_range": {
+    "from": "93af549",
+    "to": "de9b442"
+  },
+  "labels_to_ensure": [
+    {"name": "deploy", "color": "0E8A16", "description": "Deploy system"},
+    {"name": "tests", "color": "F9D0C4", "description": "Test infrastructure"},
+    {"name": "docs", "color": "BFDADC", "description": "Documentation"},
+    {"name": "maintenance-window", "color": "B60205", "description": "Requires coordinated maintenance window"},
+    {"name": "ops", "color": "5319E7", "description": "Operations / tooling"}
+  ],
+  "close_existing": [
+    {
+      "issue_number": 42,
+      "td_id": "TD-94",
+      "comment": "Closed via state review 2026-04-18 (commit de9b442). LaunchAgent audit complete — stale watchdog plist deleted (bb37be7), executor-deleted claim corrected (TD-103 → 965fcca). Watchdog -15 SIGTERM tracked as Concern C2 in STATE_2026-04-18.md and noted in Phase_Status addendum; reload attempt logged as recommendation I4."
+    },
+    {
+      "issue_number": 43,
+      "td_id": "TD-95",
+      "comment": "Closed by commit c5bc3b4 — stale AI-3 message replaced in scripts/jarvisalpha_pull.sh. Verified: grep returns zero matches on stale markers."
+    },
+    {
+      "issue_number": 44,
+      "td_id": "TD-96",
+      "comment": "Closed by commit c5bc3b4 (classifier implementation) + validated in production this session across three paths: handoff-only skip (965fcca → 3s deploy), non-runtime skip (TD-107-gated), full restart path. TD-96 classifier working as designed."
+    },
+    {
+      "issue_number": 40,
+      "td_id": "TD-92",
+      "comment": "Closed by commit c5bc3b4 (surgical update). V1 arch doc received: (1) stale-section marker at top, (2) stale nginx clause fixed in §5, (3) §9 Known Gaps nginx bullet removed, (4) Updates Since V1 Publication changelog appended. Full regeneration scoped separately as TD-99 (post-D3)."
+    }
+  ],
+  "create_and_close": [
+    {
+      "td_id": "TD-105",
+      "title": "TD-105: Consolidate all LaunchAgent plists to launchagents/ (+ closes TD-15)",
+      "body": "Consolidate all 16 LaunchAgent plists into canonical flat `launchagents/` directory (mirrors runtime layout). Closes pre-existing TD-15 (duplicate launchagents dirs).\n\n**Shipped in commit 806ed45 (2026-04-18):**\n- 6 plists moved from `scripts/launchagents/` → `launchagents/` (preserved git history via `git mv`)\n- 4 power sampler plists moved + renamed: `power_sampler_<node>.plist` → `com.jarvis.alpha.power.<node>.plist`\n- 2 new observability plists created: `com.jarvis.alpha.fluentbit.plist`, `com.jarvis.alpha.loki.plist`\n- Stale duplicate `scripts/launchagents/alpha.nginx.conf` deleted (drift from canonical endpoint/nginx/alpha.conf — missing `access_log json_structured` and `error_log warn`)\n- `scripts/launchagents/` directory removed (auto via last-file `git rm`)\n- `scripts/install_power_sampler.sh` updated with 4 new paths\n- `launchagents/README.md` created — documents flat-layout convention, reverse-domain naming, per-node deploy targets\n\n**Architecture decision locked:** flat directory mirrors launchd runtime (no subdirectories supported by launchd). Naming convention carries taxonomy via categorical prefix (service.*, rotate.*, power.*, observability.*). Matches systemd/Ansible/k8s single-location pattern.\n\n**Follow-up:** TD-110 (rename legacy labels to categorical form) requires maintenance window.",
+      "labels": ["infra", "debt", "P2-medium", "all-nodes"],
+      "close_comment": "Closed same-session by commit 806ed45. Issue created for audit trail of architectural decision (flat launchagents/ layout)."
+    }
+  ],
+  "create_open": [
+    {
+      "td_id": "TD-99",
+      "title": "TD-99: Full regeneration of JARVIS_Alpha_Architecture_Review_V1.md (V2)",
+      "body": "Full V2 regeneration of the architecture review document, scheduled after D3 Dream Orchestrator ships. V1 is marked SUPERSEDED and has extensive drift (Gateway port 8282→8283, executor deleted claim, x-jarvis-token vs RS256 two-token pattern, missing entire Alpha-2 + Alpha-3 foundation).\n\n**Interim canonical:** docs/JARVIS_Alpha_Phase_Status.md Addendum 2026-04-18 (commit de9b442) + docs/state/STATE_2026-04-18.md (commit 6699d29).\n\n**Why defer:** V2 should reflect the D3 orchestrator pattern once it lands. Regenerating before D3 ships guarantees immediate re-drift.",
+      "labels": ["debt", "docs", "P2-medium"]
+    },
+    {
+      "td_id": "TD-102",
+      "title": "TD-102: V1 doc version drift — project attachment vs repo content",
+      "body": "Discovered 2026-04-18 during TD-92 surgical update: the V1 arch doc attached to the project has §11-§16 section tables that don't exist in the repo V1 file. Same filename, different content. Repo is source of truth.\n\n**Resolution:** Will be naturally resolved by TD-99 V2 regeneration (fresh authoritative content makes both stale versions obsolete).",
+      "labels": ["debt", "docs", "P3-low"]
+    },
+    {
+      "td_id": "TD-106",
+      "title": "TD-106: CI drift detection — expanded scope: all duplicated configs (LaunchAgents, nginx, yaml, plist)",
+      "body": "Originally logged (session 2026-04-17_02) as \"CI drift-detection check for LaunchAgents.\" Upgraded to P2 and scope expanded 2026-04-18 after discovering TD-104 watchdog plist duplicate AND TD-105 alpha.nginx.conf stale duplicate.\n\n**Pattern to catch:** any file path that appears in two locations in the repo with divergent content. Examples found this session:\n- scripts/launchagents/com.jarvis.alpha.watchdog.plist (stale, dead module path) vs launchagents/com.jarvis.alpha.watchdog.plist (canonical)\n- scripts/launchagents/alpha.nginx.conf (stale, missing observability directives) vs endpoint/nginx/alpha.conf (canonical)\n\n**Implementation sketch:** GitHub Action on PR — find .plist, .conf, .yaml files with identical basenames in different directories, diff contents, fail if non-trivial drift.",
+      "labels": ["infra", "ops", "P2-medium"]
+    },
+    {
+      "td_id": "TD-110",
+      "title": "TD-110: Rename legacy LaunchAgent labels to categorical form",
+      "body": "Rename legacy LaunchAgent labels to the categorical reverse-domain scheme documented in launchagents/README.md:\n\n| Current | Target |\n|---|---|\n| com.jarvis.alpha.brain | com.jarvis.alpha.service.brain |\n| com.jarvis.alpha.buddy | com.jarvis.alpha.service.buddy |\n| com.jarvis.alpha.executor | com.jarvis.alpha.service.executor |\n| com.jarvis.alpha.watchdog | com.jarvis.alpha.service.watchdog |\n| com.jarvis.alpha.gateway | com.jarvis.alpha.service.gateway |\n| com.jarvis.alpha.fluentbit | com.jarvis.alpha.observability.fluentbit |\n| com.jarvis.alpha.loki | com.jarvis.alpha.observability.loki |\n| com.jarvis.alpha.power.* | com.jarvis.alpha.telemetry.power.* |\n\n**Requires maintenance window:** rename = launchctl bootout old + launchctl bootstrap new across Brain/Gateway/Endpoint/Sandbox. Services briefly down. Updates to commit scripts, deploy scripts, handoff references, memory entries.",
+      "labels": ["infra", "debt", "P2-medium", "maintenance-window", "all-nodes"]
+    },
+    {
+      "td_id": "TD-111",
+      "title": "TD-111: External observability configs not in repo — move to config/",
+      "body": "Two observability configs live on Brain's filesystem but not in the repo:\n- `/Users/jarvisbrain/fluent-bit/fluent-bit.yaml` — Fluent Bit log shipper config\n- `/Users/jarvisbrain/jarvis/loki/loki-config.yaml` — Loki aggregator config\n\n**Infrastructure-as-Code violation:** configs should be version-controlled alongside the plists that reference them (TD-105 just consolidated).\n\n**Implementation:** move both files into repo at `config/fluent-bit.yaml` + `config/loki-config.yaml`. Update plists if paths change (probably keep ~/ paths; configs get synced from repo on each deploy via SCP or similar pattern).",
+      "labels": ["infra", "debt", "P2-medium", "brain"]
+    },
+    {
+      "td_id": "TD-113",
+      "title": "TD-113: TD-107 classifier \\.sh$ pattern too broad — restarts services for install scripts",
+      "body": "TD-107 per-node restart classifier in jarvisalpha_pull.sh uses the pattern `\\.sh$` as a fallback for shell scripts. This matches ALL shell scripts including `scripts/install_power_sampler.sh` which doesn't require service restart.\n\n**Observed 2026-04-18:** commit 806ed45 triggered unnecessary Brain + Gateway restart because install_power_sampler.sh was modified. Deploy time 28s instead of ~10s.\n\n**Fix:** tighten Brain classifier to `^scripts/start_alpha_brain\\.sh$|^scripts/apply_migrations\\.sh$`. Gateway similarly scoped. Install/utility scripts excluded.\n\n**Risk:** false negatives for scripts that SHOULD trigger restart. Conservative default (restart) is preferable for now, so P3 not P2.",
+      "labels": ["infra", "deploy", "P3-low"]
+    },
+    {
+      "td_id": "TD-114",
+      "title": "TD-114: pytest --collect-only requires ALPHA_DB_DSN env var",
+      "body": "Observed during state review discovery 2026-04-18:\n\n```\n$ python -m pytest --collect-only -q\nERROR tests/test_route_classification.py - KeyError: 'ALPHA_DB_DSN'\n```\n\nAdding `set -a; source ~/jarvis/.secrets; set +a` resolves the error and returns 133 tests collected cleanly.\n\n**Root cause:** import-time DB connection somewhere in the test tree. Test collection should NOT require a live DB connection.\n\n**Fix:** identify the offending import chain, defer DB access to fixture-time (conftest.py) or runtime (not module-level). Likely candidate: something importing `brain.db.pool` at module scope in a conftest or shared test helper.",
+      "labels": ["tests", "debt", "P3-low", "brain"]
+    },
+    {
+      "td_id": "TD-115",
+      "title": "TD-115: Sandbox ~/.ssh/known_hosts stale for Gateway (100.112.63.25)",
+      "body": "Observed during state review discovery 2026-04-18:\n\n```\n$ ssh infranet@100.112.63.25 \"...\"\nHost key verification failed.\n```\n\nSandbox cannot SSH to Gateway — missing or stale entry in `~/.ssh/known_hosts`.\n\n**Impact today:** none (no workflow currently requires Sandbox→Gateway SSH).\n\n**Impact future:** any cross-node automation initiated from Sandbox (state reviews, health checks, log aggregation orchestration) would fail.\n\n**Fix:** `ssh-keyscan -H 100.112.63.25 >> ~/.ssh/known_hosts` on Sandbox, or investigate why the key rotated (Gateway host key shouldn't change without operator intent).",
+      "labels": ["infra", "sandbox", "gateway", "P3-low"]
+    },
+    {
+      "td_id": "TD-116",
+      "title": "TD-116: Codify Claude Code state-review pattern (SCP Sandbox→Air required)",
+      "body": "Claude Code on Sandbox successfully produced STATE_2026-04-18.md but required manual SCP from Sandbox to Air before commit, because commit script is Air-centric.\n\n**Pattern options:**\n- (A) Run Claude Code on Air natively (if CLI available) — skip SCP\n- (B) Add \"Claude Code write → commit from originating node\" path to commit script\n- (C) Document current SCP-then-commit flow as canonical until A/B decided\n\n**Recommend C short-term, A long-term.** Logged for later session — not blocking.",
+      "labels": ["ops", "docs", "P3-low", "sandbox"]
+    },
+    {
+      "td_id": "TD-117",
+      "title": "TD-117: Commit script fan-out: Sandbox auto-pull failure should halt Endpoint SCP",
+      "body": "Observed 2026-04-18 during state review commit (6699d29):\n\n```\n── FAN-OUT ──\n❌ sandbox        pull failed\n✅ endpoint (scp) ui dist synced   ← ran despite Sandbox failure\n```\n\nEndpoint SCP step in jarvisalpha_commit.sh is NOT gated on DEPLOY_FAILED, so it runs even after prior step fails. Wasted work + confusing output.\n\n**Fix:** wrap Endpoint SCP block in `if [ $DEPLOY_FAILED -eq 0 ]; then ... fi` (same pattern used by remote_pull calls downstream).\n\n**Part of deploy-system-robustness cluster with TD-118, TD-119.**",
+      "labels": ["infra", "deploy", "P2-medium"]
+    },
+    {
+      "td_id": "TD-118",
+      "title": "TD-118: Sandbox auto-pull fails on untracked file collision with incoming commit",
+      "body": "Observed 2026-04-18: when Claude Code (or any other process) writes a file directly on Sandbox, then the same file path is committed from Air, Sandbox's `git pull` fails:\n\n```\nerror: The following untracked working tree files would be overwritten by merge:\n  docs/state/STATE_2026-04-18.md\nPlease move or remove them before you merge.\nAborting\n```\n\n**Fix options:**\n- (A) Pre-pull `git clean -fd` on Sandbox — aggressive, risks destroying legitimate work\n- (B) Detect collision, diff against origin, auto-remove if identical, prompt operator if different\n- (C) Use `git pull --autostash` — stashes local changes, but doesn't help with untracked files\n- (D) Git's `-f` flag on checkout after fetch — force overwrite untracked\n\n**Recommend B** — safest, matches big-tech pattern of never auto-destroying user work without verification.\n\nPaired with TD-119 (separate Sandbox auth issue).",
+      "labels": ["infra", "deploy", "sandbox", "P2-medium"]
+    },
+    {
+      "td_id": "TD-119",
+      "title": "TD-119: Sandbox ~/.secrets missing GITHUB_TOKEN — jarvisalpha_pull.sh broken on Sandbox",
+      "body": "Two different pull paths exist on Sandbox with inconsistent auth:\n\n**Path 1 (works):** Commit script does `ssh sandbox 'cd ~/jarvis-alpha && git pull ...'` — uses git's native credential helper / SSH key.\n\n**Path 2 (broken):** `bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh` on Sandbox — reads `~/.secrets` for `GITHUB_TOKEN`, fails with `ERROR: GITHUB_TOKEN not set in secrets`.\n\n**Observed impact 2026-04-18:** during recovery from TD-118 collision, manual `jarvisalpha_pull.sh` on Sandbox failed. Had to fall back to native `git pull origin main --rebase`.\n\n**Fix options:**\n- (A) Add `GITHUB_TOKEN` to Sandbox `~/.secrets` — simplest\n- (B) Refactor pull script to use node-native git auth consistently — bigger refactor\n- (C) Document the two paths and when to use each — worst of all worlds (explicit inconsistency)\n\n**Recommend A.** Copy token from Air/Brain, chmod 600, done.",
+      "labels": ["infra", "deploy", "sandbox", "P2-medium"]
+    },
+    {
+      "td_id": "TD-120",
+      "title": "TD-120: Phase_Status.md addendum cosmetic markdown — 2 missing blank lines",
+      "body": "Addendum added 2026-04-18 (commit de9b442) is functionally correct but missing 2 blank lines for strict markdown compliance:\n\n1. Between \"Original Alpha-3 table (above) had 9 items. Status updated:\" and the following table (line 200 area)\n2. Between end of Alpha-3 progress table (line 213) and `## Alpha-3 — Additional Deliverables Shipped (Not In Original Plan)` header\n\n**Current state:** most markdown renderers handle this fine. GitHub renders correctly. No visual bug.\n\n**Fix:** 2-line sed edit. Trivial but easy to forget — log for future cleanup pass.",
+      "labels": ["docs", "P3-low"]
+    }
+  ],
+  "handoff": {
+    "tldr": "Marathon session: infrastructure hardening sprint → state review → GitHub sync tooling. 11 items shipped (TD-92, 94, 95, 96, 103, 104, 105/15, 107, 108 + Phase_Status addendum). Deploy system now textbook big-tech (handoff-skip, smart worker/dumb orchestrator, halt-on-fail). Comprehensive 768-line state review generated by Claude Code. Session-close tooling built this session to make future closes reproducible.",
+    "architecture_decisions": [
+      {
+        "title": "LaunchAgent flat-directory layout",
+        "description": "All plists consolidated into single flat launchagents/ dir. Mirrors launchd runtime constraint (no subdirectories). Naming convention carries taxonomy via categorical prefix. Matches systemd/Ansible/k8s single-location pattern."
+      },
+      {
+        "title": "Smart worker / dumb orchestrator deploy split (TD-107)",
+        "description": "Commit script fans out unconditionally to all runtime nodes. Pull script self-classifies whether to restart services based on changed files. Matches k8s kubelet + CodeDeploy agent pattern. Proven across three scenarios: 3s handoff-skip, 10s non-runtime, 28s full restart."
+      },
+      {
+        "title": "Session close tooling pattern",
+        "description": "Per-session JSON manifest in scripts/session_close/manifests/YYYY-MM-DD.json drives both gh_sync.py (GitHub issues) and handoff_scaffold.py (handoff template). Matches Ansible playbook / k8s manifest / Terraform plan pattern. Audit trail lives in git."
+      }
+    ],
+    "next_session_entry": "Resolve the 5 D3 Dream Orchestrator architecture questions (Q1 state machine, Q2 revision loop, Q3 step execution location, Q4 parallel vs sequential, Q5 workflow contract). Output: docs/D3_ORCHESTRATOR_DESIGN.md with locked answers. Prerequisites satisfied — infrastructure foundation solid per STATE_2026-04-18.md. Follow-up session: D3.1 schema migration.",
+    "lessons_learned": [
+      "Cursor multi-edit commit behavior: edits pile up in working tree until commit; batching prompts without interim commits produces one mega-commit.",
+      "TD-107 conservative default (restart when uncertain) caught TD-113 false-positive — .sh$ pattern too broad — but kept cluster safe.",
+      "LaunchAgent drift detection pattern (declared vs actual, program-path-exists check before bootout) prevented a production outage when handoff-01 wrongly claimed executor was deleted.",
+      "Claude Code state-review pattern requires SCP Sandbox→Air before commit; logged as TD-116 for codification.",
+      "Sandbox has two inconsistent pull auth paths (TD-119) — commit-script SSH works, jarvisalpha_pull.sh fails on GITHUB_TOKEN."
+    ]
+  }
+}

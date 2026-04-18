@@ -1,0 +1,46 @@
+{
+  "session_date": "YYYY-MM-DD",
+  "session_sequence": "01",
+  "session_commit_range": {
+    "from": "REPLACE_WITH_FIRST_COMMIT_HASH",
+    "to": "REPLACE_WITH_LAST_COMMIT_HASH"
+  },
+  "labels_to_ensure": [],
+  "close_existing": [
+    {
+      "issue_number": 0,
+      "td_id": "TD-XX",
+      "comment": "Closed by commit HASH — (narrative here, include hash for auto-extraction)"
+    }
+  ],
+  "create_and_close": [
+    {
+      "td_id": "TD-XX",
+      "title": "TD-XX: Full title",
+      "body": "Markdown body with full context, shipping commit, architectural rationale.",
+      "labels": ["infra", "P2-medium"],
+      "close_comment": "Closed same-session by commit HASH."
+    }
+  ],
+  "create_open": [
+    {
+      "td_id": "TD-XX",
+      "title": "TD-XX: Full title",
+      "body": "Markdown body: what was observed, impact, fix options, recommendation.",
+      "labels": ["infra", "P3-low"]
+    }
+  ],
+  "handoff": {
+    "tldr": "1-2 paragraph session summary — what was the goal, what shipped, what remains.",
+    "architecture_decisions": [
+      {
+        "title": "Decision title",
+        "description": "Prose explanation of the decision, alternatives considered, why this choice."
+      }
+    ],
+    "next_session_entry": "The next session should open with: (specific task or question)",
+    "lessons_learned": [
+      "Short bullet describing a pattern, gotcha, or insight worth remembering."
+    ]
+  }
+}
