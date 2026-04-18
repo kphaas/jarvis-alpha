@@ -10,6 +10,10 @@
 
 ---
 
+*Some sections reflect the state at initial V1 publication. Post-publication updates are tracked in the changelog at the bottom. Full regeneration is scoped as TD-99.*
+
+---
+
 ## 1. Purpose
 
 Jarvis Alpha is a **standalone** control plane and UI stack: orchestration, task graphs, memory/vault surfaces, mesh visibility, and LLM routing. It is **not** wired to call `jarvis-core` in-repo; production cutover is a future phase (see `README.md` phase plan).
@@ -92,7 +96,7 @@ flowchart LR
 
 **API access:** `apiFetch` / `apiJson` centralize base URL, Bearer injection, and error handling (`ui/src/lib/apiFetch.ts`).
 
-**Operational note:** Commit automation can **`scp`** `ui/dist` to Endpoint after builds (see `scripts/jarvisalpha_commit.sh`); nginx config for Alpha may live only on Endpoint until committed.
+**Operational note:** Commit automation can **`scp`** `ui/dist` to Endpoint after builds (see `scripts/jarvisalpha_commit.sh`); nginx config is in git at `endpoint/nginx/alpha.conf`, deployed via `scripts/deploy_nginx_endpoint.sh`.
 
 ---
 
@@ -128,7 +132,6 @@ flowchart LR
 Non-exhaustive; aligns with recent handoffs:
 
 - UniFi **WAN / clients** routes may still return stub data until wired to real UDM API endpoints.
-- **nginx** Alpha server block may not yet live in-repo.
 - **WebSocket**-style Buddy updates may be polling-only in UI.
 - **jarvis-core** parity items (KI backlog) out of scope for this file.
 
@@ -141,6 +144,29 @@ Update this document when:
 - New public route prefixes ship on Brain or Gateway.
 - Trust boundaries move (e.g. UI proxied through Brain, or Gateway auth changes).
 - Major node or port changes are recorded in `README.md` / `brain/config/node_addresses.py`.
+
+---
+
+## Updates Since V1 Publication
+
+### 2026-04-17 — AI-3 closed
+- nginx alpha.conf committed at `endpoint/nginx/alpha.conf`
+- Deploy mechanism: `scripts/deploy_nginx_endpoint.sh` (copy-validate-reload-verify with auto-rollback)
+- Orphaned top-level `nginx/alpha.conf` deleted
+
+### 2026-04-17 — TD-88 v2 shipped (commit/deploy system rewrite)
+- Structured JSON events (`##EVT##` sentinel) emitted by pull script on stderr
+- Standalone Python renderer (`scripts/render_events.py`) as stream filter
+- Auto SSH fan-out Brain → Gateway → Endpoint with halt-on-fail semantics
+- Ansible-style additive verbosity (`VERBOSE=1` for raw passthrough)
+- Per-deploy audit log at `/tmp/jarvisalpha_commit_YYYYMMDD_HHMMSS.log`
+
+### 2026-04-17 — TD-87 closed (SERVICE_IDENTITY_MODEL.md §7 scope registry)
+- §7.2 Gateway scopes table rewritten with 8 accurate scopes matching production token
+- §7.7 NEW — Brain service scopes documenting two-token pattern
+
+### 2026-04-17 — TD-86 closed (jarvis-standards canonical docs)
+- `AUTHENTICATION_TWO_TOKEN_PATTERN.md` added to jarvis-standards repo
 
 ---
 

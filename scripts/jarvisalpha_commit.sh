@@ -334,6 +334,32 @@ rm -f "$push_log"
 step_ok "git push" "origin/main" "$(fmt_s $((SECONDS - push_start)))"
 
 # ══════════════════════════════════════════════════════════
+# ── Classifier: docs/handoffs-only fan-out skip (TD-96) ─
+# ══════════════════════════════════════════════════════════
+# Predicate: skip fan-out iff every changed file in the just-pushed commit
+# matches ^docs/handoffs/. One non-handoff file → full fan-out. Empty diff
+# (defensive) → fan-out. Mirrors GitHub Actions paths-ignore semantics.
+CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+if [ -z "$CHANGED_FILES" ]; then
+  HANDOFF_ONLY=false
+else
+  NON_HANDOFF=$(echo "$CHANGED_FILES" | grep -v '^docs/handoffs/' | wc -l | tr -d ' ')
+  if [ "$NON_HANDOFF" = "0" ]; then
+    HANDOFF_ONLY=true
+  else
+    HANDOFF_ONLY=false
+  fi
+fi
+
+if [ "$HANDOFF_ONLY" = "true" ]; then
+  phase_header "FAN-OUT"
+  step_ok "classifier" "docs/handoffs only — skipping fan-out"
+  total_dur=$((SECONDS - DEPLOY_START))
+  done_banner "$HEAD_AFTER" "$total_dur"
+  exit 0
+fi
+
+# ══════════════════════════════════════════════════════════
 # ── Classify changed files (which nodes need pull) ─
 # ══════════════════════════════════════════════════════════
 if [ "$HEAD_AFTER" != "$HEAD_BEFORE" ]; then

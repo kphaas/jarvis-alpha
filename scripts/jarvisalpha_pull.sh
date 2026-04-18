@@ -273,7 +273,7 @@ if [ "$(hostname -s)" = "jarvis-endpoint" ]; then
   DIST_FILES=$(find "${REPO_DIR}/ui/dist" -type f | wc -l | tr -d ' ')
   echo "✅ ui/dist present — ${DIST_FILES} files"
   emit ok dist_check node="$NODE_SHORT" file_count="$DIST_FILES" dur_ms=$(($(time_ms) - DIST_START))
-  echo "ℹ️  nginx config managed via scripts/deploy_nginx_endpoint.sh (AI-3 closed)"
+  echo "ℹ️  nginx reload deferred — run scripts/deploy_nginx_endpoint.sh if alpha.conf changed"
 fi
 
 # ── Final complete event ──
