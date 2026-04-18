@@ -7,16 +7,16 @@ mkdir -p "$LAUNCH_AGENTS_DIR"
 mkdir -p "$HOME/jarvis-alpha/logs"
 
 if [[ "$NODE" == "Brain" ]] || [[ "$NODE" == *"jarvis-brain"* ]]; then
-  PLIST="$HOME/jarvis-alpha/scripts/power_sampler_brain.plist"
+  PLIST="$HOME/jarvis-alpha/launchagents/com.jarvis.alpha.power.brain.plist"
   LABEL="com.jarvis.alpha.power.brain"
 elif [[ "$NODE" == "Gateway" ]] || [[ "$NODE" == *"jarvis-gateway"* ]]; then
-  PLIST="$HOME/jarvis-alpha/scripts/power_sampler_gateway.plist"
+  PLIST="$HOME/jarvis-alpha/launchagents/com.jarvis.alpha.power.gateway.plist"
   LABEL="com.jarvis.alpha.power.gateway"
 elif [[ "$NODE" == "Endpoint" ]] || [[ "$NODE" == *"jarvis-endpoint"* ]]; then
-  PLIST="$HOME/jarvis-alpha/scripts/power_sampler_endpoint.plist"
+  PLIST="$HOME/jarvis-alpha/launchagents/com.jarvis.alpha.power.endpoint.plist"
   LABEL="com.jarvis.alpha.power.endpoint"
 elif [[ "$NODE" == "Sandbox" ]] || [[ "$NODE" == *"sandbox"* ]] || [[ "$NODE" == *"jarvissand"* ]]; then
-  PLIST="$HOME/jarvis-alpha/scripts/power_sampler_sandbox.plist"
+  PLIST="$HOME/jarvis-alpha/launchagents/com.jarvis.alpha.power.sandbox.plist"
   LABEL="com.jarvis.alpha.power.sandbox"
 else
   echo "Unknown node: $NODE — set JARVIS_NODE_NAME env var"
