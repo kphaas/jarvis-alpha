@@ -33,3 +33,5 @@ vault_storage/
 # Script backups — local only, never committed
 scripts/*.bak_*
 scripts/*.bak
+
+# TD-108 validation — verify skip renderer (Apr 18)
