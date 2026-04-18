@@ -112,3 +112,5 @@ app.include_router(approvals_router)
 app.include_router(watchdog_router)
 app.include_router(briefings_router)
 app.include_router(internal_cost_router)
+
+# TD-107 test 2 — validating restart-path fires on brain/*.py changes (Apr 18)
