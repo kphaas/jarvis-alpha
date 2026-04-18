@@ -18,6 +18,7 @@ Exit codes:
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -164,6 +165,7 @@ def stage_create_and_close(
             existing = find_existing_issue(title, execute, log_file)
             if existing:
                 print(f"  ⏭  {td} already exists as #{existing} — skipping")
+                count += 1
                 continue
         print(f"  Creating {td}...")
         rc, stdout = gh_call(
@@ -183,9 +185,15 @@ def stage_create_and_close(
         if rc != 0:
             print(f"  ❌ Halted creating {td}")
             return count
-        # Extract issue number from URL output
+        # Extract issue number from URL output (regex robust to trailing text)
         if execute:
-            issue_num = stdout.strip().split("/")[-1]
+            match = re.search(r"/issues/(\d+)", stdout)
+            if not match:
+                print(
+                    f"  ❌ Could not parse issue number from gh output: {stdout[:200]}"
+                )
+                return count
+            issue_num = match.group(1)
             print(f"  ✅ created {td} as #{issue_num}")
             rc, _ = gh_call(
                 ["issue", "close", issue_num, "--comment", item["close_comment"]],
@@ -217,6 +225,7 @@ def stage_create_open(
             existing = find_existing_issue(title, execute, log_file)
             if existing:
                 print(f"  ⏭  {td} already exists as #{existing} — skipping")
+                count += 1
                 continue
         print(f"  Creating {td}...")
         rc, stdout = gh_call(
@@ -237,7 +246,13 @@ def stage_create_open(
             print(f"  ❌ Halted creating {td}")
             return count
         if execute:
-            issue_num = stdout.strip().split("/")[-1]
+            match = re.search(r"/issues/(\d+)", stdout)
+            if not match:
+                print(
+                    f"  ❌ Could not parse issue number from gh output: {stdout[:200]}"
+                )
+                return count
+            issue_num = match.group(1)
             print(f"  ✅ created {td} as #{issue_num}")
         else:
             print(f"  DRY: would create {td}")
