@@ -29,5 +29,6 @@ if [[ ! -f "$CONFIG_DIR/config.yaml" ]]; then
 fi
 
 exec "$TEMPORAL_BIN" \
-  start \
-  --config-file "$CONFIG_DIR/config.yaml"
+  --config-file "$CONFIG_DIR/config.yaml" \
+  --allow-no-auth \
+  start
