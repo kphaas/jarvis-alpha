@@ -29,6 +29,5 @@ if [[ ! -f "$CONFIG_DIR/config.yaml" ]]; then
 fi
 
 exec "$TEMPORAL_BIN" \
-  --env config \
-  --config "$CONFIG_DIR" \
-  start
+  start \
+  --config-file "$CONFIG_DIR/config.yaml"
