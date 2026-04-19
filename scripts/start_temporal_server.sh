@@ -28,6 +28,21 @@ if [[ ! -f "$CONFIG_DIR/config.yaml" ]]; then
   exit 1
 fi
 
+# Resolve hostname to IPv4 at startup (ringpop requires numeric IP, not DNS name).
+# Uses macOS-native dscacheutil so Tailscale MagicDNS resolves correctly.
+# getent is not available on macOS; dig/host bypass the macOS resolver chain.
+TEMPORAL_BIND_IP=$(dscacheutil -q host -a name "$TEMPORAL_BIND_HOST" \
+  | awk '/^ip_address:/ { print $2; exit }')
+
+if [[ -z "$TEMPORAL_BIND_IP" ]]; then
+  echo "ERROR: Failed to resolve $TEMPORAL_BIND_HOST via dscacheutil." >&2
+  echo "Check that the hostname is reachable (Tailscale MagicDNS active?)." >&2
+  exit 1
+fi
+
+export TEMPORAL_BIND_IP
+echo "temporal-server: resolved $TEMPORAL_BIND_HOST -> $TEMPORAL_BIND_IP" >&2
+
 exec "$TEMPORAL_BIN" \
   --config-file "$CONFIG_DIR/config.yaml" \
   --allow-no-auth \

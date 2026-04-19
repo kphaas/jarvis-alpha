@@ -34,7 +34,7 @@ persistence:
 global:
   membership:
     maxJoinDuration: 30s
-    broadcastAddress: '{{ env "TEMPORAL_BIND_HOST" }}'
+    broadcastAddress: '{{ env "TEMPORAL_BIND_IP" }}'
   pprof:
     port: 7936
 
@@ -43,26 +43,26 @@ services:
     rpc:
       grpcPort: {{ env "TEMPORAL_GRPC_PORT" }}
       membershipPort: 6933
-      bindOnIP: '{{ env "TEMPORAL_BIND_HOST" }}'
+      bindOnIP: '{{ env "TEMPORAL_BIND_IP" }}'
       httpPort: 7243
 
   matching:
     rpc:
       grpcPort: 7235
       membershipPort: 6935
-      bindOnIP: '{{ env "TEMPORAL_BIND_HOST" }}'
+      bindOnIP: '{{ env "TEMPORAL_BIND_IP" }}'
 
   history:
     rpc:
       grpcPort: 7234
       membershipPort: 6934
-      bindOnIP: '{{ env "TEMPORAL_BIND_HOST" }}'
+      bindOnIP: '{{ env "TEMPORAL_BIND_IP" }}'
 
   worker:
     rpc:
       grpcPort: 7239
       membershipPort: 6939
-      bindOnIP: '{{ env "TEMPORAL_BIND_HOST" }}'
+      bindOnIP: '{{ env "TEMPORAL_BIND_IP" }}'
 
 clusterMetadata:
   enableGlobalNamespace: false
