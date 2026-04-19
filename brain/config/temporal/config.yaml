@@ -1,3 +1,4 @@
+# enable-template
 log:
   stdout: true
   level: {{ default .Env.TEMPORAL_LOG_LEVEL "info" }}
