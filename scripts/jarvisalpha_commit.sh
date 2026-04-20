@@ -12,7 +12,7 @@ set -uo pipefail
 
 # ── Config ────────────────────────────────────────────────
 BRAIN="jarvisbrain@jarvis-brain.tail40ed36.ts.net"
-GATEWAY="infranet@jarvis-gateway.tail40ed36.ts.net"
+GATEWAY="gate@jarvis-gateway.tail40ed36.ts.net"
 ENDPOINT="jarvisendpoint@jarvis-endpoint.tail40ed36.ts.net"
 SANDBOX="jarvissand@jarvis-sandbox.tail40ed36.ts.net"
 SSH_KEY="${HOME}/.ssh/macair_jarvis"
