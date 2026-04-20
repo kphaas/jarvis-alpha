@@ -6,8 +6,8 @@
   <string>com.jarvis.alpha.power.gateway</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/infranet/jarvis-alpha/.venv/bin/python3</string>
-    <string>/Users/infranet/jarvis-alpha/scripts/power_sampler.py</string>
+    <string>{{HOME}}/jarvis-alpha/.venv/bin/python3</string>
+    <string>{{HOME}}/jarvis-alpha/scripts/power_sampler.py</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -21,6 +21,6 @@
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/infranet/jarvis-alpha/logs/power_sampler.log</string>
+  <string>{{HOME}}/jarvis-alpha/logs/power_sampler.log</string>
 </dict>
 </plist>
