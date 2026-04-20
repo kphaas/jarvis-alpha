@@ -1,0 +1,19 @@
+# Temporal UI Server config — loopback binding, no auth (single-node)
+# All addresses use 127.0.0.1 to match temporal-server's single-node config
+temporalGrpcAddress: "127.0.0.1:${TEMPORAL_GRPC_PORT}"
+port: ${TEMPORAL_UI_PORT}
+host: "127.0.0.1"
+publicPath: ""
+defaultNamespace: default
+enableUi: true
+feedbackURL: ""
+notifyOnNewVersion: false
+auth:
+  enabled: false
+tls:
+  enableHostVerification: false
+cors:
+  cookieInsecure: true
+  allowOrigins:
+    - http://127.0.0.1
+    - http://localhost
