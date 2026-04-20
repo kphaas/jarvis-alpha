@@ -40,3 +40,6 @@ scripts/*.bak
 # Templates (.template.plist) ARE tracked; rendered output is ephemeral
 launchagents/*.plist
 !launchagents/*.template.plist
+
+# Temporal UI — rendered from config.yaml.template at startup
+brain/config/temporal-ui/config.yaml

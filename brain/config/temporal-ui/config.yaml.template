@@ -1,0 +1,15 @@
+# Temporal UI config template — rendered at startup by start_temporal_ui.sh
+# Substitutions: ${TEMPORAL_GRPC_PORT}, ${TEMPORAL_UI_PORT}
+# Single source of truth: ~/jarvis/.secrets on Brain
+# Rendered output: config.yaml in this same directory (gitignored)
+temporalGrpcAddress: "127.0.0.1:${TEMPORAL_GRPC_PORT}"
+port: ${TEMPORAL_UI_PORT}
+host: "127.0.0.1"
+publicPath: ""
+enableUi: true
+feedbackURL: ""
+notifyOnNewVersion: false
+auth:
+  enabled: false
+cors:
+  cookieInsecure: true

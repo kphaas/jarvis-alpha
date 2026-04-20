@@ -22,24 +22,35 @@ fi
 
 CONFIG_PARENT="$HOME/jarvis-alpha/brain/config"
 CONFIG_SUBDIR="temporal-ui"
+CONFIG_DIR="$CONFIG_PARENT/$CONFIG_SUBDIR"
+TEMPLATE_FILE="$CONFIG_DIR/config.yaml.template"
+RENDERED_FILE="$CONFIG_DIR/config.yaml"
 
-if [[ ! -f "$CONFIG_PARENT/$CONFIG_SUBDIR/config.yaml" ]]; then
-  echo "ERROR: temporal-ui config.yaml not found at $CONFIG_PARENT/$CONFIG_SUBDIR/config.yaml" >&2
+if [[ ! -f "$TEMPLATE_FILE" ]]; then
+  echo "ERROR: template not found at $TEMPLATE_FILE" >&2
   exit 1
 fi
 
-# Translate secrets values to TEMPORAL_* env vars that ui-server reads natively
-# (see https://docs.temporal.io/references/web-ui-environment-variables).
-# YAML-based ${VAR} substitution is NOT supported by ui-server (only temporal-server).
-export TEMPORAL_ADDRESS="127.0.0.1:${TEMPORAL_GRPC_PORT}"
-export TEMPORAL_UI_PORT="${TEMPORAL_UI_PORT}"
-export TEMPORAL_UI_ENABLED=true
-export TEMPORAL_DEFAULT_NAMESPACE=default
-export TEMPORAL_AUTH_ENABLED=false
+# Render template -> runtime config.yaml. Replaces ${VAR} with env values.
+# macOS-native perl (no envsubst dependency).
+perl -pe 's/\$\{([A-Z_][A-Z0-9_]*)\}/defined $ENV{$1} ? $ENV{$1} : $&/ge' \
+  < "$TEMPLATE_FILE" > "$RENDERED_FILE"
 
-# Workaround for ui-server --config flag stripping leading slash from absolute
-# paths (ref: github.com/temporalio/temporal issue #6226). Cd into parent dir
-# and use a relative subdir path.
+if [[ ! -s "$RENDERED_FILE" ]]; then
+  echo "ERROR: rendered config is empty at $RENDERED_FILE" >&2
+  exit 1
+fi
+
+# Sanity-check: rendered file must not contain unresolved ${...} placeholders
+if grep -q '\${' "$RENDERED_FILE"; then
+  echo "ERROR: rendered config still contains unresolved \${...} placeholders" >&2
+  grep '\${' "$RENDERED_FILE" >&2
+  exit 1
+fi
+
+echo "temporal-ui: rendered $TEMPLATE_FILE -> $RENDERED_FILE" >&2
+
+# ui-server requires --config <dir> --env <name> where <name>.yaml exists in <dir>.
+# The leading-slash stripping bug (GitHub issue #6226) requires cd + relative path.
 cd "$CONFIG_PARENT"
-
 exec "$UI_BIN" --config "$CONFIG_SUBDIR" --env config start
