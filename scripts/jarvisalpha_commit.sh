@@ -368,18 +368,22 @@ fi
 phase_header "FAN-OUT"
 
 # Sandbox auto-pull
-sb_start=$SECONDS
-sb_out=$(ssh "${SSH_OPTS[@]}" "$SANDBOX" \
-  "cd ~/jarvis-alpha && git pull origin main --rebase --quiet && git rev-parse --short HEAD" 2>&1)
-sb_ec=$?
-sb_dur=$((SECONDS - sb_start))
-if [ $sb_ec -eq 0 ]; then
-  sb_hash=$(echo "$sb_out" | tail -1 | tr -d '\r\n')
-  step_ok "sandbox" "pulled — $sb_hash" "$(fmt_s $sb_dur)"
+if [[ "${JARVIS_SKIP_SANDBOX:-0}" == "1" ]]; then
+  printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "sandbox" "SKIPPED (JARVIS_SKIP_SANDBOX=1)" ""
 else
-  step_fail "sandbox" "pull failed"
-  echo "$sb_out" >&2
-  DEPLOY_FAILED=1
+  sb_start=$SECONDS
+  sb_out=$(ssh "${SSH_OPTS[@]}" "$SANDBOX" \
+    "cd ~/jarvis-alpha && git pull origin main --rebase --quiet && git rev-parse --short HEAD" 2>&1)
+  sb_ec=$?
+  sb_dur=$((SECONDS - sb_start))
+  if [ $sb_ec -eq 0 ]; then
+    sb_hash=$(echo "$sb_out" | tail -1 | tr -d '\r\n')
+    step_ok "sandbox" "pulled — $sb_hash" "$(fmt_s $sb_dur)"
+  else
+    step_fail "sandbox" "pull failed"
+    echo "$sb_out" >&2
+    DEPLOY_FAILED=1
+  fi
 fi
 
 # Endpoint SCP dist
