@@ -11,10 +11,10 @@
 set -uo pipefail
 
 # ── Config ────────────────────────────────────────────────
-BRAIN="jarvisbrain@100.64.166.22"
-GATEWAY="infranet@100.112.63.25"
-ENDPOINT="jarvisendpoint@100.87.223.31"
-SANDBOX="jarvissand@100.124.172.14"
+BRAIN="jarvisbrain@jarvis-brain.tail40ed36.ts.net"
+GATEWAY="infranet@jarvis-gateway.tail40ed36.ts.net"
+ENDPOINT="jarvisendpoint@jarvis-endpoint.tail40ed36.ts.net"
+SANDBOX="jarvissand@jarvis-sandbox.tail40ed36.ts.net"
 SSH_KEY="${HOME}/.ssh/macair_jarvis"
 SSH_OPTS=(-i "$SSH_KEY" -o IdentitiesOnly=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no)
 REPO_DIR="${HOME}/jarvis-alpha"
