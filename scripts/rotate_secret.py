@@ -45,6 +45,27 @@ os.rename(tmp_path, path)
 print("OK")
 """
 
+DELETE_HELPER = """
+import sys, os, stat, tempfile, pathlib
+key = sys.argv[1]
+path_str = sys.argv[2]
+path = pathlib.Path(path_str).expanduser()
+if not path.exists():
+    sys.exit(f"ERR: .secrets not found at {path}")
+lines = path.read_text().splitlines()
+new_lines = [line for line in lines if not line.startswith(f"{key}=")]
+removed = len(lines) - len(new_lines)
+if removed == 0:
+    print("NOT_FOUND")
+    sys.exit(0)
+with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False, prefix=".secrets.tmp.") as tmp:
+    tmp.write("\\n".join(new_lines) + "\\n")
+    tmp_path = tmp.name
+os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
+os.rename(tmp_path, path)
+print(f"DELETED_{removed}")
+"""
+
 
 def load_config(secret_name) -> dict:
     with CONFIG_PATH.open("r", encoding="utf-8") as f:
@@ -67,6 +88,9 @@ def load_config(secret_name) -> dict:
     merged["name"] = secret_name
     merged["nodes"] = list(secret_cfg.get("nodes", []))
     merged["resolved_nodes"] = resolved_nodes
+    merged["_resolved_nodes"] = [
+        {"name": node, **resolved_nodes[node]} for node in secret_cfg.get("nodes", [])
+    ]
     merged["restarts"] = list(secret_cfg.get("restarts", []))
     merged["verify"] = dict(secret_cfg.get("verify", {"type": "none"}))
     return merged
@@ -143,6 +167,39 @@ def update_remote_secret(node, node_info, key, value):
         )
 
 
+def delete_remote_secret(node, node_info, key):
+    _ = node
+    ssh_target = node_info["ssh_target"]
+    secrets_path = node_info["secrets_path"]
+    remote_tmp = f"/tmp/delete_secret_{os.getpid()}.py"
+
+    stage1 = subprocess.run(
+        ["ssh", ssh_target, f"cat > '{remote_tmp}'"],
+        input=DELETE_HELPER,
+        text=True,
+        check=False,
+    )
+    if stage1.returncode != 0:
+        raise RuntimeError(f"failed to upload delete helper to {ssh_target}")
+
+    try:
+        stage2 = subprocess.run(
+            ["ssh", ssh_target, "python3", remote_tmp, key, secrets_path],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if stage2.returncode != 0:
+            stderr = stage2.stderr.strip() or stage2.stdout.strip() or "unknown error"
+            raise RuntimeError(f"remote delete failed on {ssh_target}: {stderr}")
+        return stage2.stdout.strip()
+    finally:
+        subprocess.run(
+            ["ssh", ssh_target, f"rm -f '{remote_tmp}'"],
+            check=False,
+        )
+
+
 def restart_service(node_info, service_label, health_url) -> bool:
     ssh_target = node_info["ssh_target"]
     kick_cmd = f'launchctl kickstart -k "gui/$(id -u)/{service_label}"'
@@ -210,11 +267,12 @@ def record_to_db(
     services_sql = (
         "ARRAY[" + ",".join(f"'{esc(s)}'" for s in services_restarted) + "]::text[]"
     )
+    value_hash_sql = "NULL" if value_hash is None else f"'{esc(value_hash)}'"
     sql = (
         "INSERT INTO alpha_secret_rotations "
         "(secret_name, rotated_by, rotation_days, nodes_updated, services_restarted, verify_status, value_hash) "
         f"VALUES ('{esc(secret_name)}', '{esc(rotated_by)}', {int(rotation_days)}, {nodes_sql}, {services_sql}, "
-        f"'{esc(verify_status)}', '{value_hash}') "
+        f"'{esc(verify_status)}', {value_hash_sql}) "
         "RETURNING id::text || ' next_due_at=' || to_char(next_due_at, 'YYYY-MM-DD\"T\"HH24:MI:SSOF');"
     )
 
@@ -245,10 +303,85 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-verify", action="store_true")
     parser.add_argument("--yes", action="store_true")
+    parser.add_argument(
+        "--delete",
+        action="store_true",
+        help="Delete the secret from listed nodes instead of rotating",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Required for --delete on non-orphan secrets",
+    )
     args = parser.parse_args()
 
     secret_name = args.secret_name
     config = load_config(secret_name)
+
+    if args.delete:
+        if not config.get("orphan") and not args.force:
+            print(
+                f"ERROR: {secret_name} is not marked orphan; use --force to delete anyway.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        print(
+            f"Deleting {secret_name} from nodes: {', '.join(n['name'] for n in config['_resolved_nodes'])}"
+        )
+        if args.dry_run:
+            print("Dry-run only; no changes made.")
+            sys.exit(0)
+        if not args.yes:
+            confirm = input(
+                f"Confirm DELETE {secret_name} from {len(config['_resolved_nodes'])} node(s)? This cannot be undone without restoring from .bak. [y/N]: "
+            )
+            if confirm.strip().lower() != "y":
+                print("Cancelled.")
+                sys.exit(0)
+        deleted_nodes = []
+        backups = {}
+        try:
+            for node_entry in config["_resolved_nodes"]:
+                node = node_entry["name"]
+                backups[node] = backup_secrets_file(node, node_entry)
+                result = delete_remote_secret(node, node_entry, secret_name)
+                if result.startswith("DELETED"):
+                    print(f"  {node:10s} ✓ deleted ({result})")
+                    deleted_nodes.append(node)
+                elif result == "NOT_FOUND":
+                    print(f"  {node:10s} — already absent")
+                else:
+                    raise RuntimeError(
+                        f"Unexpected helper output from {node}: {result!r}"
+                    )
+                sys.stdout.flush()
+        except Exception as e:
+            print(f"FAILED: {e}", file=sys.stderr)
+            for n in deleted_nodes:
+                try:
+                    node_entry = next(
+                        x for x in config["_resolved_nodes"] if x["name"] == n
+                    )
+                    rollback_secrets_file(n, node_entry, backups[n])
+                    print(f"  rolled back {n}", file=sys.stderr)
+                except Exception as rb_err:
+                    print(f"  rollback failed on {n}: {rb_err}", file=sys.stderr)
+            sys.exit(1)
+        services = []
+        db_result = record_to_db(
+            secret_name=secret_name,
+            rotation_days=config.get("rotation_days", 1),
+            nodes_updated=deleted_nodes,
+            services_restarted=services,
+            verify_status="passed",
+            value_hash=None,
+        )
+        log_to_file(
+            f"DELETED secret={secret_name} nodes={deleted_nodes} db={db_result}"
+        )
+        print(f"Done. db={db_result}")
+        sys.exit(0)
+
     services_list = [f"{r['service']}@{r['node']}" for r in config["restarts"]]
     verify_type = config["verify"].get("type", "none")
 
