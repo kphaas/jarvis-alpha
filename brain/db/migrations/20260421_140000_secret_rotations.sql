@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS alpha_secret_rotations (
     rotated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     rotated_by      TEXT NOT NULL,
     rotation_days   INTEGER NOT NULL CHECK (rotation_days > 0),
-    next_due_at     TIMESTAMPTZ GENERATED ALWAYS AS (rotated_at + (rotation_days || ' days')::interval) STORED,
+    next_due_at     TIMESTAMPTZ GENERATED ALWAYS AS (rotated_at + make_interval(days => rotation_days)) STORED,
     nodes_updated   TEXT[] NOT NULL,
     services_restarted TEXT[] NOT NULL,
     verify_status   TEXT NOT NULL CHECK (verify_status IN ('passed','failed','skipped')),
