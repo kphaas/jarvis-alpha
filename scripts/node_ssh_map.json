@@ -1,0 +1,6 @@
+{
+  "brain":    {"ssh_target": "jarvisbrain@jarvis-brain.tail40ed36.ts.net",       "secrets_path": "/Users/jarvisbrain/jarvis/.secrets"},
+  "gateway":  {"ssh_target": "gate@jarvis-gateway.tail40ed36.ts.net",             "secrets_path": "/Users/gate/jarvis/.secrets"},
+  "endpoint": {"ssh_target": "jarvisendpoint@jarvis-endpoint.tail40ed36.ts.net",  "secrets_path": "/Users/jarvisendpoint/jarvis/.secrets"},
+  "sandbox":  {"ssh_target": "sandbox",                                            "secrets_path": "/Users/jarvissand/.secrets"}
+}

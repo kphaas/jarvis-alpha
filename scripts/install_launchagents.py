@@ -114,8 +114,12 @@ def filter_by_node(templates, node):
         label = t.name.replace(".template.plist", "")
         mapped_node = SERVICE_NODE_MAP.get(label)
         if mapped_node is None:
-            log("warn", "template not in SERVICE_NODE_MAP, skipping",
-                template=t.name, node_requested=node)
+            log(
+                "warn",
+                "template not in SERVICE_NODE_MAP, skipping",
+                template=t.name,
+                node_requested=node,
+            )
             continue
         if mapped_node == node:
             out.append(t)
@@ -126,20 +130,36 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Render launchd plist templates for current user",
     )
-    parser.add_argument("--home", default=os.environ.get("HOME"),
-        help="Home directory to substitute for {{HOME}} (default: $HOME)")
-    parser.add_argument("--user", default=os.environ.get("USER"),
-        help="Username to substitute for {{USER}} (default: $USER)")
-    parser.add_argument("--node",
+    parser.add_argument(
+        "--home",
+        default=os.environ.get("HOME"),
+        help="Home directory to substitute for {{HOME}} (default: $HOME)",
+    )
+    parser.add_argument(
+        "--user",
+        default=os.environ.get("USER"),
+        help="Username to substitute for {{USER}} (default: $USER)",
+    )
+    parser.add_argument(
+        "--node",
         choices=sorted(set(SERVICE_NODE_MAP.values())),
-        help="Only install plists for a specific logical node")
-    parser.add_argument("--dry-run", action="store_true",
-        help="Print rendered output to stdout, do not write files")
-    parser.add_argument("--list", action="store_true",
-        help="List discovered templates and their target filenames, exit")
-    parser.add_argument("--output-dir",
+        help="Only install plists for a specific logical node",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print rendered output to stdout, do not write files",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List discovered templates and their target filenames, exit",
+    )
+    parser.add_argument(
+        "--output-dir",
         default=str(Path.home() / "Library" / "LaunchAgents"),
-        help="Override target directory (default: ~/Library/LaunchAgents)")
+        help="Override target directory (default: ~/Library/LaunchAgents)",
+    )
     return parser.parse_args()
 
 
@@ -164,8 +184,12 @@ def main():
         templates = filter_by_node(templates, args.node)
 
     if not templates:
-        log("warn", "no templates found matching criteria",
-            node=args.node, templates_dir=str(TEMPLATES_DIR))
+        log(
+            "warn",
+            "no templates found matching criteria",
+            node=args.node,
+            templates_dir=str(TEMPLATES_DIR),
+        )
         return 0
 
     if args.list:
@@ -201,9 +225,15 @@ def main():
         log("error", f"{errors} template(s) failed to render")
         return 2
 
-    log("info", "install complete",
-        count=len(templates), home=args.home, user=args.user,
-        output_dir=str(output_dir), dry_run=args.dry_run)
+    log(
+        "info",
+        "install complete",
+        count=len(templates),
+        home=args.home,
+        user=args.user,
+        output_dir=str(output_dir),
+        dry_run=args.dry_run,
+    )
     return 0
 
 
