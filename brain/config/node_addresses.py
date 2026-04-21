@@ -14,6 +14,6 @@ ENDPOINT_URL = os.getenv(
     "ALPHA_ENDPOINT_URL", f"https://{ENDPOINT_HOST}:{ENDPOINT_PORT}"
 )
 
-SANDBOX_HOST = os.getenv("ALPHA_SANDBOX_HOST", "jarvis-forge.tail40ed36.ts.net")
+SANDBOX_HOST = os.getenv("ALPHA_SANDBOX_HOST", "jarvis-sandbox.tail40ed36.ts.net")
 SANDBOX_PORT = int(os.getenv("ALPHA_SANDBOX_PORT", "5001"))
 SANDBOX_URL = os.getenv("ALPHA_SANDBOX_URL", f"https://{SANDBOX_HOST}:{SANDBOX_PORT}")
