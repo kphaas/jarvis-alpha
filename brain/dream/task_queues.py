@@ -11,6 +11,5 @@ DREAM_ACTIVITY_QUEUES = {
     "plan": PLANNING_QUEUE,
     "review": REVIEW_QUEUE,
     "step_execute": EXECUTION_QUEUE,
-    "record_cost": COST_TRACKING_QUEUE,
     "flush_cleanup": COST_TRACKING_QUEUE,
 }

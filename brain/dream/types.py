@@ -1,4 +1,14 @@
-"""DTOs for Dream Mode Temporal workflow — inputs, outputs, and intermediate state."""
+"""D3.3-specific DTOs for Dream Mode Temporal workflow.
+
+Shared dream types (DreamPlan, StepPlan, ReviewResult, ReviewerVerdict,
+ModelPolicy, AgentType) live in jarvis_common.dream_types. Import from
+there, not here.
+
+This file holds only DTOs that are specific to the D3.3 workflow layer:
+workflow input, cleanup state, and final result.
+"""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Literal
@@ -11,51 +21,6 @@ class DreamSessionInput:
     prompt: str
     context_ids: list[str] = field(default_factory=list)
     trigger: Literal["scheduled", "manual", "dry_run"] = "manual"
-
-
-@dataclass
-class DreamStep:
-    step_id: str
-    kind: Literal["ollama", "claude", "memory_read", "memory_write", "search"]
-    instruction: str
-    budget_usd: float = 0.0
-
-
-@dataclass
-class DreamPlan:
-    plan_hash: str
-    steps: list[DreamStep]
-
-
-@dataclass
-class CostRecord:
-    session_id: str
-    step_id: str
-    provider: Literal["anthropic", "gemini", "perplexity"]
-    model: str
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    cost_usd: float
-    idempotency_key: str
-    on_behalf_of: str
-    executor: Literal["dream"] = "dream"
-
-
-@dataclass
-class StepResult:
-    step_id: str
-    output: dict
-    cost_record: CostRecord
-    success: bool = True
-    error: str | None = None
-
-
-@dataclass
-class ReviewResult:
-    approved: bool
-    reason: str
-    violations: list[str] = field(default_factory=list)
 
 
 @dataclass

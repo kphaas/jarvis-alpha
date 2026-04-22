@@ -1,8 +1,9 @@
 """Temporal activities for Dream Mode workflow.
 
-D3.3 scope: record_cost_activity, flush_cleanup_activity.
-D3.3 scope remainder: plan_activity, review_activity, step_execute_activity
-(added in prompt 4b after these pass smoke).
+D3.3 scope: flush_cleanup_activity.
+D3.3 scope remainder: plan_activity, review_activity (added in 4b-iii).
+Cost recording is handled by Gateway's cost_emitter — no Brain-side cost
+activity needed. step_execute deferred to D3.4.
 
 Every activity takes idempotency_key as first arg for explicit discoverability.
 Every DB-writing activity uses brain.dream._db.activity_db() for RLS-safe
@@ -16,7 +17,7 @@ import json
 from temporalio import activity
 
 from brain.dream._db import activity_db
-from brain.dream.types import CleanupSpec, CostRecord
+from brain.dream.types import CleanupSpec
 
 _FINAL_STATUS_TITLE = {
     "completed": "Dream session completed",
@@ -25,71 +26,6 @@ _FINAL_STATUS_TITLE = {
     "killed": "Dream session killed (emergency)",
     "failed": "Dream session failed",
 }
-
-
-@activity.defn(name="record_cost_activity")
-async def record_cost_activity(
-    idempotency_key: str,
-    cost_record: CostRecord,
-) -> dict:
-    activity.logger.info(
-        "record_cost_activity start idempotency_key=%s info=%s",
-        idempotency_key,
-        activity.info(),
-    )
-
-    async with activity_db(user_id=cost_record.on_behalf_of) as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO alpha_cloud_costs (
-                provider,
-                model,
-                prompt_tokens,
-                completion_tokens,
-                total_tokens,
-                cost_usd,
-                session_type,
-                key_name,
-                intent,
-                executor,
-                on_behalf_of,
-                source_request_id,
-                idempotency_key
-            )
-            VALUES (
-                $1,
-                $2,
-                $3,
-                $4,
-                $5,
-                $6,
-                'dream',
-                NULL,
-                NULL,
-                'dream',
-                $7,
-                NULL,
-                $8
-            )
-            ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
-            RETURNING id
-            """,
-            cost_record.provider,
-            cost_record.model,
-            cost_record.prompt_tokens,
-            cost_record.completion_tokens,
-            cost_record.total_tokens,
-            cost_record.cost_usd,
-            cost_record.on_behalf_of,
-            idempotency_key,
-        )
-
-    inserted = row is not None
-    return {
-        "inserted": inserted,
-        "row_id": str(row["id"]) if inserted else None,
-        "idempotency_key": idempotency_key,
-    }
 
 
 @activity.defn(name="flush_cleanup_activity")
