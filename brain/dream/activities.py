@@ -71,7 +71,7 @@ async def record_cost_activity(
                 NULL,
                 $8
             )
-            ON CONFLICT (idempotency_key) DO NOTHING
+            ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
             RETURNING id
             """,
             cost_record.provider,
