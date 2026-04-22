@@ -135,7 +135,7 @@ echo "✅ jarvis-alpha pulled — $NEW_HEAD"
 echo "─────────────────────────────────────────────────────────"
 
 echo ""
-if [ "$(hostname -s)" = "jarvis-brain" ]; then
+if [ "$NODE_SHORT" = "brain" ]; then
   echo "Running database migrations..."
   MIG_START=$(time_ms)
   MIG_LOG=$(mktemp)
@@ -164,7 +164,7 @@ fi
 echo ""
 
 BRAIN_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.brain.plist"
-if [ "$(hostname -s)" = "jarvis-brain" ] && ! needs_restart_brain; then
+if [ "$NODE_SHORT" = "brain" ] && ! needs_restart_brain; then
   echo "ℹ️  Skipping Brain restart — no runtime-relevant files changed (TD-107)"
   emit skip restart node="$NODE_SHORT" service="alpha-brain" reason="no_runtime_changes"
   emit skip restart node="$NODE_SHORT" service="alpha-buddy" reason="no_runtime_changes"
@@ -248,7 +248,7 @@ elif [ -f "$BRAIN_PLIST" ]; then
 fi
 
 # ── Gateway branch (TD-88) ────────────────────────────────
-if [ "$(hostname -s)" = "jarvis-gateway" ]; then
+if [ "$NODE_SHORT" = "gateway" ]; then
   GATEWAY_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.gateway.plist"
   if ! needs_restart_gateway; then
     echo "ℹ️  Skipping Gateway restart — no runtime-relevant files changed (TD-107)"
@@ -291,7 +291,7 @@ if [ "$(hostname -s)" = "jarvis-gateway" ]; then
 fi
 
 # ── Endpoint branch (TD-88) ───────────────────────────────
-if [ "$(hostname -s)" = "jarvis-endpoint" ]; then
+if [ "$NODE_SHORT" = "endpoint" ]; then
   DIST_START=$(time_ms)
   if [ ! -d "${REPO_DIR}/ui/dist" ]; then
     echo "⚠️  ui/dist missing on Endpoint — SCP from Air may have failed"
