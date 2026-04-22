@@ -68,6 +68,7 @@ def buffer_event(
     intent: str | None = None,
     executor: str = "gateway",
     on_behalf_of: str | None = None,
+    idempotency_key: str | None = None,
 ) -> None:
     """Buffer a cost event to SQLite. Non-blocking, never raises."""
     try:
@@ -81,6 +82,7 @@ def buffer_event(
             "intent": intent,
             "executor": executor,
             "on_behalf_of": on_behalf_of,
+            "idempotency_key": idempotency_key,
         }
         conn = _get_conn()
         conn.execute(

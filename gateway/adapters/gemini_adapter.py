@@ -14,7 +14,7 @@ class GeminiAdapter(BaseCloudAdapter):
     def provider_name(self) -> str:
         return "gemini"
 
-    async def call(self, payload: dict) -> dict:
+    async def call(self, payload: dict, idempotency_key: str | None = None) -> dict:
         api_key = get_secret("GEMINI_API_KEY")
         model = payload.pop("model", "gemini-2.0-flash")
         url = GEMINI_API_URL.format(model=model)
@@ -30,5 +30,6 @@ class GeminiAdapter(BaseCloudAdapter):
                 prompt_tokens=usage.get("promptTokenCount", 0),
                 completion_tokens=usage.get("candidatesTokenCount", 0),
                 total_tokens=usage.get("totalTokenCount", 0),
+                idempotency_key=idempotency_key,
             )
             return data

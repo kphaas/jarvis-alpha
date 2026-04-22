@@ -12,7 +12,7 @@ class ClaudeAdapter(BaseCloudAdapter):
     def provider_name(self) -> str:
         return "anthropic"
 
-    async def call(self, payload: dict) -> dict:
+    async def call(self, payload: dict, idempotency_key: str | None = None) -> dict:
         api_key = get_secret("ANTHROPIC_API_KEY")
         headers = {
             "x-api-key": api_key,
@@ -30,5 +30,6 @@ class ClaudeAdapter(BaseCloudAdapter):
                 model=payload.get("model", "unknown"),
                 prompt_tokens=usage.get("input_tokens", 0),
                 completion_tokens=usage.get("output_tokens", 0),
+                idempotency_key=idempotency_key,
             )
             return data

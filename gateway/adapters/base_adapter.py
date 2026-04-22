@@ -19,7 +19,7 @@ class BaseCloudAdapter(ABC):
     def provider_name(self) -> str: ...
 
     @abstractmethod
-    async def call(self, payload: dict) -> dict: ...
+    async def call(self, payload: dict, idempotency_key: str | None = None) -> dict: ...
 
     def _emit_cost(
         self,
@@ -30,6 +30,7 @@ class BaseCloudAdapter(ABC):
         session_type: str | None = None,
         intent: str | None = None,
         on_behalf_of: str | None = None,
+        idempotency_key: str | None = None,
     ) -> None:
         """Buffer a cost event. Never raises — fire-and-forget."""
         try:
@@ -45,6 +46,7 @@ class BaseCloudAdapter(ABC):
                 executor="gateway",
                 intent=intent,
                 on_behalf_of=on_behalf_of,
+                idempotency_key=idempotency_key,
             )
         except Exception:
             pass

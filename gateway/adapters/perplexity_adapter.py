@@ -12,7 +12,7 @@ class PerplexityAdapter(BaseCloudAdapter):
     def provider_name(self) -> str:
         return "perplexity"
 
-    async def call(self, payload: dict) -> dict:
+    async def call(self, payload: dict, idempotency_key: str | None = None) -> dict:
         api_key = get_secret("PERPLEXITY_API_KEY")
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -45,5 +45,6 @@ class PerplexityAdapter(BaseCloudAdapter):
                 prompt_tokens=usage.get("prompt_tokens", 0),
                 completion_tokens=usage.get("completion_tokens", 0),
                 total_tokens=usage.get("total_tokens", 0),
+                idempotency_key=idempotency_key,
             )
             return data
