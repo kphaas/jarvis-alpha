@@ -140,14 +140,14 @@ async def flush_cleanup_activity(
                 finished_at = now(),
                 steps_completed = $4,
                 steps_failed = $5
-            WHERE id = CAST($6 AS bigint)
+            WHERE id = $6
             """,
             final_status,
             cleanup_spec.halt_reason,
             cleanup_spec.briefing_summary,
             completed_count,
             failed_count,
-            cleanup_spec.session_id,
+            int(cleanup_spec.session_id),
         )
 
         buddy_row = await conn.fetchrow(
