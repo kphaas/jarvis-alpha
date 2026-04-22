@@ -54,8 +54,21 @@ def _service_token() -> str:
 
 
 def _post_sync(
-    url: str, payload: dict, token: str, timeout_s: int = 60
+    url: str,
+    payload: dict,
+    token: str,
+    timeout_s: int = 60,
+    extra_headers: dict[str, str] | None = None,
 ) -> tuple[int, str]:
+    headers_list = [
+        "-H",
+        "Content-Type: application/json",
+        "-H",
+        f"Authorization: Bearer {token}",
+    ]
+    if extra_headers:
+        for k, v in extra_headers.items():
+            headers_list.extend(["-H", f"{k}: {v}"])
     args = [
         "curl",
         "-sk",
@@ -63,10 +76,7 @@ def _post_sync(
         str(timeout_s),
         "-X",
         "POST",
-        "-H",
-        "Content-Type: application/json",
-        "-H",
-        f"Authorization: Bearer {token}",
+        *headers_list,
         "-d",
         json.dumps(payload),
         url,
@@ -124,6 +134,7 @@ async def call_gateway_cloud(
     max_tokens: int = 2000,
     temperature: float = 0.3,
     timeout_s: int = 60,
+    idempotency_key: str | None = None,
 ) -> str:
     """POST to Gateway /v1/cloud/call, return LLM text output.
 
@@ -143,7 +154,12 @@ async def call_gateway_cloud(
     url = _gateway_url()
     token = _service_token()
 
-    rc, body = await asyncio.to_thread(_post_sync, url, envelope, token, timeout_s)
+    extra_headers: dict[str, str] = {}
+    if idempotency_key:
+        extra_headers["X-JARVIS-Idempotency-Key"] = idempotency_key
+    rc, body = await asyncio.to_thread(
+        _post_sync, url, envelope, token, timeout_s, extra_headers or None
+    )
 
     if rc != 0:
         log.error("llm_transport curl rc=%d body=%s", rc, body[:500])

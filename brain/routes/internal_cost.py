@@ -34,6 +34,7 @@ class CostEvent(BaseModel):
     intent: Optional[str] = None
     executor: Optional[str] = None
     on_behalf_of: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
 
 async def _lookup_pricing(
@@ -100,8 +101,10 @@ async def ingest_cost_event(request: Request, event: CostEvent):
                 INSERT INTO alpha_cloud_costs
                     (provider, model, prompt_tokens, completion_tokens, total_tokens,
                      cost_usd, session_type, key_name, intent,
-                     executor, on_behalf_of, source_request_id, schema_version)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, 1)
+                     executor, on_behalf_of, source_request_id, schema_version,
+                     idempotency_key)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, 1, $13)
+                ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
                 RETURNING id, cost_usd, created_at
                 """,
                 event.provider,
@@ -116,11 +119,29 @@ async def ingest_cost_event(request: Request, event: CostEvent):
                 event.executor,
                 event.on_behalf_of,
                 trace_id,
+                event.idempotency_key,
             )
+
+    if row is None:
+        # Idempotency key collision — row already exists, silent no-op
+        logger.info(
+            "cost_event dedup provider=%s model=%s idempotency_key=%s",
+            event.provider,
+            event.model,
+            event.idempotency_key,
+        )
+        return {
+            "id": None,
+            "cost_usd": 0.0,
+            "pricing_found": pricing is not None,
+            "created_at": None,
+            "deduped": True,
+        }
 
     return {
         "id": str(row["id"]),
         "cost_usd": float(row["cost_usd"]),
         "pricing_found": pricing is not None,
         "created_at": row["created_at"].isoformat(),
+        "deduped": False,
     }
