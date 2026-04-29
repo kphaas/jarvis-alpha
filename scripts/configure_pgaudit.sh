@@ -97,8 +97,8 @@ awk -v begin="# BEGIN PGAUDIT_MANAGED" -v end="# END PGAUDIT_MANAGED" '
 
 # Validate before swap
 log "validating new conf"
-if ! "$POSTGRES_BIN" -D "$DATA_DIR" -c "config_file=$TMP_CONF.new" --check-config >/dev/null 2>&1; then
-  CHECK_OUT=$("$POSTGRES_BIN" -D "$DATA_DIR" -c "config_file=$TMP_CONF.new" --check-config 2>&1 || true)
+if ! "$POSTGRES_BIN" -D "$DATA_DIR" -c "config_file=$TMP_CONF.new" -C shared_preload_libraries >/dev/null 2>&1; then
+  CHECK_OUT=$("$POSTGRES_BIN" -D "$DATA_DIR" -c "config_file=$TMP_CONF.new" -C shared_preload_libraries 2>&1 || true)
   rm -f "$TMP_CONF.new"
   fail "postgres --check-config rejected new conf: $CHECK_OUT"
 fi
