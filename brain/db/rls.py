@@ -5,9 +5,7 @@ Canonical entry point for any route that queries RLS-protected tables.
 Reads identity from request.state (set by JWTAuthMiddleware) and:
   1. Acquires a connection from the pool
   2. SETs ROLE jarvis_alpha_app (revokes BYPASSRLS)
-  3. Sets canonical 'jarvis.*' session variables (plus app.* helpers
-     for max_rating / workspace_id which are not part of the GUC
-     canonicalization scope)
+  3. Sets canonical 'rls.*' session variables consumed by RLS policies
   4. Yields the connection
   5. RESETs ROLE on exit
 
@@ -45,11 +43,10 @@ async def rls_connection(request: Request):
     """Acquire a DB connection with RLS session variables set from JWT claims.
 
     Variables set:
-        jarvis.current_user — JWT sub claim (canonical user identity)
-        jarvis.role         — 'platform_admin' if admin else 'user'
-        app.user_id         — same as jarvis.current_user (kept for legacy reads)
-        app.max_rating      — 'all_ages' / 'age_8_plus' / 'teen' / 'adult'
-        app.workspace_id    — primary workspace from JWT claim
+        rls.user_id      — JWT sub claim (canonical user identity)
+        rls.role         — 'platform_admin' if admin else 'user'
+        rls.max_rating   — 'all_ages' / 'age_8_plus' / 'teen' / 'adult'
+        rls.workspace_id — primary workspace from JWT claim
 
     Raises:
         HTTPException(401): if request.state has no user_id (auth failed
@@ -83,19 +80,16 @@ async def rls_connection(request: Request):
         try:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('jarvis.current_user', $1, true)", user_id
+                    "SELECT set_config('rls.user_id', $1, true)", user_id
                 )
                 await conn.execute(
-                    "SELECT set_config('jarvis.role', $1, true)", jarvis_role
+                    "SELECT set_config('rls.role', $1, true)", jarvis_role
                 )
                 await conn.execute(
-                    "SELECT set_config('app.user_id', $1, true)", user_id
+                    "SELECT set_config('rls.max_rating', $1, true)", max_rating
                 )
                 await conn.execute(
-                    "SELECT set_config('app.max_rating', $1, true)", max_rating
-                )
-                await conn.execute(
-                    "SELECT set_config('app.workspace_id', $1, true)", workspace_id
+                    "SELECT set_config('rls.workspace_id', $1, true)", workspace_id
                 )
                 yield conn
         finally:

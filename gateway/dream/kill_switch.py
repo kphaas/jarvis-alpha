@@ -57,7 +57,7 @@ async def is_killed_in_db(pool: asyncpg.Pool) -> bool:
         async with pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('jarvis.role', 'platform_admin', true)"
+                    "SELECT set_config('rls.role', 'platform_admin', true)"
                 )
                 row = await conn.fetchrow(
                     """

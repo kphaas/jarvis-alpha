@@ -93,9 +93,7 @@ async def ingest_cost_event(request: Request, event: CostEvent):
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute(
-                "SELECT set_config('jarvis.role', 'platform_admin', true)"
-            )
+            await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
             row = await conn.fetchrow(
                 """
                 INSERT INTO alpha_cloud_costs

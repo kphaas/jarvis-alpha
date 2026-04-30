@@ -142,7 +142,7 @@ class DreamInvariantChecker:
         async with self._pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('jarvis.role', 'platform_admin', true)"
+                    "SELECT set_config('rls.role', 'platform_admin', true)"
                 )
                 rows = await conn.fetch(
                     "SELECT path_glob FROM alpha_dream_allowed_paths WHERE enabled = TRUE"
@@ -303,7 +303,7 @@ class DreamInvariantChecker:
             async with self._pool.acquire() as conn:
                 async with conn.transaction():
                     await conn.execute(
-                        "SELECT set_config('jarvis.role', 'platform_admin', true)"
+                        "SELECT set_config('rls.role', 'platform_admin', true)"
                     )
                     await conn.execute(
                         """

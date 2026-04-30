@@ -72,9 +72,7 @@ class ReviewRequest(BaseModel):
 async def _load_policy(pool: asyncpg.Pool, goal_type: str) -> ModelPolicy:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute(
-                "SELECT set_config('jarvis.role', 'platform_admin', true)"
-            )
+            await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
             row = await conn.fetchrow(
                 """
                 SELECT goal_type, planner_provider, planner_model, planner_family,

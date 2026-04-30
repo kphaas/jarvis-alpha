@@ -52,11 +52,11 @@ async def _rls_dev(conn, request: Request) -> None:
     role = getattr(request.state, "role", "user")
     jarvis_role = "platform_admin" if role == "admin" else "user"
     await conn.execute(
-        "SELECT set_config('jarvis.current_user', $1, true)",
+        "SELECT set_config('rls.user_id', $1, true)",
         user_id,
     )
     await conn.execute(
-        "SELECT set_config('jarvis.role', $1, true)",
+        "SELECT set_config('rls.role', $1, true)",
         jarvis_role,
     )
 
@@ -271,11 +271,11 @@ async def dev_approve(
             role = getattr(request.state, "role", "user")
             jarvis_role = "platform_admin" if role == "admin" else "user"
             await conn.execute(
-                "SELECT set_config('jarvis.current_user', $1, true)",
+                "SELECT set_config('rls.user_id', $1, true)",
                 str(created_by),
             )
             await conn.execute(
-                "SELECT set_config('jarvis.role', $1, true)",
+                "SELECT set_config('rls.role', $1, true)",
                 jarvis_role,
             )
             await conn.execute(

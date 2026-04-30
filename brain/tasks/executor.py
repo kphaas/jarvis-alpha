@@ -42,10 +42,8 @@ def _load_dsn() -> str:
 
 
 async def _bind_executor_rls(conn: asyncpg.Connection) -> None:
-    await conn.execute(
-        "SELECT set_config('jarvis.current_user', 'platform_admin', true)"
-    )
-    await conn.execute("SELECT set_config('jarvis.role', 'platform_admin', true)")
+    await conn.execute("SELECT set_config('rls.user_id', 'platform_admin', true)")
+    await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
 
 
 def _step_dict_llm(step_input: dict[str, Any]) -> dict[str, Any]:

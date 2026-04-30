@@ -43,7 +43,7 @@ class DreamCostCapService:
         async with self._pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('jarvis.role', 'platform_admin', true)"
+                    "SELECT set_config('rls.role', 'platform_admin', true)"
                 )
                 row = await conn.fetchrow(
                     "SELECT limit_usd FROM alpha_dream_cost_caps WHERE scope = $1",
@@ -125,7 +125,7 @@ class DreamCostCapService:
         async with self._pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('jarvis.role', 'platform_admin', true)"
+                    "SELECT set_config('rls.role', 'platform_admin', true)"
                 )
 
                 # INSERT ON CONFLICT DO NOTHING then SELECT FOR UPDATE
