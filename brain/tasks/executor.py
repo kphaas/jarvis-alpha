@@ -42,8 +42,16 @@ def _load_dsn() -> str:
 
 
 async def _bind_executor_rls(conn: asyncpg.Connection) -> None:
-    await conn.execute("SELECT set_config('rls.user_id', 'platform_admin', true)")
-    await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
+    # TD-181 closed: rls.user_id is a UUID slot, not a role slot.
+    # Executor is a background agent; Shape B policies ignore user_id but the
+    # GUC layer requires a valid UUID-castable string. Use reserved system-agent
+    # UUID (application convention, not DB sentinel - Slab 3 decision D).
+    await conn.execute(
+        "SELECT "
+        "set_config('rls.user_id', $1, true), "
+        "set_config('rls.role', 'platform_admin', true)",
+        "00000000-0000-0000-0000-000000000001",
+    )
 
 
 def _step_dict_llm(step_input: dict[str, Any]) -> dict[str, Any]:
