@@ -22,13 +22,19 @@ emit() {
   for kv in "$@"; do
     local k="${kv%%=*}"
     local v="${kv#*=}"
-    if [[ "$v" =~ ^[0-9]+$ ]]; then
-      fields+=",\"$k\":$v"
-    else
-      # Escape quotes in string values
-      v="${v//\"/\\\"}"
-      fields+=",\"$k\":\"$v\""
-    fi
+    # TD-188: quote-by-key not quote-by-value-shape.
+    # Hex commit hashes like 0855889 match ^[0-9]+$ but aren't valid JSON numbers
+    # (leading zero). Whitelist actual numeric keys instead.
+    case "$k" in
+      file_count|dur_ms|exit_code|cost_usd|count|size_bytes|line_count)
+        fields+=",\"$k\":$v"
+        ;;
+      *)
+        # Escape quotes in string values
+        v="${v//\"/\\\"}"
+        fields+=",\"$k\":\"$v\""
+        ;;
+    esac
   done
   emit_event "{$fields}"
 }
