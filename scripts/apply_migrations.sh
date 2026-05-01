@@ -26,7 +26,7 @@ set -uo pipefail
 
 # ── Config ────────────────────────────────────────────────
 PSQL_PATH="/opt/homebrew/Cellar/postgresql@16/16.13/bin/psql"
-DB="jarvis_alpha"
+DB="${DB:-jarvis_alpha}"
 MIGRATIONS_DIR="${HOME}/jarvis-alpha/brain/db/migrations"
 ADVISORY_LOCK_KEY=2026040701  # Arbitrary 64-bit int — must be stable across runs
 
