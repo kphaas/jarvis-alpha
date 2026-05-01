@@ -128,6 +128,14 @@ FAILED=0
 shopt -s nullglob
 for file in "$MIGRATIONS_DIR"/*.sql; do
   basename=$(basename "$file")
+
+  # TD-184: defense-in-depth — skip rollback files even if accidentally placed here.
+  # Canonical home is brain/db/rollbacks/ (per TD-183 self-cancelling deploy recovery).
+  if [[ "$basename" == *_rollback.sql ]]; then
+    echo "  [SKIP] $basename — rollback files belong in brain/db/rollbacks/"
+    continue
+  fi
+
   local_checksum=$(shasum -a 256 "$file" | awk '{print $1}')
 
   # Check if already in tracking table
