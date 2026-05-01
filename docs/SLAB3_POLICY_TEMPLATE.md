@@ -317,3 +317,4 @@ Atomic deploy + 24h soak applies to 6a only. 6b and 6c can deploy in separate wi
 - Slab 4 spec (pending): SECDEF fleet + typed wrapper + LISTEN/NOTIFY rebuild + TD-94 fold-in + this doc Layer 1 CI check + Layer 2 DB event trigger
 - Slab 5 spec (pending): TD-181 + Apr 27 Lock 8 + smoke harness extension
 - Slab 6 spec (pending re-cut): atomic policy deploy + 24h soak with sub-slabs 6a / 6b / 6c
+
