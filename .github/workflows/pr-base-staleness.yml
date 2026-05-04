@@ -1,0 +1,106 @@
+# JARVIS PR base-staleness check (TD-X23)
+#
+# Computes the merge-base between the PR head and target branch and warns
+# (>14 days) or fails (>30 days) when the base is too old. Catches PRs that
+# have rotted and risk silent merge conflicts or lost context.
+#
+# Comment posting is idempotent: peter-evans/find-comment locates an
+# existing JARVIS-tagged comment, peter-evans/create-or-update-comment
+# updates it instead of duplicating.
+#
+# Source of truth: jarvis-standards scripts/_templates/workflows/.
+# Propagated to consuming repos under .github/workflows/ in Phase B3.
+
+name: pr-base-staleness
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  base-staleness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute merge-base age
+        id: age
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # actions/checkout fetches the merge ref but not always the base
+          # branch's tip — make sure we have it.
+          git fetch --no-tags origin "${BASE_REF}" --depth=200 || \
+            git fetch --no-tags origin "${BASE_REF}"
+
+          base_sha="$(git merge-base "${HEAD_SHA}" "origin/${BASE_REF}")"
+          base_ts="$(git show -s --format=%ct "${base_sha}")"
+          now_ts="$(date -u +%s)"
+          age_days=$(( (now_ts - base_ts) / 86400 ))
+
+          echo "base_sha=${base_sha}"   >> "${GITHUB_OUTPUT}"
+          echo "base_ts=${base_ts}"     >> "${GITHUB_OUTPUT}"
+          echo "age_days=${age_days}"   >> "${GITHUB_OUTPUT}"
+          echo "Base ${base_sha} is ${age_days} days old."
+
+      - name: Find existing staleness comment
+        id: find
+        if: steps.age.outputs.age_days != ''
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: '<!-- jarvis:pr-base-staleness -->'
+
+      - name: Post / update warning (>14d)
+        if: steps.age.outputs.age_days != '' && fromJSON(steps.age.outputs.age_days) >= 14
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            <!-- jarvis:pr-base-staleness -->
+            ⚠ **PR base is stale** — merge-base
+            (`${{ steps.age.outputs.base_sha }}`) is
+            **${{ steps.age.outputs.age_days }} days** old.
+
+            Rebase before merge to avoid silent conflicts:
+
+            ```
+            git fetch origin ${{ github.event.pull_request.base.ref }}
+            git rebase origin/${{ github.event.pull_request.base.ref }}
+            git push --force-with-lease
+            ```
+
+            (warn ≥14 days, fail ≥30 days — JARVIS TD-X23)
+
+      - name: Delete stale comment if base is fresh again
+        if: >-
+          steps.age.outputs.age_days != '' &&
+          fromJSON(steps.age.outputs.age_days) < 14 &&
+          steps.find.outputs.comment-id != ''
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find.outputs.comment-id }}
+          edit-mode: replace
+          body: |
+            <!-- jarvis:pr-base-staleness -->
+            ✅ Base is fresh again
+            (${{ steps.age.outputs.age_days }} days). Earlier staleness
+            warning resolved.
+
+      - name: Fail if base older than 30 days
+        if: steps.age.outputs.age_days != '' && fromJSON(steps.age.outputs.age_days) >= 30
+        run: |
+          echo "::error::PR base is ${{ steps.age.outputs.age_days }} days old (>=30). Rebase required before this PR can merge."
+          exit 1
