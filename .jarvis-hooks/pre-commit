@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# JARVIS pre-commit hook — TD-X25 (main/master block) + TD-X24 (namespace)
+#
+# Enforces DEPLOYMENT.md §15.2 #11: agents must not commit directly to main.
+# Enforces DEPLOYMENT.md §15.2 #15: namespace conventions per §4.3 (ADR-0005
+# lines 84-93). Asymmetric:
+#   - agents committing on feature/* → REJECT (human-canonical namespace)
+#   - humans committing on agent namespaces (claude-code/*, cursor/*,
+#     copilot/*) → WARN to stderr, log, allow (emergency override path)
+#
+# Detached HEAD is allowed (rebase / cherry-pick path).
+# Identity is read from $JARVIS_AGENT first, then hostname-based fallback;
+# $HOOK_HOSTNAME_OVERRIDE is honored to make the hostname path testable.
+#
+# Best-effort audit log at ~/.jarvis/namespace_violations.log.
+
+set -u
+
+branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+[ -z "${branch}" ] && exit 0
+
+# ---------- §15.2 #11: main/master block ----------
+case "${branch}" in
+  main|master)
+    cat >&2 <<'ERR'
+✗ pre-commit: direct commits to main are forbidden per ADR-0005 §15.2 #11.
+
+Create a branch first:
+    git checkout -b claude-code/<descriptor>     # for Claude Code
+    git checkout -b feature/<descriptor>         # for human work
+
+If this is an emergency hotfix and you've decided to override, run with
+    git commit --no-verify
+and own the deviation.
+ERR
+    exit 1
+    ;;
+esac
+
+# ---------- §15.2 #15: namespace + identity ----------
+
+# 1. Identity detection — JARVIS_AGENT env wins, hostname is fallback.
+identity="${JARVIS_AGENT:-}"
+if [ -z "${identity}" ]; then
+  host="${HOOK_HOSTNAME_OVERRIDE:-$(hostname 2>/dev/null || echo unknown)}"
+  host_lc="$(printf '%s' "${host}" | tr '[:upper:]' '[:lower:]')"
+  case "${host_lc}" in
+    *jarvis-sandbox*|*sandbox*) identity="claude-code" ;;
+    *macbook*|*air*)            identity="human" ;;
+    *)                           identity="unknown" ;;
+  esac
+fi
+
+# Normalize: anything we don't recognize collapses to "unknown" (human-treat).
+case "${identity}" in
+  human|claude-code|cursor|copilot) ;;
+  *) identity="unknown" ;;
+esac
+
+# 2. Branch namespace classification.
+#    feature/*  → human-canonical (per ADR-0005 §4.3)
+#    claude-code/* | cursor/* | copilot/* → agent-canonical
+#    everything else → unrestricted (hotfix/*, fix/*, chore/*, audit/*, docs/*, ...)
+ns="other"
+case "${branch}" in
+  feature/*)                          ns="human" ;;
+  claude-code/*|cursor/*|copilot/*)   ns="agent" ;;
+esac
+
+# 3. Audit-log helper. Best-effort, never blocks.
+audit() {
+  local action="$1"
+  {
+    log_dir="${HOME}/.jarvis"
+    log_file="${log_dir}/namespace_violations.log"
+    mkdir -p "${log_dir}" 2>/dev/null || return 0
+    ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    repo="$(git rev-parse --show-toplevel 2>/dev/null || echo unknown)"
+    printf '%s\t%s\t%s\t%s\t%s\n' "${ts}" "${repo}" "${branch}" "${identity}" "${action}" >> "${log_file}" 2>/dev/null || true
+  } 2>/dev/null || true
+}
+
+# 4. Apply rules.
+case "${identity}:${ns}" in
+  claude-code:human|cursor:human|copilot:human)
+    cat >&2 <<ERR
+✗ pre-commit: branch '${branch}' uses the feature/* namespace, which is reserved for human commits per ADR-0005 §4.3 (DEPLOYMENT.md §15.2 #15).
+
+Detected agent identity: '${identity}'.
+
+Move to an agent namespace, e.g.:
+    git branch -m ${identity}/$(printf '%s' "${branch}" | sed 's|^feature/||')
+
+Or, if this commit really is from a human running through the agent shell,
+unset JARVIS_AGENT before committing.
+ERR
+    audit "rejected"
+    exit 1
+    ;;
+  human:agent|unknown:agent)
+    printf '! pre-commit: human identity committing to agent namespace '\''%s'\''. Allowed for emergency override. Logged.\n' "${branch}" >&2
+    audit "warned"
+    ;;
+esac
+
+exit 0

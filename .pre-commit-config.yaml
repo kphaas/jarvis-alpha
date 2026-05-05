@@ -1,0 +1,40 @@
+# JARVIS canonical pre-commit framework config — TD-X28.
+#
+# Source of truth: jarvis-standards/scripts/_templates/.pre-commit-config.yaml.
+# install_pre_commit.sh copies this into a target repo, copies the JARVIS
+# pre-commit hook script into .jarvis-hooks/pre-commit, and runs
+# `pre-commit install` to wire .git/hooks/pre-commit through the framework.
+#
+# The local hook below is how JARVIS namespace + main-block enforcement
+# (TD-X24 + TD-X25, DEPLOYMENT.md §15.2 #11 / #15) keeps running after
+# pre-commit framework takes ownership of .git/hooks/pre-commit.
+#
+# Update `rev` values via:  pre-commit autoupdate --bleeding-edge
+# Pinned at template-build time so propagation across repos stays consistent.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        # Skip the baseline file itself — it embeds the very fingerprints
+        # we'd otherwise self-report on. detect-secrets recommends this.
+        exclude: '\.secrets\.baseline$'
+
+  - repo: local
+    hooks:
+      - id: jarvis-namespace
+        name: JARVIS namespace + main block (TD-X24 + TD-X25)
+        entry: bash .jarvis-hooks/pre-commit
+        language: system
+        stages: [pre-commit]
+        always_run: true
+        pass_filenames: false
