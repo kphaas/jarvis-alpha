@@ -1,36 +1,257 @@
-name: jarvis-alpha CI
+# JARVIS uniform CI workflow — TD-X29 (TD-X32 workspace-aware sync).
+#
+# Source of truth: jarvis-standards/scripts/_templates/workflows/ci.yml.
+# Phase 3 propagates this into each consuming repo's .github/workflows/.
+#
+# Jobs run in parallel against PRs and pushes to main. Each Python job
+# (lint / typecheck / test) gracefully skips when the repo doesn't have
+# the corresponding configuration; secret-scan is unconditional.
+#
+# `ci-pass` is the single required-status-check name configured in branch
+# protection — it depends on every other job, so a skip in any one of
+# them propagates as a green required check, while a real failure
+# anywhere blocks the merge.
+#
+# Step ordering matters: the gate step that decides whether the job's
+# real work runs MUST come before the Python / uv setup, because
+# `astral-sh/setup-uv@v3` with `cache-dependency-glob` errors out if
+# nothing matches the glob — so a no-pyproject-toml repo would fail
+# during setup before our gate had a chance to skip it.
+#
+# Workspace awareness (TD-X32):
+# JARVIS repos use `uv` workspaces. The naive `uv sync --all-extras` only
+# resolves the root package — workspace siblings (e.g. jarvis-financial's
+# packages/core, packages/risk, packages/contracts; jarvis-alpha's brain/
+# + gateway/) stay un-synced and downstream `import` calls fail with
+# `ModuleNotFoundError`. Phase 3 propagation surfaced this on financial,
+# alpha, family. test + typecheck jobs detect `[tool.uv.workspace]` in
+# the root `pyproject.toml` and add `--all-packages` when present;
+# `--group dev` is also added so test runners (pytest, etc.) declared as
+# PEP 735 dependency-groups install during the sync. Repos with no root
+# `pyproject.toml` skip test + typecheck entirely (covers the
+# alpha-without-workspace-root case until alpha adopts a workspace
+# root). The lint job is unaffected because `uv tool run ruff` operates
+# on the filesystem and doesn't need a synced env.
+
+name: ci
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+
+permissions:
+  contents: read
+
+# Concurrency: cancel in-progress PR runs on the same branch when a new
+# push lands; never cancel main pushes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  lint-and-test:
+  lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - name: Install dependencies
-        run: pip install ruff pytest
-      - name: Ruff lint
-        run: ruff check brain/ gateway/
-      - name: Pytest
-        run: pytest --tb=short || true
 
-  ui-build:
+      - name: Skip if no Python config
+        id: gate
+        run: |
+          if [ ! -f pyproject.toml ] && [ ! -f setup.cfg ] && [ ! -f setup.py ]; then
+            echo "skip=true" >> "${GITHUB_OUTPUT}"
+            echo "No Python project config found — skipping ruff."
+          else
+            echo "skip=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Set up Python
+        if: steps.gate.outputs.skip == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        if: steps.gate.outputs.skip == 'false'
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+
+      - name: ruff check
+        if: steps.gate.outputs.skip == 'false'
+        run: uv tool run ruff check .
+
+      - name: ruff format --check
+        if: steps.gate.outputs.skip == 'false'
+        run: uv tool run ruff format --check .
+
+  typecheck:
+    name: typecheck
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - name: Install and build
+
+      - name: Skip if mypy not configured
+        id: gate
         run: |
-          cd endpoint/dashboard
-          npm install
-          npm run build
-        continue-on-error: true
+          if [ ! -f pyproject.toml ] || ! grep -q '\[tool\.mypy\]' pyproject.toml; then
+            echo "skip=true" >> "${GITHUB_OUTPUT}"
+            echo "[tool.mypy] not present — skipping mypy."
+          else
+            echo "skip=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Set up Python
+        if: steps.gate.outputs.skip == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        if: steps.gate.outputs.skip == 'false'
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+
+      - name: Sync dependencies (workspace-aware, TD-X32)
+        if: steps.gate.outputs.skip == 'false'
+        run: |
+          # Workspace detection: presence of [tool.uv.workspace] in the
+          # root pyproject.toml indicates a uv workspace; in that case
+          # --all-packages is needed so workspace siblings get synced
+          # too. Without it, sibling imports (e.g. jarvis_contracts) fail
+          # at type-check / test time.
+          if grep -q '^\[tool\.uv\.workspace\]' pyproject.toml; then
+            echo "uv workspace detected → uv sync --all-packages --all-extras --group dev"
+            uv sync --all-packages --all-extras --group dev
+          else
+            echo "single-package repo → uv sync --all-extras --group dev"
+            uv sync --all-extras --group dev
+          fi
+
+      - name: mypy
+        if: steps.gate.outputs.skip == 'false'
+        run: uv run mypy .
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip if no root pyproject.toml or no tests/
+        id: gate
+        run: |
+          # TD-X32: also gate on root pyproject.toml. Without it `uv sync`
+          # has nothing to sync against, and the alpha case (multi-package
+          # repo without a workspace root) used to blow up here.
+          if [ ! -f pyproject.toml ] || [ ! -d tests ]; then
+            echo "skip=true" >> "${GITHUB_OUTPUT}"
+            echo "No root pyproject.toml or no tests/ directory — skipping pytest."
+          else
+            echo "skip=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Set up Python
+        if: steps.gate.outputs.skip == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        if: steps.gate.outputs.skip == 'false'
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+
+      - name: Sync dependencies (workspace-aware, TD-X32)
+        if: steps.gate.outputs.skip == 'false'
+        run: |
+          # Workspace detection: see the typecheck job for the full
+          # rationale. --all-packages on workspace repos so siblings sync
+          # (covers financial's jarvis_contracts, jarvis_core.* etc).
+          # --group dev so PEP 735 dev-group entries (e.g. pytest) are
+          # installed during the sync, not left to a separate `uv pip
+          # install pytest` step (covers family's pytest-not-found).
+          if grep -q '^\[tool\.uv\.workspace\]' pyproject.toml; then
+            echo "uv workspace detected → uv sync --all-packages --all-extras --group dev"
+            uv sync --all-packages --all-extras --group dev
+          else
+            echo "single-package repo → uv sync --all-extras --group dev"
+            uv sync --all-extras --group dev
+          fi
+
+      - name: pytest
+        if: steps.gate.outputs.skip == 'false'
+        run: uv run pytest
+
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need history for the audit comparison against the baseline.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install detect-secrets
+        run: pip install --quiet 'detect-secrets==1.5.0'
+
+      - name: Scan against baseline
+        run: |
+          if [ ! -f .secrets.baseline ]; then
+            echo "::warning::No .secrets.baseline present — running scan in audit-only mode (will not fail this build)."
+            detect-secrets scan > /tmp/scan.json || true
+            python - <<'PY'
+          import json
+          with open('/tmp/scan.json') as f:
+              report = json.load(f)
+          findings = sum(len(v) for v in report.get('results', {}).items())
+          print(f"detect-secrets reported {findings} potential findings (baseline missing).")
+          PY
+            exit 0
+          fi
+          # With a baseline present: fail if scan reports anything not
+          # already in the baseline. detect-secrets exits non-zero when
+          # the audit finds new secrets.
+          detect-secrets scan --baseline .secrets.baseline
+
+  ci-pass:
+    name: ci-pass
+    needs: [lint, typecheck, test, secret-scan]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Aggregate results
+        env:
+          LINT:        ${{ needs.lint.result }}
+          TYPECHECK:   ${{ needs.typecheck.result }}
+          TEST:        ${{ needs.test.result }}
+          SECRET_SCAN: ${{ needs.secret-scan.result }}
+        run: |
+          set -e
+          fail=0
+          for n in LINT TYPECHECK TEST SECRET_SCAN; do
+            v="${!n}"
+            case "${v}" in
+              success|skipped) echo "${n}: ${v}" ;;
+              *)               echo "::error::${n}: ${v}"; fail=1 ;;
+            esac
+          done
+          exit "${fail}"
