@@ -185,3 +185,53 @@ $$;
 
 RESET ALL;
 \echo === ALL 8 SMOKE CASES PASSED ===
+
+\echo === Case 9: chat_messages admin override READ ===
+RESET ALL;
+SELECT set_config('rls.role',         'platform_admin',                        false);
+SELECT set_config('rls.user_id',      '00000000-0000-0000-0000-0000000000aa',  false);
+SELECT set_config('rls.max_rating',   'adult',                                 false);
+SELECT set_config('rls.workspace_id', '00000000-0000-0000-0000-0000000000aa',  false);
+
+DO $$
+DECLARE
+    n INT;
+BEGIN
+    SELECT count(*) INTO n FROM chat_messages;
+    ASSERT n >= 1,
+        'Case 9 FAIL: platform_admin should see all chat_messages (got ' || n || ')';
+    RAISE NOTICE 'Case 9 PASS: admin sees % chat_messages rows', n;
+END
+$$;
+
+\echo === Case 10: chat_messages admin override WRITE ===
+RESET ALL;
+SELECT set_config('rls.role',         'platform_admin',                        false);
+SELECT set_config('rls.user_id',      '00000000-0000-0000-0000-0000000000aa',  false);
+SELECT set_config('rls.max_rating',   'adult',                                 false);
+SELECT set_config('rls.workspace_id', '00000000-0000-0000-0000-0000000000aa',  false);
+
+DO $$
+BEGIN
+    DELETE FROM chat_messages WHERE id = 'cccccccc-cccc-cccc-cccc-cccccccccc99';
+    BEGIN
+        INSERT INTO chat_messages (id, thread_id, role, content, content_rating, created_at)
+        VALUES (
+            'cccccccc-cccc-cccc-cccc-cccccccccc99',
+            'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1',
+            'system',
+            'rls_smoke case10 admin override insert',
+            'age_8_plus',
+            now()
+        );
+    EXCEPTION WHEN OTHERS THEN
+        ASSERT FALSE,
+            'Case 10 FAIL: platform_admin should INSERT into any user''s chat_messages';
+    END;
+    RAISE NOTICE 'Case 10 PASS: platform_admin INSERT into user_b thread OK';
+    DELETE FROM chat_messages WHERE id = 'cccccccc-cccc-cccc-cccc-cccccccccc99';
+END
+$$;
+
+RESET ALL;
+\echo === ALL 10 SMOKE CASES PASSED ===

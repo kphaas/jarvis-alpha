@@ -544,3 +544,87 @@ Cursor work begins next session, not in this spec session.
 - `~/jarvis-alpha/docs/SLAB3_POLICY_TEMPLATE.md` - Shape A / A-FK / B templates (shipped)
 - Slab 5 spec (pending): TD-181 + Apr 27 Lock 8 fixes using helpers from this slab
 - Slab 6 spec (pending re-cut): atomic policy deploy with sub-slabs 6a / 6b / 6c
+
+---
+
+## ADDENDUM — 2026-05-07 — TD-197 Watchdog SECDEF Wrapper
+
+**Origin:** RLS audit 2026-05-07 surfaced two non-canonical watchdog policies
+(`qual=true`, `with_check=true`) and over-broad `arwd` grants. Deferred from
+Slab 6a because canonical fix is part of Slab 4 SECDEF fleet.
+
+### TD-197 — Watchdog read+write policies + over-broad grants
+
+| Field | Value |
+|---|---|
+| Priority | P1 |
+| Owner | Slab 4 (this spec) + Slab 7c (REVOKE) |
+| Risk today | Defense-in-depth gap. No active exploit; no HTTP route reads watchdog. |
+| Pre-flight | Confirmed: watchdog process has zero `rls.role` set calls. SECDEF is the only clean path. |
+
+### New SECDEF function — `record_watchdog_event()`
+
+Adds to the existing SECDEF fleet (`record_*` writers).
+
+```sql
+CREATE OR REPLACE FUNCTION record_watchdog_event(
+  p_trace_id    UUID,
+  p_event_type  TEXT,
+  p_payload     JSONB
+) RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  -- xact-local elevation; never leaks past statement
+  PERFORM set_config('rls.role', 'platform_admin', true);
+
+  INSERT INTO alpha_watchdog_events (trace_id, event_type, payload)
+  VALUES (p_trace_id, p_event_type, p_payload);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION record_watchdog_event(UUID, TEXT, JSONB) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION record_watchdog_event(UUID, TEXT, JSONB)
+       TO jarvis_alpha_app, jarvis_alpha_writer;
+```
+
+### Policy changes shipped with this function
+
+| Policy | New shape |
+|---|---|
+| `watchdog_events_read` | Shape B — `(current_setting('rls.role') = 'platform_admin')` |
+| `watchdog_events_system_write` | DROP — superseded by SECDEF function path |
+
+### Watchdog process refactor
+
+| Location | Change |
+|---|---|
+| `brain/agents/watchdog.py` (or equivalent) | Replace raw `INSERT INTO alpha_watchdog_events` with `SELECT record_watchdog_event($1, $2, $3)` |
+| Watchdog connection setup | No `rls.role` set needed — SECDEF function handles it internally |
+
+### Slab 7c interaction
+
+After Slab 4 ships:
+- Slab 7c REVOKE INSERT/UPDATE/DELETE on `alpha_watchdog_events` from
+  `jarvis_alpha_app` and `jarvis_alpha_writer`
+- SELECT remains revoked (Shape B policy enforces admin-only read at policy
+  layer, but DML grant is the second lock)
+- Net: only path to write watchdog events is `record_watchdog_event()`
+
+### Big-tech alignment
+
+This pattern matches AWS CloudTrail, GCP Audit Logs, Stripe internal events,
+Datadog audit log: **never grant raw DML to app roles on telemetry tables;
+gate writes through a defined function with elevated privileges.**
+
+### Acceptance criteria
+
+- [ ] `record_watchdog_event()` deployed and EXECUTE granted to app + writer
+- [ ] Watchdog process refactored to call function
+- [ ] `watchdog_events_read` policy = Shape B
+- [ ] `watchdog_events_system_write` policy DROPPED
+- [ ] Smoke case added: non-admin role cannot SELECT from `alpha_watchdog_events`
+- [ ] Smoke case added: non-admin role cannot INSERT directly into `alpha_watchdog_events` (raw DML blocked at function-only path post-7c)
+- [ ] Watchdog `launchctl list` shows process healthy 24h post-deploy

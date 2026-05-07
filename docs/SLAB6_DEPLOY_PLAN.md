@@ -307,3 +307,59 @@ Implementation is ~2-3 hours of Cursor work + 24h soak.
 - `~/jarvis-alpha/scripts/run_smoke.sh` — smoke harness for staging dry run
 - `~/jarvis-alpha/brain/db/tests/rls_smoke.sql` — 8 cases, all should PASS post-Slab-6a
 - TD-183 / TD-184 — rollback file location convention + runner filter
+
+---
+
+## REVISION — 2026-05-07 — Scope Locked at 9 Policies
+
+**Source:** Live `pg_policies` audit on prod (`jarvis_alpha`), 2026-05-07.
+**Outcome:** Original "atomic 22-policy" framing replaced with verified 9-policy
+locked scope. Remaining items deferred to Slab 4 and Slab 6b with traceability.
+
+### Final 9-policy scope (single transaction)
+
+| # | Policy | Change |
+|---|---|---|
+| 1 | `chat_threads_isolation` | Add admin override (Shape A canonical) — closes TD-196 |
+| 2 | `chat_messages_isolation` | Add admin override (Shape A-FK canonical) — closes new finding |
+| 3 | `alpha_memory_isolation` | Add explicit `with_check` clause |
+| 4 | `semantic_isolation` | Add explicit `with_check` clause |
+| 5 | `task_graph_isolation` | Add explicit `with_check` clause |
+| 6 | `task_step_isolation` | Add explicit `with_check` clause |
+| 7 | `vault_access_log_admin` | Add explicit `with_check` clause |
+| 8 | `vault_documents_write` | Add explicit `with_check` clause |
+| 9 | `vault_pipeline_admin` | Add explicit `with_check` clause |
+
+### Deferred from 6a
+
+| Item | Owner | Why deferred |
+|---|---|---|
+| `watchdog_events_read` (`qual=true`) | **Slab 4** (TD-197) | Canonical fix is `record_watchdog_event()` SECDEF function from Slab 4 fleet. Doing raw Shape B in 6a would break the watchdog process (no `rls.role` set today) and create rework. |
+| `watchdog_events_system_write` (`with_check=true`) | **Slab 4** (TD-197) | Same reason — SECDEF wrapper is the canonical big-tech pattern. |
+| Over-broad `arwd` grants on `alpha_watchdog_events` to `jarvis_alpha_app` + `jarvis_alpha_writer` | **Slab 7c** | REVOKE replaces with EXECUTE on SECDEF function only. |
+| `vault_documents_read` (custom classification logic) | **Slab 6b** | Vault sub-slab. Either formalize as Shape C or refactor to Shape B + view layer. |
+
+### Audit findings reference
+
+- 29 policies / 22 tables surveyed
+- Bug class instances: 5 total (TD-181, Apr 27 Lock 8, TD-196, chat_messages, watchdog × 2)
+- Defect rate on policy correctness: ~23% (5 of 22 tables had a role/identity/admin-override bug)
+- See: live audit output `/tmp/rls_audit_20260507_170959.txt`
+
+### Smoke harness additions for staging dry-run
+
+Cases 9 and 10 added to `brain/db/tests/rls_smoke.sql`:
+- **Case 9** — chat_messages admin override READ
+- **Case 10** — chat_messages admin override WRITE
+
+All 10 cases must PASS on `jarvis_alpha_test` before prod deploy.
+
+### Pre-flight checks completed (2026-05-07)
+
+- **R4** chat_messages admin consumer audit: zero current callers using admin context. Slab 6a fix adds capability rather than restoring break. Low risk.
+- **R5** watchdog grants + RLS context: confirmed watchdog process sets no `rls.role`, validated SECDEF deferral path.
+
+### Pattern recognition
+
+This is the third audit confirming **doc/DB drift is recurring**. Always query
+live `pg_policies` before locking deploy plans. Live DB > handoff text.
