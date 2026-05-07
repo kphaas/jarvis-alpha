@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# JARVIS substrate pre-push hook — force-push block on protected refs.
+# Generated from jarvis-standards/scripts/_templates/hooks/pre-push.
+# DO NOT EDIT in consumer repos — regenerate via install_pre_commit.sh.
+#
+# Stage: pre-push (managed by pre-commit framework)
+# Source: TD-X31 — promoted from jarvis-forge custom hook (2026-05-06)
+#
+# Rules:
+#   1. Refuse force-push (non-fast-forward) to main / master / production
+#   2. Refuse deletion of those protected branches
+#   3. Allow new branch pushes, fast-forwards, all unprotected branches
+
+set -euo pipefail
+
+protected_pattern='^(main|master|production)$'
+zero_sha='0000000000000000000000000000000000000000'
+
+blocked=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # remote_ref looks like refs/heads/main; strip prefix
+  branch="${remote_ref#refs/heads/}"
+
+  # Skip if not a branch ref (tags, etc.)
+  [ "$branch" = "$remote_ref" ] && continue
+
+  # Skip unprotected branches
+  [[ "$branch" =~ $protected_pattern ]] || continue
+
+  # New branch — fine
+  [ "$remote_sha" = "$zero_sha" ] && continue
+
+  # Branch deletion — block
+  if [ "$local_sha" = "$zero_sha" ]; then
+    echo "✗ BLOCKED: refuse to delete protected branch '$branch'" >&2
+    blocked=1
+    continue
+  fi
+
+  # Non-fast-forward (force-push) — block
+  if ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+    echo "✗ BLOCKED: force-push to protected branch '$branch' detected" >&2
+    echo "  remote: $remote_sha" >&2
+    echo "  local:  $local_sha" >&2
+    echo "  Local does not include remote as ancestor — this rewrites history." >&2
+    echo "  If intentional, push to a different branch and open a PR." >&2
+    blocked=1
+  fi
+done
+
+exit "$blocked"
