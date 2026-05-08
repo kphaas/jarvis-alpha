@@ -4,8 +4,8 @@
 -- TD-201 surgical fix: rewrite expire_pending_approvals() with multi-row
 -- safe pattern (CTE chain) replacing broken `RETURNING id INTO uuid[]`.
 --
--- Bug: original function used `RETURNING id INTO v_expired_ids` where
--- v_expired_ids is uuid[]. PL/pgSQL `RETURNING ... INTO` raises P0003
+-- Bug: original function declared a uuid[] variable and used a
+-- RETURNING-INTO-array pattern. PL/pgSQL `RETURNING ... INTO` raises P0003
 -- ('query returned more than one row') when >=2 rows match. Function
 -- failed every 60s when the queue had >=2 expired pending rows, never
 -- making progress. Caught 2026-05-07 evening as root cause of UI 500
@@ -63,7 +63,7 @@ BEGIN
     SET LOCAL statement_timeout = '10s';
 
     -- Multi-row safe: chain UPDATE -> INSERT in a single CTE statement.
-    -- Replaces broken `RETURNING id INTO v_expired_ids` (P0003 multi-row).
+    -- Replaces an earlier pattern that raised P0003 (multi-row INTO scalar).
     WITH expired AS (
         UPDATE public.alpha_approval_queue
         SET status = 'expired'
@@ -106,8 +106,8 @@ BEGIN
     IF v_def NOT LIKE '%WITH expired AS%' THEN
         RAISE EXCEPTION 'POST-FLIGHT FAIL: function missing expected CTE pattern';
     END IF;
-    IF v_def LIKE '%RETURNING id%INTO v_expired_ids%' THEN
-        RAISE EXCEPTION 'POST-FLIGHT FAIL: function still has broken RETURNING INTO pattern';
+    IF v_def LIKE '%v_expired_ids uuid[]%' THEN
+        RAISE EXCEPTION 'POST-FLIGHT FAIL: function still declares v_expired_ids (old broken version)';
     END IF;
     IF v_def NOT LIKE '%audited AS%' THEN
         RAISE EXCEPTION 'POST-FLIGHT FAIL: function missing audited CTE';
