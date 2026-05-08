@@ -182,8 +182,15 @@ BEGIN
   RAISE NOTICE 'POST-FLIGHT PASS: 9 policies have explicit with_check, 2 have admin override';
 END $$;
 
-INSERT INTO schema_migrations (filename, applied_at)
-VALUES ('065_slab6a_admin_overrides_explicit_withcheck.sql', NOW());
+INSERT INTO schema_migrations (filename, checksum, source)
+VALUES (
+  '065_slab6a_admin_overrides_explicit_withcheck.sql',
+  :'checksum',
+  'runner'
+)
+ON CONFLICT (filename) DO UPDATE
+  SET checksum = EXCLUDED.checksum,
+      applied_at = NOW();
 
 COMMIT;
 
