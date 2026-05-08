@@ -174,6 +174,6 @@ if [ "${SMOKE_RC}" -ne 0 ]; then
     exit "${SMOKE_RC}"
 fi
 
-echo -e "${GREEN}[3/3] smoke OK — all 8 cases passed${NC}" | tee -a "${LOG_FILE}"
+echo -e "${GREEN}[3/3] smoke OK — all 10 cases passed${NC}" | tee -a "${LOG_FILE}"
 echo "log: ${LOG_FILE}"
 exit 0
