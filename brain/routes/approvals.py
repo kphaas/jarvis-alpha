@@ -188,7 +188,7 @@ async def decide_approval(queue_id: str, req: DecideRequest, request: Request):
     )
 
     return {
-        "queue_id": str(row["id"]),
+        "queue_id": str(row["queue_id"]),
         "decision": req.decision,
         "description": row["description"],
         "expires_at": (
