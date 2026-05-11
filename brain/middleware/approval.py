@@ -144,19 +144,27 @@ class ApprovalMiddleware(BaseHTTPMiddleware):
             logger.error("no DB pool available for approval queue read")
             return None
 
+        # System-level read: the approval-consumption path must always run as
+        # platform_admin regardless of requester identity. rls_connection() is
+        # request-scoped and derives role from JWT, which would only fix the
+        # admin-actor case. See TD-211 / DISCOVERY_2026-05-11_td211_consume_approved.md.
         async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """SELECT id
-                   FROM alpha_approval_queue
-                   WHERE actor_sub = $1
-                     AND parameters_hash = $2
-                     AND status = 'approved'
-                     AND expires_at > NOW()
-                   ORDER BY requested_at DESC
-                   LIMIT 1""",
-                actor_sub,
-                parameters_hash,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('rls.role', 'platform_admin', true)"
+                )
+                row = await conn.fetchrow(
+                    """SELECT id
+                       FROM alpha_approval_queue
+                       WHERE actor_sub = $1
+                         AND parameters_hash = $2
+                         AND status = 'approved'
+                         AND expires_at > NOW()
+                       ORDER BY requested_at DESC
+                       LIMIT 1""",
+                    actor_sub,
+                    parameters_hash,
+                )
 
         return str(row["id"]) if row else None
 
