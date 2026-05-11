@@ -274,7 +274,7 @@ BEGIN
     BEGIN
         v_id := public.enqueue_approval_request(
             ARRAY['post_flight_verify']::text[],
-            'tier_low',
+            'T1',
             'post-flight-test-actor',
             'user',
             'POST-FLIGHT verification row — rolled back by savepoint',
