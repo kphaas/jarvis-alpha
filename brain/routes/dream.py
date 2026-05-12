@@ -64,6 +64,7 @@ async def create_session(request: Request, req: CreateSessionRequest):
     pool = get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
+            await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
             row = await conn.fetchrow(
                 """
                 INSERT INTO alpha_dream_sessions (trigger, cost_budget_usd, max_duration_s, step_count)
@@ -130,25 +131,28 @@ async def start_session(request: Request, session_id: int):
     check_scopes(request, "dream.execute")
     pool = get_pool()
     async with pool.acquire() as conn:
-        session = await conn.fetchrow(
-            "SELECT id, status FROM alpha_dream_sessions WHERE id = $1", session_id
-        )
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        if session["status"] != "pending":
-            raise HTTPException(
-                status_code=409,
-                detail=f"Cannot start session in '{session['status']}' state",
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
+            session = await conn.fetchrow(
+                "SELECT id, status FROM alpha_dream_sessions WHERE id = $1",
+                session_id,
             )
-        await conn.execute(
-            """
-            UPDATE alpha_dream_sessions
-            SET status = 'running', started_at = $1
-            WHERE id = $2
-            """,
-            datetime.now(timezone.utc),
-            session_id,
-        )
+            if not session:
+                raise HTTPException(status_code=404, detail="Session not found")
+            if session["status"] != "pending":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cannot start session in '{session['status']}' state",
+                )
+            await conn.execute(
+                """
+                UPDATE alpha_dream_sessions
+                SET status = 'running', started_at = $1
+                WHERE id = $2
+                """,
+                datetime.now(timezone.utc),
+                session_id,
+            )
     logger.info("DREAM_SESSION_STARTED session_id=%d", session_id)
     return {"session_id": session_id, "status": "running"}
 
@@ -158,17 +162,19 @@ async def kill_session(request: Request, session_id: int, req: KillRequest):
     check_scopes(request, "dream.execute", "dream.kill")
     pool = get_pool()
     async with pool.acquire() as conn:
-        session = await conn.fetchrow(
-            "SELECT id, status FROM alpha_dream_sessions WHERE id = $1", session_id
-        )
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        if session["status"] not in ("pending", "running"):
-            raise HTTPException(
-                status_code=409,
-                detail=f"Session already in terminal state '{session['status']}'",
-            )
         async with conn.transaction():
+            await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
+            session = await conn.fetchrow(
+                "SELECT id, status FROM alpha_dream_sessions WHERE id = $1",
+                session_id,
+            )
+            if not session:
+                raise HTTPException(status_code=404, detail="Session not found")
+            if session["status"] not in ("pending", "running"):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Session already in terminal state '{session['status']}'",
+                )
             await conn.execute(
                 """
                 UPDATE alpha_dream_sessions
@@ -199,56 +205,60 @@ async def get_next_step(request: Request, session_id: int):
     check_scopes(request, "dream.execute")
     pool = get_pool()
     async with pool.acquire() as conn:
-        session = await conn.fetchrow(
-            "SELECT id, status, cost_actual_usd, cost_budget_usd FROM alpha_dream_sessions WHERE id = $1",
-            session_id,
-        )
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        if session["status"] != "running":
-            return {"next_step": None, "reason": f"session is {session['status']}"}
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
+            session = await conn.fetchrow(
+                "SELECT id, status, cost_actual_usd, cost_budget_usd FROM alpha_dream_sessions WHERE id = $1",
+                session_id,
+            )
+            if not session:
+                raise HTTPException(status_code=404, detail="Session not found")
+            if session["status"] != "running":
+                return {"next_step": None, "reason": f"session is {session['status']}"}
 
-        if session["cost_actual_usd"] >= session["cost_budget_usd"]:
-            return {"next_step": None, "reason": "cost budget exceeded"}
+            if session["cost_actual_usd"] >= session["cost_budget_usd"]:
+                return {"next_step": None, "reason": "cost budget exceeded"}
 
-        pending_steps = await conn.fetch(
-            """
-            SELECT * FROM alpha_dream_steps
-            WHERE session_id = $1 AND status = 'pending'
-            ORDER BY step_index
-            """,
-            session_id,
-        )
-        for step in pending_steps:
-            deps = step["depends_on"] or []
-            if not deps:
-                return {"next_step": dict(step)}
-            dep_statuses = await conn.fetch(
+            pending_steps = await conn.fetch(
                 """
-                SELECT step_index, status FROM alpha_dream_steps
-                WHERE session_id = $1 AND step_index = ANY($2)
+                SELECT * FROM alpha_dream_steps
+                WHERE session_id = $1 AND status = 'pending'
+                ORDER BY step_index
                 """,
                 session_id,
-                deps,
             )
-            all_completed = all(d["status"] == "completed" for d in dep_statuses)
-            any_failed = any(d["status"] in ("failed", "blocked") for d in dep_statuses)
-            if any_failed:
-                await conn.execute(
+            for step in pending_steps:
+                deps = step["depends_on"] or []
+                if not deps:
+                    return {"next_step": dict(step)}
+                dep_statuses = await conn.fetch(
                     """
-                    UPDATE alpha_dream_steps SET status = 'blocked',
-                    error_message = 'Dependency failed or blocked'
-                    WHERE id = $1
+                    SELECT step_index, status FROM alpha_dream_steps
+                    WHERE session_id = $1 AND step_index = ANY($2)
                     """,
-                    step["id"],
-                )
-                await conn.execute(
-                    "UPDATE alpha_dream_sessions SET steps_blocked = steps_blocked + 1 WHERE id = $1",
                     session_id,
+                    deps,
                 )
-                continue
-            if all_completed:
-                return {"next_step": dict(step)}
+                all_completed = all(d["status"] == "completed" for d in dep_statuses)
+                any_failed = any(
+                    d["status"] in ("failed", "blocked") for d in dep_statuses
+                )
+                if any_failed:
+                    await conn.execute(
+                        """
+                        UPDATE alpha_dream_steps SET status = 'blocked',
+                        error_message = 'Dependency failed or blocked'
+                        WHERE id = $1
+                        """,
+                        step["id"],
+                    )
+                    await conn.execute(
+                        "UPDATE alpha_dream_sessions SET steps_blocked = steps_blocked + 1 WHERE id = $1",
+                        session_id,
+                    )
+                    continue
+                if all_completed:
+                    return {"next_step": dict(step)}
 
     return {"next_step": None, "reason": "no runnable steps"}
 
@@ -259,21 +269,22 @@ async def update_step(request: Request, step_id: int, req: UpdateStepRequest):
     pool = get_pool()
     now = datetime.now(timezone.utc)
     async with pool.acquire() as conn:
-        step = await conn.fetchrow(
-            "SELECT * FROM alpha_dream_steps WHERE id = $1", step_id
-        )
-        if not step:
-            raise HTTPException(status_code=404, detail="Step not found")
-
-        current = step["status"]
-        target = req.status
-        valid = VALID_STEP_TRANSITIONS.get(current, [])
-        if target not in valid:
-            raise HTTPException(
-                status_code=409, detail=f"Invalid transition: {current} → {target}"
-            )
-
         async with conn.transaction():
+            await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
+            step = await conn.fetchrow(
+                "SELECT * FROM alpha_dream_steps WHERE id = $1", step_id
+            )
+            if not step:
+                raise HTTPException(status_code=404, detail="Step not found")
+
+            current = step["status"]
+            target = req.status
+            valid = VALID_STEP_TRANSITIONS.get(current, [])
+            if target not in valid:
+                raise HTTPException(
+                    status_code=409, detail=f"Invalid transition: {current} → {target}"
+                )
+
             if target == "running":
                 await conn.execute(
                     "UPDATE alpha_dream_steps SET status = 'running', started_at = $1 WHERE id = $2",
@@ -354,39 +365,42 @@ async def complete_session(request: Request, session_id: int):
     check_scopes(request, "dream.execute")
     pool = get_pool()
     async with pool.acquire() as conn:
-        session = await conn.fetchrow(
-            "SELECT * FROM alpha_dream_sessions WHERE id = $1", session_id
-        )
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        if session["status"] != "running":
-            raise HTTPException(
-                status_code=409, detail=f"Session is {session['status']}"
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
+            session = await conn.fetchrow(
+                "SELECT * FROM alpha_dream_sessions WHERE id = $1", session_id
             )
+            if not session:
+                raise HTTPException(status_code=404, detail="Session not found")
+            if session["status"] != "running":
+                raise HTTPException(
+                    status_code=409, detail=f"Session is {session['status']}"
+                )
 
-        steps = await conn.fetch(
-            "SELECT status FROM alpha_dream_steps WHERE session_id = $1", session_id
-        )
-        any_failed = any(s["status"] in ("failed", "blocked") for s in steps)
-        final_status = "failed" if any_failed else "completed"
+            steps = await conn.fetch(
+                "SELECT status FROM alpha_dream_steps WHERE session_id = $1",
+                session_id,
+            )
+            any_failed = any(s["status"] in ("failed", "blocked") for s in steps)
+            final_status = "failed" if any_failed else "completed"
 
-        summary_parts = []
-        for s in ("completed", "failed", "blocked", "skipped", "pending"):
-            count = sum(1 for st in steps if st["status"] == s)
-            if count:
-                summary_parts.append(f"{s}:{count}")
+            summary_parts = []
+            for s in ("completed", "failed", "blocked", "skipped", "pending"):
+                count = sum(1 for st in steps if st["status"] == s)
+                if count:
+                    summary_parts.append(f"{s}:{count}")
 
-        await conn.execute(
-            """
-            UPDATE alpha_dream_sessions
-            SET status = $1, finished_at = $2, summary = $3
-            WHERE id = $4
-            """,
-            final_status,
-            datetime.now(timezone.utc),
-            " | ".join(summary_parts),
-            session_id,
-        )
+            await conn.execute(
+                """
+                UPDATE alpha_dream_sessions
+                SET status = $1, finished_at = $2, summary = $3
+                WHERE id = $4
+                """,
+                final_status,
+                datetime.now(timezone.utc),
+                " | ".join(summary_parts),
+                session_id,
+            )
     logger.info(
         "DREAM_SESSION_COMPLETE session_id=%d status=%s", session_id, final_status
     )
