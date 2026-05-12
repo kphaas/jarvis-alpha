@@ -213,15 +213,20 @@ class ApprovalMiddleware(BaseHTTPMiddleware):
                 )
                 return str(queue_id)
             except UniqueViolationError:
-                existing = await conn.fetchval(
-                    """SELECT id FROM alpha_approval_queue
-                       WHERE actor_sub = $1
-                         AND parameters_hash = $2
-                         AND status = 'pending'
-                       LIMIT 1""",
-                    actor_sub,
-                    parameters_hash,
-                )
+                existing = None
+                async with conn.transaction():
+                    await conn.execute(
+                        "SELECT set_config('rls.role', 'platform_admin', true)"
+                    )
+                    existing = await conn.fetchval(
+                        """SELECT id FROM alpha_approval_queue
+                           WHERE actor_sub = $1
+                             AND parameters_hash = $2
+                             AND status = 'pending'
+                           LIMIT 1""",
+                        actor_sub,
+                        parameters_hash,
+                    )
                 if existing:
                     return str(existing)
                 return None

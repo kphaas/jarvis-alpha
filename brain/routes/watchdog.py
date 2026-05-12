@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from brain.db.pool import get_pool
+from brain.db.rls import rls_connection
 from brain.middleware.scopes import check_scopes
 
 router = APIRouter(prefix="/v1/watchdog", tags=["watchdog"])
@@ -101,12 +102,11 @@ class WatchdogEventIngestResponse(BaseModel):
 
 @router.get("/events", response_model=WatchdogEventsResponse)
 async def get_events(
+    request: Request,
     limit: int = Query(default=50, le=500),
     event_type: str | None = Query(default=None),
     service_name: str | None = Query(default=None),
 ) -> WatchdogEventsResponse:
-    pool = get_pool()
-
     filters = []
     params: list = []
     idx = 1
@@ -124,7 +124,7 @@ async def get_events(
     where = f"WHERE {' AND '.join(filters)}" if filters else ""
     params.append(limit)
 
-    async with pool.acquire() as conn:
+    async with rls_connection(request) as conn:
         rows = await conn.fetch(
             f"""
             SELECT
@@ -163,10 +163,8 @@ async def get_events(
 
 
 @router.get("/status", response_model=WatchdogStatusResponse)
-async def get_status() -> WatchdogStatusResponse:
-    pool = get_pool()
-
-    async with pool.acquire() as conn:
+async def get_status(request: Request) -> WatchdogStatusResponse:
+    async with rls_connection(request) as conn:
         rows = await conn.fetch(
             """
             SELECT DISTINCT ON (service_name)
