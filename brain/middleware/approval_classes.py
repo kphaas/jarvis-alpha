@@ -106,6 +106,8 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "external_call",
     ],  # Code analysis via local Ollama + GitHub API — no DB write, no cloud cost
     "POST /v1/dev": ["admin"],
+    # --- Review — T2 pass-through (Forge service review calls, local Ollama, $0) ---
+    "POST /v1/review": ["write", "external_call"],  # TASK-001 Deliverable A
     # --- Diagnose — T2 security_read ---
     "GET /v1/diagnose": ["read", "security_read"],
     # --- Health agents — T1 read ---
