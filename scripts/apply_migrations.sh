@@ -195,10 +195,14 @@ for file in "$MIGRATIONS_DIR"/*.sql; do
     fi
   fi
 
-  # TD-X40: backfill short-circuit — record as already-applied without running
+  # TD-X40: backfill short-circuit — record as already-applied without running.
+  # NOTE: schema_migrations.source CHECK constraint allows {runner, pre-tracking,
+  # baseline}. 'backfill' is the user-facing mode name (ALLOW_BACKFILL=1); the
+  # recorded DB source is 'baseline' since that's the schema-allowed value
+  # semantically closest to "recording an existing baseline state".
   if [ "$ALLOW_BACKFILL" = "1" ]; then
     if [ "$CONFIRM_BACKFILL" = "1" ]; then
-      if ! psql_exec "INSERT INTO schema_migrations (filename, checksum, execution_time_ms, source) VALUES ('$basename', '$local_checksum', 0, 'backfill') ON CONFLICT (filename) DO UPDATE SET checksum=EXCLUDED.checksum, source=EXCLUDED.source, applied_at=NOW();" >/dev/null; then
+      if ! psql_exec "INSERT INTO schema_migrations (filename, checksum, execution_time_ms, source) VALUES ('$basename', '$local_checksum', 0, 'baseline') ON CONFLICT (filename) DO UPDATE SET checksum=EXCLUDED.checksum, source=EXCLUDED.source, applied_at=NOW();" >/dev/null; then
         error_box "Failed to backfill $basename in schema_migrations" \
           "Manually insert: filename=$basename checksum=$local_checksum source=backfill"
         FAILED=$((FAILED + 1))
