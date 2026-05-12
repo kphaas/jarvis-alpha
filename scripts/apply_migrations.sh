@@ -30,6 +30,13 @@ DB="${DB:-jarvis_alpha}"
 MIGRATIONS_DIR="${HOME}/jarvis-alpha/brain/db/migrations"
 ADVISORY_LOCK_KEY=2026040701  # Arbitrary 64-bit int — must be stable across runs
 
+# TD-X40 backfill mode — opt-in path to record on-disk migrations as
+# already-applied without executing them. Use when bootstrapping a fresh
+# DB from a SQL dump where objects already exist.
+ALLOW_BACKFILL="${ALLOW_BACKFILL:-0}"
+CONFIRM_BACKFILL="${CONFIRM_BACKFILL:-0}"
+I_KNOW_THIS_IS_PROD="${I_KNOW_THIS_IS_PROD:-0}"
+
 if [ "$(hostname -s)" != "jarvis-brain" ]; then
   echo "❌ apply_migrations.sh must run on Brain (jarvis-brain). Current host: $(hostname -s)"
   exit 1
@@ -103,6 +110,29 @@ if [[ -z "$TABLE_EXISTS" ]]; then
   exit 1
 fi
 
+# ── Backfill mode validation (TD-X40) ─────────────────────
+if [ "$ALLOW_BACKFILL" = "1" ]; then
+  if [ "${ALLOW_FORCE_REAPPLY:-0}" = "1" ]; then
+    error_box "ALLOW_BACKFILL and ALLOW_FORCE_REAPPLY are mutually exclusive" \
+      "Pick one: backfill (record without applying) or force-reapply (re-run a tracked file)."
+    exit 1
+  fi
+  if [ "$DB" != "jarvis_alpha_test" ] && [ "$I_KNOW_THIS_IS_PROD" != "1" ]; then
+    error_box "BACKFILL mode against non-test DB '$DB' requires I_KNOW_THIS_IS_PROD=1" \
+      "Set I_KNOW_THIS_IS_PROD=1 to acknowledge that backfill rows will land in '$DB'."
+    exit 1
+  fi
+  printf '%b\n' "${YELLOW}════════════════════════════════════════════${RESET}"
+  printf '%b  BACKFILL MODE ACTIVE%b\n' "${YELLOW}${BOLD}" "${RESET}"
+  printf '%b  DB: %s%b\n' "${YELLOW}" "$DB" "${RESET}"
+  if [ "$CONFIRM_BACKFILL" = "1" ]; then
+    printf '%b  Mode: WRITE (CONFIRM_BACKFILL=1)%b\n' "${RED}${BOLD}" "${RESET}"
+  else
+    printf '%b  Mode: DRY-RUN (set CONFIRM_BACKFILL=1 to write)%b\n' "${CYAN}" "${RESET}"
+  fi
+  printf '%b════════════════════════════════════════════%b\n' "${YELLOW}" "${RESET}"
+fi
+
 # ── Acquire advisory lock ─────────────────────────────────
 LOCK_OUT=$(psql_exec "SELECT pg_try_advisory_lock($ADVISORY_LOCK_KEY);" 2>&1)
 if [[ "$LOCK_OUT" != "t" ]]; then
@@ -124,6 +154,8 @@ trap cleanup EXIT
 APPLIED=0
 SKIPPED=0
 FAILED=0
+BACKFILL_APPLIED=0
+BACKFILL_DRY_RUN=0
 
 shopt -s nullglob
 for file in "$MIGRATIONS_DIR"/*.sql; do
@@ -163,6 +195,24 @@ for file in "$MIGRATIONS_DIR"/*.sql; do
     fi
   fi
 
+  # TD-X40: backfill short-circuit — record as already-applied without running
+  if [ "$ALLOW_BACKFILL" = "1" ]; then
+    if [ "$CONFIRM_BACKFILL" = "1" ]; then
+      if ! psql_exec "INSERT INTO schema_migrations (filename, checksum, execution_time_ms, source) VALUES ('$basename', '$local_checksum', 0, 'backfill') ON CONFLICT (filename) DO UPDATE SET checksum=EXCLUDED.checksum, source=EXCLUDED.source, applied_at=NOW();" >/dev/null; then
+        error_box "Failed to backfill $basename in schema_migrations" \
+          "Manually insert: filename=$basename checksum=$local_checksum source=backfill"
+        FAILED=$((FAILED + 1))
+        exit 1
+      fi
+      printf '[BACKFILL APPLIED] %s (%s)\n' "$basename" "$local_checksum" >&2
+      BACKFILL_APPLIED=$((BACKFILL_APPLIED + 1))
+    else
+      printf '[BACKFILL DRY-RUN] would backfill: %s (%s)\n' "$basename" "$local_checksum" >&2
+      BACKFILL_DRY_RUN=$((BACKFILL_DRY_RUN + 1))
+    fi
+    continue
+  fi
+
   # New migration — apply it
   status_line "${YELLOW}→${RESET}" "$basename" "applying..."
   # macOS date does not support %3N; always use Python for sub-second ms.
@@ -198,6 +248,10 @@ printf '\n%b── SUMMARY ─────────────────�
 printf '  Applied:  %d\n' "$APPLIED"
 printf '  Skipped:  %d\n' "$SKIPPED"
 printf '  Failed:   %d\n' "$FAILED"
+if [ "$ALLOW_BACKFILL" = "1" ]; then
+  printf '  Backfill applied: %d\n' "$BACKFILL_APPLIED"
+  printf '  Backfill dry-run: %d\n' "$BACKFILL_DRY_RUN"
+fi
 printf '%b─────────────────────────────────────────────────────────%b\n' "${CYAN}" "${RESET}"
 
 if [[ $FAILED -gt 0 ]]; then
