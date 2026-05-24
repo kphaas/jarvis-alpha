@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { User, Lock, CheckCircle, XCircle, Eye, EyeOff, KeyRound } from 'lucide-react'
 import { apiJson } from '../lib/apiFetch'
@@ -50,7 +50,7 @@ function PinForm({ profileId, onSuccess }: { profileId: string; onSuccess: () =>
     }
     setForm(f => ({ ...f, loading: true, result: 'idle', message: '' }))
     try {
-      await apiJson('/v1/auth/set-child-pin', {
+      await apiJson('/v1/auth/set-profile-pin', {
         method: 'POST',
         body: JSON.stringify({ profile_id: profileId, new_pin: form.pin }),
       })
@@ -173,13 +173,18 @@ function AdminPinForm() {
   )
 }
 
-function ProfileCard({ profile }: { profile: Profile }) {
+function ProfileCard({ profile, onPinUpdated }: { profile: Profile; onPinUpdated: () => void }) {
   const { theme } = useAppStore()
   const isDark = theme === 'dark'
   const border = isDark ? 'border-white/10' : 'border-[#141414]/10'
   const subtle = isDark ? 'bg-white/5' : 'bg-[#141414]/5'
-  const [expanded, setExpanded] = useState(profile.pin_status === 'placeholder')
-  const [pinSet, setPinSet] = useState(profile.pin_status === 'set')
+  const canManagePin = profile.id !== 'ken'
+  const [expanded, setExpanded] = useState(canManagePin && profile.pin_status === 'placeholder')
+  const pinSet = profile.pin_status === 'set'
+
+  useEffect(() => {
+    setExpanded(canManagePin && profile.pin_status === 'placeholder')
+  }, [canManagePin, profile.pin_status])
 
   return (
     <motion.div
@@ -203,10 +208,11 @@ function ProfileCard({ profile }: { profile: Profile }) {
           <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${pinSet ? 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30' : 'text-amber-400 bg-amber-500/15 border-amber-500/30'}`}>
             {pinSet ? 'PIN SET' : 'PIN REQUIRED'}
           </span>
-          {profile.role === 'child' && (
+          {canManagePin && (
             <button
               onClick={() => setExpanded(e => !e)}
-              className="opacity-40 hover:opacity-80 transition-opacity"
+              className="min-h-11 min-w-11 inline-flex items-center justify-center opacity-40 hover:opacity-80 transition-opacity"
+              aria-label={`Set PIN for ${profile.display_name}`}
             >
               <Lock size={14} />
             </button>
@@ -214,10 +220,10 @@ function ProfileCard({ profile }: { profile: Profile }) {
         </div>
       </div>
 
-      {profile.role === 'child' && expanded && (
+      {canManagePin && expanded && (
         <PinForm
           profileId={profile.id}
-          onSuccess={() => { setPinSet(true); setExpanded(false) }}
+          onSuccess={() => { setExpanded(false); onPinUpdated() }}
         />
       )}
     </motion.div>
@@ -227,12 +233,27 @@ function ProfileCard({ profile }: { profile: Profile }) {
 export default function Settings() {
   const { theme } = useAppStore()
   const isDark = theme === 'dark'
+  const [profiles, setProfiles] = useState<Profile[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const profiles: Profile[] = [
-    { id: 'ken',     display_name: 'Ken',     role: 'admin',  max_rating: 'adult',     pin_status: 'set' },
-    { id: 'ryleigh', display_name: 'Ryleigh', role: 'child',  max_rating: 'age_8_plus', child_age: 8, pin_status: 'set' },
-    { id: 'sloane',  display_name: 'Sloane',  role: 'child',  max_rating: 'all_ages',   child_age: 5, pin_status: 'placeholder' },
-  ]
+  async function loadProfiles() {
+    setLoading(true)
+    setError(null)
+    try {
+      const rows = await apiJson<Profile[]>('/v1/auth/profiles')
+      setProfiles(rows)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to load profiles'
+      setError(msg)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadProfiles()
+  }, [])
 
   return (
     <div className="space-y-8 max-w-xl">
@@ -243,7 +264,20 @@ export default function Settings() {
 
       <section className="space-y-3">
         <h2 className="text-xs font-mono uppercase opacity-40 tracking-widest">Family Profiles</h2>
-        {profiles.map(p => <ProfileCard key={p.id} profile={p} />)}
+        {loading && [0, 1, 2, 3].map(i => (
+          <div
+            key={i}
+            className={`h-28 rounded-2xl border ${isDark ? 'border-white/10 bg-white/5' : 'border-[#141414]/10 bg-[#141414]/5'} animate-pulse`}
+          />
+        ))}
+        {error && (
+          <div className={`p-4 rounded-2xl border ${isDark ? 'border-rose-400/30 bg-rose-500/10 text-rose-200' : 'border-rose-600/30 bg-rose-50 text-rose-700'} text-sm`}>
+            {error}
+          </div>
+        )}
+        {!loading && !error && profiles.map(p => (
+          <ProfileCard key={p.id} profile={p} onPinUpdated={loadProfiles} />
+        ))}
       </section>
 
       <section className="space-y-3">

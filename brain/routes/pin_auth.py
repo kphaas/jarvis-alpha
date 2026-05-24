@@ -3,6 +3,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 import bcrypt
 from fastapi import APIRouter, HTTPException, Request
@@ -29,6 +30,41 @@ class PinRequest(BaseModel):
 class SetChildPinRequest(BaseModel):
     profile_id: str
     new_pin: str
+
+
+class SetProfilePinRequest(BaseModel):
+    profile_id: str
+    new_pin: str
+
+
+class ProfileResponse(BaseModel):
+    id: str
+    display_name: str
+    role: str
+    child_age: int | None
+    max_rating: str
+    pin_status: Literal["set", "placeholder"]
+
+
+def _pin_status(pin_hash: str) -> Literal["set", "placeholder"]:
+    if pin_hash == "PLACEHOLDER_MIGRATE_FROM_ALPHA_PIN":
+        try:
+            get_secret("ALPHA_PIN")
+        except KeyError:
+            return "placeholder"
+        return "set"
+    if pin_hash.startswith("PLACEHOLDER"):
+        return "placeholder"
+    return "set"
+
+
+def _validate_new_pin(new_pin: str) -> None:
+    if len(new_pin) < 4:
+        raise HTTPException(status_code=400, detail="PIN must be at least 4 characters")
+
+
+def _hash_pin(new_pin: str) -> str:
+    return bcrypt.hashpw(new_pin.encode("utf-8"), bcrypt.gensalt()).decode()
 
 
 @router.post("/pin")
@@ -118,9 +154,47 @@ async def authenticate_pin(req: PinRequest):
     return {"token": token, "expires_at": expires_at}
 
 
+@router.get("/profiles", response_model=list[ProfileResponse])
+async def list_profiles(request: Request):
+    check_scopes(request, "admin")
+
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, display_name, role, child_age, max_rating, pin_hash
+            FROM alpha_profiles
+            WHERE active = true
+            ORDER BY
+                CASE WHEN role = 'admin' THEN 0 ELSE 1 END,
+                CASE id
+                    WHEN 'ken' THEN 0
+                    WHEN 'sweta' THEN 1
+                    WHEN 'ryleigh' THEN 2
+                    WHEN 'sloane' THEN 3
+                    ELSE 99
+                END,
+                display_name
+            """
+        )
+
+    return [
+        ProfileResponse(
+            id=row["id"],
+            display_name=row["display_name"],
+            role=row["role"],
+            child_age=row["child_age"],
+            max_rating=row["max_rating"],
+            pin_status=_pin_status(row["pin_hash"]),
+        )
+        for row in rows
+    ]
+
+
 @router.post("/set-child-pin")
 async def set_child_pin(request: Request, req: SetChildPinRequest):
     check_scopes(request, "admin")
+    _validate_new_pin(req.new_pin)
 
     pool = get_pool()
     async with pool.acquire() as conn:
@@ -132,15 +206,49 @@ async def set_child_pin(request: Request, req: SetChildPinRequest):
                 status_code=400, detail="Profile not found or not a child profile"
             )
 
-        hashed = bcrypt.hashpw(req.new_pin.encode("utf-8"), bcrypt.gensalt()).decode()
         await conn.execute(
             "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = $2",
-            hashed,
+            _hash_pin(req.new_pin),
             req.profile_id,
         )
     logger.info(
         "CHILD_PIN_SET profile=%s by=%s",
         req.profile_id,
+        getattr(request.state, "iss", "unknown"),
+    )
+    return {"status": "ok", "profile_id": req.profile_id}
+
+
+@router.post("/set-profile-pin")
+async def set_profile_pin(request: Request, req: SetProfilePinRequest):
+    check_scopes(request, "admin")
+    _validate_new_pin(req.new_pin)
+
+    if req.profile_id == "ken":
+        raise HTTPException(
+            status_code=400,
+            detail="Use Change Admin PIN for Ken so the current PIN is verified",
+        )
+
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        profile = await conn.fetchrow(
+            "SELECT id, role FROM alpha_profiles WHERE id = $1 AND active = true",
+            req.profile_id,
+        )
+        if not profile:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        await conn.execute(
+            "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = $2",
+            _hash_pin(req.new_pin),
+            req.profile_id,
+        )
+
+    logger.info(
+        "PROFILE_PIN_SET profile=%s role=%s by=%s",
+        req.profile_id,
+        profile["role"],
         getattr(request.state, "iss", "unknown"),
     )
     return {"status": "ok", "profile_id": req.profile_id}
@@ -182,14 +290,12 @@ async def set_admin_pin(request: Request, req: SetAdminPinRequest):
             logger.warning("SET_ADMIN_PIN_FAIL reason=bad_current_pin")
             raise HTTPException(status_code=401, detail="Invalid current PIN")
 
-    if len(req.new_pin) < 4:
-        raise HTTPException(status_code=400, detail="PIN must be at least 4 characters")
+    _validate_new_pin(req.new_pin)
 
-    hashed = bcrypt.hashpw(req.new_pin.encode("utf-8"), bcrypt.gensalt()).decode()
     async with pool.acquire() as conn:
         await conn.execute(
             "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = 'ken'",
-            hashed,
+            _hash_pin(req.new_pin),
         )
 
     logger.info("SET_ADMIN_PIN_SUCCESS profile=ken")
