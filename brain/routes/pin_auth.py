@@ -46,6 +46,14 @@ class ProfileResponse(BaseModel):
     pin_status: Literal["set", "placeholder"]
 
 
+class LoginProfileResponse(BaseModel):
+    id: str
+    display_name: str
+    role: str
+    child_age: int | None
+    max_rating: str
+
+
 def _pin_status(pin_hash: str) -> Literal["set", "placeholder"]:
     if pin_hash == "PLACEHOLDER_MIGRATE_FROM_ALPHA_PIN":
         try:
@@ -65,6 +73,23 @@ def _validate_new_pin(new_pin: str) -> None:
 
 def _hash_pin(new_pin: str) -> str:
     return bcrypt.hashpw(new_pin.encode("utf-8"), bcrypt.gensalt()).decode()
+
+
+_PROFILE_SELECT_SQL = """
+    SELECT id, display_name, role, child_age, max_rating, pin_hash
+    FROM alpha_profiles
+    WHERE active = true
+    ORDER BY
+        CASE WHEN role = 'admin' THEN 0 ELSE 1 END,
+        CASE id
+            WHEN 'ken' THEN 0
+            WHEN 'sweta' THEN 1
+            WHEN 'ryleigh' THEN 2
+            WHEN 'sloane' THEN 3
+            ELSE 99
+        END,
+        display_name
+"""
 
 
 @router.post("/pin")
@@ -154,29 +179,31 @@ async def authenticate_pin(req: PinRequest):
     return {"token": token, "expires_at": expires_at}
 
 
+@router.get("/login-profiles", response_model=list[LoginProfileResponse])
+async def list_login_profiles():
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_PROFILE_SELECT_SQL)
+
+    return [
+        LoginProfileResponse(
+            id=row["id"],
+            display_name=row["display_name"],
+            role=row["role"],
+            child_age=row["child_age"],
+            max_rating=row["max_rating"],
+        )
+        for row in rows
+    ]
+
+
 @router.get("/profiles", response_model=list[ProfileResponse])
 async def list_profiles(request: Request):
     check_scopes(request, "admin")
 
     pool = get_pool()
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT id, display_name, role, child_age, max_rating, pin_hash
-            FROM alpha_profiles
-            WHERE active = true
-            ORDER BY
-                CASE WHEN role = 'admin' THEN 0 ELSE 1 END,
-                CASE id
-                    WHEN 'ken' THEN 0
-                    WHEN 'sweta' THEN 1
-                    WHEN 'ryleigh' THEN 2
-                    WHEN 'sloane' THEN 3
-                    ELSE 99
-                END,
-                display_name
-            """
-        )
+        rows = await conn.fetch(_PROFILE_SELECT_SQL)
 
     return [
         ProfileResponse(

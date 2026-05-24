@@ -10,6 +10,14 @@ type PinGateProps = {
   children: ReactNode
 }
 
+type LoginProfile = {
+  id: string
+  display_name: string
+  role: string
+  child_age?: number | null
+  max_rating: string
+}
+
 function getJwtExpSeconds(token: string): number | null {
   try {
     const parts = token.split('.')
@@ -28,7 +36,10 @@ function getJwtExpSeconds(token: string): number | null {
 export function PinGate({ children }: PinGateProps) {
   const [authenticated, setAuthenticated] = useState(false)
   const [pin, setPin] = useState('')
+  const [profiles, setProfiles] = useState<LoginProfile[]>([])
+  const [selectedProfileId, setSelectedProfileId] = useState('ken')
   const [error, setError] = useState<string | null>(null)
+  const [profilesLoading, setProfilesLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -40,6 +51,37 @@ export function PinGate({ children }: PinGateProps) {
       setAuthenticated(true)
     }
   }, [])
+
+  useEffect(() => {
+    if (authenticated) return
+
+    let cancelled = false
+    async function loadProfiles() {
+      setProfilesLoading(true)
+      try {
+        const base = import.meta.env.VITE_BRAIN_URL as string
+        const res = await fetch(`${base}/v1/auth/login-profiles`)
+        if (!res.ok) throw new Error('profile_load_failed')
+        const rows = (await res.json()) as LoginProfile[]
+        if (!cancelled) {
+          setProfiles(rows)
+          setSelectedProfileId(rows[0]?.id ?? 'ken')
+        }
+      } catch {
+        if (!cancelled) {
+          setProfiles([{ id: 'ken', display_name: 'Ken', role: 'admin', max_rating: 'adult' }])
+          setSelectedProfileId('ken')
+        }
+      } finally {
+        if (!cancelled) setProfilesLoading(false)
+      }
+    }
+
+    void loadProfiles()
+    return () => {
+      cancelled = true
+    }
+  }, [authenticated])
 
   useEffect(() => {
     if (!authenticated && inputRef.current) {
@@ -56,7 +98,7 @@ export function PinGate({ children }: PinGateProps) {
       const res = await fetch(`${base}/v1/auth/pin`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin }),
+        body: JSON.stringify({ pin, profile_id: selectedProfileId }),
       })
       if (res.status === 200) {
         const data = (await res.json()) as { token: string; expires_at: string }
@@ -85,6 +127,37 @@ export function PinGate({ children }: PinGateProps) {
         <h1 className="mb-6 text-center text-2xl font-semibold text-white">
           JARVIS Alpha
         </h1>
+        <div className="mb-5 grid grid-cols-2 gap-2" aria-label="Choose profile">
+          {profilesLoading && [0, 1, 2, 3].map((i) => (
+            <div key={i} className="h-16 animate-pulse rounded-lg bg-white/10" />
+          ))}
+          {!profilesLoading && profiles.map((profile) => {
+            const selected = selectedProfileId === profile.id
+            return (
+              <button
+                key={profile.id}
+                type="button"
+                onClick={() => {
+                  setSelectedProfileId(profile.id)
+                  setError(null)
+                  setPin('')
+                  inputRef.current?.focus()
+                }}
+                className={`min-h-16 rounded-lg border px-3 py-2 text-left transition ${
+                  selected
+                    ? 'border-blue-400 bg-blue-500/20 text-white'
+                    : 'border-gray-700 bg-gray-900/60 text-gray-300 hover:border-gray-500'
+                }`}
+                aria-pressed={selected}
+              >
+                <span className="block text-sm font-semibold">{profile.display_name}</span>
+                <span className="block text-[10px] uppercase tracking-wide text-gray-400">
+                  {profile.role}{profile.child_age ? ` · Age ${profile.child_age}` : ''}
+                </span>
+              </button>
+            )
+          })}
+        </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label
