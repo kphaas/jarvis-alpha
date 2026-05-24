@@ -54,6 +54,7 @@ SKIP_PATHS = {
     "/docs",
     "/openapi.json",
     "/redoc",
+    "/v1/auth/login-profiles",
     "/v1/auth/pin",
     "/v1/metrics/power",
     "/v1/metrics/power/current",

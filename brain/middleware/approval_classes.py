@@ -45,6 +45,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/cloud/call": ["external_call", "cost_incurring"],
     # Dream mode — controlled by scopes, but classify for audit
     # Auth — admin
+    "GET /v1/auth/login-profiles": ["read"],
     "GET /v1/auth/profiles": ["read", "security_read"],
     "POST /v1/auth/set-child-pin": ["write", "security_write"],
     "POST /v1/auth/set-profile-pin": ["write", "security_write"],

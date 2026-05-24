@@ -30,6 +30,13 @@ PROFILES = {
         "child_age": None,
         "scopes": ["*"],
     },
+    "sweta": {
+        "display_name": "Sweta Gurnani",
+        "role": "admin",
+        "max_rating": "adult",
+        "child_age": None,
+        "scopes": ["*"],
+    },
     "ryleigh": {
         "display_name": "Ryleigh",
         "role": "child",
