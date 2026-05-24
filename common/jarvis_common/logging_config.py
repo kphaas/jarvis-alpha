@@ -15,6 +15,30 @@ trace_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
 )
 
 _NODE = os.environ.get("JARVIS_NODE", "brain")
+_RESERVED_RECORD_KEYS = {
+    "args",
+    "asctime",
+    "created",
+    "exc_info",
+    "exc_text",
+    "filename",
+    "funcName",
+    "levelname",
+    "levelno",
+    "lineno",
+    "message",
+    "module",
+    "msecs",
+    "msg",
+    "name",
+    "pathname",
+    "process",
+    "processName",
+    "relativeCreated",
+    "stack_info",
+    "thread",
+    "threadName",
+}
 
 
 def set_trace_id(trace_id: str) -> None:
@@ -39,16 +63,30 @@ class JarvisFormatter(logging.Formatter):
         if record.exc_info and record.exc_info[0] is not None:
             msg += "\n" + "".join(tb.format_exception(*record.exc_info))
 
-        return json.dumps(
-            {
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "level": record.levelname,
-                "service": self._service,
-                "node": _NODE,
-                "trace_id": trace_id_var.get("no-trace"),
-                "message": msg,
-            }
-        )
+        payload = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "level": record.levelname,
+            "service": self._service,
+            "node": _NODE,
+            "trace_id": trace_id_var.get("no-trace"),
+            "message": msg,
+        }
+        payload.update(_safe_extra(record))
+        return json.dumps(payload, default=str)
+
+
+def _safe_extra(record: logging.LogRecord) -> dict[str, object]:
+    extras: dict[str, object] = {}
+    for key, value in record.__dict__.items():
+        if key in _RESERVED_RECORD_KEYS or key.startswith("_"):
+            continue
+        if isinstance(value, str | int | float | bool) or value is None:
+            extras[key] = value
+        elif isinstance(value, (list, tuple, set)):
+            extras[key] = list(value)
+        elif isinstance(value, dict):
+            extras[key] = value
+    return extras
 
 
 def get_logger(service: str) -> logging.Logger:

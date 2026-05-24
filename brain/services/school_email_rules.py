@@ -45,6 +45,10 @@ def _lookback_days() -> int:
     return max(1, _int_env("ALPHA_SCHOOL_EMAIL_LOOKBACK_DAYS", DEFAULT_LOOKBACK_DAYS))
 
 
+def current_lookback_days() -> int:
+    return _lookback_days()
+
+
 def _sender_query(sender: str, lookback_days: int) -> str:
     value = sender.strip().lower()
     if "@" in value and not value.startswith("@"):
@@ -125,14 +129,18 @@ async def message_rule_map(
     max_results: int,
 ) -> tuple[dict[str, list[SchoolEmailScanRule]], int]:
     message_rules: dict[str, list[SchoolEmailScanRule]] = {}
-    queries_run = 0
+    rules_by_query: dict[str, list[SchoolEmailScanRule]] = {}
     for rule in rules:
+        rules_by_query.setdefault(rule.query, []).append(rule)
+
+    queries_run = 0
+    for query, query_rules in rules_by_query.items():
         queries_run += 1
         for gmail_message_id in await gmail.list_message_ids(
-            rule.query,
+            query,
             max_results=max_results,
         ):
-            message_rules.setdefault(gmail_message_id, []).append(rule)
+            message_rules.setdefault(gmail_message_id, []).extend(query_rules)
     return message_rules, queries_run
 
 

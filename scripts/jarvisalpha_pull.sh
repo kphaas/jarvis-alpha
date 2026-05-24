@@ -113,6 +113,11 @@ needs_restart_brain() {
   echo "$CHANGED_FILES" | grep -qE '(^brain/|^common/|^db/|^scripts/apply_migrations\.sh|\.py$|^scripts/start_alpha_brain\.sh$|^launchagents/com\.jarvis\.alpha\.(brain|buddy)\.plist$)'
 }
 
+needs_reload_school_email() {
+  [ -z "$CHANGED_FILES" ] && return 1
+  echo "$CHANGED_FILES" | grep -qE '(^launchagents/com\.jarvis\.alpha\.school-email\.template\.plist$|^scripts/start_alpha_school_email\.sh$|^scripts/install_launchagents\.py$)'
+}
+
 needs_restart_gateway() {
   [ -z "$CHANGED_FILES" ] && return 1
   echo "$CHANGED_FILES" | grep -qE '(^gateway/|^common/|\.py$|^scripts/start_alpha_gateway\.sh$|^launchagents/com\.jarvis\.alpha\.gateway\.plist$)'
@@ -251,6 +256,37 @@ elif [ -f "$BRAIN_PLIST" ]; then
     fi
   fi
   echo "─────────────────────────────────────────────────────────"
+fi
+
+SCHOOL_EMAIL_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.school-email.plist"
+if [ "$NODE_SHORT" = "brain" ] && needs_reload_school_email; then
+  echo ""
+  echo "Refreshing Alpha School Email LaunchAgent..."
+  SCHOOL_START=$(time_ms)
+  INSTALL_LOG=$(mktemp)
+  if ! python3 "${REPO_DIR}/scripts/install_launchagents.py" --node brain >"$INSTALL_LOG" 2>&1; then
+    SCHOOL_DUR=$(($(time_ms) - SCHOOL_START))
+    INSTALL_ERR=$(tail -5 "$INSTALL_LOG" | tr '\n' ' ' | cut -c1-300)
+    rm -f "$INSTALL_LOG"
+    emit fail restart node="$NODE_SHORT" service="alpha-school-email" dur_ms="$SCHOOL_DUR" error="$INSTALL_ERR"
+    echo "❌ School email LaunchAgent install failed"
+    exit 1
+  fi
+  rm -f "$INSTALL_LOG"
+  if [ -f "$SCHOOL_EMAIL_PLIST" ]; then
+    launchctl unload "$SCHOOL_EMAIL_PLIST" 2>/dev/null || true
+    launchctl load "$SCHOOL_EMAIL_PLIST"
+    SCHOOL_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.school-email" {print $1}' | head -1)
+    [ "$SCHOOL_PID" = "-" ] && SCHOOL_PID=0
+    echo "✅ School email LaunchAgent refreshed"
+    emit ok restart node="$NODE_SHORT" service="alpha-school-email" pid="${SCHOOL_PID:-0}" dur_ms=$(($(time_ms) - SCHOOL_START))
+  else
+    emit fail restart node="$NODE_SHORT" service="alpha-school-email" dur_ms=$(($(time_ms) - SCHOOL_START)) error="plist missing after install"
+    echo "❌ School email LaunchAgent plist missing after install"
+    exit 1
+  fi
+elif [ "$NODE_SHORT" = "brain" ]; then
+  emit skip restart node="$NODE_SHORT" service="alpha-school-email" reason="no_launchagent_changes"
 fi
 
 # ── Gateway branch (TD-88) ────────────────────────────────

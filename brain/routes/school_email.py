@@ -14,10 +14,12 @@ from brain.models.school_email import (
     SchoolActionCandidateList,
     SchoolActionCandidateOut,
     SchoolEmailScanResponse,
+    SchoolEmailScanRunOut,
     SchoolEventCandidateList,
     SchoolEventCandidateOut,
 )
 from brain.services.school_email_agent import scan_school_email
+from brain.services.school_email_repository import latest_scan_run
 
 router = APIRouter(prefix="/v1/school-email", tags=["school-email"])
 
@@ -126,8 +128,20 @@ async def scan_school_emails(
         query=query,
         max_results=max_results,
         import_to_family=should_import,
+        trigger="api",
     )
     return SchoolEmailScanResponse(**result.__dict__)
+
+
+@router.get("/scan-runs/latest", response_model=SchoolEmailScanRunOut | None)
+async def get_latest_school_email_scan(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> SchoolEmailScanRunOut | None:
+    _check_school_scope(request)
+    async with get_pool().acquire() as conn:
+        row = await latest_scan_run(conn)
+    return SchoolEmailScanRunOut(**dict(row)) if row else None
 
 
 @router.get("/candidates", response_model=SchoolEventCandidateList)
