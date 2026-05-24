@@ -34,16 +34,20 @@ class FamilySchoolClient:
         key_path = Path.home() / "jarvis" / "pki" / "services" / "brain_private.pem"
         private_key = key_path.read_text()
         now = int(time.time())
+        claims: dict[str, Any] = {
+            "sub": "alpha-school-email",
+            "iss": "brain",
+            "actor_type": "service",
+            "scopes": scopes,
+            "jti": str(uuid.uuid4()),
+            "iat": now,
+            "exp": now + 3600,
+        }
+        family_id = os.environ.get("JARVIS_FAMILY_ID", "").strip()
+        if family_id:
+            claims["family_id"] = family_id
         return jwt.encode(
-            {
-                "sub": "alpha-school-email",
-                "iss": "brain",
-                "actor_type": "service",
-                "scopes": scopes,
-                "jti": str(uuid.uuid4()),
-                "iat": now,
-                "exp": now + 3600,
-            },
+            claims,
             private_key,
             algorithm="RS256",
         )
