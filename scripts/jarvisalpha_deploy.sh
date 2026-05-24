@@ -33,8 +33,10 @@ BRAIN="jarvisbrain@jarvis-brain.tail40ed36.ts.net"
 GATEWAY="gate@jarvis-gateway.tail40ed36.ts.net"
 ENDPOINT="jarvisendpoint@jarvis-endpoint.tail40ed36.ts.net"
 SANDBOX="jarvissand@jarvis-sandbox.tail40ed36.ts.net"
-SSH_KEY="${HOME}/.ssh/macair_jarvis"
-SSH_OPTS=(-i "$SSH_KEY" -o IdentitiesOnly=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no)
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no)
+if [[ -n "${JARVIS_ALPHA_SSH_KEY:-}" ]]; then
+  SSH_OPTS=(-i "$JARVIS_ALPHA_SSH_KEY" -o IdentitiesOnly=yes "${SSH_OPTS[@]}")
+fi
 REPO_DIR="${HOME}/jarvis-alpha"
 RENDERER="${REPO_DIR}/scripts/render_events.py"
 VERBOSE="${VERBOSE:-0}"
