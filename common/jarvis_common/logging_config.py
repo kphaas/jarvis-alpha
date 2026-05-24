@@ -36,6 +36,7 @@ _RESERVED_RECORD_KEYS = {
     "processName",
     "relativeCreated",
     "stack_info",
+    "taskName",
     "thread",
     "threadName",
 }
