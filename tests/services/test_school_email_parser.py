@@ -4,6 +4,7 @@ import pytest
 
 from brain.services.gmail_client import GmailMessage
 from brain.services.school_email_parser import (
+    extract_school_actions_deterministic,
     extract_school_events,
     extract_school_events_deterministic,
 )
@@ -59,6 +60,39 @@ def test_ignores_non_school_messages() -> None:
     )
 
     assert candidates == []
+
+
+def test_trusted_sender_allows_teacher_message_without_school_name() -> None:
+    candidates = extract_school_events_deterministic(
+        _message(
+            "Class Picnic",
+            "The class picnic is on May 28, 2026 at 11:30am at the playground.",
+            sender="teacher@example.com",
+        ),
+        anchor=date(2026, 5, 24),
+        trusted_sender=True,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].event_date == date(2026, 5, 28)
+
+
+def test_extracts_school_parent_action() -> None:
+    candidates = extract_school_actions_deterministic(
+        _message(
+            "Permission form due",
+            "Mount Pisgah permission form is due May 27, 2026 at 9am.",
+        ),
+        anchor=date(2026, 5, 24),
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].title == "Action: Permission form due"
+    assert candidates[0].action_date == date(2026, 5, 27)
+    assert candidates[0].action_time == time(9, 0)
+    assert candidates[0].family_external_id.startswith(
+        "alpha:gmail:mount-pisgah:action:"
+    )
 
 
 def test_rolls_missing_year_forward_when_date_is_far_past() -> None:

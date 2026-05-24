@@ -34,6 +34,23 @@ EVENT_TERMS = (
     "program",
     "school",
 )
+ACTION_TERMS = (
+    "bring",
+    "complete",
+    "deadline",
+    "due",
+    "form",
+    "order",
+    "permission",
+    "register",
+    "registration",
+    "rsvp",
+    "send",
+    "sign up",
+    "signup",
+    "volunteer",
+    "wear",
+)
 MONTHS = {
     "january": 1,
     "february": 2,
@@ -63,6 +80,26 @@ class SchoolEventCandidate:
     notes: str | None
     confidence: float
     family_external_id: str
+    child_member_id: str | None = None
+    child_name: str | None = None
+
+
+@dataclass(frozen=True)
+class SchoolActionCandidate:
+    title: str
+    action_date: date
+    action_time: time | None
+    notes: str | None
+    confidence: float
+    family_external_id: str
+    child_member_id: str | None = None
+    child_name: str | None = None
+
+
+@dataclass(frozen=True)
+class SchoolEmailExtraction:
+    events: list[SchoolEventCandidate]
+    actions: list[SchoolActionCandidate]
 
 
 def _clean_text(value: str | None) -> str:
@@ -75,7 +112,11 @@ def _subject_title(subject: str | None) -> str:
     return value[:120] or "School event"
 
 
-def _is_school_message(message: GmailMessage) -> bool:
+def _is_school_message(
+    message: GmailMessage,
+    *,
+    trusted_sender: bool = False,
+) -> bool:
     haystack = " ".join(
         [
             message.sender or "",
@@ -86,6 +127,8 @@ def _is_school_message(message: GmailMessage) -> bool:
     ).lower()
     if any(term in haystack for term in BLOCKED_CONTEXT_TERMS):
         return False
+    if trusted_sender:
+        return True
     return any(term in haystack for term in SCHOOL_TERMS)
 
 
@@ -121,8 +164,10 @@ def _filter_plausible_candidates(
     message: GmailMessage,
     candidates: list[SchoolEventCandidate],
     anchor: date,
+    *,
+    trusted_sender: bool = False,
 ) -> list[SchoolEventCandidate]:
-    if not _is_school_message(message):
+    if not _is_school_message(message, trusted_sender=trusted_sender):
         return []
     earliest, latest = _event_window(anchor)
     return [
@@ -195,16 +240,19 @@ def _location(text: str) -> str | None:
     return match.group(1).strip(" .,\n")[:100]
 
 
-def _external_id(message: GmailMessage, event_date: date, title: str) -> str:
-    basis = f"{message.gmail_message_id}|{event_date.isoformat()}|{title.lower()}"
+def _external_id(message: GmailMessage, item_date: date, title: str, kind: str) -> str:
+    basis = f"{kind}|{message.gmail_message_id}|{item_date.isoformat()}|{title.lower()}"
     digest = sha256(basis.encode("utf-8")).hexdigest()[:24]
-    return f"alpha:gmail:mount-pisgah:{digest}"
+    return f"alpha:gmail:mount-pisgah:{kind}:{digest}"
 
 
 def extract_school_events_deterministic(
-    message: GmailMessage, anchor: date | None = None
+    message: GmailMessage,
+    anchor: date | None = None,
+    *,
+    trusted_sender: bool = False,
 ) -> list[SchoolEventCandidate]:
-    if not _is_school_message(message):
+    if not _is_school_message(message, trusted_sender=trusted_sender):
         return []
     anchor = anchor or date.today()
     text = _clean_text(
@@ -232,21 +280,62 @@ def extract_school_events_deterministic(
                 location=location,
                 notes=(message.snippet or text[:240] or None),
                 confidence=confidence,
-                family_external_id=_external_id(message, event_date, title),
+                family_external_id=_external_id(message, event_date, title, "event"),
             )
         )
-    return _filter_plausible_candidates(message, candidates, anchor)
+    return _filter_plausible_candidates(
+        message,
+        candidates,
+        anchor,
+        trusted_sender=trusted_sender,
+    )
 
 
-def _parse_llm_json(text: str) -> list[dict[str, Any]]:
-    match = re.search(r"\[[\s\S]*\]", text)
+def extract_school_actions_deterministic(
+    message: GmailMessage,
+    anchor: date | None = None,
+    *,
+    trusted_sender: bool = False,
+) -> list[SchoolActionCandidate]:
+    if not _is_school_message(message, trusted_sender=trusted_sender):
+        return []
+    anchor = anchor or date.today()
+    text = _clean_text(
+        "\n".join([message.subject or "", message.snippet or "", message.body_text])
+    )
+    lowered = text.lower()
+    if not any(term in lowered for term in ACTION_TERMS):
+        return []
+    dates = _extract_dates(text, anchor)
+    if not dates:
+        return []
+    earliest, latest = _event_window(anchor)
+    title = _subject_title(message.subject)
+    action_time = _parse_time(text)
+    confidence = 0.72 + (0.1 if "deadline" in lowered or "due" in lowered else 0)
+    confidence = min(confidence + (0.08 if action_time else 0), 0.9)
+    return [
+        SchoolActionCandidate(
+            title=f"Action: {title}",
+            action_date=action_date,
+            action_time=action_time,
+            notes=message.snippet or text[:240] or None,
+            confidence=confidence,
+            family_external_id=_external_id(message, action_date, title, "action"),
+        )
+        for action_date in dates[:5]
+        if earliest <= action_date <= latest
+    ]
+
+
+def _parse_llm_json(text: str) -> Any:
+    match = re.search(r"\{[\s\S]*\}|\[[\s\S]*\]", text)
     if not match:
-        return []
+        return None
     try:
-        parsed = json.loads(match.group(0))
+        return json.loads(match.group(0))
     except json.JSONDecodeError:
-        return []
-    return parsed if isinstance(parsed, list) else []
+        return None
 
 
 def _candidate_from_llm(
@@ -272,25 +361,95 @@ def _candidate_from_llm(
         location=_clean_text(row.get("location"))[:100] or None,
         notes=_clean_text(row.get("notes"))[:300] or message.snippet,
         confidence=max(0.0, min(confidence, 0.98)),
-        family_external_id=_external_id(message, event_date, title),
+        family_external_id=_external_id(message, event_date, title, "event"),
     )
 
 
+def _action_from_llm(
+    row: dict[str, Any], message: GmailMessage
+) -> SchoolActionCandidate | None:
+    try:
+        action_date = date.fromisoformat(str(row["action_date"]))
+    except (KeyError, ValueError, TypeError):
+        return None
+    action_time = None
+    if row.get("action_time"):
+        try:
+            action_time = time.fromisoformat(str(row["action_time"])[:5])
+        except ValueError:
+            action_time = None
+    title = _clean_text(str(row.get("title") or _subject_title(message.subject)))[:120]
+    confidence = float(row.get("confidence") or 0.75)
+    return SchoolActionCandidate(
+        title=title or "School action",
+        action_date=action_date,
+        action_time=action_time,
+        notes=_clean_text(row.get("notes"))[:300] or message.snippet,
+        confidence=max(0.0, min(confidence, 0.98)),
+        family_external_id=_external_id(message, action_date, title, "action"),
+    )
+
+
+def _split_llm_rows(parsed: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if isinstance(parsed, dict):
+        events = parsed.get("events", [])
+        actions = parsed.get("actions", [])
+        return (
+            events if isinstance(events, list) else [],
+            actions if isinstance(actions, list) else [],
+        )
+    if isinstance(parsed, list):
+        return parsed, []
+    return [], []
+
+
 async def extract_school_events(
-    message: GmailMessage, anchor: date | None = None
+    message: GmailMessage,
+    anchor: date | None = None,
+    *,
+    trusted_sender: bool = False,
 ) -> list[SchoolEventCandidate]:
+    return (
+        await extract_school_items(
+            message,
+            anchor,
+            trusted_sender=trusted_sender,
+        )
+    ).events
+
+
+async def extract_school_items(
+    message: GmailMessage,
+    anchor: date | None = None,
+    *,
+    trusted_sender: bool = False,
+) -> SchoolEmailExtraction:
     anchor = anchor or date.today()
     if os.environ.get("ALPHA_SCHOOL_EMAIL_USE_LLM", "true").lower() != "true":
-        return extract_school_events_deterministic(message, anchor)
-    if not _is_school_message(message):
-        return []
+        return SchoolEmailExtraction(
+            events=extract_school_events_deterministic(
+                message,
+                anchor,
+                trusted_sender=trusted_sender,
+            ),
+            actions=extract_school_actions_deterministic(
+                message,
+                anchor,
+                trusted_sender=trusted_sender,
+            ),
+        )
+    if not _is_school_message(message, trusted_sender=trusted_sender):
+        return SchoolEmailExtraction(events=[], actions=[])
 
     prompt = (
         "You are a local-only family calendar extraction agent. "
-        "Return JSON only: an array of objects with title, event_date "
-        "(YYYY-MM-DD), event_time (HH:MM or null), location, notes, confidence. "
-        "Extract only Mount Pisgah school events, deadlines, no-school days, "
-        "meetings, performances, sports, or parent action dates.\n\n"
+        "Return JSON only with keys events and actions. "
+        "events is an array with title, event_date (YYYY-MM-DD), event_time "
+        "(HH:MM or null), location, notes, confidence. actions is an array "
+        "with title, action_date (YYYY-MM-DD), action_time (HH:MM or null), "
+        "notes, confidence. Extract only Mount Pisgah school events, no-school "
+        "days, meetings, performances, sports, deadlines, forms, signups, "
+        "or parent action dates.\n\n"
         f"Subject: {message.subject or ''}\n"
         f"Sender: {message.sender or ''}\n"
         f"Snippet: {message.snippet or ''}\n"
@@ -314,15 +473,41 @@ async def extract_school_events(
                 },
             )
         if response.status_code < 400:
-            rows = _parse_llm_json(str(response.json().get("response", "")))
-            candidates = [
+            parsed = _parse_llm_json(str(response.json().get("response", "")))
+            event_rows, action_rows = _split_llm_rows(parsed)
+            events = [
                 candidate
-                for row in rows
+                for row in event_rows
                 if (candidate := _candidate_from_llm(row, message)) is not None
             ]
-            candidates = _filter_plausible_candidates(message, candidates, anchor)
-            if candidates:
-                return candidates[:8]
+            actions = [
+                action
+                for row in action_rows
+                if (action := _action_from_llm(row, message)) is not None
+            ]
+            events = _filter_plausible_candidates(
+                message,
+                events,
+                anchor,
+                trusted_sender=trusted_sender,
+            )
+            earliest, latest = _event_window(anchor)
+            actions = [
+                action for action in actions if earliest <= action.action_date <= latest
+            ]
+            if events or actions:
+                return SchoolEmailExtraction(events=events[:8], actions=actions[:8])
     except Exception:
         pass
-    return extract_school_events_deterministic(message, anchor)
+    return SchoolEmailExtraction(
+        events=extract_school_events_deterministic(
+            message,
+            anchor,
+            trusted_sender=trusted_sender,
+        ),
+        actions=extract_school_actions_deterministic(
+            message,
+            anchor,
+            trusted_sender=trusted_sender,
+        ),
+    )

@@ -1,28 +1,29 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from datetime import date
-from typing import Protocol
-
-import asyncpg
 
 from brain.db.pool import get_pool
-from brain.services.gmail_client import GmailClient, GmailMessage
-from brain.services.school_email_parser import (
-    SchoolEventCandidate,
-    extract_school_events,
+from brain.services.family_school_client import FamilySchoolClient
+from brain.services.gmail_client import GmailClient
+from brain.services.school_email_bridge import (
+    apply_rule_context,
+    import_action,
+    import_event,
 )
-
-DEFAULT_SCHOOL_QUERY = '("Mount Pisgah" OR "MPCS" OR "Pisgah") newer_than:21d'
-
-
-class MessageClient(Protocol):
-    async def list_message_ids(
-        self, query: str, max_results: int = 25
-    ) -> list[str]: ...
-
-    async def get_message(self, message_id: str) -> GmailMessage: ...
+from brain.services.school_email_parser import extract_school_items
+from brain.services.school_email_repository import (
+    message_exists,
+    record_action_candidate,
+    record_event_candidate,
+    record_message,
+)
+from brain.services.school_email_rules import (
+    MessageClient,
+    dedupe_rules,
+    message_rule_map,
+    scan_rules,
+)
 
 
 @dataclass(frozen=True)
@@ -31,133 +32,153 @@ class SchoolEmailScanResult:
     messages_new: int
     candidates_created: int
     candidates_existing: int
+    event_candidates_created: int
+    event_candidates_existing: int
+    action_candidates_created: int
+    action_candidates_existing: int
+    events_imported: int
+    actions_imported: int
+    import_errors: int
+    rules_loaded: int
+    queries_run: int
 
 
-async def _message_exists(conn: asyncpg.Connection, gmail_message_id: str) -> bool:
-    return bool(
-        await conn.fetchval(
-            """
-            SELECT 1
-            FROM public.alpha_school_email_messages
-            WHERE gmail_message_id = $1
-            """,
-            gmail_message_id,
-        )
-    )
+@dataclass
+class _Counters:
+    messages_new: int = 0
+    event_candidates_created: int = 0
+    event_candidates_existing: int = 0
+    action_candidates_created: int = 0
+    action_candidates_existing: int = 0
+    events_imported: int = 0
+    actions_imported: int = 0
+    import_errors: int = 0
 
+    @property
+    def candidates_created(self) -> int:
+        return self.event_candidates_created + self.action_candidates_created
 
-async def _record_message(
-    conn: asyncpg.Connection,
-    message: GmailMessage,
-) -> str:
-    return str(
-        await conn.fetchval(
-            """
-            INSERT INTO public.alpha_school_email_messages (
-                gmail_message_id, gmail_thread_id, history_id, sender, subject,
-                received_at, snippet, body_sha256, classification
-            )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'school')
-            ON CONFLICT (gmail_message_id) DO UPDATE
-            SET gmail_thread_id = EXCLUDED.gmail_thread_id,
-                history_id = EXCLUDED.history_id,
-                sender = EXCLUDED.sender,
-                subject = EXCLUDED.subject,
-                received_at = EXCLUDED.received_at,
-                snippet = EXCLUDED.snippet,
-                body_sha256 = EXCLUDED.body_sha256,
-                processed_at = now(),
-                updated_at = now()
-            RETURNING id
-            """,
-            message.gmail_message_id,
-            message.thread_id,
-            message.history_id,
-            message.sender,
-            message.subject,
-            message.received_at,
-            message.snippet,
-            message.body_sha256,
-        )
-    )
-
-
-async def _record_candidate(
-    conn: asyncpg.Connection,
-    message_id: str,
-    gmail_message_id: str,
-    candidate: SchoolEventCandidate,
-) -> bool:
-    status = "needs_review"
-    auto_threshold = os.environ.get("ALPHA_SCHOOL_EMAIL_AUTO_APPROVE_MIN_CONFIDENCE")
-    if auto_threshold:
-        try:
-            if candidate.confidence >= float(auto_threshold):
-                status = "approved"
-        except ValueError:
-            status = "needs_review"
-    row = await conn.fetchrow(
-        """
-        INSERT INTO public.alpha_school_event_candidates (
-            email_message_id, gmail_message_id, title, event_date, event_time,
-            end_time, location, notes, confidence, family_external_id, status
-        )
-        VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-        ON CONFLICT (family_external_id) DO NOTHING
-        RETURNING id
-        """,
-        message_id,
-        gmail_message_id,
-        candidate.title,
-        candidate.event_date,
-        candidate.event_time,
-        candidate.end_time,
-        candidate.location,
-        candidate.notes,
-        candidate.confidence,
-        candidate.family_external_id,
-        status,
-    )
-    return row is not None
+    @property
+    def candidates_existing(self) -> int:
+        return self.event_candidates_existing + self.action_candidates_existing
 
 
 async def scan_school_email(
     *,
     client: MessageClient | None = None,
+    family_client: FamilySchoolClient | None = None,
     query: str | None = None,
     max_results: int = 25,
     anchor: date | None = None,
+    import_to_family: bool = True,
 ) -> SchoolEmailScanResult:
     gmail = client or GmailClient()
-    school_query = query or os.environ.get(
-        "ALPHA_SCHOOL_EMAIL_QUERY", DEFAULT_SCHOOL_QUERY
+    family = family_client or FamilySchoolClient()
+    rules = await scan_rules(query=query, family_client=family)
+    message_rules, queries_run = await message_rule_map(
+        gmail=gmail,
+        rules=rules,
+        max_results=max_results,
     )
-    message_ids = await gmail.list_message_ids(school_query, max_results=max_results)
 
-    messages_new = 0
-    candidates_created = 0
-    candidates_existing = 0
+    counters = _Counters()
     pool = get_pool()
     async with pool.acquire() as conn:
-        for gmail_message_id in message_ids:
-            if await _message_exists(conn, gmail_message_id):
-                continue
+        for gmail_message_id, matched_rules in message_rules.items():
+            unique_rules = dedupe_rules(matched_rules)
+            existed = await message_exists(conn, gmail_message_id)
             message = await gmail.get_message(gmail_message_id)
-            messages_new += 1
-            message_row_id = await _record_message(conn, message)
-            candidates = await extract_school_events(message, anchor=anchor)
-            for candidate in candidates:
-                created = await _record_candidate(
-                    conn, message_row_id, message.gmail_message_id, candidate
+            counters.messages_new += int(not existed)
+            message_row_id = await record_message(conn, message, unique_rules[0])
+            extraction = await extract_school_items(
+                message,
+                anchor=anchor,
+                trusted_sender=any(rule.trusted_sender for rule in unique_rules),
+            )
+            for rule in unique_rules:
+                await _persist_rule_items(
+                    conn=conn,
+                    family=family,
+                    message=message,
+                    message_row_id=message_row_id,
+                    rule=rule,
+                    extraction=extraction,
+                    counters=counters,
+                    import_to_family=import_to_family,
                 )
-                if created:
-                    candidates_created += 1
-                else:
-                    candidates_existing += 1
 
     return SchoolEmailScanResult(
-        messages_seen=len(message_ids),
-        messages_new=messages_new,
-        candidates_created=candidates_created,
-        candidates_existing=candidates_existing,
+        messages_seen=len(message_rules),
+        messages_new=counters.messages_new,
+        candidates_created=counters.candidates_created,
+        candidates_existing=counters.candidates_existing,
+        event_candidates_created=counters.event_candidates_created,
+        event_candidates_existing=counters.event_candidates_existing,
+        action_candidates_created=counters.action_candidates_created,
+        action_candidates_existing=counters.action_candidates_existing,
+        events_imported=counters.events_imported,
+        actions_imported=counters.actions_imported,
+        import_errors=counters.import_errors,
+        rules_loaded=len(rules),
+        queries_run=queries_run,
     )
+
+
+async def _persist_rule_items(
+    *,
+    conn,
+    family: FamilySchoolClient,
+    message,
+    message_row_id: str,
+    rule,
+    extraction,
+    counters: _Counters,
+    import_to_family: bool,
+) -> None:
+    events, actions = apply_rule_context(extraction, rule)
+    for event in events:
+        persisted = await record_event_candidate(
+            conn,
+            message_row_id,
+            message.gmail_message_id,
+            event,
+        )
+        counters.event_candidates_created += int(persisted.created)
+        counters.event_candidates_existing += int(not persisted.created)
+        if import_to_family:
+            try:
+                imported = await import_event(
+                    conn,
+                    family,
+                    persisted=persisted,
+                    message=message,
+                    candidate=event,
+                    rule=rule,
+                )
+            except Exception:
+                counters.import_errors += 1
+            else:
+                counters.events_imported += int(imported)
+    for action in actions:
+        persisted = await record_action_candidate(
+            conn,
+            message_row_id,
+            message.gmail_message_id,
+            action,
+        )
+        counters.action_candidates_created += int(persisted.created)
+        counters.action_candidates_existing += int(not persisted.created)
+        if import_to_family:
+            try:
+                imported = await import_action(
+                    conn,
+                    family,
+                    persisted=persisted,
+                    message=message,
+                    candidate=action,
+                    rule=rule,
+                )
+            except Exception:
+                counters.import_errors += 1
+            else:
+                counters.actions_imported += int(imported)

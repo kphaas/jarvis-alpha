@@ -26,10 +26,20 @@ async def run_once() -> None:
             max_results=int(os.environ.get("ALPHA_SCHOOL_EMAIL_MAX_RESULTS", "25"))
         )
         logger.info(
-            "SCHOOL_EMAIL_SCAN seen=%s new=%s created=%s existing=%s",
+            (
+                "SCHOOL_EMAIL_SCAN rules=%s queries=%s seen=%s new=%s "
+                "events_created=%s actions_created=%s events_imported=%s "
+                "actions_imported=%s import_errors=%s existing=%s"
+            ),
+            result.rules_loaded,
+            result.queries_run,
             result.messages_seen,
             result.messages_new,
-            result.candidates_created,
+            result.event_candidates_created,
+            result.action_candidates_created,
+            result.events_imported,
+            result.actions_imported,
+            result.import_errors,
             result.candidates_existing,
         )
     finally:
