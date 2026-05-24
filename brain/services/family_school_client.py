@@ -10,6 +10,10 @@ from typing import Any
 import httpx
 
 
+class FamilySchoolClientConfigError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class FamilySchoolEmailRule:
     id: str
@@ -22,11 +26,12 @@ class FamilySchoolEmailRule:
 
 class FamilySchoolClient:
     def __init__(self, base_url: str | None = None) -> None:
-        self.base_url = (
-            base_url
-            or os.environ.get("JARVIS_FAMILY_API_URL")
-            or "https://127.0.0.1:8187"
-        ).rstrip("/")
+        resolved_url = base_url or os.environ.get("JARVIS_FAMILY_API_URL", "").strip()
+        if not resolved_url:
+            raise FamilySchoolClientConfigError(
+                "JARVIS_FAMILY_API_URL is not configured"
+            )
+        self.base_url = resolved_url.rstrip("/")
 
     def _token(self, scopes: list[str]) -> str:
         import jwt

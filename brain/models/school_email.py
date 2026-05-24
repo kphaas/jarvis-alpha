@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class SchoolEmailScanResponse(BaseModel):
+    scan_run_id: str | None = None
     messages_seen: int
     messages_new: int
     candidates_created: int
@@ -21,6 +22,29 @@ class SchoolEmailScanResponse(BaseModel):
     import_errors: int = 0
     rules_loaded: int = 0
     queries_run: int = 0
+
+
+class SchoolEmailScanRunOut(BaseModel):
+    id: UUID
+    trigger: str
+    status: str
+    started_at: datetime
+    finished_at: datetime | None
+    lookback_days: int
+    max_results: int
+    import_to_family: bool
+    manual_query: bool
+    rules_loaded: int
+    queries_run: int
+    messages_seen: int
+    messages_new: int
+    event_candidates_created: int
+    action_candidates_created: int
+    events_imported: int
+    actions_imported: int
+    import_errors: int
+    error_type: str | None = None
+    error_message: str | None = None
 
 
 class SchoolEventCandidateOut(BaseModel):

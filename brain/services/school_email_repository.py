@@ -21,6 +21,106 @@ class PersistedCandidate:
     family_id: str | None
 
 
+def _safe_error_message(exc: Exception) -> str:
+    message = str(exc).replace("\n", " ").strip()
+    return message[:240] or exc.__class__.__name__
+
+
+async def start_scan_run(
+    conn: asyncpg.Connection,
+    *,
+    trigger: str,
+    lookback_days: int,
+    max_results: int,
+    import_to_family: bool,
+    manual_query: bool,
+) -> str:
+    return str(
+        await conn.fetchval(
+            """
+            INSERT INTO public.alpha_school_email_scan_runs (
+                trigger, lookback_days, max_results, import_to_family, manual_query
+            )
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id
+            """,
+            trigger,
+            lookback_days,
+            max_results,
+            import_to_family,
+            manual_query,
+        )
+    )
+
+
+async def finish_scan_run(conn: asyncpg.Connection, scan_run_id: str, result) -> None:
+    await conn.execute(
+        """
+        UPDATE public.alpha_school_email_scan_runs
+        SET status = 'succeeded',
+            finished_at = now(),
+            rules_loaded = $2,
+            queries_run = $3,
+            messages_seen = $4,
+            messages_new = $5,
+            event_candidates_created = $6,
+            action_candidates_created = $7,
+            events_imported = $8,
+            actions_imported = $9,
+            import_errors = $10,
+            updated_at = now()
+        WHERE id = $1::uuid
+        """,
+        scan_run_id,
+        result.rules_loaded,
+        result.queries_run,
+        result.messages_seen,
+        result.messages_new,
+        result.event_candidates_created,
+        result.action_candidates_created,
+        result.events_imported,
+        result.actions_imported,
+        result.import_errors,
+    )
+
+
+async def fail_scan_run(
+    conn: asyncpg.Connection,
+    scan_run_id: str,
+    exc: Exception,
+) -> None:
+    await conn.execute(
+        """
+        UPDATE public.alpha_school_email_scan_runs
+        SET status = 'failed',
+            finished_at = now(),
+            error_type = $2,
+            error_message = $3,
+            updated_at = now()
+        WHERE id = $1::uuid
+        """,
+        scan_run_id,
+        exc.__class__.__name__,
+        _safe_error_message(exc),
+    )
+
+
+async def latest_scan_run(conn: asyncpg.Connection):
+    return await conn.fetchrow(
+        """
+        SELECT id, trigger, status, started_at, finished_at, lookback_days,
+               max_results, import_to_family, manual_query, rules_loaded,
+               queries_run, messages_seen, messages_new,
+               event_candidates_created, action_candidates_created,
+               events_imported, actions_imported, import_errors,
+               error_type, error_message
+        FROM public.alpha_school_email_scan_runs
+        ORDER BY started_at DESC
+        LIMIT 1
+        """
+    )
+
+
 async def message_exists(conn: asyncpg.Connection, gmail_message_id: str) -> bool:
     return bool(
         await conn.fetchval(

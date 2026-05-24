@@ -13,13 +13,17 @@ from brain.services.school_email_bridge import (
 )
 from brain.services.school_email_parser import extract_school_items
 from brain.services.school_email_repository import (
+    fail_scan_run,
+    finish_scan_run,
     message_exists,
     record_action_candidate,
     record_event_candidate,
     record_message,
+    start_scan_run,
 )
 from brain.services.school_email_rules import (
     MessageClient,
+    current_lookback_days,
     dedupe_rules,
     message_rule_map,
     scan_rules,
@@ -41,6 +45,7 @@ class SchoolEmailScanResult:
     import_errors: int
     rules_loaded: int
     queries_run: int
+    scan_run_id: str | None = None
 
 
 @dataclass
@@ -71,18 +76,65 @@ async def scan_school_email(
     max_results: int = 25,
     anchor: date | None = None,
     import_to_family: bool = True,
+    trigger: str = "manual",
 ) -> SchoolEmailScanResult:
     gmail = client or GmailClient()
     family = family_client or FamilySchoolClient()
-    rules = await scan_rules(query=query, family_client=family)
-    message_rules, queries_run = await message_rule_map(
-        gmail=gmail,
-        rules=rules,
-        max_results=max_results,
-    )
-
+    scan_run_id = None
     counters = _Counters()
     pool = get_pool()
+    async with pool.acquire() as conn:
+        scan_run_id = await start_scan_run(
+            conn,
+            trigger=trigger,
+            lookback_days=current_lookback_days(),
+            max_results=max_results,
+            import_to_family=import_to_family,
+            manual_query=query is not None,
+        )
+
+    try:
+        rules = await scan_rules(query=query, family_client=family)
+        message_rules, queries_run = await message_rule_map(
+            gmail=gmail,
+            rules=rules,
+            max_results=max_results,
+        )
+        result = await _scan_matched_messages(
+            pool=pool,
+            gmail=gmail,
+            family=family,
+            message_rules=message_rules,
+            anchor=anchor,
+            counters=counters,
+            import_to_family=import_to_family,
+            rules_loaded=len(rules),
+            queries_run=queries_run,
+            scan_run_id=scan_run_id,
+        )
+    except Exception as exc:
+        async with pool.acquire() as conn:
+            await fail_scan_run(conn, scan_run_id, exc)
+        raise
+
+    async with pool.acquire() as conn:
+        await finish_scan_run(conn, scan_run_id, result)
+    return result
+
+
+async def _scan_matched_messages(
+    *,
+    pool,
+    gmail: MessageClient,
+    family: FamilySchoolClient,
+    message_rules: dict,
+    anchor: date | None,
+    counters: _Counters,
+    import_to_family: bool,
+    rules_loaded: int,
+    queries_run: int,
+    scan_run_id: str,
+) -> SchoolEmailScanResult:
     async with pool.acquire() as conn:
         for gmail_message_id, matched_rules in message_rules.items():
             unique_rules = dedupe_rules(matched_rules)
@@ -119,8 +171,9 @@ async def scan_school_email(
         events_imported=counters.events_imported,
         actions_imported=counters.actions_imported,
         import_errors=counters.import_errors,
-        rules_loaded=len(rules),
+        rules_loaded=rules_loaded,
         queries_run=queries_run,
+        scan_run_id=scan_run_id,
     )
 
 
