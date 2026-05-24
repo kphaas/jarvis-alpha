@@ -4,7 +4,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from datetime import date, time
+from datetime import date, time, timedelta
 from hashlib import sha256
 from typing import Any
 
@@ -13,6 +13,12 @@ import httpx
 from brain.services.gmail_client import GmailMessage
 
 SCHOOL_TERMS = ("mount pisgah", "pisgah", "mpcs")
+BLOCKED_CONTEXT_TERMS = (
+    "background check",
+    "checkr",
+    "mount pisgah church",
+    "church, inc",
+)
 EVENT_TERMS = (
     "calendar",
     "conference",
@@ -43,6 +49,8 @@ MONTHS = {
     "december": 12,
 }
 MONTH_PATTERN = "|".join(MONTHS)
+DEFAULT_PAST_EVENT_GRACE_DAYS = 14
+DEFAULT_FUTURE_EVENT_HORIZON_DAYS = 548
 
 
 @dataclass(frozen=True)
@@ -76,7 +84,52 @@ def _is_school_message(message: GmailMessage) -> bool:
             message.body_text,
         ]
     ).lower()
+    if any(term in haystack for term in BLOCKED_CONTEXT_TERMS):
+        return False
     return any(term in haystack for term in SCHOOL_TERMS)
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _event_window(anchor: date) -> tuple[date, date]:
+    past_grace_days = max(
+        0,
+        _int_env(
+            "ALPHA_SCHOOL_EMAIL_PAST_EVENT_GRACE_DAYS",
+            DEFAULT_PAST_EVENT_GRACE_DAYS,
+        ),
+    )
+    future_horizon_days = max(
+        30,
+        _int_env(
+            "ALPHA_SCHOOL_EMAIL_FUTURE_EVENT_HORIZON_DAYS",
+            DEFAULT_FUTURE_EVENT_HORIZON_DAYS,
+        ),
+    )
+    return (
+        anchor - timedelta(days=past_grace_days),
+        anchor + timedelta(days=future_horizon_days),
+    )
+
+
+def _filter_plausible_candidates(
+    message: GmailMessage,
+    candidates: list[SchoolEventCandidate],
+    anchor: date,
+) -> list[SchoolEventCandidate]:
+    if not _is_school_message(message):
+        return []
+    earliest, latest = _event_window(anchor)
+    return [
+        candidate
+        for candidate in candidates
+        if earliest <= candidate.event_date <= latest
+    ]
 
 
 def _parse_time(value: str) -> time | None:
@@ -182,7 +235,7 @@ def extract_school_events_deterministic(
                 family_external_id=_external_id(message, event_date, title),
             )
         )
-    return candidates
+    return _filter_plausible_candidates(message, candidates, anchor)
 
 
 def _parse_llm_json(text: str) -> list[dict[str, Any]]:
@@ -226,6 +279,7 @@ def _candidate_from_llm(
 async def extract_school_events(
     message: GmailMessage, anchor: date | None = None
 ) -> list[SchoolEventCandidate]:
+    anchor = anchor or date.today()
     if os.environ.get("ALPHA_SCHOOL_EMAIL_USE_LLM", "true").lower() != "true":
         return extract_school_events_deterministic(message, anchor)
     if not _is_school_message(message):
@@ -266,6 +320,7 @@ async def extract_school_events(
                 for row in rows
                 if (candidate := _candidate_from_llm(row, message)) is not None
             ]
+            candidates = _filter_plausible_candidates(message, candidates, anchor)
             if candidates:
                 return candidates[:8]
     except Exception:
