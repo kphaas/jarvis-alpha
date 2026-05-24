@@ -9,10 +9,13 @@
 <string>/bin/bash</string>
 <string>{{HOME}}/jarvis-alpha/scripts/start_alpha_school_email.sh</string>
 </array>
-<key>StartInterval</key>
-<integer>1800</integer>
-<key>RunAtLoad</key>
-<true/>
+<key>StartCalendarInterval</key>
+<dict>
+<key>Hour</key>
+<integer>23</integer>
+<key>Minute</key>
+<integer>0</integer>
+</dict>
 <key>WorkingDirectory</key>
 <string>{{HOME}}/jarvis-alpha</string>
 <key>StandardOutPath</key>

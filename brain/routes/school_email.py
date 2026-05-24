@@ -11,6 +11,8 @@ from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
 from brain.models.school_email import (
     CandidateStatusUpdate,
+    SchoolActionCandidateList,
+    SchoolActionCandidateOut,
     SchoolEmailScanResponse,
     SchoolEventCandidateList,
     SchoolEventCandidateOut,
@@ -31,6 +33,8 @@ def _candidate_from_row(row) -> SchoolEventCandidateOut:
         gmail_message_id=row["gmail_message_id"],
         source=row["source"],
         school_name=row["school_name"],
+        child_member_id=row["child_member_id"],
+        child_name=row["child_name"],
         title=row["title"],
         event_date=row["event_date"],
         event_time=event_time,
@@ -61,6 +65,48 @@ def _candidate_from_row(row) -> SchoolEventCandidateOut:
                 "gmail_message_id": row["gmail_message_id"],
                 "school_name": row["school_name"],
                 "confidence": float(row["confidence"]),
+                "child_name": row["child_name"],
+            },
+        },
+    )
+
+
+def _action_from_row(row) -> SchoolActionCandidateOut:
+    action_time = row["action_time"]
+    return SchoolActionCandidateOut(
+        id=row["id"],
+        gmail_message_id=row["gmail_message_id"],
+        source=row["source"],
+        school_name=row["school_name"],
+        child_member_id=row["child_member_id"],
+        child_name=row["child_name"],
+        title=row["title"],
+        action_date=row["action_date"],
+        action_time=action_time,
+        notes=row["notes"],
+        confidence=float(row["confidence"]),
+        status=row["status"],
+        family_external_id=row["family_external_id"],
+        family_action_id=row["family_action_id"],
+        sender=row["sender"],
+        subject=row["subject"],
+        received_at=row["received_at"],
+        created_at=row["created_at"],
+        family_import={
+            "title": row["title"],
+            "action_date": row["action_date"].isoformat(),
+            "action_time": action_time.isoformat(timespec="minutes")
+            if action_time
+            else None,
+            "notes": row["notes"],
+            "source": "alpha_school_email",
+            "external_id": row["family_external_id"],
+            "source_metadata": {
+                "alpha_candidate_id": str(row["id"]),
+                "gmail_message_id": row["gmail_message_id"],
+                "school_name": row["school_name"],
+                "confidence": float(row["confidence"]),
+                "child_name": row["child_name"],
             },
         },
     )
@@ -71,10 +117,16 @@ async def scan_school_emails(
     request: Request,
     _: str = Depends(require_auth),
     query: str | None = None,
+    import_to_family: bool | None = Query(default=None),
     max_results: int = Query(default=25, ge=1, le=100),
 ) -> SchoolEmailScanResponse:
     check_scopes(request, "school_email.scan", "school_email.write")
-    result = await scan_school_email(query=query, max_results=max_results)
+    should_import = query is None if import_to_family is None else import_to_family
+    result = await scan_school_email(
+        query=query,
+        max_results=max_results,
+        import_to_family=should_import,
+    )
     return SchoolEmailScanResponse(**result.__dict__)
 
 
@@ -111,7 +163,8 @@ async def list_school_event_candidates(
             SELECT c.id, c.gmail_message_id, c.source, c.school_name, c.title,
                    c.event_date, c.event_time, c.end_time, c.location, c.notes,
                    c.confidence, c.status, c.family_external_id, c.family_event_id,
-                   c.created_at, m.sender, m.subject, m.received_at
+                   c.child_member_id, c.child_name, c.created_at, m.sender,
+                   m.subject, m.received_at
             FROM public.alpha_school_event_candidates c
             JOIN public.alpha_school_email_messages m
               ON m.id = c.email_message_id
@@ -124,6 +177,52 @@ async def list_school_event_candidates(
     return SchoolEventCandidateList(
         candidates=[_candidate_from_row(row) for row in rows]
     )
+
+
+@router.get("/actions", response_model=SchoolActionCandidateList)
+async def list_school_action_candidates(
+    request: Request,
+    _: str = Depends(require_auth),
+    status: Literal["needs_review", "approved", "imported", "ignored", "all"] = Query(
+        default="needs_review"
+    ),
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> SchoolActionCandidateList:
+    _check_school_scope(request)
+    filters: list[str] = []
+    params: list = []
+
+    if status != "all":
+        params.append(status)
+        filters.append(f"c.status = ${len(params)}")
+    if date_from:
+        params.append(date_from)
+        filters.append(f"c.action_date >= ${len(params)}")
+    if date_to:
+        params.append(date_to)
+        filters.append(f"c.action_date <= ${len(params)}")
+
+    where = " AND ".join(filters) if filters else "TRUE"
+    params.append(limit)
+    async with get_pool().acquire() as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT c.id, c.gmail_message_id, c.source, c.school_name, c.title,
+                   c.action_date, c.action_time, c.notes, c.confidence, c.status,
+                   c.family_external_id, c.family_action_id, c.child_member_id,
+                   c.child_name, c.created_at, m.sender, m.subject, m.received_at
+            FROM public.alpha_school_action_candidates c
+            JOIN public.alpha_school_email_messages m
+              ON m.id = c.email_message_id
+            WHERE {where}
+            ORDER BY c.action_date ASC, c.action_time ASC NULLS LAST, c.created_at DESC
+            LIMIT ${len(params)}
+            """,
+            *params,
+        )
+    return SchoolActionCandidateList(candidates=[_action_from_row(row) for row in rows])
 
 
 @router.post(
@@ -154,7 +253,8 @@ async def update_school_event_candidate_status(
             RETURNING c.id, c.gmail_message_id, c.source, c.school_name, c.title,
                       c.event_date, c.event_time, c.end_time, c.location, c.notes,
                       c.confidence, c.status, c.family_external_id, c.family_event_id,
-                      c.created_at, m.sender, m.subject, m.received_at
+                      c.child_member_id, c.child_name, c.created_at, m.sender,
+                      m.subject, m.received_at
             """,
             candidate_id,
             body.status,
@@ -164,3 +264,41 @@ async def update_school_event_candidate_status(
     if row is None:
         raise HTTPException(status_code=404, detail="Candidate not found")
     return _candidate_from_row(row)
+
+
+@router.post("/actions/{candidate_id}/status", response_model=SchoolActionCandidateOut)
+async def update_school_action_candidate_status(
+    candidate_id: UUID,
+    body: CandidateStatusUpdate,
+    request: Request,
+    _: str = Depends(require_auth),
+) -> SchoolActionCandidateOut:
+    check_scopes(request, "school_email.write")
+    reviewer = getattr(request.state, "sub", None) or getattr(
+        request.state, "user_id", None
+    )
+    async with get_pool().acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE public.alpha_school_action_candidates c
+            SET status = $2,
+                family_action_id = COALESCE($3, family_action_id),
+                reviewed_by = $4,
+                reviewed_at = now(),
+                updated_at = now()
+            FROM public.alpha_school_email_messages m
+            WHERE c.id = $1
+              AND m.id = c.email_message_id
+            RETURNING c.id, c.gmail_message_id, c.source, c.school_name, c.title,
+                      c.action_date, c.action_time, c.notes, c.confidence, c.status,
+                      c.family_external_id, c.family_action_id, c.child_member_id,
+                      c.child_name, c.created_at, m.sender, m.subject, m.received_at
+            """,
+            candidate_id,
+            body.status,
+            body.family_action_id,
+            reviewer,
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Action candidate not found")
+    return _action_from_row(row)

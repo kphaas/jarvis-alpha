@@ -12,6 +12,15 @@ class SchoolEmailScanResponse(BaseModel):
     messages_new: int
     candidates_created: int
     candidates_existing: int
+    event_candidates_created: int = 0
+    event_candidates_existing: int = 0
+    action_candidates_created: int = 0
+    action_candidates_existing: int = 0
+    events_imported: int = 0
+    actions_imported: int = 0
+    import_errors: int = 0
+    rules_loaded: int = 0
+    queries_run: int = 0
 
 
 class SchoolEventCandidateOut(BaseModel):
@@ -21,6 +30,8 @@ class SchoolEventCandidateOut(BaseModel):
     gmail_message_id: str
     source: str
     school_name: str
+    child_member_id: UUID | None = None
+    child_name: str | None = None
     title: str
     event_date: date
     event_time: time | None
@@ -42,6 +53,35 @@ class SchoolEventCandidateList(BaseModel):
     candidates: list[SchoolEventCandidateOut]
 
 
+class SchoolActionCandidateOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    gmail_message_id: str
+    source: str
+    school_name: str
+    child_member_id: UUID | None = None
+    child_name: str | None = None
+    title: str
+    action_date: date
+    action_time: time | None
+    notes: str | None
+    confidence: float
+    status: str
+    family_external_id: str
+    family_action_id: UUID | None
+    sender: str | None
+    subject: str | None
+    received_at: datetime | None
+    created_at: datetime
+    family_import: dict
+
+
+class SchoolActionCandidateList(BaseModel):
+    candidates: list[SchoolActionCandidateOut]
+
+
 class CandidateStatusUpdate(BaseModel):
     status: Literal["approved", "ignored", "needs_review", "imported"]
     family_event_id: UUID | None = None
+    family_action_id: UUID | None = None
