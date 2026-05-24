@@ -140,6 +140,10 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/briefings": ["read"],
     "GET /v1/briefings/latest": ["read"],
     "GET /v1/briefings/{batch_run_id}": ["read"],
+    # --- School email intelligence — Gmail read-only scan + reviewed candidates ---
+    "GET /v1/school-email/candidates": ["read", "security_read"],
+    "POST /v1/school-email/scan": ["write", "external_call"],
+    "POST /v1/school-email/candidates/{candidate_id}/status": ["write"],
     # --- MCP registry — T1 read, write T2 ---
     "GET /v1/mcp/registry": ["read"],
     "POST /v1/mcp/registry": ["write"],
