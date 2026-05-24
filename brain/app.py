@@ -38,6 +38,7 @@ from brain.routes.prompts import router as prompts_router
 from brain.routes.approvals import router as approvals_router
 from brain.routes.watchdog import router as watchdog_router
 from brain.routes.briefings import router as briefings_router
+from brain.routes.school_email import router as school_email_router
 from brain.routes.internal_cost import router as internal_cost_router
 from brain.middleware.jwt_auth import JWTAuthMiddleware
 
@@ -111,6 +112,7 @@ app.include_router(prompts_router)
 app.include_router(approvals_router)
 app.include_router(watchdog_router)
 app.include_router(briefings_router)
+app.include_router(school_email_router)
 app.include_router(internal_cost_router)
 
 # TD-107 test 2 — validating restart-path fires on brain/*.py changes (Apr 18)
