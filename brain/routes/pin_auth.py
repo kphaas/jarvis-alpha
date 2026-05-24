@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from brain.db.pool import get_pool
 from brain.middleware.scopes import check_scopes
+from brain.services.family_pin_sync import FamilyPinSyncError, sync_family_pin_hash
 from jarvis_common.logging_config import get_logger
 from jarvis_common.secrets import get_secret
 
@@ -73,6 +74,17 @@ def _validate_new_pin(new_pin: str) -> None:
 
 def _hash_pin(new_pin: str) -> str:
     return bcrypt.hashpw(new_pin.encode("utf-8"), bcrypt.gensalt()).decode()
+
+
+async def _sync_family_pin_or_409(profile_id: str, pin_hash: str) -> None:
+    try:
+        await sync_family_pin_hash(profile_id, pin_hash)
+    except FamilyPinSyncError:
+        logger.exception("FAMILY_PIN_SYNC_FAIL profile=%s", profile_id)
+        raise HTTPException(
+            status_code=409,
+            detail="Family PIN sync failed; PIN was not changed.",
+        ) from None
 
 
 _PROFILE_SELECT_SQL = """
@@ -222,22 +234,25 @@ async def list_profiles(request: Request):
 async def set_child_pin(request: Request, req: SetChildPinRequest):
     check_scopes(request, "admin")
     _validate_new_pin(req.new_pin)
+    pin_hash = _hash_pin(req.new_pin)
 
     pool = get_pool()
     async with pool.acquire() as conn:
-        profile = await conn.fetchrow(
-            "SELECT id, role FROM alpha_profiles WHERE id = $1", req.profile_id
-        )
-        if not profile or profile["role"] != "child":
-            raise HTTPException(
-                status_code=400, detail="Profile not found or not a child profile"
+        async with conn.transaction():
+            profile = await conn.fetchrow(
+                "SELECT id, role FROM alpha_profiles WHERE id = $1", req.profile_id
             )
+            if not profile or profile["role"] != "child":
+                raise HTTPException(
+                    status_code=400, detail="Profile not found or not a child profile"
+                )
 
-        await conn.execute(
-            "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = $2",
-            _hash_pin(req.new_pin),
-            req.profile_id,
-        )
+            await conn.execute(
+                "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = $2",
+                pin_hash,
+                req.profile_id,
+            )
+            await _sync_family_pin_or_409(req.profile_id, pin_hash)
     logger.info(
         "CHILD_PIN_SET profile=%s by=%s",
         req.profile_id,
@@ -256,21 +271,24 @@ async def set_profile_pin(request: Request, req: SetProfilePinRequest):
             status_code=400,
             detail="Use Change Admin PIN for Ken so the current PIN is verified",
         )
+    pin_hash = _hash_pin(req.new_pin)
 
     pool = get_pool()
     async with pool.acquire() as conn:
-        profile = await conn.fetchrow(
-            "SELECT id, role FROM alpha_profiles WHERE id = $1 AND active = true",
-            req.profile_id,
-        )
-        if not profile:
-            raise HTTPException(status_code=404, detail="Profile not found")
+        async with conn.transaction():
+            profile = await conn.fetchrow(
+                "SELECT id, role FROM alpha_profiles WHERE id = $1 AND active = true",
+                req.profile_id,
+            )
+            if not profile:
+                raise HTTPException(status_code=404, detail="Profile not found")
 
-        await conn.execute(
-            "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = $2",
-            _hash_pin(req.new_pin),
-            req.profile_id,
-        )
+            await conn.execute(
+                "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = $2",
+                pin_hash,
+                req.profile_id,
+            )
+            await _sync_family_pin_or_409(req.profile_id, pin_hash)
 
     logger.info(
         "PROFILE_PIN_SET profile=%s role=%s by=%s",
@@ -318,12 +336,15 @@ async def set_admin_pin(request: Request, req: SetAdminPinRequest):
             raise HTTPException(status_code=401, detail="Invalid current PIN")
 
     _validate_new_pin(req.new_pin)
+    pin_hash = _hash_pin(req.new_pin)
 
     async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = 'ken'",
-            _hash_pin(req.new_pin),
-        )
+        async with conn.transaction():
+            await conn.execute(
+                "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = 'ken'",
+                pin_hash,
+            )
+            await _sync_family_pin_or_409("ken", pin_hash)
 
     logger.info("SET_ADMIN_PIN_SUCCESS profile=ken")
     return {"status": "ok", "profile_id": "ken"}
