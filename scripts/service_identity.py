@@ -36,7 +36,7 @@ DEFAULT_SCOPES = {
         "forge.llm.call",
         "health.read",
     ],
-    "endpoint": ["health.read"],
+    "endpoint": ["health.read", "school_email.read"],
 }
 
 TOKEN_LIFETIME_DAYS = 1
