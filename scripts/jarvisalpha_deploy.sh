@@ -310,7 +310,7 @@ if [[ "${JARVIS_SKIP_SANDBOX:-0}" == "1" ]]; then
 else
   sb_start=$SECONDS
   sb_out=$(ssh "${SSH_OPTS[@]}" "$SANDBOX" \
-    "cd ~/jarvis-alpha && git pull origin main --rebase --quiet && git rev-parse --short HEAD" 2>&1)
+    "cd ~/jarvis-alpha && git fetch origin main --quiet && git switch main --quiet && git pull --ff-only origin main --quiet && git rev-parse --short HEAD" 2>&1)
   sb_ec=$?
   sb_dur=$((SECONDS - sb_start))
   if [ $sb_ec -eq 0 ]; then
