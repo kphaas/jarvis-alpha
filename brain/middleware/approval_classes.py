@@ -222,6 +222,13 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "write"
     ],  # Node watchdog event ingestion — service-to-service telemetry
     "POST /v1/internal/cost-event": ["write"],
+    # --- Skill and agent registries — reads T2, agent control T5 ---
+    "GET /v1/skills": ["read", "security_read"],
+    "GET /v1/skills/{skill_name}": ["read", "security_read"],
+    "GET /v1/agents": ["read", "security_read"],
+    "GET /v1/agents/{agent_id}": ["read", "security_read"],
+    "POST /v1/agents/{agent_id}/enable": ["admin"],
+    "POST /v1/agents/{agent_id}/disable": ["admin"],
     # --- Admin panel ---
     "GET /admin": ["admin"],
     "POST /admin": ["admin"],
