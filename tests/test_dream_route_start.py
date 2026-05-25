@@ -43,6 +43,10 @@ class FakeConn:
         self.executed.append(("fetchrow", query, args))
         return self.session
 
+    async def fetch(self, query, *args):
+        self.executed.append(("fetch", query, args))
+        return []
+
     async def execute(self, query, *args):
         self.executed.append(("execute", query, args))
         return "UPDATE 1"
@@ -107,6 +111,48 @@ async def test_start_session_starts_temporal_workflow_and_persists_run_id(monkey
 
 
 @pytest.mark.asyncio
+async def test_start_session_rejects_when_halt_flag_is_active(monkeypatch):
+    conn = FakeConn(
+        session={
+            "id": 8,
+            "status": "pending",
+            "trigger": "manual",
+            "goal_type": "default",
+            "goal_text": "Run D3.3",
+            "prompt_version": "v1",
+            "recent_context": None,
+            "prior_lessons": None,
+        }
+    )
+    pool = FakePool(conn)
+    started = False
+
+    async def fake_halt_flags(conn):
+        return [{"flag_name": "overnight_execution_paused", "flag_value": True}]
+
+    async def fake_start(session):
+        nonlocal started
+        started = True
+        return DreamWorkflowStart(workflow_id="dream-session-8", run_id="run-8")
+
+    monkeypatch.setattr(dream_route, "get_pool", lambda: pool)
+    monkeypatch.setattr(dream_route, "_active_dream_halt_flags", fake_halt_flags)
+    monkeypatch.setattr(dream_route, "start_dream_session_workflow", fake_start)
+
+    with pytest.raises(HTTPException) as exc:
+        await dream_route.start_session(request_with_admin_scope(), 8)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["reason"] == "dream_halt_flag_active"
+    assert not started
+    assert not any(
+        "temporal_workflow_id" in query
+        for kind, query, _ in conn.executed
+        if kind == "execute"
+    )
+
+
+@pytest.mark.asyncio
 async def test_start_session_rolls_back_reservation_on_duplicate_workflow(monkeypatch):
     conn = FakeConn(
         session={
@@ -138,6 +184,72 @@ async def test_start_session_rolls_back_reservation_on_duplicate_workflow(monkey
         if kind == "execute" and "started_at = NULL" in query
     ]
     assert rollback_updates
+
+
+@pytest.mark.asyncio
+async def test_execute_readonly_rejects_when_halt_flag_is_active(monkeypatch):
+    conn = FakeConn(
+        session={
+            "id": 12,
+            "status": "completed",
+            "review_verdict": "APPROVED",
+        }
+    )
+    pool = FakePool(conn)
+
+    async def fake_halt_flags(conn):
+        return [{"flag_name": "dream_mode_killed", "flag_value": True}]
+
+    monkeypatch.setattr(dream_route, "get_pool", lambda: pool)
+    monkeypatch.setattr(dream_route, "_active_dream_halt_flags", fake_halt_flags)
+
+    with pytest.raises(HTTPException) as exc:
+        await dream_route.execute_readonly_session(
+            request_with_admin_scope(),
+            12,
+            dream_route.ExecuteReadOnlyRequest(limit=5),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["reason"] == "dream_halt_flag_active"
+    assert not any(
+        "UPDATE alpha_dream_steps" in query
+        for kind, query, _ in conn.executed
+        if kind == "execute"
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_step_rejects_execution_transition_when_halt_flag_is_active(
+    monkeypatch,
+):
+    conn = FakeConn(
+        session={
+            "id": 31,
+            "session_id": 12,
+            "status": "pending",
+            "retry_count": 0,
+            "max_retries": 3,
+        }
+    )
+    pool = FakePool(conn)
+
+    async def fake_halt_flags(conn):
+        return [{"flag_name": "dream_emergency", "flag_value": True}]
+
+    monkeypatch.setattr(dream_route, "get_pool", lambda: pool)
+    monkeypatch.setattr(dream_route, "_active_dream_halt_flags", fake_halt_flags)
+
+    with pytest.raises(HTTPException) as exc:
+        await dream_route.update_step(
+            request_with_admin_scope(),
+            31,
+            dream_route.UpdateStepRequest(status="running"),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["reason"] == "dream_halt_flag_active"
+    assert not any(kind == "fetchrow" for kind, _, _ in conn.executed)
 
 
 @pytest.mark.asyncio
