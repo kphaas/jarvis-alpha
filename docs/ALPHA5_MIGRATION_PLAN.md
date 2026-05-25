@@ -33,7 +33,7 @@ This is **NOT "containerize everything."** The rule is explicit in ADR-0002: **s
 
 ### What Alpha-5 accomplishes
 
-- Retires Architecture Review V1 §1 line 23 ("No Docker anywhere")
+- Retires Architecture Review V1 §1 line 23 ("No Docker anywhere"); Architecture Review V2 is the canonical amended review
 - Establishes image immutability and rollback for stateless services
 - Consolidates `get_secret()` and per-service secrets hygiene
 - Unifies observability across native + container surfaces
@@ -251,7 +251,7 @@ Every decision was independently validated against 2026 industry practice via Pe
  - JWT private key bind-mounted read-only
  - Healthcheck on `/health` endpoint
  - `depends_on` cannot gate on native services; use in-app startup retry instead
-- Blue/green: native Brain on 8187, container on 8186
+- Blue/green: native Brain temporarily moved to a non-production fallback port such as 8188; container takes production port 8186. Do **not** use 8187; Brain reserves it for `jarvis-family`.
 
 **Validation matrix (ALL must pass):**
 - PIN auth works end-to-end
@@ -334,8 +334,8 @@ Every decision was independently validated against 2026 industry practice via Pe
 - `launchctl bootout` all now-redundant native LaunchAgents
 - Plist templates retained in git (emergency rollback path) but excluded from `install_launchagents.py` default install
 - `install_launchagents.py --node <n>` filter updated per ADR-0002 exception list
-- Architecture Review V1 §1 line 23 document amendment
-- Architecture Review §3 (node topology) updated to reflect containerized services
+- Architecture Review V2 §3 (node topology) updated to reflect containerized services
+- Architecture Review V2 §4 (service state) updated so native/container placement matches the Phase 5.8 end state
 - Alpha-5 sign-off handoff doc
 
 **Sign-off criteria:**
@@ -528,7 +528,7 @@ Explicitly deferred, with target future phases:
 - **Session transcripts:** 2026-04-20 (Gateway M1→M4 swap), 2026-04-21 (Alpha-5 planning)
 - **Perplexity validations:** Q2 state/compute pattern, Q3 secrets pattern, Q4-sub-decisions (registry/compose/cert/auth)
 - **Prior handoffs:** `HANDOFF_2026-04-20.md`, `HANDOFF_launchagent_templating.md`
-- **Architecture Review V1** (pending amendment: §1 line 23 retirement, §3 node topology update)
+- **Architecture Review V2:** canonical amended architecture review; update §3 and §4 again during Phase 5.8 sign-off to reflect actual containerized services
 
 ---
 

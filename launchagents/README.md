@@ -31,6 +31,9 @@ These are deployed and working. Rename to categorical form is tracked as **TD-11
 | `com.jarvis.alpha.buddy.plist` | Brain | `launchctl bootstrap` via start script |
 | `com.jarvis.alpha.executor.plist` | Brain | `launchctl bootstrap` via start script |
 | `com.jarvis.alpha.watchdog.plist` | Brain | `launchctl bootstrap` via start script |
+| `com.jarvis.alpha.temporal.server.plist` | Brain | `launchctl bootstrap` via start script |
+| `com.jarvis.alpha.temporal.ui.plist` | Brain | `launchctl bootstrap` via start script |
+| `com.jarvis.alpha.temporal.worker.plist` | Brain | `launchctl bootstrap` via start script |
 | `com.jarvis.alpha.gateway.plist` | Gateway | `launchctl bootstrap` via start script |
 | `com.jarvis.alpha.rotate.brain_service.plist` | Brain | Scheduled (StartInterval=86400) |
 | `com.jarvis.alpha.rotate.buddy.plist` | Brain | Scheduled |

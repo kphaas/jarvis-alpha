@@ -11,7 +11,7 @@ workflow input, cleanup state, and final result.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 
 @dataclass
@@ -21,6 +21,58 @@ class DreamSessionInput:
     prompt: str
     context_ids: list[str] = field(default_factory=list)
     trigger: Literal["scheduled", "manual", "dry_run"] = "manual"
+    goal_type: str = "default"
+    prompt_version: str = "v1"
+    recent_context: str | None = None
+    prior_lessons: str | None = None
+
+
+@dataclass
+class PlanSessionSpec:
+    session_id: str
+    user_id: str
+    goal_type: str
+    goal_text: str
+    prompt_version: str = "v1"
+    recent_context: str | None = None
+    prior_lessons: str | None = None
+    revision_hint: str | None = None
+
+
+@dataclass
+class PlanSessionResult:
+    plan: dict[str, Any]
+    policy: dict[str, Any]
+
+
+@dataclass
+class ReviewPlanSpec:
+    session_id: str
+    user_id: str
+    goal_type: str
+    plan: dict[str, Any]
+    prompt_version: str = "v1"
+
+
+@dataclass
+class ReviewPlanResult:
+    verdict: Literal["APPROVED", "REJECTED", "NEEDS_REVISION"]
+    reasoning: str
+    issues: list[dict[str, Any]] = field(default_factory=list)
+    revision_hint: str | None = None
+
+
+@dataclass
+class PersistPlanSpec:
+    session_id: str
+    plan: dict[str, Any]
+    review: dict[str, Any]
+    replan_count: int = 0
+
+
+@dataclass
+class PersistPlanResult:
+    step_count: int
 
 
 @dataclass
