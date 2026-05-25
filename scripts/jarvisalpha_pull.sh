@@ -118,6 +118,11 @@ needs_reload_school_email() {
   echo "$CHANGED_FILES" | grep -qE '(^launchagents/com\.jarvis\.alpha\.school-email\.template\.plist$|^scripts/start_alpha_school_email\.sh$|^scripts/install_launchagents\.py$)'
 }
 
+needs_restart_temporal_worker() {
+  [ -z "$CHANGED_FILES" ] && return 1
+  echo "$CHANGED_FILES" | grep -qE '(^brain/dream/|^brain/services/(planner|reviewer)\.py$|^scripts/start_temporal_worker\.sh$|^launchagents/com\.jarvis\.alpha\.temporal\.worker(\.template)?\.plist$)'
+}
+
 needs_restart_gateway() {
   [ -z "$CHANGED_FILES" ] && return 1
   echo "$CHANGED_FILES" | grep -qE '(^gateway/|^common/|\.py$|^scripts/start_alpha_gateway\.sh$|^launchagents/com\.jarvis\.alpha\.gateway\.plist$)'
@@ -256,6 +261,29 @@ elif [ -f "$BRAIN_PLIST" ]; then
     fi
   fi
   echo "─────────────────────────────────────────────────────────"
+fi
+
+TEMPORAL_WORKER_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.temporal.worker.plist"
+if [ "$NODE_SHORT" = "brain" ] && needs_restart_temporal_worker; then
+  echo ""
+  echo "Restarting Alpha Temporal Worker..."
+  TEMPORAL_START=$(time_ms)
+  if [ ! -f "$TEMPORAL_WORKER_PLIST" ]; then
+    emit fail restart node="$NODE_SHORT" service="alpha-temporal-worker" dur_ms=$(($(time_ms) - TEMPORAL_START)) error="plist missing"
+    echo "❌ Temporal worker LaunchAgent plist missing"
+    exit 1
+  fi
+  find "${REPO_DIR}/brain/dream" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null
+  launchctl unload "$TEMPORAL_WORKER_PLIST" 2>/dev/null || true
+  sleep 1
+  launchctl load "$TEMPORAL_WORKER_PLIST"
+  sleep 2
+  TEMPORAL_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.temporal.worker" {print $1}' | head -1)
+  [ "$TEMPORAL_PID" = "-" ] && TEMPORAL_PID=0
+  echo "✅ Temporal worker restarted"
+  emit ok restart node="$NODE_SHORT" service="alpha-temporal-worker" pid="${TEMPORAL_PID:-0}" dur_ms=$(($(time_ms) - TEMPORAL_START))
+elif [ "$NODE_SHORT" = "brain" ]; then
+  emit skip restart node="$NODE_SHORT" service="alpha-temporal-worker" reason="no_worker_changes"
 fi
 
 SCHOOL_EMAIL_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.school-email.plist"
