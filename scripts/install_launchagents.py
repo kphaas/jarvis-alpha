@@ -55,6 +55,7 @@ SERVICE_NODE_MAP = {
     "com.jarvis.alpha.school-email": "brain",
     "com.jarvis.alpha.temporal.server": "brain",
     "com.jarvis.alpha.temporal.ui": "brain",
+    "com.jarvis.alpha.temporal.worker": "brain",
     "com.jarvis.alpha.watchdog": "brain",
     "com.jarvis.alpha.power.endpoint": "endpoint",
     "com.jarvis.alpha.rotate.endpoint": "endpoint",

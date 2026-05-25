@@ -10,8 +10,9 @@ Update its dedicated file — never duplicate content across docs.
 ## By Concern
 
 ### Architecture & Roadmap
-- [`JARVIS_Alpha_Architecture_Review_V1.md`](./JARVIS_Alpha_Architecture_Review_V1.md) — High-level system overview, node topology, services
-- [`JARVIS_Alpha_Phase_Status.md`](./JARVIS_Alpha_Phase_Status.md) — Phase roadmap (Alpha-0 → Alpha-4)
+- [`JARVIS_Alpha_Architecture_Review_V2.md`](./JARVIS_Alpha_Architecture_Review_V2.md) — Canonical system overview, node topology, services, and Alpha-5 deployment model
+- [`JARVIS_Alpha_Phase_Status.md`](./JARVIS_Alpha_Phase_Status.md) — Historical phase tracker with April 18 addendum; use Architecture Review V2 for current roadmap
+- [`ALPHA5_MIGRATION_PLAN.md`](./ALPHA5_MIGRATION_PLAN.md) — Approved Alpha-5 state-native / compute-containerized migration plan
 
 ### Backend Standards
 - [`PATTERNS.md`](./PATTERNS.md) — Backend coding patterns (asyncpg, curl, logging)
@@ -38,7 +39,7 @@ Update its dedicated file — never duplicate content across docs.
 ## By Audience
 
 ### New Developer Onboarding
-1. Start with [`JARVIS_Alpha_Architecture_Review_V1.md`](./JARVIS_Alpha_Architecture_Review_V1.md) — understand the system
+1. Start with [`JARVIS_Alpha_Architecture_Review_V2.md`](./JARVIS_Alpha_Architecture_Review_V2.md) — understand the system
 2. Read [`PATTERNS.md`](./PATTERNS.md) — learn the coding conventions
 3. Skim [`MIDDLEWARE_STACK.md`](./MIDDLEWARE_STACK.md) — understand request lifecycle
 4. Bookmark [`ALPHA_UI_STANDARDS.md`](./ALPHA_UI_STANDARDS.md) if working on frontend
@@ -62,8 +63,11 @@ Update its dedicated file — never duplicate content across docs.
 4. [`RLS_ROLLOUT_PLAN.md`](./RLS_ROLLOUT_PLAN.md) — data isolation status
 
 ### Deploying or Operating
-1. [`JARVIS_Alpha_Architecture_Review_V1.md`](./JARVIS_Alpha_Architecture_Review_V1.md) — section on commit/deploy workflow
+1. [`JARVIS_Alpha_Architecture_Review_V2.md`](./JARVIS_Alpha_Architecture_Review_V2.md) — section on commit/deploy workflow
 2. Latest [`handoffs/`](./handoffs/) entry — current operational state
+
+### Superseded
+- [`archive/JARVIS_Alpha_Architecture_Review_V1.md`](./archive/JARVIS_Alpha_Architecture_Review_V1.md) — archived historical review; superseded by V2 and ADR-0002
 
 ---
 

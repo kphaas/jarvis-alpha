@@ -1,4 +1,4 @@
-> **⚠️ SUPERSEDED — This document is a historical record. The canonical phase tracker is `JARVIS_Alpha_Phase_Status.md`.**
+> **⚠️ SUPERSEDED — This document is a historical record. The canonical architecture review is `docs/JARVIS_Alpha_Architecture_Review_V2.md`; the phase tracker is `docs/JARVIS_Alpha_Phase_Status.md`.**
 
 ---
 

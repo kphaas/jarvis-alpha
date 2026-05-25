@@ -3,9 +3,8 @@
 Activities run in a Temporal worker process (not FastAPI), so they cannot
 use brain.db.rls.rls_connection() which requires a FastAPI Request object.
 
-Pattern matches brain/services/dream_cost_cap_service.py: acquire pool
-connection, SET ROLE, set_config() for rls.user_id + rls.role
-inside a transaction, yield, RESET ROLE on exit.
+Pattern matches the current Dream route write path: acquire the writer pool
+connection, set transaction-scoped rls.user_id + rls.role GUCs, yield.
 
 Deferred (TD-145): replace with SECURITY DEFINER functions in Alpha-6.
 """
@@ -27,13 +26,7 @@ async def activity_db(
 ) -> AsyncIterator[asyncpg.Connection]:
     pool = get_pool()
     async with pool.acquire() as conn:
-        await conn.execute("SET ROLE jarvis_alpha_app")
-        try:
-            async with conn.transaction():
-                await conn.execute(
-                    "SELECT set_config('rls.user_id', $1, true)", user_id
-                )
-                await conn.execute("SELECT set_config('rls.role', $1, true)", role)
-                yield conn
-        finally:
-            await conn.execute("RESET ROLE")
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('rls.user_id', $1, true)", user_id)
+            await conn.execute("SELECT set_config('rls.role', $1, true)", role)
+            yield conn
