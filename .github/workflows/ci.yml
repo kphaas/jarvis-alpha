@@ -27,11 +27,7 @@
 # alpha, family. test + typecheck jobs detect `[tool.uv.workspace]` in
 # the root `pyproject.toml` and add `--all-packages` when present;
 # `--group dev` is also added so test runners (pytest, etc.) declared as
-# PEP 735 dependency-groups install during the sync. Repos with no root
-# `pyproject.toml` skip test + typecheck entirely (covers the
-# alpha-without-workspace-root case until alpha adopts a workspace
-# root). The lint job is unaffected because `uv tool run ruff` operates
-# on the filesystem and doesn't need a synced env.
+# PEP 735 dependency-groups install during the sync.
 
 name: ci
 
@@ -151,8 +147,7 @@ jobs:
         id: gate
         run: |
           # TD-X32: also gate on root pyproject.toml. Without it `uv sync`
-          # has nothing to sync against, and the alpha case (multi-package
-          # repo without a workspace root) used to blow up here.
+          # has nothing to sync against.
           if [ ! -f pyproject.toml ] || [ ! -d tests ]; then
             echo "skip=true" >> "${GITHUB_OUTPUT}"
             echo "No root pyproject.toml or no tests/ directory — skipping pytest."
