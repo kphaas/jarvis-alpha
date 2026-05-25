@@ -17,6 +17,7 @@ def _secret(name: str) -> str:
         "MATTERMOST_URL": "https://mattermost.test",
         "MATTERMOST_BOT_TOKEN": "m" * 26,
         "MATTERMOST_DEFAULT_CHANNEL_ID": "alerts-channel-id",
+        "MATTERMOST_CHANNEL_ALPHA_EVENTS_ID": "alpha-events-channel-id",
         "MATTERMOST_CHANNEL_ALERTS_ID": "alerts-channel-id",
         "MATTERMOST_CHANNEL_DREAM_ID": "dream-channel-id",
     }
@@ -129,7 +130,8 @@ async def test_mattermost_notify_sends_rest_payload(monkeypatch):
     seen = {}
 
     def fake_post(config, payload):
-        seen["base_url"] = config.base_url
+        seen["mode"] = config.mode
+        seen["url"] = config.url
         seen["token"] = config.bot_token
         seen["payload"] = payload
         return 0, '{"id":"post-1","channel_id":"alerts-channel-id"}'
@@ -148,9 +150,12 @@ async def test_mattermost_notify_sends_rest_payload(monkeypatch):
     )
 
     assert response.status == "sent"
+    assert response.mode == "rest"
+    assert response.channel_key == "alerts"
     assert response.post_id == "post-1"
     assert response.channel_id == "alerts-channel-id"
-    assert seen["base_url"] == "https://mattermost.test"
+    assert seen["mode"] == "rest"
+    assert seen["url"] == "https://mattermost.test/api/v4/posts"
     assert seen["token"] == "m" * 26
     assert seen["payload"]["channel_id"] == "alerts-channel-id"
     assert "**Alpha**" in seen["payload"]["message"]
@@ -178,6 +183,76 @@ async def test_mattermost_notify_uses_channel_key_secret(monkeypatch):
     )
 
     assert seen["payload"]["channel_id"] == "dream-channel-id"
+
+
+@pytest.mark.asyncio
+async def test_mattermost_notify_prefers_incoming_webhook(monkeypatch):
+    seen = {}
+
+    def secret(name: str) -> str:
+        if name == "MATTERMOST_WEBHOOK_URL_ALPHA_EVENTS":
+            return "https://mattermost.tail40ed36.ts.net/hooks/alpha"
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        raise KeyError(name)
+
+    def fake_post(config, payload):
+        seen["mode"] = config.mode
+        seen["url"] = config.url
+        seen["payload"] = payload
+        return 0, "ok"
+
+    monkeypatch.setattr("gateway.routes.notify.get_secret", secret)
+    monkeypatch.setattr("gateway.routes.notify._post_mattermost_sync", fake_post)
+
+    response = await mattermost_notify(
+        MattermostNotifyRequest(title="Alpha", message="Routine event"),
+        authorization="Bearer gateway-token",
+    )
+
+    assert response.status == "sent"
+    assert response.mode == "webhook"
+    assert response.channel_key == "alpha_events"
+    assert response.post_id is None
+    assert seen["mode"] == "webhook"
+    assert seen["url"] == "https://mattermost.tail40ed36.ts.net/hooks/alpha"
+    assert seen["payload"]["channel"] == "alpha-events"
+    assert seen["payload"]["text"].startswith("**Alpha**")
+
+
+@pytest.mark.asyncio
+async def test_mattermost_notify_routes_needs_input_to_cross_cutting_channel(
+    monkeypatch,
+):
+    seen = {}
+
+    def secret(name: str) -> str:
+        if name == "MATTERMOST_WEBHOOK_URL_ALPHA_EVENTS":
+            return "https://mattermost.tail40ed36.ts.net/hooks/alpha"
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        raise KeyError(name)
+
+    def fake_post(config, payload):
+        seen["channel_key"] = config.channel_key
+        seen["payload"] = payload
+        return 0, "ok"
+
+    monkeypatch.setattr("gateway.routes.notify.get_secret", secret)
+    monkeypatch.setattr("gateway.routes.notify._post_mattermost_sync", fake_post)
+
+    response = await mattermost_notify(
+        MattermostNotifyRequest(
+            title="Approval",
+            message="Ken review needed",
+            severity="needs_input",
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert response.channel_key == "needs_input"
+    assert seen["channel_key"] == "needs_input"
+    assert seen["payload"]["channel"] == "needs-input"
 
 
 @pytest.mark.asyncio

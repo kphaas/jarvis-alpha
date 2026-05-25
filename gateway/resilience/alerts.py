@@ -5,7 +5,8 @@ Interface:
         async def send(severity, title, message, metadata=None) -> bool
 
 Concrete implementations:
-    MattermostSink  — primary ChatOps sink (curl + asyncio.to_thread)
+    MattermostWebhookSink — Phase 1 ChatOps sink (incoming webhook)
+    MattermostSink  — bot REST sink for Phase 2+ API automation
     PushoverSink    — fallback wake-up sink (curl + asyncio.to_thread)
     NullSink        — logs only, no network (dev/test default)
     CompositeSink   — fan-out to multiple sinks
@@ -103,7 +104,7 @@ class NullSink(IAlertSink):
 
 
 class MattermostSink(IAlertSink):
-    """Real Mattermost sink. Uses bot REST API through Gateway egress."""
+    """Mattermost bot REST sink for Phase 2+ API automation."""
 
     def __init__(self, base_url: str, bot_token: str, channel_id: str):
         if not base_url or not bot_token or not channel_id:
@@ -194,6 +195,91 @@ class MattermostSink(IAlertSink):
             return False
         except Exception as e:
             log.error("mattermost send failed: %s", e)
+            return False
+
+
+class MattermostWebhookSink(IAlertSink):
+    """Mattermost incoming webhook sink. This is the Phase 1 default."""
+
+    def __init__(self, webhook_url: str, channel_name: str = "alerts"):
+        if not webhook_url:
+            raise ValueError("MattermostWebhookSink requires webhook_url")
+        if not webhook_url.startswith(("https://", "http://")):
+            raise ValueError("Mattermost webhook_url must include http(s) scheme")
+        if not channel_name:
+            raise ValueError("Mattermost channel_name is required")
+        self._webhook_url = webhook_url
+        self._channel_name = channel_name.lstrip("#")
+
+    @property
+    def name(self) -> str:
+        return "mattermost-webhook"
+
+    def _post_sync(self, payload: dict[str, Any]) -> tuple[int, str]:
+        args = [
+            "curl",
+            "-sS",
+            "-m",
+            "10",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            json.dumps(payload),
+            self._webhook_url,
+        ]
+        try:
+            result = subprocess.run(args, capture_output=True, text=True, timeout=15)
+            return result.returncode, result.stdout
+        except subprocess.TimeoutExpired:
+            return 124, "timeout"
+        except Exception as e:
+            return 1, str(e)
+
+    async def send(
+        self,
+        severity: Severity,
+        title: str,
+        message: str,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        payload = {
+            "channel": _mattermost_channel_for(severity, self._channel_name),
+            "text": "\n".join(
+                [
+                    f"**{title[:250]}**",
+                    "",
+                    message[:4000],
+                    "",
+                    f"Severity: `{severity.value}`",
+                ]
+            ),
+            "props": {
+                "jarvis": {
+                    "severity": severity.value,
+                    "metadata": metadata or {},
+                }
+            },
+        }
+
+        try:
+            rc, body = await asyncio.to_thread(self._post_sync, payload)
+            if rc != 0:
+                log.error("mattermost webhook curl rc=%d body=%s", rc, body[:500])
+                return False
+            if body.strip() == "ok":
+                log.info(
+                    "mattermost webhook sent severity=%s title=%r channel=%s",
+                    severity.value,
+                    title,
+                    payload["channel"],
+                )
+                return True
+            log.error("mattermost webhook rejected: %s", body[:500])
+            return False
+        except Exception as e:
+            log.error("mattermost webhook send failed: %s", e)
             return False
 
 
@@ -340,11 +426,20 @@ def build_default_sink() -> IAlertSink:
     """Factory — reads env once, returns configured sink.
 
     Selection:
-        Mattermost configured + Pushover configured → Mattermost with Pushover fallback
-        Mattermost configured → MattermostSink
+        Mattermost webhook + Pushover configured → webhook with Pushover fallback
+        Mattermost webhook configured → MattermostWebhookSink
+        Mattermost bot REST configured → MattermostSink
         Pushover configured → PushoverSink
         Otherwise → NullSink
     """
+    mattermost_webhook_url = (
+        os.environ.get("MATTERMOST_WEBHOOK_URL_ALPHA_EVENTS", "").strip()
+        or os.environ.get("MATTERMOST_WEBHOOK_URL_ALERTS", "").strip()
+        or os.environ.get("MATTERMOST_WEBHOOK_URL", "").strip()
+    )
+    mattermost_channel_name = (
+        os.environ.get("MATTERMOST_CHANNEL_ALERTS_NAME", "").strip() or "alerts"
+    )
     mattermost_url = os.environ.get("MATTERMOST_URL", "").strip()
     mattermost_token = os.environ.get("MATTERMOST_BOT_TOKEN", "").strip()
     mattermost_channel = (
@@ -355,7 +450,19 @@ def build_default_sink() -> IAlertSink:
     app_token = os.environ.get("PUSHOVER_APP_TOKEN", "").strip()
 
     mattermost_sink: IAlertSink | None = None
-    if mattermost_url and mattermost_token and mattermost_channel:
+    if mattermost_webhook_url:
+        try:
+            mattermost_sink = MattermostWebhookSink(
+                webhook_url=mattermost_webhook_url,
+                channel_name=mattermost_channel_name,
+            )
+            log.info("alert sink: MattermostWebhookSink configured")
+        except ValueError as e:
+            log.error(
+                "MattermostWebhookSink construction failed, falling back if possible: %s",
+                e,
+            )
+    elif mattermost_url and mattermost_token and mattermost_channel:
         try:
             mattermost_sink = MattermostSink(
                 base_url=mattermost_url,
@@ -387,3 +494,9 @@ def build_default_sink() -> IAlertSink:
 
     log.warning("alert sink: no Mattermost/Pushover config available; using NullSink")
     return NullSink()
+
+
+def _mattermost_channel_for(severity: Severity, default_channel: str) -> str:
+    if severity in {Severity.ERROR, Severity.CRITICAL}:
+        return "alerts"
+    return default_channel.lstrip("#")

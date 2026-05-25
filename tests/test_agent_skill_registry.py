@@ -27,7 +27,9 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     skills = {skill.name: skill for skill in INITIAL_SKILLS}
     assert skills["notify.send"].status == "active"
     assert skills["notify.send"].metadata["primary"] == "mattermost"
+    assert skills["notify.send"].metadata["delivery"] == "incoming_webhook"
     assert skills["notify.send_mattermost"].status == "active"
+    assert skills["notify.send_mattermost"].metadata["delivery"] == "incoming_webhook"
     assert skills["notify.send_pushover"].status == "active"
 
 
