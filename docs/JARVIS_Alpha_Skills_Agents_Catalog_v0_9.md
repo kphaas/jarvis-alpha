@@ -127,11 +127,16 @@ MCP must never call provider adapters directly.
 
 ## Next Build Recommendation
 
-After the policy-gate PR lands, the next production slice should be:
+`notify.send_pushover` is active. It is a Gateway-egress skill: Brain calls
+Gateway over Tailscale with `curl`; Gateway owns `PUSHOVER_USER_KEY` and
+`PUSHOVER_APP_TOKEN` and calls the Pushover API. The skill is T2, mutating, and
+requires an idempotency key.
 
-1. Implement `notify.send_pushover`.
-2. Add a `network_watchdog` run loop in disabled-by-default mode.
-3. Enable read-only UniFi controller data behind the registry contract.
+After the Pushover skill PR lands, the next production slice should be:
+
+1. Add a `network_watchdog` run loop in disabled-by-default mode.
+2. Enable read-only UniFi controller data behind the registry contract.
+3. Route watchdog alerts through `notify.send_pushover`.
 
 That path gives Alpha a real new agent without making Gmail, iMessage, or child
 surfaces the first test case.

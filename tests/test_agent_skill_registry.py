@@ -22,6 +22,9 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert "smarthome.run_trusted_scene" in names
     assert "smarthome.unlock" in names
     assert "smarthome.alarm_disarm" in names
+    assert {skill.name: skill for skill in INITIAL_SKILLS}[
+        "notify.send_pushover"
+    ].status == "active"
 
 
 def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_agents():
