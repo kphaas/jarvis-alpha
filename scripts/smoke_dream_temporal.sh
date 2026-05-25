@@ -16,9 +16,12 @@ import time
 import urllib.error
 import urllib.request
 
-BASE = os.environ.get(
-    "JARVIS_ALPHA_BRAIN_URL",
-    "https://jarvis-brain.tail40ed36.ts.net:8186",
+from brain.config.node_addresses import BRAIN_URL
+
+BASE = (
+    os.environ.get("JARVIS_ALPHA_BRAIN_URL")
+    or os.environ.get("ALPHA_BRAIN_URL")
+    or BRAIN_URL
 ).rstrip("/")
 PROFILE = os.environ.get("DREAM_SMOKE_PROFILE", "ken")
 POLL_LIMIT = int(os.environ.get("DREAM_SMOKE_POLLS", "60"))
