@@ -1,0 +1,71 @@
+# Rendered by scripts/jarvisalpha_pull.sh before launchd loads Fluent Bit.
+# Supported placeholders: {{HOME}}, {{REPO_DIR}}, {{LOKI_HOST}}.
+service:
+  flush: 5
+  log_level: info
+  storage.path: {{HOME}}/fluent-bit/db/
+
+pipeline:
+  inputs:
+    - name: tail
+      tag: brain.alpha_brain
+      path: {{REPO_DIR}}/logs/alpha_brain.log
+      read_from_head: false
+      db: {{HOME}}/fluent-bit/db/alpha_brain.db
+
+    - name: tail
+      tag: brain.alpha_brain_error
+      path: {{REPO_DIR}}/logs/alpha_brain_error.log
+      read_from_head: false
+      db: {{HOME}}/fluent-bit/db/alpha_brain_error.db
+
+    - name: tail
+      tag: brain.buddy
+      path: {{REPO_DIR}}/logs/alpha_buddy.log
+      read_from_head: false
+      db: {{HOME}}/fluent-bit/db/buddy.db
+
+    - name: tail
+      tag: brain.buddy_error
+      path: {{REPO_DIR}}/logs/alpha_buddy_error.log
+      read_from_head: false
+      db: {{HOME}}/fluent-bit/db/buddy_error.db
+
+    - name: tail
+      tag: brain.executor
+      path: {{REPO_DIR}}/logs/executor.log
+      read_from_head: false
+      db: {{HOME}}/fluent-bit/db/executor.db
+
+    - name: tail
+      tag: brain.executor_error
+      path: {{REPO_DIR}}/logs/executor_error.log
+      read_from_head: false
+      db: {{HOME}}/fluent-bit/db/executor_error.db
+
+    - name: tail
+      tag: brain.watchdog
+      path: {{REPO_DIR}}/logs/watchdog.log
+      read_from_head: false
+      db: {{HOME}}/fluent-bit/db/watchdog.db
+
+    - name: tail
+      tag: brain.watchdog_error
+      path: {{REPO_DIR}}/logs/watchdog_error.log
+      read_from_head: false
+      db: {{HOME}}/fluent-bit/db/watchdog_error.db
+
+    - name: tail
+      tag: brain.power_sampler
+      path: {{REPO_DIR}}/logs/power_sampler.log
+      read_from_head: false
+      db: {{HOME}}/fluent-bit/db/power_sampler.db
+
+  outputs:
+    - name: loki
+      match: "brain.*"
+      host: {{LOKI_HOST}}
+      port: 3100
+      labels: node=brain
+      label_keys: $level,$service
+      auto_kubernetes_labels: false

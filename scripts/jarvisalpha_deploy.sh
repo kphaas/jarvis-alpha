@@ -312,7 +312,7 @@ if [[ "${JARVIS_SKIP_SANDBOX:-0}" == "1" ]]; then
 else
   sb_start=$SECONDS
   sb_out=$(ssh "${SSH_OPTS[@]}" "$SANDBOX" \
-    "cd ~/jarvis-alpha && git fetch origin main --quiet && git switch main --quiet && git pull --ff-only origin main --quiet && git rev-parse --short HEAD" 2>&1)
+    "bash -s" < "${REPO_DIR}/scripts/sandbox_safe_pull.sh" 2>&1)
   sb_ec=$?
   sb_dur=$((SECONDS - sb_start))
   if [ $sb_ec -eq 0 ]; then
@@ -325,17 +325,19 @@ else
   fi
 fi
 
-# Endpoint SCP dist
-scp_start=$SECONDS
-scp_out=$(scp "${SSH_OPTS[@]}" -r "$REPO_DIR/ui/dist" "$ENDPOINT:~/jarvis-alpha/ui/" 2>&1)
-scp_ec=$?
-scp_dur=$((SECONDS - scp_start))
-if [ $scp_ec -eq 0 ]; then
-  step_ok "endpoint (scp)" "ui dist synced" "$(fmt_s $scp_dur)"
-else
-  step_fail "endpoint (scp)" "scp failed"
-  echo "$scp_out" >&2
-  DEPLOY_FAILED=1
+# Endpoint SCP dist — only after Sandbox is clean/current.
+if [ $DEPLOY_FAILED -eq 0 ]; then
+  scp_start=$SECONDS
+  scp_out=$(scp "${SSH_OPTS[@]}" -r "$REPO_DIR/ui/dist" "$ENDPOINT:~/jarvis-alpha/ui/" 2>&1)
+  scp_ec=$?
+  scp_dur=$((SECONDS - scp_start))
+  if [ $scp_ec -eq 0 ]; then
+    step_ok "endpoint (scp)" "ui dist synced" "$(fmt_s $scp_dur)"
+  else
+    step_fail "endpoint (scp)" "scp failed"
+    echo "$scp_out" >&2
+    DEPLOY_FAILED=1
+  fi
 fi
 
 # SSH fan-out: Brain → Gateway → Endpoint (halt on failure)

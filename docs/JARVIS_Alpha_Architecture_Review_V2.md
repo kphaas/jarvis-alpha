@@ -418,11 +418,9 @@ bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh
 | AI-11 | Executor runs in-process — migrate to LaunchAgent at >5 concurrent graphs | Brain | P3 |
 | AI-12 | Worker node architecture — Phase 10+ | All | P3 |
 | AI-14 | Sandbox health endpoint — forge dashboard on :5001 not always running | Sandbox | P2 |
-| TD-94 | Watchdog LaunchAgent exit -15 / stale executor on Brain | Brain | P1 |
-| — | Bootstrap backfill: 6 of 10 expected audit triggers in prod | Brain | P1 |
 | — | Gateway Python upgrade (deferred to local session — Tailscale TLS hang) | Gateway | P2 |
 
-**Closed since V1:** AI-3 (nginx alpha.conf committed to git, `8225a98`).
+**Closed since V1:** AI-3 (nginx alpha.conf committed to git, `8225a98`); TD-94 (watchdog now handles SIGTERM/SIGINT cleanly); stale audit-trigger backfill item (current trigger inventory verified, no canonical 10-trigger target found).
 
 ---
 
@@ -432,11 +430,10 @@ bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh
 |---|---|---|---|
 | 1 | Dream Mode soak + approved-writer smoke | Prove bounded write execution under real approval flow before adding more handlers | 0.5-1 session |
 | 2 | Add next Dream write handler only if reversible | Expand autonomy one allowlisted handler at a time | 1 session |
-| 3 | RLSContext migration slab for remaining Dream/watchdog callers | Replace remaining ad hoc platform elevation with typed caller context | 1-2 sessions |
-| 4 | TD-94 watchdog `-15` SIGTERM investigation | P1 open | 0.5 session |
-| 5 | Audit trigger backfill (4 of 10 missing in prod) | Data integrity | 0.5 session |
-| 6 | Wire real UDM Pro API in gateway/routes/unifi.py (AI-1) | Stubs ship no data | 1 session |
-| 7 | Alpha-5 Phase 5.0 kickoff | Per ALPHA5_MIGRATION_PLAN.md | 2-3 sessions |
+| 3 | Agent management brainstorm + first Agent Spec | Move from Dream hardening into governed agent architecture | 1 session |
+| 4 | RLSContext migration slab for remaining Dream/watchdog callers | Replace remaining ad hoc platform elevation with typed caller context | 1-2 sessions |
+| 5 | Wire real UDM Pro API in gateway/routes/unifi.py (AI-1) | Stubs ship no data | 1 session |
+| 6 | Alpha-5 Phase 5.0 kickoff | Per ALPHA5_MIGRATION_PLAN.md | 2-3 sessions |
 
 ---
 

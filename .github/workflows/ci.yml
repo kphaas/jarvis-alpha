@@ -211,6 +211,9 @@ jobs:
       - name: Ban shell xtrace around secrets
         run: python scripts/check_no_xtrace_secrets.py
 
+      - name: Detect duplicate config drift
+        run: python scripts/check_duplicate_config_drift.py
+
       - name: Scan against baseline
         run: |
           if [ ! -f .secrets.baseline ]; then

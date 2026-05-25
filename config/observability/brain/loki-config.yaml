@@ -1,0 +1,44 @@
+# Rendered by scripts/jarvisalpha_pull.sh before launchd loads Loki.
+# Supported placeholders: {{HOME}}, {{LOKI_HTTP_LISTEN_ADDRESS}},
+# {{LOKI_GRPC_LISTEN_ADDRESS}}, {{LOKI_INSTANCE_ADDR}}.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  http_listen_address: {{LOKI_HTTP_LISTEN_ADDRESS}}
+  grpc_listen_port: 9095
+  grpc_listen_address: {{LOKI_GRPC_LISTEN_ADDRESS}}
+
+common:
+  instance_addr: {{LOKI_INSTANCE_ADDR}}
+  path_prefix: {{HOME}}/jarvis/loki
+  storage:
+    filesystem:
+      chunks_directory: {{HOME}}/jarvis/loki/chunks
+      rules_directory: {{HOME}}/jarvis/loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: "2026-04-04"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 720h
+  ingestion_rate_mb: 4
+  ingestion_burst_size_mb: 8
+
+compactor:
+  working_directory: {{HOME}}/jarvis/loki/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  delete_request_store: filesystem

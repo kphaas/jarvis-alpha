@@ -111,6 +111,14 @@ def render_event(evt):
         else:
             detail = "launchagent loaded"
 
+    elif phase == "config_sync":
+        service = evt.get("service", "config")
+        step = f"sync {service}"
+        if status == "fail":
+            detail = evt.get("error", "sync failed")[:60]
+        else:
+            detail = "runtime configs updated"
+
     elif phase == "health":
         url = evt.get("url", "")
         # Shorten URL: strip protocol + port for display

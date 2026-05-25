@@ -47,6 +47,21 @@ These are deployed and working. Rename to categorical form is tracked as **TD-11
 | `com.jarvis.alpha.fluentbit.plist` | Brain | KeepAlive — log shipper to Loki |
 | `com.jarvis.alpha.loki.plist` | Brain | KeepAlive — log aggregator |
 
+## External config sync
+
+Observability config templates are versioned in the repo and rendered to their
+runtime paths by `scripts/jarvisalpha_pull.sh` when Brain pulls an observability
+change. Runtime-specific values come from the node environment with conservative
+loopback defaults (`JARVIS_ALPHA_LOKI_HOST`, `JARVIS_ALPHA_LOKI_*_ADDRESS`):
+
+| Repo path | Runtime path |
+|---|---|
+| `config/observability/brain/fluent-bit.yaml` | `~/fluent-bit/fluent-bit.yaml` |
+| `config/observability/brain/loki-config.yaml` | `~/jarvis/loki/loki-config.yaml` |
+
+Changing either repo template restarts `com.jarvis.alpha.fluentbit` and
+`com.jarvis.alpha.loki` on Brain during deploy.
+
 ## Adding a new plist
 
 1. Name file by Label key: `com.jarvis.alpha.<category>.<name>.plist`
@@ -69,4 +84,4 @@ Add `--strict` when using the audit as a smoke or CI gate.
 ## Related tech debt
 
 - **TD-110** — Rename legacy labels to categorical form (`.service.`, `.observability.`, `.telemetry.`) — maintenance window work
-- **TD-111** — External configs (`fluent-bit.yaml`, `loki-config.yaml`) not in repo — move to `config/` under version control
+- **TD-111** — Closed: external Fluent Bit and Loki configs now live under `config/observability/brain/` and sync during Brain deploy
