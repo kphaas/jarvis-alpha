@@ -51,4 +51,7 @@ async def start_dream_session_workflow(
         id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
         id_conflict_policy=WorkflowIDConflictPolicy.FAIL,
     )
-    return DreamWorkflowStart(workflow_id=handle.id, run_id=handle.run_id)
+    return DreamWorkflowStart(
+        workflow_id=handle.id,
+        run_id=handle.first_execution_run_id or handle.result_run_id or handle.run_id,
+    )
