@@ -29,15 +29,17 @@ case "${1:-}" in
 esac
 
 # ── Config ────────────────────────────────────────────────
-BRAIN="jarvisbrain@jarvis-brain.tail40ed36.ts.net"
-GATEWAY="gate@jarvis-gateway.tail40ed36.ts.net"
-ENDPOINT="jarvisendpoint@jarvis-endpoint.tail40ed36.ts.net"
-SANDBOX="jarvissand@jarvis-sandbox.tail40ed36.ts.net"
+REPO_DIR="${JARVIS_ALPHA_REPO_DIR:-${HOME}/jarvis-alpha}"
+source "${REPO_DIR}/scripts/lib/node_addresses.sh"
+
+BRAIN="${JARVIS_ALPHA_BRAIN_SSH}"
+GATEWAY="${JARVIS_ALPHA_GATEWAY_SSH}"
+ENDPOINT="${JARVIS_ALPHA_ENDPOINT_SSH}"
+SANDBOX="${JARVIS_ALPHA_SANDBOX_SSH}"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no)
 if [[ -n "${JARVIS_ALPHA_SSH_KEY:-}" ]]; then
   SSH_OPTS=(-i "$JARVIS_ALPHA_SSH_KEY" -o IdentitiesOnly=yes "${SSH_OPTS[@]}")
 fi
-REPO_DIR="${HOME}/jarvis-alpha"
 RENDERER="${REPO_DIR}/scripts/render_events.py"
 VERBOSE="${VERBOSE:-0}"
 

@@ -1,6 +1,22 @@
 {
-  "brain":    {"ssh_target": "jarvisbrain@jarvis-brain.tail40ed36.ts.net",       "secrets_path": "/Users/jarvisbrain/jarvis/.secrets"},
-  "gateway":  {"ssh_target": "gate@jarvis-gateway.tail40ed36.ts.net",             "secrets_path": "/Users/gate/jarvis/.secrets"},
-  "endpoint": {"ssh_target": "jarvisendpoint@jarvis-endpoint.tail40ed36.ts.net",  "secrets_path": "/Users/jarvisendpoint/jarvis/.secrets"},
-  "sandbox":  {"ssh_target": "sandbox",                                            "secrets_path": "/Users/jarvissand/.secrets"}
+  "brain": {
+    "ssh_target": "jarvisbrain@jarvis-brain.tail40ed36.ts.net",
+    "health_url": "https://jarvis-brain.tail40ed36.ts.net:8186/health",
+    "secrets_path": "/Users/jarvisbrain/jarvis/.secrets"
+  },
+  "gateway": {
+    "ssh_target": "gate@jarvis-gateway.tail40ed36.ts.net",
+    "health_url": "https://jarvis-gateway.tail40ed36.ts.net:8283/health",
+    "secrets_path": "/Users/gate/jarvis/.secrets"
+  },
+  "endpoint": {
+    "ssh_target": "jarvisendpoint@jarvis-endpoint.tail40ed36.ts.net",
+    "health_url": "https://jarvis-endpoint.tail40ed36.ts.net:4100",
+    "secrets_path": "/Users/jarvisendpoint/jarvis/.secrets"
+  },
+  "sandbox": {
+    "ssh_target": "jarvissand@jarvis-sandbox",
+    "health_url": "https://jarvis-sandbox:5001/api/health",
+    "secrets_path": "/Users/jarvissand/.secrets"
+  }
 }

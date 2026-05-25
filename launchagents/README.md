@@ -55,6 +55,17 @@ These are deployed and working. Rename to categorical form is tracked as **TD-11
 4. Update this README's Deploy targets table
 5. Commit — TD-107 commit script classifier will fan out deploy
 
+## Drift audit
+
+Use the ownership map in `scripts/install_launchagents.py` for machine-readable
+audits:
+
+```bash
+python3 scripts/audit_launchagent_drift.py --node brain
+```
+
+Add `--strict` when using the audit as a smoke or CI gate.
+
 ## Related tech debt
 
 - **TD-110** — Rename legacy labels to categorical form (`.service.`, `.observability.`, `.telemetry.`) — maintenance window work

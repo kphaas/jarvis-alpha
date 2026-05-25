@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter
 
+from brain.services.temporal_storage_monitor import collect_temporal_storage_snapshot
 from jarvis_common.logging_config import get_logger
 
 log = get_logger("alpha_brain")
@@ -137,3 +138,9 @@ async def health_agents():
         "agents": agents,
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@router.get("/v1/health/temporal-storage")
+async def health_temporal_storage():
+    """Return Temporal persistence size, row counts, and disk alert state."""
+    return await collect_temporal_storage_snapshot()

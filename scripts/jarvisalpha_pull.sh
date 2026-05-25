@@ -1,7 +1,7 @@
 #!/bin/bash
 set -uo pipefail
 
-REPO_DIR="${HOME}/jarvis-alpha"
+REPO_DIR="${JARVIS_ALPHA_REPO_DIR:-${HOME}/jarvis-alpha}"
 
 # ── Event emitter (structured JSON events on stderr, parsed by commit script) ──
 emit_event() {
@@ -95,6 +95,10 @@ else
 fi
 
 NEW_HEAD=$(git -C "$REPO_DIR" rev-parse --short HEAD)
+
+if [ -f "${REPO_DIR}/scripts/lib/node_addresses.sh" ]; then
+  source "${REPO_DIR}/scripts/lib/node_addresses.sh"
+fi
 
 # Capture changed files list AND count (TD-107: used for restart classification)
 if [ -n "${PREV_HEAD:-}" ] && [ "$PREV_HEAD" != "$NEW_HEAD" ]; then
@@ -205,7 +209,7 @@ elif [ -f "$BRAIN_PLIST" ]; then
   emit ok restart node="$NODE_SHORT" service="alpha-brain" pid="${BRAIN_PID:-0}" dur_ms=$(($(time_ms) - RESTART_START))
 
   HEALTH_START=$(time_ms)
-  HEALTH_URL="https://jarvis-brain.tail40ed36.ts.net:8186/health"
+  HEALTH_URL="${JARVIS_ALPHA_BRAIN_HEALTH_URL:-https://localhost:8186/health}"
   HEALTH_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "$HEALTH_URL" 2>/dev/null || echo "000")
   HEALTH_DUR=$(($(time_ms) - HEALTH_START))
   if curl -sk --max-time 5 "$HEALTH_URL" 2>/dev/null | grep -q '"status":"ok"'; then
