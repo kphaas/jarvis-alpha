@@ -16,6 +16,7 @@ from brain.dream.activities import (
     review_plan_activity,
 )
 from brain.dream.client import temporal_namespace, temporal_target
+from brain.dream.health import heartbeat_loop
 from brain.dream.task_queues import DREAM_WORKFLOW_QUEUE
 from brain.dream.workflows import DreamSessionWorkflow
 from jarvis_common.logging_config import get_logger
@@ -54,8 +55,11 @@ async def run_worker() -> None:
             workflows=TEMPORAL_WORKFLOWS,
             activities=TEMPORAL_ACTIVITIES,
         )
+        heartbeat_task = asyncio.create_task(heartbeat_loop())
         await worker.run()
     finally:
+        if "heartbeat_task" in locals():
+            heartbeat_task.cancel()
         await close_pool()
 
 

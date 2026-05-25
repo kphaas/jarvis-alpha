@@ -80,7 +80,7 @@ class DreamSessionWorkflow:
                         session=session,
                         completed_steps=completed_steps,
                         failed_steps=failed_steps,
-                        final_status="halted",
+                        final_status=self._halt_final_status(),
                         briefing_summary=(
                             "Dream workflow halted before plan approval."
                         ),
@@ -113,6 +113,18 @@ class DreamSessionWorkflow:
                 completed_steps.append(f"plan:{replan_count + 1}")
                 max_revisions = int(plan_result.policy.get("max_revisions", 0))
 
+                if self._halt_reason:
+                    cleanup = self._cleanup_spec(
+                        session=session,
+                        completed_steps=completed_steps,
+                        failed_steps=failed_steps,
+                        final_status=self._halt_final_status(),
+                        briefing_summary=(
+                            "Dream workflow halted after planning and before review."
+                        ),
+                    )
+                    break
+
                 review_result = await workflow.execute_activity(
                     review_plan_activity,
                     args=[
@@ -140,6 +152,18 @@ class DreamSessionWorkflow:
                     "issues": review_result.issues,
                     "revision_hint": review_result.revision_hint,
                 }
+
+                if self._halt_reason:
+                    cleanup = self._cleanup_spec(
+                        session=session,
+                        completed_steps=completed_steps,
+                        failed_steps=failed_steps,
+                        final_status=self._halt_final_status(),
+                        briefing_summary=(
+                            "Dream workflow halted after review and before persistence."
+                        ),
+                    )
+                    break
 
                 if review_result.verdict == "APPROVED":
                     persist_result = await workflow.execute_activity(
@@ -231,6 +255,13 @@ class DreamSessionWorkflow:
             halt_severity=self._halt_severity,
             briefing_summary=briefing_summary,
         )
+
+    def _halt_final_status(self) -> str:
+        if self._halt_severity == "killed":
+            return "killed"
+        if self._halt_severity == "aborted":
+            return "aborted"
+        return "halted"
 
     async def _flush_cleanup(
         self,
