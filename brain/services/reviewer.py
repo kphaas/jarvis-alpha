@@ -46,8 +46,25 @@ class IReviewer(ABC):
     ) -> ReviewResult: ...
 
 
+def _strip_json_wrapping(raw: str) -> str:
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    if not text.startswith("{"):
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            text = text[start : end + 1]
+    return text
+
+
 def parse_review_json(raw: str) -> ReviewResult:
     """Parse reviewer LLM JSON into ReviewResult. Raises ReviewerSchemaError on issue."""
+    raw = _strip_json_wrapping(raw)
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:

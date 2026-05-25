@@ -45,6 +45,28 @@ def test_parse_approved():
     assert r.revision_hint is None
 
 
+def test_parse_strips_json_fence():
+    raw = """```json
+{
+  "verdict": "APPROVED",
+  "reasoning": "solid plan",
+  "issues": [],
+  "revision_hint": null
+}
+```"""
+    r = parse_review_json(raw)
+    assert r.verdict == ReviewerVerdict.APPROVED
+
+
+def test_parse_extracts_json_object_from_wrapped_text():
+    raw = (
+        "Here is the review:\n"
+        '{"verdict":"APPROVED","reasoning":"solid plan","issues":[],"revision_hint":null}'
+    )
+    r = parse_review_json(raw)
+    assert r.verdict == ReviewerVerdict.APPROVED
+
+
 def test_parse_rejected_with_issues():
     raw = json.dumps(
         {
