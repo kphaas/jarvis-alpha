@@ -430,9 +430,9 @@ bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh
 
 | # | Task | Why | Effort |
 |---|---|---|---|
-| 1 | Dream Mode bounded write executor design + first allowlisted handler | Move beyond approval queuing without arbitrary side effects | 1-2 sessions |
-| 2 | Dream Mode post-action verifier + compensation runner | Required before T5/admin/deploy writes | 1-2 sessions |
-| 3 | RLSContext implementation slab for Dream + watchdog callers | Replace ad hoc platform elevation with typed caller context | 1-2 sessions |
+| 1 | Dream Mode soak + approved-writer smoke | Prove bounded write execution under real approval flow before adding more handlers | 0.5-1 session |
+| 2 | Add next Dream write handler only if reversible | Expand autonomy one allowlisted handler at a time | 1 session |
+| 3 | RLSContext migration slab for remaining Dream/watchdog callers | Replace remaining ad hoc platform elevation with typed caller context | 1-2 sessions |
 | 4 | TD-94 watchdog `-15` SIGTERM investigation | P1 open | 0.5 session |
 | 5 | Audit trigger backfill (4 of 10 missing in prod) | Data integrity | 0.5 session |
 | 6 | Wire real UDM Pro API in gateway/routes/unifi.py (AI-1) | Stubs ship no data | 1 session |
@@ -447,7 +447,7 @@ bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh
 | Alpha-0 | Foundation | Repo scaffold, schema, config, stubs, GitHub infra | COMPLETE |
 | Alpha-1 | Brain Middleware + UI Shell | JWT, CORS, RLS middleware, Buddy agent, PIN gate, Health/Mesh/Home pages, apiFetch, auto-scp | COMPLETE |
 | Alpha-2 | TaskGraph + DB Wiring | asyncpg pool, TaskGraph DAG + executor, kill switch, circuit breaker, watchdog, Child RLS, Approval Gateway T1-T5, Service Identity RS256, route classification (142 routes, zero gaps), PATTERNS.md + DB_CONTRACTS.md + SERVICE_CONTRACTS.md | COMPLETE |
-| Alpha-3 | Dream Mode + Voice | D1 safety (invariants + cost caps + kill switch), D2 planner + reviewer, Temporal production stack, live planner/reviewer workflow, Temporal worker LaunchAgent, kill signal, health endpoint, read-only execution slice, approval-gated write path, morning briefing surface; bounded write executor and voice UI remain | IN PROGRESS |
+| Alpha-3 | Dream Mode + Voice | D1 safety (invariants + cost caps + kill switch), D2 planner + reviewer, Temporal production stack, live planner/reviewer workflow, Temporal worker LaunchAgent, kill signal, health endpoint, read-only execution slice, approval-gated write path, bounded approved writer, morning briefing surface; Voice UI remains | IN PROGRESS |
 | Alpha-4 | Cut Over | jarvis-core → jarvis-alpha migration, decommission jarvis-core services | PLANNED (after Alpha-3) |
 | **Alpha-5** | **Containerization** | **OrbStack runtime + state/compute split + progressive secrets + per-node Compose + private registry + cert renewal + rotation automation. See ALPHA5_MIGRATION_PLAN.md for 9-phase sequence. Locks: ADR-0002, ADR-0003, ADR-0004.** | **PLANNED** |
 | Alpha-6 | Vault + observability deepening | Infisical / Bitwarden deployment (Phase 5c per ADR-0003), Harbor upgrade if scanning / SBOM needed, tracing via OpenTelemetry | PLANNED |

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from brain.db.pool import get_pool
-from brain.db.rls import rls_connection
+from brain.db.rls import platform_admin_connection, rls_connection
 from brain.dream.briefing import DREAM_BRIEFING_SOURCE, build_dream_briefing
 from brain.dream.client import (
     dream_workflow_id,
@@ -18,6 +18,7 @@ from brain.dream.client import (
     start_dream_session_workflow,
 )
 from brain.dream.gated_executor import (
+    approval_parameters_hash_for_step,
     build_write_approval_plan,
     decode_gate_verification,
     encode_gate_verification,
@@ -25,6 +26,7 @@ from brain.dream.gated_executor import (
 from brain.dream.health import read_worker_heartbeat, temporal_server_reachable
 from brain.dream.read_only_executor import execute_read_only_step
 from brain.dream.types import DreamSessionInput
+from brain.dream.write_executor import execute_approved_write_step
 from brain.middleware.scopes import check_scopes
 from brain.services.approval_notifier import send_approval_notification
 from jarvis_common.logging_config import get_logger
@@ -74,6 +76,10 @@ class ExecuteReadOnlyRequest(BaseModel):
 
 class ExecuteGatedRequest(BaseModel):
     limit: int = Field(default=10, ge=1, le=50)
+
+
+class ExecuteApprovedRequest(BaseModel):
+    limit: int = Field(default=10, ge=1, le=25)
 
 
 class PublishBriefingRequest(BaseModel):
@@ -166,6 +172,14 @@ def _raise_if_dream_halt_active(halt_flags: list[dict]) -> None:
         )
 
 
+def _request_audit_actor(request: Request) -> str:
+    return str(
+        getattr(request.state, "user_sub", None)
+        or getattr(request.state, "user_id", None)
+        or "system"
+    )
+
+
 async def _fetch_dream_session_and_steps(conn, session_id: int):
     session = await conn.fetchrow(
         "SELECT * FROM alpha_dream_sessions WHERE id = $1",
@@ -217,6 +231,49 @@ async def _queue_dream_step_approval(conn, plan, preview: str) -> tuple[str, boo
         uuid4().hex,
     )
     return str(queue_id), True
+
+
+def _approved_queue_rejection(row, plan) -> str | None:
+    if not row:
+        return "approval_not_found"
+    if row["status"] != "approved":
+        return f"approval_status:{row['status']}"
+    if not row["approval_live"]:
+        return "approval_expired"
+    if row["actor_sub"] != "dream_mode" or row["actor_type"] != "agent":
+        return "approval_actor_mismatch"
+    if row["parameters_hash"] != plan.parameters_hash:
+        return "approval_parameters_hash_mismatch"
+    if row["risk_tier"] != plan.risk_tier:
+        return "approval_risk_tier_mismatch"
+    if not row["overnight"]:
+        return "approval_not_marked_overnight"
+    approved_classes = set(row["action_class"] or [])
+    if not set(plan.action_classes).issubset(approved_classes):
+        return "approval_action_class_mismatch"
+    return None
+
+
+async def _fetch_dream_step_approval(conn, queue_id: str):
+    return await conn.fetchrow(
+        """
+        SELECT id, action_class, risk_tier, actor_sub, actor_type,
+               parameters_hash, status, expires_at, overnight,
+               expires_at > now() AS approval_live
+        FROM alpha_approval_queue
+        WHERE id = $1::uuid
+        """,
+        queue_id,
+    )
+
+
+def _steps_with_current_statuses(steps, status_by_index: dict[int, str]) -> list[dict]:
+    rows = []
+    for step in steps:
+        row = dict(step)
+        row["status"] = status_by_index.get(row["step_index"], row["status"])
+        rows.append(row)
+    return rows
 
 
 @dream_router.post("/sessions")
@@ -956,6 +1013,251 @@ async def execute_gated_session(
         "session_id": session_id,
         "queued": queued,
         "already_queued": already_queued,
+        "skipped": skipped,
+        "remaining_pending": counts["pending"],
+        "blocked": counts["blocked"],
+    }
+
+
+@dream_router.post("/sessions/{session_id}/execute-approved")
+async def execute_approved_session(
+    request: Request,
+    session_id: int,
+    req: ExecuteApprovedRequest,
+):
+    check_scopes(request, "dream.execute")
+    now = datetime.now(timezone.utc)
+    executed = []
+    failed = []
+    skipped = []
+    pool = get_pool()
+
+    async with platform_admin_connection(
+        source="dream",
+        audit_actor=_request_audit_actor(request),
+        pool=pool,
+    ) as conn:
+        _raise_if_dream_halt_active(await _active_dream_halt_flags(conn))
+        session, steps = await _fetch_dream_session_and_steps(conn, session_id)
+        if session["status"] not in ("completed", "running"):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Approved execution requires a completed approved plan "
+                    f"or running session, got '{session['status']}'"
+                ),
+            )
+        if session["review_verdict"] not in (None, "APPROVED"):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Cannot execute approved writes with "
+                    f"review_verdict={session['review_verdict']}"
+                ),
+            )
+
+        status_by_index = {step["step_index"]: step["status"] for step in steps}
+        for step in steps:
+            if len(executed) + len(failed) >= req.limit:
+                break
+
+            gate = decode_gate_verification(step["verification"])
+            if not gate:
+                continue
+            if step["status"] != "blocked":
+                skipped.append(
+                    {
+                        "step_id": step["id"],
+                        "step_index": step["step_index"],
+                        "name": step["name"],
+                        "reason": f"status:{step['status']}",
+                    }
+                )
+                continue
+
+            deps = step["depends_on"] or []
+            unmet = [
+                dep
+                for dep in deps
+                if status_by_index.get(dep) not in ("completed", "skipped")
+            ]
+            if unmet:
+                skipped.append(
+                    {
+                        "step_id": step["id"],
+                        "step_index": step["step_index"],
+                        "name": step["name"],
+                        "reason": f"dependencies_not_complete:{unmet}",
+                    }
+                )
+                continue
+
+            plan = build_write_approval_plan(dict(step))
+            if not plan:
+                skipped.append(
+                    {
+                        "step_id": step["id"],
+                        "step_index": step["step_index"],
+                        "name": step["name"],
+                        "reason": "stale_gate_for_read_only_step",
+                    }
+                )
+                continue
+            if approval_parameters_hash_for_step(dict(step)) != plan.parameters_hash:
+                skipped.append(
+                    {
+                        "step_id": step["id"],
+                        "step_index": step["step_index"],
+                        "name": step["name"],
+                        "reason": "approval_plan_hash_unstable",
+                    }
+                )
+                continue
+
+            queue_id = gate.get("queue_id")
+            if not queue_id:
+                skipped.append(
+                    {
+                        "step_id": step["id"],
+                        "step_index": step["step_index"],
+                        "name": step["name"],
+                        "reason": "gate_missing_queue_id",
+                    }
+                )
+                continue
+            row = await _fetch_dream_step_approval(conn, str(queue_id))
+            rejection = _approved_queue_rejection(row, plan)
+            if rejection:
+                skipped.append(
+                    {
+                        "step_id": step["id"],
+                        "step_index": step["step_index"],
+                        "name": step["name"],
+                        "queue_id": queue_id,
+                        "reason": rejection,
+                    }
+                )
+                continue
+
+            await conn.execute(
+                """
+                UPDATE alpha_dream_steps
+                SET status = 'running', started_at = $1
+                WHERE id = $2 AND status = 'blocked'
+                """,
+                now,
+                step["id"],
+            )
+            result = await execute_approved_write_step(
+                conn,
+                dict(session),
+                _steps_with_current_statuses(steps, status_by_index),
+                dict(step),
+                {
+                    "queue_id": str(queue_id),
+                    "risk_tier": plan.risk_tier,
+                    "parameters_hash": plan.parameters_hash,
+                },
+            )
+            if result.status == "skipped":
+                await conn.execute(
+                    """
+                    UPDATE alpha_dream_steps
+                    SET status = 'blocked', error_message = $1
+                    WHERE id = $2
+                    """,
+                    result.reason,
+                    step["id"],
+                )
+                skipped.append(
+                    {
+                        "step_id": step["id"],
+                        "step_index": step["step_index"],
+                        "name": step["name"],
+                        "queue_id": queue_id,
+                        "reason": result.reason,
+                    }
+                )
+                continue
+
+            terminal_status = "completed" if result.status == "completed" else "failed"
+            await conn.execute(
+                """
+                UPDATE alpha_dream_steps
+                SET status = $1,
+                    finished_at = $2,
+                    input_hash = $3,
+                    output_summary = $4,
+                    verification = $5,
+                    cost_usd = 0,
+                    error_message = $6
+                WHERE id = $7
+                """,
+                terminal_status,
+                now,
+                result.input_hash,
+                result.output_summary,
+                result.verification,
+                None if terminal_status == "completed" else result.reason,
+                step["id"],
+            )
+            await conn.execute(
+                "SELECT public.consume_approved_queue_item($1::uuid)",
+                str(queue_id),
+            )
+            status_by_index[step["step_index"]] = terminal_status
+            row_payload = {
+                "step_id": step["id"],
+                "step_index": step["step_index"],
+                "name": step["name"],
+                "queue_id": queue_id,
+                "reason": result.reason,
+                "verification": result.verification,
+                "side_effect": result.side_effect,
+                "compensation": result.compensation,
+            }
+            if terminal_status == "completed":
+                executed.append(row_payload)
+            else:
+                failed.append(row_payload)
+
+        counts = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+                COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+                COUNT(*) FILTER (WHERE status = 'blocked') AS blocked,
+                COUNT(*) FILTER (WHERE status = 'pending') AS pending
+            FROM alpha_dream_steps
+            WHERE session_id = $1
+            """,
+            session_id,
+        )
+        await conn.execute(
+            """
+            UPDATE alpha_dream_sessions
+            SET steps_completed = $1,
+                steps_failed = $2,
+                steps_blocked = $3
+            WHERE id = $4
+            """,
+            counts["completed"],
+            counts["failed"],
+            counts["blocked"],
+            session_id,
+        )
+
+    logger.warning(
+        "DREAM_APPROVED_EXECUTION session_id=%d executed=%d failed=%d skipped=%d",
+        session_id,
+        len(executed),
+        len(failed),
+        len(skipped),
+    )
+    return {
+        "session_id": session_id,
+        "executed": executed,
+        "failed": failed,
         "skipped": skipped,
         "remaining_pending": counts["pending"],
         "blocked": counts["blocked"],

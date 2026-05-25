@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from brain.dream.client import DreamWorkflowStart
+from brain.dream.write_executor import DreamWriteExecutionResult
 from brain.routes import dream as dream_route
 
 
@@ -58,6 +59,38 @@ class FakePool:
 
     def acquire(self):
         return FakeAcquire(self.conn)
+
+
+class ExecuteApprovedFakeConn:
+    def __init__(self, session, steps, approval, counts):
+        self.session = session
+        self.steps = steps
+        self.approval = approval
+        self.counts = counts
+        self.executed = []
+
+    def transaction(self):
+        return FakeTransaction()
+
+    async def fetchrow(self, query, *args):
+        if "FROM alpha_dream_sessions" in query:
+            return self.session
+        if "FROM alpha_approval_queue" in query:
+            return self.approval
+        if "COUNT(*) FILTER" in query:
+            return self.counts
+        raise AssertionError(f"unexpected fetchrow query: {query}")
+
+    async def fetch(self, query, *args):
+        if "FROM alpha_system_flags" in query:
+            return []
+        if "FROM alpha_dream_steps" in query:
+            return self.steps
+        raise AssertionError(f"unexpected fetch query: {query}")
+
+    async def execute(self, query, *args):
+        self.executed.append(("execute", query, args))
+        return "UPDATE 1"
 
 
 def request_with_admin_scope():
@@ -217,6 +250,78 @@ async def test_execute_readonly_rejects_when_halt_flag_is_active(monkeypatch):
         for kind, query, _ in conn.executed
         if kind == "execute"
     )
+
+
+@pytest.mark.asyncio
+async def test_execute_approved_consumes_matching_dream_approval(monkeypatch):
+    step = {
+        "id": 41,
+        "session_id": 12,
+        "step_index": 2,
+        "name": "update_briefing_row",
+        "description": "Write the generated morning briefing row.",
+        "agent_type": "tool",
+        "depends_on": [],
+        "status": "blocked",
+        "verification": None,
+    }
+    plan = dream_route.build_write_approval_plan(step)
+    step["verification"] = dream_route.encode_gate_verification("queue-id", plan)
+    approval = {
+        "id": "queue-id",
+        "action_class": plan.action_classes,
+        "risk_tier": plan.risk_tier,
+        "actor_sub": "dream_mode",
+        "actor_type": "agent",
+        "parameters_hash": plan.parameters_hash,
+        "status": "approved",
+        "approval_live": True,
+        "overnight": True,
+    }
+    conn = ExecuteApprovedFakeConn(
+        session={
+            "id": 12,
+            "status": "running",
+            "review_verdict": "APPROVED",
+        },
+        steps=[step],
+        approval=approval,
+        counts={"completed": 1, "failed": 0, "blocked": 0, "pending": 0},
+    )
+    pool = FakePool(conn)
+
+    async def fake_execute_approved_write_step(
+        conn, session, steps, step, approval_context
+    ):
+        assert approval_context["queue_id"] == "queue-id"
+        return DreamWriteExecutionResult(
+            status="completed",
+            reason="published_dream_briefing_verified",
+            output_summary="Published Dream morning briefing to alpha_briefings.",
+            verification="dream_write_exec_v1:{}",
+            input_hash="abc123",
+            side_effect={"table": "alpha_briefings"},
+            compensation={"ran": False},
+        )
+
+    monkeypatch.setattr(dream_route, "get_pool", lambda: pool)
+    monkeypatch.setattr(
+        dream_route,
+        "execute_approved_write_step",
+        fake_execute_approved_write_step,
+    )
+
+    response = await dream_route.execute_approved_session(
+        request_with_admin_scope(),
+        12,
+        dream_route.ExecuteApprovedRequest(limit=1),
+    )
+
+    assert response["executed"][0]["queue_id"] == "queue-id"
+    assert response["failed"] == []
+    assert response["blocked"] == 0
+    assert any("rls.audit_actor" in query for _, query, _ in conn.executed)
+    assert any("consume_approved_queue_item" in query for _, query, _ in conn.executed)
 
 
 @pytest.mark.asyncio
