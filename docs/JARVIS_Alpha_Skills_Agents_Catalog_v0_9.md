@@ -132,18 +132,21 @@ MCP must never call provider adapters directly.
 Mattermost is the primary Alpha ChatOps surface. Agents should call
 `notify.send`, not a provider-specific adapter. The provider-neutral skill sends
 to Mattermost through Gateway and can fall back to Pushover when ChatOps is
-unavailable.
+unavailable. Phase 1 uses Mattermost incoming webhooks; bot-token REST remains
+available for Phase 2+ slash-command follow-ups and threaded API automation.
 
 | Skill | Role | Provider | Notes |
 |---|---|---|---|
-| `notify.send` | Stable agent contract | Mattermost primary, Pushover fallback | T2, mutating, idempotency required. |
-| `notify.send_mattermost` | Direct ChatOps send | Mattermost REST API | Gateway owns `MATTERMOST_URL`, `MATTERMOST_BOT_TOKEN`, and channel IDs. |
+| `notify.send` | Stable agent contract | Mattermost webhook primary, Pushover fallback | T2, mutating, idempotency required. |
+| `notify.send_mattermost` | Direct ChatOps send | Mattermost incoming webhook | Gateway owns `MATTERMOST_WEBHOOK_URL_ALPHA_EVENTS`; bot REST is Phase 2+. |
 | `notify.send_pushover` | Wake-up fallback | Pushover | Gateway owns `PUSHOVER_USER_KEY` and `PUSHOVER_APP_TOKEN`. |
 
-Mattermost channel routing uses secret-backed channel keys. The first expected
-keys are `alerts`, `agents`, `dream`, and `approvals`, backed by
-`MATTERMOST_CHANNEL_<KEY>_ID` secrets. `MATTERMOST_DEFAULT_CHANNEL_ID` is the
-fallback for `alerts`.
+Mattermost channel routing uses the four initial ops channels:
+`alpha-events`, `forge-events`, `needs-input`, and `alerts`. The Alpha Gateway
+uses `MATTERMOST_WEBHOOK_URL_ALPHA_EVENTS` for routine posts and payload-level
+channel override for `needs-input` and `alerts`. Optional
+`MATTERMOST_CHANNEL_<KEY>_NAME` secrets can override channel names; bot REST
+mode still supports `MATTERMOST_CHANNEL_<KEY>_ID` for later phases.
 
 ## Next Build Recommendation
 

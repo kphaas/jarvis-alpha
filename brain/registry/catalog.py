@@ -21,7 +21,11 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         mutates_state=True,
         idempotency_required=True,
         status="active",
-        metadata={"primary": "mattermost", "fallback": "pushover"},
+        metadata={
+            "primary": "mattermost",
+            "delivery": "incoming_webhook",
+            "fallback": "pushover",
+        },
     ),
     SkillSpec(
         name="notify.send_mattermost",
@@ -33,7 +37,12 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         mutates_state=True,
         idempotency_required=True,
         status="active",
-        metadata={"egress": "gateway", "provider": "mattermost"},
+        metadata={
+            "egress": "gateway",
+            "provider": "mattermost",
+            "delivery": "incoming_webhook",
+            "rest_api": "phase2",
+        },
     ),
     SkillSpec(
         name="notify.send_pushover",

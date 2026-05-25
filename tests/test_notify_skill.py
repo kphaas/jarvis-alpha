@@ -137,7 +137,10 @@ async def test_send_mattermost_calls_gateway_with_channel_key(monkeypatch):
         seen["provider"] = provider
         seen["idempotency_key"] = idempotency_key
         seen["timeout_sec"] = timeout_sec
-        return 0, '{"status":"sent","post_id":"post-1","channel_id":"chan-1"}'
+        return 0, (
+            '{"status":"sent","mode":"webhook","channel_key":"agents",'
+            '"post_id":"post-1","channel_id":"chan-1"}'
+        )
 
     monkeypatch.setattr("brain.skills.notify._post_gateway_notify_sync", fake_post)
 
@@ -156,6 +159,8 @@ async def test_send_mattermost_calls_gateway_with_channel_key(monkeypatch):
     assert result == {
         "status": "sent",
         "provider": "mattermost",
+        "mode": "webhook",
+        "channel_key": "agents",
         "post_id": "post-1",
         "channel_id": "chan-1",
     }
@@ -189,7 +194,10 @@ async def test_send_notify_uses_mattermost_primary(monkeypatch):
     def fake_post(payload, *, provider, idempotency_key, timeout_sec=15):
         seen["provider"] = provider
         seen["payload"] = payload
-        return 0, '{"status":"sent","post_id":"post-1","channel_id":"chan-1"}'
+        return 0, (
+            '{"status":"sent","mode":"webhook","channel_key":"alpha_events",'
+            '"post_id":"post-1","channel_id":"chan-1"}'
+        )
 
     monkeypatch.setattr("brain.skills.notify._post_gateway_notify_sync", fake_post)
 
@@ -207,12 +215,14 @@ async def test_send_notify_uses_mattermost_primary(monkeypatch):
     assert result == {
         "status": "sent",
         "provider": "mattermost",
+        "mode": "webhook",
+        "channel_key": "alpha_events",
         "post_id": "post-1",
         "channel_id": "chan-1",
         "fallback_used": False,
     }
     assert seen["provider"] == "mattermost"
-    assert seen["payload"]["channel_key"] == "alerts"
+    assert seen["payload"]["channel_key"] == "alpha_events"
 
 
 @pytest.mark.asyncio

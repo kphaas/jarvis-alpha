@@ -8,6 +8,7 @@ from gateway.resilience.alerts import (
     CompositeSink,
     FallbackSink,
     MattermostSink,
+    MattermostWebhookSink,
     NullSink,
     PUSHOVER_PRIORITY,
     PushoverSink,
@@ -68,6 +69,46 @@ def test_mattermost_rejects_invalid_config():
         MattermostSink(
             base_url="https://mattermost.test", bot_token="m" * 26, channel_id="short"
         )
+
+
+def test_mattermost_webhook_rejects_invalid_config():
+    with pytest.raises(ValueError):
+        MattermostWebhookSink(webhook_url="")
+    with pytest.raises(ValueError):
+        MattermostWebhookSink(webhook_url="mattermost.test/hooks/abc")
+    with pytest.raises(ValueError):
+        MattermostWebhookSink(
+            webhook_url="https://mattermost.test/hooks/abc",
+            channel_name="",
+        )
+
+
+async def test_mattermost_webhook_send_success_mocked():
+    sink = MattermostWebhookSink(
+        webhook_url="https://mattermost.test/hooks/abc",
+        channel_name="alpha-events",
+    )
+    with patch.object(sink, "_post_sync", return_value=(0, "ok")):
+        ok = await sink.send(Severity.INFO, "title", "message")
+    assert ok is True
+
+
+async def test_mattermost_webhook_routes_errors_to_alerts():
+    sink = MattermostWebhookSink(
+        webhook_url="https://mattermost.test/hooks/abc",
+        channel_name="alpha-events",
+    )
+    seen = {}
+
+    def fake_post(payload):
+        seen.update(payload)
+        return 0, "ok"
+
+    with patch.object(sink, "_post_sync", fake_post):
+        ok = await sink.send(Severity.ERROR, "title", "message")
+
+    assert ok is True
+    assert seen["channel"] == "alerts"
 
 
 async def test_mattermost_send_success_mocked():
@@ -190,6 +231,9 @@ async def test_fallback_sink_uses_fallback_only_after_primary_failure():
 
 
 def test_factory_returns_null_when_unset(monkeypatch):
+    monkeypatch.delenv("MATTERMOST_WEBHOOK_URL_ALPHA_EVENTS", raising=False)
+    monkeypatch.delenv("MATTERMOST_WEBHOOK_URL_ALERTS", raising=False)
+    monkeypatch.delenv("MATTERMOST_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("MATTERMOST_URL", raising=False)
     monkeypatch.delenv("MATTERMOST_BOT_TOKEN", raising=False)
     monkeypatch.delenv("MATTERMOST_CHANNEL_ALERTS_ID", raising=False)
@@ -200,7 +244,26 @@ def test_factory_returns_null_when_unset(monkeypatch):
     assert sink.name == "null"
 
 
-def test_factory_returns_mattermost_when_set(monkeypatch):
+def test_factory_returns_mattermost_webhook_when_set(monkeypatch):
+    monkeypatch.setenv(
+        "MATTERMOST_WEBHOOK_URL_ALPHA_EVENTS",
+        "https://mattermost.test/hooks/alpha",
+    )
+    monkeypatch.setenv("MATTERMOST_CHANNEL_ALERTS_NAME", "alerts")
+    monkeypatch.delenv("MATTERMOST_URL", raising=False)
+    monkeypatch.delenv("MATTERMOST_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("MATTERMOST_CHANNEL_ALERTS_ID", raising=False)
+    monkeypatch.delenv("MATTERMOST_DEFAULT_CHANNEL_ID", raising=False)
+    monkeypatch.delenv("PUSHOVER_USER_KEY", raising=False)
+    monkeypatch.delenv("PUSHOVER_APP_TOKEN", raising=False)
+    sink = build_default_sink()
+    assert sink.name == "mattermost-webhook"
+
+
+def test_factory_returns_mattermost_rest_when_set(monkeypatch):
+    monkeypatch.delenv("MATTERMOST_WEBHOOK_URL_ALPHA_EVENTS", raising=False)
+    monkeypatch.delenv("MATTERMOST_WEBHOOK_URL_ALERTS", raising=False)
+    monkeypatch.delenv("MATTERMOST_WEBHOOK_URL", raising=False)
     monkeypatch.setenv("MATTERMOST_URL", "https://mattermost.test")
     monkeypatch.setenv("MATTERMOST_BOT_TOKEN", "m" * 26)
     monkeypatch.setenv("MATTERMOST_CHANNEL_ALERTS_ID", "alerts-channel-id")
@@ -211,6 +274,9 @@ def test_factory_returns_mattermost_when_set(monkeypatch):
 
 
 def test_factory_returns_pushover_when_only_pushover_set(monkeypatch):
+    monkeypatch.delenv("MATTERMOST_WEBHOOK_URL_ALPHA_EVENTS", raising=False)
+    monkeypatch.delenv("MATTERMOST_WEBHOOK_URL_ALERTS", raising=False)
+    monkeypatch.delenv("MATTERMOST_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("MATTERMOST_URL", raising=False)
     monkeypatch.delenv("MATTERMOST_BOT_TOKEN", raising=False)
     monkeypatch.delenv("MATTERMOST_CHANNEL_ALERTS_ID", raising=False)
@@ -222,16 +288,24 @@ def test_factory_returns_pushover_when_only_pushover_set(monkeypatch):
 
 
 def test_factory_returns_fallback_when_both_set(monkeypatch):
-    monkeypatch.setenv("MATTERMOST_URL", "https://mattermost.test")
-    monkeypatch.setenv("MATTERMOST_BOT_TOKEN", "m" * 26)
-    monkeypatch.setenv("MATTERMOST_CHANNEL_ALERTS_ID", "alerts-channel-id")
+    monkeypatch.setenv(
+        "MATTERMOST_WEBHOOK_URL_ALPHA_EVENTS",
+        "https://mattermost.test/hooks/alpha",
+    )
+    monkeypatch.delenv("MATTERMOST_URL", raising=False)
+    monkeypatch.delenv("MATTERMOST_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("MATTERMOST_CHANNEL_ALERTS_ID", raising=False)
+    monkeypatch.delenv("MATTERMOST_DEFAULT_CHANNEL_ID", raising=False)
     monkeypatch.setenv("PUSHOVER_USER_KEY", "a" * 30)
     monkeypatch.setenv("PUSHOVER_APP_TOKEN", "b" * 30)
     sink = build_default_sink()
-    assert sink.name == "fallback(mattermost->pushover)"
+    assert sink.name == "fallback(mattermost-webhook->pushover)"
 
 
 def test_factory_falls_back_on_invalid_length(monkeypatch):
+    monkeypatch.delenv("MATTERMOST_WEBHOOK_URL_ALPHA_EVENTS", raising=False)
+    monkeypatch.delenv("MATTERMOST_WEBHOOK_URL_ALERTS", raising=False)
+    monkeypatch.delenv("MATTERMOST_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("MATTERMOST_URL", raising=False)
     monkeypatch.delenv("MATTERMOST_BOT_TOKEN", raising=False)
     monkeypatch.delenv("MATTERMOST_CHANNEL_ALERTS_ID", raising=False)

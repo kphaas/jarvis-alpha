@@ -194,7 +194,7 @@ T4/T5 queued → approval_notifier.send_approval_notification()
     → log + buddy event (same as now)
     → SkillRunner notify.send
         → POST to Gateway /v1/notify/mattermost
-        → Gateway posts to Mattermost ChatOps
+        → Gateway posts to Mattermost incoming webhook
         → Pushover fallback only if Mattermost is unavailable
 ```
 

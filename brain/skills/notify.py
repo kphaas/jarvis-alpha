@@ -18,7 +18,9 @@ logger = get_logger("alpha_brain")
 
 GATEWAY_NOTIFY_TIMEOUT_SEC = 15
 
-NotificationSeverity = Literal["debug", "info", "warning", "error", "critical"]
+NotificationSeverity = Literal[
+    "debug", "info", "needs_input", "warning", "error", "critical"
+]
 
 
 class PushoverSkillPayload(BaseModel):
@@ -47,8 +49,9 @@ class MattermostSkillPayload(BaseModel):
     title: str = Field(min_length=1, max_length=250)
     message: str = Field(min_length=1, max_length=4000)
     severity: NotificationSeverity = "info"
+    source: Literal["alpha", "forge", "watchdog"] = "alpha"
     channel_key: str = Field(
-        default="alerts",
+        default="alpha_events",
         min_length=1,
         max_length=32,
         pattern=r"^[a-z][a-z0-9_]{0,31}$",
@@ -195,6 +198,8 @@ async def _send_mattermost_payload(
     return {
         "status": "sent",
         "provider": "mattermost",
+        "mode": parsed.get("mode"),
+        "channel_key": parsed.get("channel_key"),
         "post_id": parsed.get("post_id"),
         "channel_id": parsed.get("channel_id"),
     }
@@ -281,6 +286,7 @@ def _pushover_priority_for(severity: NotificationSeverity) -> int:
     return {
         "debug": -2,
         "info": -1,
+        "needs_input": 0,
         "warning": 0,
         "error": 1,
         "critical": 1,
