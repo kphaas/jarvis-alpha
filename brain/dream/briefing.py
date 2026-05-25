@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Iterable, Mapping
 
@@ -28,9 +28,9 @@ def _dt(value: object) -> datetime | None:
     return value if isinstance(value, datetime) else None
 
 
-def _iso_date(value: object) -> str:
+def _date_value(value: object) -> date:
     dt = _dt(value) or datetime.now(timezone.utc)
-    return dt.date().isoformat()
+    return dt.date()
 
 
 def _duration_seconds(started_at: object, finished_at: object) -> int:
@@ -149,7 +149,7 @@ def build_dream_briefing(
     started = _dt(session.get("started_at")) or _dt(session.get("created_at"))
     return {
         "batch_run_id": dream_batch_run_id(session),
-        "briefing_date": _iso_date(session.get("finished_at") or started),
+        "briefing_date": _date_value(session.get("finished_at") or started),
         "started_at": started or datetime.now(timezone.utc),
         "source": DREAM_BRIEFING_SOURCE,
         "summary": summary,
