@@ -84,10 +84,12 @@ The initial seed covers foundation and near-term waves:
 
 Agents must not call adapters directly. The required runtime path is:
 
-`agent -> SkillPolicyGate -> approval/cost/body/idempotency checks -> adapter`
+`agent -> SkillRunner -> SkillPolicyGate -> approval/cost/body/idempotency checks -> adapter`
 
-The gate reads `alpha_agents`, `alpha_skill_registry`, and `alpha_agent_runs`
-before execution. It returns one of three outcomes:
+`SkillRunner` owns the handler registry and is the only intended path to invoke
+a concrete provider adapter. The gate reads `alpha_agents`,
+`alpha_skill_registry`, and `alpha_agent_runs` before execution. It returns one
+of three outcomes:
 
 | Outcome | Meaning |
 |---|---|
@@ -108,7 +110,7 @@ The first enforced checks are:
 
 MCP comes later as a transport adapter over this gate:
 
-`MCP tool -> Alpha MCP server -> SkillPolicyGate -> adapter`
+`MCP tool -> Alpha MCP server -> SkillRunner -> SkillPolicyGate -> adapter`
 
 MCP must never call provider adapters directly.
 
@@ -128,9 +130,8 @@ MCP must never call provider adapters directly.
 After the policy-gate PR lands, the next production slice should be:
 
 1. Implement `notify.send_pushover`.
-2. Add a `SkillRunner` wrapper that calls `SkillPolicyGate` before adapter execution.
-3. Add a `network_watchdog` run loop in disabled-by-default mode.
-4. Enable read-only UniFi controller data behind the registry contract.
+2. Add a `network_watchdog` run loop in disabled-by-default mode.
+3. Enable read-only UniFi controller data behind the registry contract.
 
 That path gives Alpha a real new agent without making Gmail, iMessage, or child
 surfaces the first test case.
