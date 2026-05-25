@@ -55,32 +55,36 @@ echo "Node: $(hostname)"
 echo "Time: $(date '+%Y-%m-%d %H:%M')"
 echo ""
 
-if [ ! -f "$SECRETS_FILE" ]; then
-  echo "ERROR: secrets file not found at $SECRETS_FILE"
-  exit 1
-fi
-
-set -a
-source "$SECRETS_FILE"
-set +a
-
-if [ -z "${GITHUB_TOKEN:-}" ]; then
-  echo "ERROR: GITHUB_TOKEN not set in secrets"
-  exit 1
+if [ -f "$SECRETS_FILE" ]; then
+  set -a
+  source "$SECRETS_FILE"
+  set +a
+else
+  echo "⚠️  secrets file not found at $SECRETS_FILE"
+  echo "   Existing clones will use native git auth; first-time clone still requires GITHUB_TOKEN."
 fi
 
 if [ ! -d "$REPO_DIR" ]; then
+  if [ -z "${GITHUB_TOKEN:-}" ]; then
+    echo "ERROR: GITHUB_TOKEN not set; cannot clone jarvis-alpha for first time"
+    exit 1
+  fi
   echo "Cloning jarvis-alpha for first time..."
   if ! git clone https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git "$REPO_DIR"; then
     echo ""
     echo "❌ GIT CLONE FAILED — aborting."
     exit 1
   fi
+  PULL_DUR=0
 else
   cd "$REPO_DIR"
   PREV_HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo "")
-  git config credential.helper ""
-  GIT_TERMINAL_PROMPT=0 git remote set-url origin https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    git config credential.helper ""
+    GIT_TERMINAL_PROMPT=0 git remote set-url origin https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git
+  else
+    echo "ℹ️  GITHUB_TOKEN not set; using existing git remote/native auth"
+  fi
 
   PULL_START=$(time_ms)
   if ! GIT_TERMINAL_PROMPT=0 git pull origin main --rebase; then
@@ -135,6 +139,75 @@ needs_restart_gateway() {
 needs_restart_endpoint() {
   [ -z "$CHANGED_FILES" ] && return 1
   echo "$CHANGED_FILES" | grep -qE '(^endpoint/|^ui/dist/|^scripts/deploy_nginx_endpoint\.sh$)'
+}
+
+needs_restart_watchdog() {
+  [ -z "$CHANGED_FILES" ] && return 1
+  echo "$CHANGED_FILES" | grep -qE '(^brain/agents/watchdog_agent\.py$|^scripts/start_alpha_watchdog\.sh$|^launchagents/com\.jarvis\.alpha\.watchdog\.plist$)'
+}
+
+needs_restart_observability() {
+  [ -z "$CHANGED_FILES" ] && return 1
+  echo "$CHANGED_FILES" | grep -qE '(^config/observability/brain/|^launchagents/com\.jarvis\.alpha\.(fluentbit|loki)\.plist$)'
+}
+
+sync_brain_observability_configs() {
+  local sync_start
+  sync_start=$(time_ms)
+  local fluent_src="${REPO_DIR}/config/observability/brain/fluent-bit.yaml"
+  local loki_src="${REPO_DIR}/config/observability/brain/loki-config.yaml"
+  local loki_host="${JARVIS_ALPHA_LOKI_HOST:-127.0.0.1}"
+  local loki_http_listen_address="${JARVIS_ALPHA_LOKI_HTTP_LISTEN_ADDRESS:-0.0.0.0}"
+  local loki_grpc_listen_address="${JARVIS_ALPHA_LOKI_GRPC_LISTEN_ADDRESS:-127.0.0.1}"
+  local loki_instance_addr="${JARVIS_ALPHA_LOKI_INSTANCE_ADDR:-127.0.0.1}"
+
+  mkdir -p "${HOME}/fluent-bit/db" "${HOME}/jarvis/loki"
+
+  if [ -f "$fluent_src" ]; then
+    sed \
+      -e "s|{{HOME}}|${HOME}|g" \
+      -e "s|{{REPO_DIR}}|${REPO_DIR}|g" \
+      -e "s|{{LOKI_HOST}}|${loki_host}|g" \
+      "$fluent_src" > "${HOME}/fluent-bit/fluent-bit.yaml"
+  fi
+  if [ -f "$loki_src" ]; then
+    sed \
+      -e "s|{{HOME}}|${HOME}|g" \
+      -e "s|{{LOKI_HTTP_LISTEN_ADDRESS}}|${loki_http_listen_address}|g" \
+      -e "s|{{LOKI_GRPC_LISTEN_ADDRESS}}|${loki_grpc_listen_address}|g" \
+      -e "s|{{LOKI_INSTANCE_ADDR}}|${loki_instance_addr}|g" \
+      "$loki_src" > "${HOME}/jarvis/loki/loki-config.yaml"
+  fi
+
+  emit ok config_sync node="$NODE_SHORT" service="observability" dur_ms=$(($(time_ms) - sync_start))
+}
+
+restart_launchagent() {
+  local display_service="$1"
+  local label="$2"
+  local plist="$3"
+  local restart_start
+  restart_start=$(time_ms)
+
+  if [ ! -f "$plist" ]; then
+    emit fail restart node="$NODE_SHORT" service="$display_service" dur_ms=$(($(time_ms) - restart_start)) error="plist missing"
+    echo "❌ LaunchAgent plist missing for $display_service: $plist"
+    exit 1
+  fi
+
+  launchctl unload "$plist" 2>/dev/null || true
+  sleep 1
+  if ! launchctl load "$plist"; then
+    emit fail restart node="$NODE_SHORT" service="$display_service" dur_ms=$(($(time_ms) - restart_start)) error="launchctl load failed"
+    echo "❌ LaunchAgent load failed for $display_service"
+    exit 1
+  fi
+  sleep 1
+
+  local pid
+  pid=$(launchctl list | awk -v label="$label" '$3 == label {print $1}' | head -1)
+  [ "$pid" = "-" ] && pid=0
+  emit ok restart node="$NODE_SHORT" service="$display_service" pid="${pid:-0}" dur_ms=$(($(time_ms) - restart_start))
 }
 
 emit ok pull node="$NODE_SHORT" from_hash="${PREV_HEAD:-none}" to_hash="$NEW_HEAD" file_count="$FILE_COUNT" dur_ms="$PULL_DUR"
@@ -265,6 +338,28 @@ elif [ -f "$BRAIN_PLIST" ]; then
     fi
   fi
   echo "─────────────────────────────────────────────────────────"
+fi
+
+WATCHDOG_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.watchdog.plist"
+if [ "$NODE_SHORT" = "brain" ] && needs_restart_watchdog; then
+  echo ""
+  echo "Restarting Watchdog Agent..."
+  restart_launchagent "alpha-watchdog" "com.jarvis.alpha.watchdog" "$WATCHDOG_PLIST"
+elif [ "$NODE_SHORT" = "brain" ]; then
+  emit skip restart node="$NODE_SHORT" service="alpha-watchdog" reason="no_watchdog_changes"
+fi
+
+if [ "$NODE_SHORT" = "brain" ] && needs_restart_observability; then
+  echo ""
+  echo "Syncing observability configs..."
+  sync_brain_observability_configs
+
+  echo "Restarting Alpha observability LaunchAgents..."
+  restart_launchagent "alpha-fluentbit" "com.jarvis.alpha.fluentbit" "${HOME}/Library/LaunchAgents/com.jarvis.alpha.fluentbit.plist"
+  restart_launchagent "alpha-loki" "com.jarvis.alpha.loki" "${HOME}/Library/LaunchAgents/com.jarvis.alpha.loki.plist"
+elif [ "$NODE_SHORT" = "brain" ]; then
+  emit skip restart node="$NODE_SHORT" service="alpha-fluentbit" reason="no_observability_changes"
+  emit skip restart node="$NODE_SHORT" service="alpha-loki" reason="no_observability_changes"
 fi
 
 TEMPORAL_WORKER_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.temporal.worker.plist"

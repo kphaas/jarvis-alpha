@@ -313,7 +313,7 @@ async def _check_and_heal(pool: asyncpg.Pool, svc: ServiceState) -> None:
             svc.consecutive_failures = 0
 
 
-async def watchdog_loop(pool: asyncpg.Pool) -> None:
+async def watchdog_loop(pool: asyncpg.Pool, shutdown: asyncio.Event) -> None:
     logger.info(
         "watchdog starting — node=%s interval=%ds threshold=%d",
         NODE_NAME,
@@ -321,7 +321,7 @@ async def watchdog_loop(pool: asyncpg.Pool) -> None:
         FAILURE_THRESHOLD,
     )
 
-    while True:
+    while not shutdown.is_set():
         try:
             services = await _load_services(pool)
             if not services:
@@ -344,14 +344,28 @@ async def watchdog_loop(pool: asyncpg.Pool) -> None:
         except Exception as e:
             logger.error("watchdog loop error: %s", e, exc_info=True)
 
-        await asyncio.sleep(WATCHDOG_INTERVAL)
+        try:
+            await asyncio.wait_for(shutdown.wait(), timeout=WATCHDOG_INTERVAL)
+        except TimeoutError:
+            pass
+
+    logger.info("watchdog shutdown complete")
 
 
 async def main() -> None:
+    shutdown = asyncio.Event()
+
+    def handle_signal(signum, _frame):
+        logger.info("watchdog received signal %s — shutting down", signum)
+        shutdown.set()
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+
     dsn = get_secret("ALPHA_DB_DSN_WATCHDOG_AGENT")
     pool = await asyncpg.create_pool(dsn, min_size=1, max_size=3)
     try:
-        await watchdog_loop(pool)
+        await watchdog_loop(pool, shutdown)
     finally:
         await pool.close()
 
@@ -359,6 +373,8 @@ async def main() -> None:
 if __name__ == "__main__":
     try:
         asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Watchdog agent stopped by interrupt")
     except Exception as exc:
         logger.error(
             "Watchdog agent crashed — unhandled exception: %s",
