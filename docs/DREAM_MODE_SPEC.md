@@ -650,6 +650,31 @@ All identified gaps, their severity, and resolution status.
 
 ---
 
+## 19A. Implementation Status — 2026-05-25
+
+This V1 spec predates the Temporal D3 implementation. Current production shape is:
+
+| Area | Status | Notes |
+|---|---|---|
+| Session truth | ✅ Brain-owned | `alpha_dream_sessions` / `alpha_dream_steps` remain canonical |
+| Durable orchestration | ✅ Temporal | One workflow per Dream session, task queue `alpha-planning-v1` |
+| Planning | ✅ Live | Claude planner via Gateway adapter |
+| Review | ✅ Live | Gemini reviewer via Gateway adapter, cross-family policy enforced |
+| Revision loop | ✅ Live | Reviewer `NEEDS_REVISION` feeds planner up to policy max |
+| Plan persistence | ✅ Live | Approved plan replaces pending session steps |
+| Kill path | ✅ Live | `/v1/dream/sessions/{id}/kill` signals Temporal `halt` and blocks pending/running steps |
+| Health | ✅ Live | `/v1/dream/health` checks worker heartbeat, Temporal reachability, stale running sessions |
+| Canonical smoke | ✅ Live | `scripts/smoke_dream_temporal.sh` creates, starts, polls, health-checks, and read-only executes |
+| Read-only execution | ✅ First slice | `/v1/dream/sessions/{id}/execute-readonly` completes allowlisted `tool` / `canary` inspection steps only |
+| Write execution | ⏳ Deferred | Requires approval gates, compensation, verification, and kill-switch checks |
+| Briefing/Dendrite UI | ⏳ Deferred | Buddy event exists; dedicated morning briefing UX remains |
+
+The current production safety line is intentional: Dream may plan, review, persist,
+and execute only narrowly allowlisted read-only inspection steps. Code, cloud, LLM,
+and write-capable tool execution remain skipped by the D3.5 executor.
+
+---
+
 ## 20. Future Extensions (Not Building Now)
 
 | Extension | Phase | Description |
