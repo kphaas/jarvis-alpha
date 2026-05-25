@@ -152,6 +152,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/mcp/registry": ["write"],
     # --- Dream sessions ---
     "GET /v1/dream/sessions": ["read"],
+    "GET /v1/dream/health": ["read", "security_read"],
     "POST /v1/dream/sessions": ["write"],
     "POST /v1/dream/plan": ["write", "external_call", "cost_incurring"],
     "POST /v1/dream/review": ["write", "external_call", "cost_incurring"],
@@ -168,6 +169,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     ],
     "POST /v1/dream/sessions/{session_id}/complete": ["write"],
     "POST /v1/dream/sessions/{session_id}/kill": ["write"],
+    "POST /v1/dream/sessions/{session_id}/execute-readonly": ["write"],
     "PATCH /v1/dream/steps/{step_id}": ["write", "cost_incurring"],
     # --- FastAPI built-in docs — T1 read ---
     "GET /docs": ["read"],
