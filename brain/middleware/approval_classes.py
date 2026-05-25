@@ -115,6 +115,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/diagnose": ["read", "security_read"],
     # --- Health agents — T1 read ---
     "GET /v1/health/agents": ["read"],
+    "GET /v1/health/temporal-storage": ["read", "security_read"],
     # --- Honeypot events — T1 read ---
     "GET /v1/honeypot/events": ["read"],
     # --- Honeypot traps — T1 read (they just log) ---

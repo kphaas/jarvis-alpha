@@ -8,14 +8,22 @@ from datetime import datetime, timezone
 
 import asyncpg
 
+from brain.services.temporal_storage_monitor import (
+    collect_temporal_storage_snapshot,
+    temporal_storage_summary_body,
+)
 from jarvis_common.logging_config import get_logger, new_trace_id
 
 logger = get_logger("alpha_buddy")
 
 BUDDY_INTERVAL = int(os.environ.get("BUDDY_INTERVAL_SECONDS", "60"))
 ALERT_THRESHOLD_HOURS = 20
+TEMPORAL_STORAGE_SUMMARY_WEEKDAY = int(
+    os.environ.get("TEMPORAL_STORAGE_SUMMARY_WEEKDAY", "0")
+)
 
 _VALID_BUDDY_EVENT_TYPES = frozenset({"alert", "reminder", "suggestion", "system"})
+_last_temporal_storage_week_key: str | None = None
 
 
 def _normalize_buddy_event_type(event_type: str) -> str:
@@ -85,9 +93,48 @@ async def _expire_pending_approvals(pool: asyncpg.Pool) -> None:
         logger.warning("buddy_expire_approvals error: %s", exc)
 
 
+async def _maybe_write_temporal_storage_summary(pool: asyncpg.Pool) -> None:
+    global _last_temporal_storage_week_key
+
+    now = datetime.now(timezone.utc)
+    if now.weekday() != TEMPORAL_STORAGE_SUMMARY_WEEKDAY:
+        return
+
+    week_key = now.strftime("%G-W%V")
+    if _last_temporal_storage_week_key == week_key:
+        return
+
+    try:
+        snapshot = await collect_temporal_storage_snapshot(include_row_counts=True)
+        priority = 3 if snapshot["status"] in {"alert", "degraded"} else 1
+        await _write_event(
+            pool,
+            user_id="system",
+            event_type="alert" if priority == 3 else "system",
+            title="Temporal storage weekly summary",
+            body=temporal_storage_summary_body(snapshot),
+            priority=priority,
+            source="temporal_storage_monitor",
+            payload={
+                "week_key": week_key,
+                "status": snapshot["status"],
+                "temporal_total_bytes": snapshot["temporal_total_bytes"],
+                "disk_free_bytes": snapshot["disk_free_bytes"],
+                "threshold_bytes": snapshot["threshold_bytes"],
+                "threshold_exceeded": snapshot["threshold_exceeded"],
+                "databases": snapshot["databases"],
+                "errors": snapshot["errors"],
+            },
+        )
+        _last_temporal_storage_week_key = week_key
+    except Exception as exc:
+        logger.warning("temporal storage weekly summary failed: %s", exc)
+
+
 async def _run_cycle(pool: asyncpg.Pool) -> None:
     new_trace_id()
     await _expire_pending_approvals(pool)
+    await _maybe_write_temporal_storage_summary(pool)
 
     async with pool.acquire() as conn:
         users = await conn.fetch(

@@ -2,10 +2,14 @@
 set -uo pipefail
 
 PORT=8283
-HEALTH_URL="https://jarvis-gateway.tail40ed36.ts.net:8283/health"
 LOG_DIR="$HOME/jarvis-alpha/logs"
 SERVICE_DIR="$HOME/jarvis-alpha"
 GATEWAY_PLIST="com.jarvis.alpha.gateway"
+
+if [ -f "$SERVICE_DIR/scripts/lib/node_addresses.sh" ]; then
+    source "$SERVICE_DIR/scripts/lib/node_addresses.sh"
+fi
+HEALTH_URL="${JARVIS_ALPHA_GATEWAY_HEALTH_URL:-https://localhost:8283/health}"
 
 spinner() {
     local pid=$1 msg=$2 delay=0.1 i=0

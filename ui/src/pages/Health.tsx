@@ -40,6 +40,25 @@ interface LaunchAgentRow {
   status: string;
 }
 
+interface TemporalDatabaseRow {
+  name: string;
+  size_bytes: number | null;
+  size_pretty: string;
+  row_counts: Record<string, number | null>;
+  error: string | null;
+}
+
+interface TemporalStoragePayload {
+  status: string;
+  checked_at: string;
+  disk_free_pretty: string;
+  threshold_pretty: string;
+  threshold_exceeded: boolean;
+  temporal_total_pretty: string;
+  databases: TemporalDatabaseRow[];
+  errors: string[];
+}
+
 function agentShortLabel(label: string): string {
   return label.replace(/^com\.jarvis\./, "");
 }
@@ -100,6 +119,12 @@ function certColor(days: number | null): string {
   return "#ef4444";
 }
 
+function temporalStatusColor(status: string): string {
+  if (status === "ok") return "#22c55e";
+  if (status === "degraded") return "#f59e0b";
+  return "#ef4444";
+}
+
 export default function Health({ theme, token }: { theme: "dark" | "light"; token: string }) {
   const isDark = theme === "dark";
   const bg = isDark ? "#0f1117" : "#f8fafc";
@@ -116,6 +141,9 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
   const [agents, setAgents] = useState<LaunchAgentRow[] | null>(null);
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [agentsErr, setAgentsErr] = useState(false);
+  const [temporalStorage, setTemporalStorage] = useState<TemporalStoragePayload | null>(null);
+  const [temporalStorageLoading, setTemporalStorageLoading] = useState(true);
+  const [temporalStorageErr, setTemporalStorageErr] = useState(false);
 
   const fetchSummary = useCallback(async () => {
     try {
@@ -165,15 +193,31 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
     }
   }, [token]);
 
+  const fetchTemporalStorage = useCallback(async () => {
+    setTemporalStorageLoading(true);
+    setTemporalStorageErr(false);
+    try {
+      const data = await apiJson<TemporalStoragePayload>("/v1/health/temporal-storage");
+      setTemporalStorage(data);
+    } catch {
+      setTemporalStorage(null);
+      setTemporalStorageErr(true);
+    } finally {
+      setTemporalStorageLoading(false);
+    }
+  }, [token]);
+
   useEffect(() => {
     fetchSummary();
     fetchAgents();
+    fetchTemporalStorage();
     const t = setInterval(() => {
       fetchSummary();
       fetchAgents();
+      fetchTemporalStorage();
     }, REFRESH_MS);
     return () => clearInterval(t);
-  }, [fetchSummary, fetchAgents]);
+  }, [fetchSummary, fetchAgents, fetchTemporalStorage]);
 
   const sectionStyle = {
     background: card,
@@ -222,6 +266,7 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
             onClick={() => {
               fetchSummary();
               fetchAgents();
+              fetchTemporalStorage();
             }}
             style={{ fontSize: 12, padding: "6px 12px", borderRadius: 6, border: `1px solid ${border}`, background: "transparent", color: text, cursor: "pointer" }}
           >
@@ -435,6 +480,73 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
               </div>
             );
           })()}
+        </div>
+      </div>
+
+      {/* Temporal Storage */}
+      <div style={sectionStyle}>
+        <div style={sectionHeader}>
+          <span style={labelStyle}>Temporal Storage</span>
+          {temporalStorage && (
+            <span style={{ fontSize: 11, color: temporalStatusColor(temporalStorage.status), fontWeight: 700, textTransform: "uppercase" }}>
+              {temporalStorage.status}
+            </span>
+          )}
+        </div>
+        <div style={{ padding: "14px 16px" }}>
+          {temporalStorageLoading && (
+            <span style={{ fontSize: 12, color: muted }}>Loading…</span>
+          )}
+          {!temporalStorageLoading && temporalStorageErr && (
+            <span style={{ fontSize: 12, color: "#f59e0b" }}>Temporal storage unavailable</span>
+          )}
+          {!temporalStorageLoading && !temporalStorageErr && temporalStorage && (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 14 }}>
+                <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                  <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Temporal Total</div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{temporalStorage.temporal_total_pretty}</div>
+                </div>
+                <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                  <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Free Disk</div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{temporalStorage.disk_free_pretty}</div>
+                </div>
+                <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                  <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Threshold</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: temporalStorage.threshold_exceeded ? "#ef4444" : text }}>
+                    {temporalStorage.threshold_pretty}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+                {temporalStorage.databases.map((db) => (
+                  (() => {
+                    const countEntries = Object.entries(db.row_counts).filter(([, count]) => count != null);
+                    return (
+                      <div key={db.name} style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}`, background: isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: countEntries.length > 0 ? 6 : 0 }}>
+                          <span style={{ fontWeight: 600, fontSize: 13, fontFamily: "ui-monospace, monospace" }}>{db.name}</span>
+                          <span style={{ fontSize: 12, color: db.error ? "#f59e0b" : text }}>{db.size_pretty}</span>
+                        </div>
+                        {countEntries.length > 0 && (
+                          <div style={{ fontSize: 11, color: muted, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            {countEntries.map(([table, count]) => (
+                              <span key={table}>
+                                {table}: <span style={{ color: text }}>{count}</span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {db.error && (
+                          <div style={{ fontSize: 11, color: "#f59e0b", marginTop: 6 }}>{db.error}</div>
+                        )}
+                      </div>
+                    );
+                  })()
+                ))}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
