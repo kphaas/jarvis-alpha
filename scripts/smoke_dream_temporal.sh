@@ -27,6 +27,7 @@ PROFILE = os.environ.get("DREAM_SMOKE_PROFILE", "ken")
 POLL_LIMIT = int(os.environ.get("DREAM_SMOKE_POLLS", "60"))
 POLL_INTERVAL_S = float(os.environ.get("DREAM_SMOKE_POLL_INTERVAL_S", "5"))
 EXECUTE_READONLY = os.environ.get("DREAM_SMOKE_EXECUTE_READONLY", "1") != "0"
+PUBLISH_BRIEFING = os.environ.get("DREAM_SMOKE_PUBLISH_BRIEFING", "1") != "0"
 TERMINAL = {"completed", "failed", "aborted", "killed", "halted"}
 CTX = ssl._create_unverified_context()
 
@@ -78,7 +79,7 @@ payload = {
     "recent_context": "Canonical smoke script for Dream Temporal D3.5.",
     "prior_lessons": (
         "Keep this smoke read-only and minimal. Autonomous write execution remains "
-        "disabled behind future approval gates."
+        "behind approval gates until allowlisted write executors exist."
     ),
     "trigger": "dry_run",
     "cost_budget_usd": 0.25,
@@ -129,6 +130,24 @@ if EXECUTE_READONLY:
         {"limit": 20},
     )
     emit({"readonly": readonly})
+
+briefing = None
+if PUBLISH_BRIEFING:
+    briefing = call(
+        "POST",
+        f"/v1/dream/sessions/{session_id}/briefing/publish",
+        {"notify": True},
+    )
+    emit(
+        {
+            "briefing": {
+                "batch_run_id": briefing.get("batch_run_id"),
+                "briefing_id": briefing.get("briefing_id"),
+                "buddy_event_id": briefing.get("buddy_event_id"),
+                "summary": briefing.get("briefing", {}).get("summary", {}),
+            }
+        }
+    )
 
 health = call("GET", "/v1/dream/health")
 emit({"health": health})
