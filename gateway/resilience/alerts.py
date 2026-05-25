@@ -5,14 +5,16 @@ Interface:
         async def send(severity, title, message, metadata=None) -> bool
 
 Concrete implementations:
-    PushoverSink    — real Pushover HTTP (curl + asyncio.to_thread)
+    MattermostSink  — primary ChatOps sink (curl + asyncio.to_thread)
+    PushoverSink    — fallback wake-up sink (curl + asyncio.to_thread)
     NullSink        — logs only, no network (dev/test default)
     CompositeSink   — fan-out to multiple sinks
+    FallbackSink    — primary first, fallback only on failure
 
 Factory:
     build_default_sink() -> IAlertSink
-        Reads PUSHOVER_USER_KEY + PUSHOVER_APP_TOKEN from env.
-        If both present → PushoverSink; else → NullSink.
+        Reads MATTERMOST_* and PUSHOVER_* from env.
+        Mattermost primary, Pushover fallback, NullSink if neither configured.
 
 Severity → Pushover priority mapping (per Pushover API):
     DEBUG     = -2  silent
@@ -98,6 +100,101 @@ class NullSink(IAlertSink):
             metadata or {},
         )
         return True
+
+
+class MattermostSink(IAlertSink):
+    """Real Mattermost sink. Uses bot REST API through Gateway egress."""
+
+    def __init__(self, base_url: str, bot_token: str, channel_id: str):
+        if not base_url or not bot_token or not channel_id:
+            raise ValueError("MattermostSink requires base_url, bot_token, channel_id")
+        if not base_url.startswith(("https://", "http://")):
+            raise ValueError("Mattermost base_url must include http(s) scheme")
+        if len(bot_token) < 20:
+            raise ValueError("Mattermost bot token is too short")
+        if len(channel_id) < 8:
+            raise ValueError("Mattermost channel_id is too short")
+        self._base_url = base_url.rstrip("/")
+        self._bot_token = bot_token
+        self._channel_id = channel_id
+
+    @property
+    def name(self) -> str:
+        return "mattermost"
+
+    def _post_sync(self, payload: dict[str, Any]) -> tuple[int, str]:
+        args = [
+            "curl",
+            "-sS",
+            "-m",
+            "10",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            f"Authorization: Bearer {self._bot_token}",
+            "-d",
+            json.dumps(payload),
+            f"{self._base_url}/api/v4/posts",
+        ]
+        try:
+            result = subprocess.run(args, capture_output=True, text=True, timeout=15)
+            return result.returncode, result.stdout
+        except subprocess.TimeoutExpired:
+            return 124, '{"message":"timeout"}'
+        except Exception as e:
+            return 1, json.dumps({"message": str(e)})
+
+    async def send(
+        self,
+        severity: Severity,
+        title: str,
+        message: str,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        payload = {
+            "channel_id": self._channel_id,
+            "message": "\n".join(
+                [
+                    f"**{title[:250]}**",
+                    "",
+                    message[:4000],
+                    "",
+                    f"Severity: `{severity.value}`",
+                ]
+            ),
+            "props": {
+                "jarvis": {
+                    "severity": severity.value,
+                    "metadata": metadata or {},
+                }
+            },
+        }
+
+        try:
+            rc, body = await asyncio.to_thread(self._post_sync, payload)
+            if rc != 0:
+                log.error("mattermost curl rc=%d body=%s", rc, body[:500])
+                return False
+            try:
+                parsed = json.loads(body)
+            except json.JSONDecodeError:
+                log.error("mattermost non-JSON response: %s", body[:500])
+                return False
+            if parsed.get("id"):
+                log.info(
+                    "mattermost sent severity=%s title=%r post=%s",
+                    severity.value,
+                    title,
+                    parsed.get("id"),
+                )
+                return True
+            log.error("mattermost rejected: %s", parsed)
+            return False
+        except Exception as e:
+            log.error("mattermost send failed: %s", e)
+            return False
 
 
 class PushoverSink(IAlertSink):
@@ -211,27 +308,82 @@ class CompositeSink(IAlertSink):
         return any_ok
 
 
+class FallbackSink(IAlertSink):
+    """Try primary first, then fallback only when primary delivery fails."""
+
+    def __init__(self, primary: IAlertSink, fallback: IAlertSink):
+        self._primary = primary
+        self._fallback = fallback
+
+    @property
+    def name(self) -> str:
+        return f"fallback({self._primary.name}->{self._fallback.name})"
+
+    async def send(
+        self,
+        severity: Severity,
+        title: str,
+        message: str,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        if await self._primary.send(severity, title, message, metadata):
+            return True
+        log.warning(
+            "primary alert sink[%s] failed; trying fallback[%s]",
+            self._primary.name,
+            self._fallback.name,
+        )
+        return await self._fallback.send(severity, title, message, metadata)
+
+
 def build_default_sink() -> IAlertSink:
     """Factory — reads env once, returns configured sink.
 
     Selection:
-        PUSHOVER_USER_KEY + PUSHOVER_APP_TOKEN both set and valid → PushoverSink
+        Mattermost configured + Pushover configured → Mattermost with Pushover fallback
+        Mattermost configured → MattermostSink
+        Pushover configured → PushoverSink
         Otherwise → NullSink
     """
+    mattermost_url = os.environ.get("MATTERMOST_URL", "").strip()
+    mattermost_token = os.environ.get("MATTERMOST_BOT_TOKEN", "").strip()
+    mattermost_channel = (
+        os.environ.get("MATTERMOST_CHANNEL_ALERTS_ID", "").strip()
+        or os.environ.get("MATTERMOST_DEFAULT_CHANNEL_ID", "").strip()
+    )
     user_key = os.environ.get("PUSHOVER_USER_KEY", "").strip()
     app_token = os.environ.get("PUSHOVER_APP_TOKEN", "").strip()
 
+    mattermost_sink: IAlertSink | None = None
+    if mattermost_url and mattermost_token and mattermost_channel:
+        try:
+            mattermost_sink = MattermostSink(
+                base_url=mattermost_url,
+                bot_token=mattermost_token,
+                channel_id=mattermost_channel,
+            )
+            log.info("alert sink: MattermostSink configured")
+        except ValueError as e:
+            log.error(
+                "MattermostSink construction failed, falling back if possible: %s", e
+            )
+
+    pushover_sink: IAlertSink | None = None
     if user_key and app_token:
         try:
-            sink = PushoverSink(user_key=user_key, app_token=app_token)
+            pushover_sink = PushoverSink(user_key=user_key, app_token=app_token)
             log.info("alert sink: PushoverSink configured")
-            return sink
         except ValueError as e:
             log.error(
                 "PushoverSink construction failed, falling back to NullSink: %s", e
             )
 
-    log.warning(
-        "alert sink: PushoverSink not configured (missing/invalid PUSHOVER_* secrets) — using NullSink"
-    )
+    if mattermost_sink and pushover_sink:
+        return FallbackSink(mattermost_sink, pushover_sink)
+    if mattermost_sink:
+        return mattermost_sink
+    if pushover_sink:
+        return pushover_sink
+
+    log.warning("alert sink: no Mattermost/Pushover config available; using NullSink")
     return NullSink()

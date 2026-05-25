@@ -142,7 +142,7 @@ Undecorated routes default to `require_scopes(["*"])` — deny by default.
 | 1 | Approval queue expiry cleanup | 30 min | **P1** | Dedup bug: expired `pending` rows block retries |
 | 2 | Middleware stack doc update | 10 min | P2 | Spec says Scopes middleware; live uses decorator |
 | 3 | nginx `alpha.conf` → git | 20 min | P2 | Config lost if Endpoint rebuilt |
-| 4 | Pushover wiring — Gateway `/v1/notify/pushover` | 1 session | P2 | Mobile push for T4/T5 approvals |
+| 4 | Mattermost ChatOps notify — Gateway `/v1/notify/mattermost` | 1 session | P2 | Primary Alpha/agent alert surface; Pushover remains fallback |
 | 5 | Dream Mode — overnight loop + morning briefing | 2–3 sessions | P1 | Core Alpha-3 deliverable |
 | 6 | Voice UI port from jarvis-core | 1–2 sessions | P2 | STT/TTS, HomePod AirPlay stub |
 | 7 | UI refactor — component extraction, custom hooks, lazy loading | 1 session | P3 | Noted but not blocking |

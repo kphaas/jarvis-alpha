@@ -187,14 +187,15 @@ T4/T5 queued → approval_notifier.send_approval_notification()
     → INSERT alpha_buddy_events (source='approval_gateway')
 ```
 
-### Delivery Chain (Phase 3 — Pushover)
+### Delivery Chain (Phase 3 — Mattermost Primary)
 
 ```
 T4/T5 queued → approval_notifier.send_approval_notification()
     → log + buddy event (same as now)
-    → POST to Gateway /v1/notify/pushover
-        → Gateway forwards to Pushover API
-        → Push notification on Ken's phone
+    → SkillRunner notify.send
+        → POST to Gateway /v1/notify/mattermost
+        → Gateway posts to Mattermost ChatOps
+        → Pushover fallback only if Mattermost is unavailable
 ```
 
 ---
