@@ -42,15 +42,35 @@ def test_worker_registers_dream_workflow_and_activity():
 
 
 def test_temporal_target_defaults_to_loopback(monkeypatch):
+    monkeypatch.delenv("TEMPORAL_CLIENT_HOST", raising=False)
+    monkeypatch.delenv("TEMPORAL_BIND_IP", raising=False)
     monkeypatch.delenv("TEMPORAL_BIND_HOST", raising=False)
     monkeypatch.delenv("TEMPORAL_GRPC_PORT", raising=False)
     assert temporal_target() == "127.0.0.1:7233"
 
 
-def test_temporal_target_uses_env(monkeypatch):
+def test_temporal_target_uses_bind_host_fallback(monkeypatch):
+    monkeypatch.delenv("TEMPORAL_CLIENT_HOST", raising=False)
+    monkeypatch.delenv("TEMPORAL_BIND_IP", raising=False)
     monkeypatch.setenv("TEMPORAL_BIND_HOST", "127.0.0.2")
     monkeypatch.setenv("TEMPORAL_GRPC_PORT", "7722")
     assert temporal_target() == "127.0.0.2:7722"
+
+
+def test_temporal_target_prefers_bind_ip_over_bind_host(monkeypatch):
+    monkeypatch.delenv("TEMPORAL_CLIENT_HOST", raising=False)
+    monkeypatch.setenv("TEMPORAL_BIND_IP", "127.0.0.1")
+    monkeypatch.setenv("TEMPORAL_BIND_HOST", "jarvis-brain.tail40ed36.ts.net")
+    monkeypatch.setenv("TEMPORAL_GRPC_PORT", "7233")
+    assert temporal_target() == "127.0.0.1:7233"
+
+
+def test_temporal_target_uses_client_host_override(monkeypatch):
+    monkeypatch.setenv("TEMPORAL_CLIENT_HOST", "127.0.0.9")
+    monkeypatch.setenv("TEMPORAL_BIND_IP", "127.0.0.1")
+    monkeypatch.setenv("TEMPORAL_BIND_HOST", "jarvis-brain.tail40ed36.ts.net")
+    monkeypatch.setenv("TEMPORAL_GRPC_PORT", "7999")
+    assert temporal_target() == "127.0.0.9:7999"
 
 
 def test_temporal_namespace_default(monkeypatch):
@@ -85,7 +105,7 @@ async def test_start_dream_session_workflow_uses_expected_temporal_options(
         return FakeClient()
 
     monkeypatch.setattr(dream_client.Client, "connect", fake_connect)
-    monkeypatch.setenv("TEMPORAL_BIND_HOST", "127.0.0.9")
+    monkeypatch.setenv("TEMPORAL_CLIENT_HOST", "127.0.0.9")
     monkeypatch.setenv("TEMPORAL_GRPC_PORT", "7999")
     monkeypatch.delenv("TEMPORAL_NAMESPACE", raising=False)
 
