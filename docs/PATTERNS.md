@@ -180,6 +180,19 @@ All secrets go in `~/jarvis/.secrets` (chmod 600), loaded via
 All secrets via `get_secret()`. All IPs/hostnames via `node_addresses.py`.
 No hardcoded IPs, hostnames, tokens, certs, or keys in source.
 
+### Never enable shell xtrace near secrets
+
+Do not run `bash -x`, `sh -x`, `zsh -x`, `set -x`, or `set -o xtrace` in
+any script, prompt, LaunchAgent helper, smoke test, or workflow that can source
+`~/jarvis/.secrets`, `~/.secrets`, or shell startup files. Xtrace prints the
+expanded command stream and can leak secret values into logs or agent context.
+
+Use explicit `echo` checkpoints, `bash -n` syntax checks, targeted health
+commands, or narrowly scoped `bash -v` only for static scripts that do not
+source secrets. CI enforces this for active script/config roots via
+`scripts/check_no_xtrace_secrets.py`; historical handoff docs may still mention
+past incidents.
+
 ---
 
 ## 5. Inter-Node Communication
