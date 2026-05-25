@@ -138,3 +138,53 @@ async def test_start_session_rolls_back_reservation_on_duplicate_workflow(monkey
         if kind == "execute" and "started_at = NULL" in query
     ]
     assert rollback_updates
+
+
+@pytest.mark.asyncio
+async def test_kill_session_signals_temporal_workflow_and_updates_db(monkeypatch):
+    conn = FakeConn(
+        session={
+            "id": 11,
+            "status": "running",
+            "temporal_workflow_id": "dream-session-11",
+            "temporal_run_id": "run-11",
+        }
+    )
+    pool = FakePool(conn)
+    signals = []
+
+    async def fake_signal(workflow_id, *, run_id, reason, severity):
+        signals.append(
+            {
+                "workflow_id": workflow_id,
+                "run_id": run_id,
+                "reason": reason,
+                "severity": severity,
+            }
+        )
+
+    monkeypatch.setattr(dream_route, "get_pool", lambda: pool)
+    monkeypatch.setattr(dream_route, "signal_dream_session_halt", fake_signal)
+
+    response = await dream_route.kill_session(
+        request_with_admin_scope(),
+        11,
+        dream_route.KillRequest(reason="operator stop"),
+    )
+
+    assert response == {
+        "session_id": 11,
+        "status": "killed",
+        "reason": "operator stop",
+        "temporal_signal": "sent",
+    }
+    assert signals == [
+        {
+            "workflow_id": "dream-session-11",
+            "run_id": "run-11",
+            "reason": "operator stop",
+            "severity": "killed",
+        }
+    ]
+    updates = [query for kind, query, _ in conn.executed if kind == "execute"]
+    assert any("SET status = 'killed'" in query for query in updates)

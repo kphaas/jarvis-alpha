@@ -11,10 +11,12 @@ from brain.dream.activities import (
 )
 from brain.dream.client import (
     dream_workflow_id,
+    signal_dream_session_halt,
     start_dream_session_workflow,
     temporal_namespace,
     temporal_target,
 )
+from brain.dream.signals import HALT_SIGNAL_NAME
 from brain.dream.task_queues import DREAM_WORKFLOW_QUEUE, PLANNING_QUEUE
 from brain.dream.types import DreamSessionInput
 from brain.dream.worker import (
@@ -125,6 +127,47 @@ async def test_start_dream_session_workflow_uses_expected_temporal_options(
     assert calls["task_queue"] == DREAM_WORKFLOW_QUEUE
     assert calls["id_reuse_policy"] == WorkflowIDReusePolicy.REJECT_DUPLICATE
     assert calls["id_conflict_policy"] == WorkflowIDConflictPolicy.FAIL
+
+
+async def test_signal_dream_session_halt_targets_existing_run(monkeypatch):
+    calls = {}
+
+    class FakeHandle:
+        async def signal(self, signal, *, args):
+            calls["signal"] = signal
+            calls["args"] = args
+
+    class FakeClient:
+        def get_workflow_handle(self, workflow_id, *, run_id=None):
+            calls["workflow_id"] = workflow_id
+            calls["run_id"] = run_id
+            return FakeHandle()
+
+    async def fake_connect(target, *, namespace):
+        calls["target"] = target
+        calls["namespace"] = namespace
+        return FakeClient()
+
+    monkeypatch.setattr(dream_client.Client, "connect", fake_connect)
+    monkeypatch.setenv("TEMPORAL_CLIENT_HOST", "127.0.0.9")
+    monkeypatch.setenv("TEMPORAL_GRPC_PORT", "7999")
+    monkeypatch.delenv("TEMPORAL_NAMESPACE", raising=False)
+
+    await signal_dream_session_halt(
+        "dream-session-42",
+        run_id="run-42",
+        reason="operator stop",
+        severity="killed",
+    )
+
+    assert calls == {
+        "target": "127.0.0.9:7999",
+        "namespace": "default",
+        "workflow_id": "dream-session-42",
+        "run_id": "run-42",
+        "signal": HALT_SIGNAL_NAME,
+        "args": ["operator stop", "killed"],
+    }
 
 
 def test_workflow_cleanup_timeout_is_bounded():

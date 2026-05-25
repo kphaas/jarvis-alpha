@@ -11,6 +11,7 @@ from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from brain.dream.task_queues import DREAM_WORKFLOW_QUEUE
 from brain.dream.types import DreamSessionInput
 from brain.dream.workflows import DreamSessionWorkflow
+from brain.dream.signals import HALT_SIGNAL_NAME
 
 
 @dataclass(frozen=True)
@@ -55,3 +56,15 @@ async def start_dream_session_workflow(
         workflow_id=handle.id,
         run_id=handle.first_execution_run_id or handle.result_run_id or handle.run_id,
     )
+
+
+async def signal_dream_session_halt(
+    workflow_id: str,
+    *,
+    run_id: str | None = None,
+    reason: str,
+    severity: str = "killed",
+) -> None:
+    client = await Client.connect(temporal_target(), namespace=temporal_namespace())
+    handle = client.get_workflow_handle(workflow_id, run_id=run_id)
+    await handle.signal(HALT_SIGNAL_NAME, args=[reason, severity])
