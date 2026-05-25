@@ -385,6 +385,8 @@ The April 18 blocker list above is superseded for Dream Mode orchestration.
 | First read-only execution slice | ✅ | PR #119 adds `/v1/dream/sessions/{id}/execute-readonly` |
 | Route classification for D3.5 routes | ✅ | PR #120 |
 | Write-capable approval gate | ✅ | `/v1/dream/sessions/{id}/execute-gated` queues autonomous side effects for T4/T5 approval before execution |
+| Bounded approved write executor | ✅ | `/v1/dream/sessions/{id}/execute-approved` validates approved Dream rows, runs the `publish_dream_briefing` allowlist handler, records verification, and stores compensation metadata |
+| Dream RLSContext first slab | ✅ | Frozen `RLSContext`, `set_rls_context()`, and Dream platform helper path landed for approved execution |
 | Dream morning briefing surface | ✅ | Dream cleanup publishes `alpha_briefings` rows; `/briefing` UI and Buddy event path surface them |
 
 ## Live Verification
@@ -406,7 +408,7 @@ The April 18 blocker list above is superseded for Dream Mode orchestration.
 
 | Item | Status | Notes |
 |---|---|---|
-| Write-capable autonomous execution | 🟡 GATED | Approval gate, kill-switch check, and verification/compensation metadata are live; arbitrary write handlers remain allowlist-only future work |
+| Write-capable autonomous execution | 🟢 BOUNDED | Approval gate, exact approval/hash validation, `publish_dream_briefing` handler, post-action verification, and compensation metadata are live; future handlers stay allowlist-only |
 | Morning briefing generation/UI | ✅ LIVE | Dream sessions synthesize `dream_mode` briefings into `alpha_briefings`, Buddy events, and the `/briefing` UI |
 | Dendrite/Matrix notification path | ⏳ DEFERRED | Spec item remains separate from core Temporal execution |
 | Voice UI port | ⏳ PENDING | Still outside Dream D3.4/D3.5 |

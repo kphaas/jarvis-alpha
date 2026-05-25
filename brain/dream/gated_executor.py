@@ -114,6 +114,11 @@ def _hash_step(step: Mapping[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def approval_parameters_hash_for_step(step: Mapping[str, Any]) -> str:
+    """Return the approval hash for a persisted Dream step."""
+    return _hash_step(step)
+
+
 def _at_least_t4(action_classes: list[str]) -> str:
     tier = determine_risk_tier(action_classes)
     if tier in {"T1", "T2", "T3"}:

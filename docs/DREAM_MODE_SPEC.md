@@ -10,11 +10,11 @@ Updated 2026-05-25 · github.com/kphaas/jarvis-alpha
 Dream Mode is live as a bounded Temporal workflow on Brain. It can create
 sessions, plan with Claude through Gateway, review with Gemini through Gateway,
 persist approved plans, publish morning briefings, execute a narrow read-only
-slice, and queue write-capable steps for human approval.
+slice, queue write-capable steps for human approval, and consume approved rows
+through a bounded allowlisted writer.
 
-Dream Mode is not an arbitrary autonomous write executor. That remains
-intentionally deferred until bounded allowlisted write handlers, post-action
-verification, and compensation runners exist.
+Dream Mode is not an arbitrary autonomous write executor. The only live
+approved write handler is the reversible Dream-owned briefing publish path.
 
 This V2 supersedes the April 2026 V1 design that described a Gateway-owned
 orchestrator, session-scoped dream JWT minting, Matrix/Dendrite notification,
@@ -34,8 +34,11 @@ reintroduced by a future ADR.
 - Halt flags stop new Dream execution before side effects.
 - Read-only execution does not call shell, mutate state, call LLMs, or call the
   network.
-- Write-capable steps are queued through the Approval Gateway before any future
-  executor may run them.
+- Write-capable steps are queued through the Approval Gateway before bounded
+  execution may run them.
+- Approved write execution re-checks halt flags, validates the exact approval
+  row and parameters hash, runs an allowlisted handler only, records post-action
+  verification, and stores compensation metadata.
 - All database writes to FORCE-RLS Dream tables run in a transaction with
   `rls.role = platform_admin`.
 - Runtime targets must come from config helpers or environment-derived settings,
@@ -82,6 +85,9 @@ Temporal task queues:
 10. Optional post-plan execution slices are explicit route calls:
     `execute-readonly` for allowlisted inspection steps, and `execute-gated`
     to queue side-effecting steps for human approval.
+11. After approval, `execute-approved` consumes matching Dream approval rows and
+    runs only allowlisted write handlers. Today that allowlist contains Dream
+    briefing publication.
 
 Canonical smoke:
 
@@ -109,6 +115,7 @@ active:
 | `POST /v1/dream/sessions/{id}/start` | Prevents new Temporal workflow starts |
 | `POST /v1/dream/sessions/{id}/execute-readonly` | Prevents even read-only slice execution during pause/kill |
 | `POST /v1/dream/sessions/{id}/execute-gated` | Prevents approval queuing during pause/kill |
+| `POST /v1/dream/sessions/{id}/execute-approved` | Prevents approved write execution during pause/kill |
 | `PATCH /v1/dream/steps/{id}` to `running` or `completed` | Prevents legacy/direct execution transitions |
 
 `GET /v1/dream/health` returns `active_halt_flags` and reports `degraded` while
@@ -141,14 +148,28 @@ Dream step audit fields.
 queues a T4/T5 approval through `enqueue_dream_step_approval_request`, blocks
 the Dream step, and records gate metadata in `alpha_dream_steps.verification`.
 
-No arbitrary write handler runs today. A future write executor must:
+### Approved Write Executor
+
+`POST /v1/dream/sessions/{id}/execute-approved` consumes approved Dream rows
+only when all of these checks pass:
 
 - accept only explicit allowlisted handlers
 - re-check halt flags immediately before execution
-- require approval consumption for the matching parameters hash
+- require an approved, non-expired `alpha_approval_queue` row for actor
+  `dream_mode`, actor type `agent`, `overnight = true`, matching action classes,
+  risk tier, and parameters hash
 - record post-action verification
-- require compensation metadata for T5/admin/deploy classes
-- publish result details into the morning briefing
+- record compensation metadata and run compensation when verification fails
+- consume the approval row only after the attempted write is complete
+
+The current handler allowlist is:
+
+| Handler | Side effect | Verification | Compensation |
+|---|---|---|---|
+| `publish_dream_briefing` | Upsert `alpha_briefings` for the Dream session | Row exists, source is `dream_mode`, markdown matches generated briefing | Restore prior row snapshot or delete the inserted row |
+
+No shell command, deployment, schema migration, arbitrary SQL writer, network
+mutation, or child/family-facing write handler is allowlisted.
 
 ---
 
@@ -159,7 +180,7 @@ callers need relevant scopes.
 
 | Route class | Auth requirement |
 |---|---|
-| Session create/list/get/start/health/read-only/gated/briefing | `dream.execute` or admin user |
+| Session create/list/get/start/health/read-only/gated/approved/briefing | `dream.execute` or admin user |
 | Kill | `dream.execute` plus `dream.kill`, or admin user |
 | Legacy step updates | `dream.execute` or admin user |
 
@@ -167,18 +188,16 @@ RLS model:
 
 - Human-facing reads use `rls_connection(request)` where request identity should
   flow into RLS.
-- Platform-level Dream operations use a raw pool connection inside
-  `conn.transaction()` and set `rls.role = platform_admin` before touching
-  `alpha_dream_sessions`, `alpha_dream_steps`, `alpha_briefings`, approval
-  queue rows, or Buddy-event side effects.
+- Platform-level Dream operations run inside transactions with
+  `rls.role = platform_admin`. New platform-owned callers use the frozen
+  `RLSContext` and `platform_admin_connection(source="dream", ...)` helper.
 - Temporal activities use `brain.dream._db.activity_db()`, which binds
   transaction-scoped `rls.user_id` and `rls.role`.
 - Security-definer helpers used by Dream must set `rls.role = platform_admin`
   internally. `enqueue_dream_step_approval_request` does this.
 
-The current pattern is intentionally explicit. A future RLSContext dataclass can
-make the caller contract more uniform, but it must preserve the distinction
-between request-scoped reads and platform-level Dream execution writes.
+The current pattern preserves the distinction between request-scoped reads and
+platform-level Dream execution writes.
 
 ---
 
@@ -192,7 +211,7 @@ between request-scoped reads and platform-level Dream execution writes.
 | Briefings | `alpha_briefings.source = dream_mode` |
 | Buddy event | Dream cleanup publishes a `source = dream` event |
 | Approval queue | Side-effecting Dream steps use actor `dream_mode` and action class `dream_autonomous` |
-| Tests | Dream workflow, activities, health, read-only execution, gated execution, and routes have pytest coverage |
+| Tests | Dream workflow, activities, health, read-only execution, gated execution, approved execution, and routes have pytest coverage |
 
 ---
 
@@ -207,7 +226,7 @@ between request-scoped reads and platform-level Dream execution writes.
 | Kill signal | Live | Signals Temporal and blocks pending/running steps |
 | Health endpoint | Live | Includes active halt flags as of 2026-05-25 |
 | Read-only execution | Live, narrow | Allowlisted acknowledgement-only slice |
-| Write execution | Approval-gated | Queues approvals only; no arbitrary write handlers |
+| Write execution | Live, bounded | Approval consumption plus `publish_dream_briefing` allowlist only |
 | Morning briefing | Live | `alpha_briefings`, Buddy event, UI |
 | Matrix/Dendrite | Deferred | Not part of current production path |
 | Voice UI | Deferred | Outside Dream D3 production scope |
@@ -258,10 +277,8 @@ WHERE flag_name = 'overnight_execution_paused';
 
 | Item | Priority | Notes |
 |---|---|---|
-| Bounded write executor allowlist | P1 before arbitrary writes | Start with one reversible, low-impact handler |
-| Post-action verifier | P1 before arbitrary writes | Must run after every write handler |
-| Compensation runner | P1 before T5/admin writes | Required for deploy/admin classes |
-| RLSContext migration | P1/P2 | Replace ad hoc caller patterns with a typed context once design questions are answered |
+| Additional write handlers | P1 before broader autonomy | Add one reversible handler at a time with verifier + compensation |
+| Full Dream RLSContext migration | P2 | Existing platform paths still include some explicit `set_config` blocks |
 | Scheduled overnight trigger | P2 | Current production shape supports manual/API start and worker execution |
 | Notification backup | P2 | Buddy/UI live; Matrix remains deferred |
 | Voice UI | P3 | Alpha-3 broader roadmap, not Dream core |
