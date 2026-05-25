@@ -15,8 +15,8 @@
     "secrets_path": "/Users/jarvisendpoint/jarvis/.secrets"
   },
   "sandbox": {
-    "ssh_target": "jarvissand@jarvis-sandbox",
-    "health_url": "https://jarvis-sandbox:5001/api/health",
+    "ssh_target": "jarvissand@jarvis-sandbox.tail40ed36.ts.net",
+    "health_url": "https://jarvis-sandbox.tail40ed36.ts.net:5001/api/health",
     "secrets_path": "/Users/jarvissand/.secrets"
   }
 }
