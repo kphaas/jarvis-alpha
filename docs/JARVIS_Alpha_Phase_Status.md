@@ -364,4 +364,51 @@ Additional canonical docs shipped since April 6:
 
 ---
 
+# Addendum — 2026-05-25
+
+## Alpha-3 Dream Mode — D3.4/D3.5 Shipped
+
+The April 18 blocker list above is superseded for Dream Mode orchestration.
+
+| Deliverable | Status | Evidence |
+|---|---|---|
+| D3 architecture questions resolved | ✅ | Implemented one Temporal workflow per Dream session with planner/reviewer revision loop |
+| D3.1 schema metadata | ✅ | `20260524_223000_dream_session_goal_metadata.sql` |
+| D3.4 Temporal planner/reviewer workflow | ✅ | PR #112, deployed to Brain/Gateway/Endpoint |
+| Dream Temporal worker LaunchAgent template | ✅ | PR #113, `com.jarvis.alpha.temporal.worker` live on Brain |
+| Temporal SDK loopback/run-id fixes | ✅ | PRs #114, #115, #118 |
+| Gemini reviewer adapter compatibility | ✅ | PR #116 |
+| Reviewer JSON wrapping tolerance | ✅ | PR #117 |
+| D3.5 kill signal hardening | ✅ | PR #119 wires `/v1/dream/sessions/{id}/kill` to Temporal `halt` signal |
+| D3.5 health/stale-session checks | ✅ | PR #119 adds `/v1/dream/health` + worker heartbeat |
+| Canonical Dream smoke script | ✅ | `scripts/smoke_dream_temporal.sh` |
+| First read-only execution slice | ✅ | PR #119 adds `/v1/dream/sessions/{id}/execute-readonly` |
+| Route classification for D3.5 routes | ✅ | PR #120 |
+
+## Live Verification
+
+| Check | Result |
+|---|---|
+| Deploy commit | `7dd4aa2` |
+| Brain test gate | `171 passed, 0 failed` |
+| Temporal worker | LaunchAgent running, heartbeat fresh |
+| Canonical smoke | `bash scripts/smoke_dream_temporal.sh` PASS |
+| Smoke session | `alpha_dream_sessions.id = 12` |
+| Workflow/run | `dream-session-12`, run ID populated |
+| Reviewer verdict | `APPROVED` |
+| Persisted plan | 12 steps |
+| Read-only executor | 4 allowlisted tool steps completed; non-allowlisted/code steps skipped |
+| Dream health | `status = ok`, no stale running sessions |
+
+## Remaining Alpha-3 Dream Scope
+
+| Item | Status | Notes |
+|---|---|---|
+| Write-capable autonomous execution | ⏳ NEXT | Must sit behind approval tiering, kill-switch checks, and post-action verification |
+| Morning briefing generation/UI | ⏳ NEXT | Existing Buddy events record workflow completion; dedicated briefing surface remains |
+| Dendrite/Matrix notification path | ⏳ DEFERRED | Spec item remains separate from core Temporal execution |
+| Voice UI port | ⏳ PENDING | Still outside Dream D3.4/D3.5 |
+
+---
+
 *JARVIS Alpha Phase Status · April 6 2026 · github.com/kphaas/jarvis-alpha*
