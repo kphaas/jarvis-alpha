@@ -90,7 +90,9 @@ async def test_start_dream_session_workflow_uses_expected_temporal_options(
 
     class FakeHandle:
         id = "dream-session-42"
-        run_id = "run-abc"
+        first_execution_run_id = "run-abc"
+        result_run_id = None
+        run_id = None
 
     class FakeClient:
         async def start_workflow(self, workflow, arg, **kwargs):
