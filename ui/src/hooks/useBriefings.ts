@@ -34,12 +34,13 @@ export interface BriefingFull {
   created_at: string
 }
 
-export function useLatestBriefing() {
+export function useLatestBriefing(source?: string) {
   return useQuery<BriefingFull | null>({
-    queryKey: ['briefings', 'latest'],
+    queryKey: ['briefings', 'latest', source ?? 'all'],
     queryFn: async () => {
       try {
-        return await apiJson<BriefingFull>('/v1/briefings/latest')
+        const qs = source ? `?source=${encodeURIComponent(source)}` : ''
+        return await apiJson<BriefingFull>(`/v1/briefings/latest${qs}`)
       } catch (err: unknown) {
         // 404 = no briefings yet, return null instead of throwing.
         if (err instanceof Error && err.message === 'HTTP 404') return null

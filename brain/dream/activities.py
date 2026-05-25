@@ -12,6 +12,7 @@ import json
 from temporalio import activity
 
 from brain.dream._db import activity_db
+from brain.dream.briefing import build_dream_briefing
 from brain.dream.planning import (
     get_registry,
     load_model_policy,
@@ -195,6 +196,7 @@ async def flush_cleanup_activity(
         }
     )
 
+    briefing_row = None
     async with activity_db() as conn:
         await conn.execute(
             """
@@ -214,6 +216,59 @@ async def flush_cleanup_activity(
             failed_count,
             int(cleanup_spec.session_id),
         )
+
+        session = await conn.fetchrow(
+            "SELECT * FROM alpha_dream_sessions WHERE id = $1",
+            int(cleanup_spec.session_id),
+        )
+        steps = await conn.fetch(
+            """
+            SELECT *
+            FROM alpha_dream_steps
+            WHERE session_id = $1
+            ORDER BY step_index
+            """,
+            int(cleanup_spec.session_id),
+        )
+        if session:
+            briefing = build_dream_briefing(
+                dict(session),
+                [dict(step) for step in steps],
+            )
+            briefing_row = await conn.fetchrow(
+                """
+                INSERT INTO alpha_briefings (
+                    batch_run_id,
+                    briefing_date,
+                    started_at,
+                    source,
+                    summary,
+                    results,
+                    markdown
+                )
+                VALUES ($1, $2::date, $3, $4, $5::jsonb, $6::jsonb, $7)
+                ON CONFLICT (batch_run_id) DO UPDATE
+                SET briefing_date = EXCLUDED.briefing_date,
+                    started_at = EXCLUDED.started_at,
+                    source = EXCLUDED.source,
+                    summary = EXCLUDED.summary,
+                    results = EXCLUDED.results,
+                    markdown = EXCLUDED.markdown
+                RETURNING id, batch_run_id
+                """,
+                briefing["batch_run_id"],
+                briefing["briefing_date"],
+                briefing["started_at"],
+                briefing["source"],
+                json.dumps(briefing["summary"]),
+                json.dumps(briefing["results"]),
+                briefing["markdown"],
+            )
+
+        buddy_payload = json.loads(payload)
+        if briefing_row:
+            buddy_payload["briefing_id"] = briefing_row["id"]
+            buddy_payload["briefing_batch_run_id"] = briefing_row["batch_run_id"]
 
         buddy_row = await conn.fetchrow(
             """
@@ -238,10 +293,12 @@ async def flush_cleanup_activity(
             title,
             body,
             priority,
-            payload,
+            json.dumps(buddy_payload),
         )
 
     return {
         "session_status": final_status,
         "buddy_event_id": str(buddy_row["id"]),
+        "briefing_id": briefing_row["id"] if briefing_row else None,
+        "briefing_batch_run_id": briefing_row["batch_run_id"] if briefing_row else None,
     }

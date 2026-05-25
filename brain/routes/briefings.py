@@ -37,7 +37,13 @@ class BriefingIngest(BaseModel):
     batch_run_id: str
     briefing_date: date
     started_at: datetime
-    source: Literal["forge_overnight", "forge_manual", "forge_ci", "buddy_alert"]
+    source: Literal[
+        "forge_overnight",
+        "forge_manual",
+        "forge_ci",
+        "buddy_alert",
+        "dream_mode",
+    ]
     summary: dict[str, Any]
     results: list[dict[str, Any]]
     markdown: str | None = None
