@@ -151,6 +151,21 @@ async def _active_dream_halt_flags(conn) -> list[dict]:
     return [dict(row) for row in rows if row["flag_value"]]
 
 
+def _dream_halt_detail(halt_flags: list[dict]) -> dict:
+    return {
+        "reason": "dream_halt_flag_active",
+        "active_flags": halt_flags,
+    }
+
+
+def _raise_if_dream_halt_active(halt_flags: list[dict]) -> None:
+    if halt_flags:
+        raise HTTPException(
+            status_code=409,
+            detail=_dream_halt_detail(halt_flags),
+        )
+
+
 async def _fetch_dream_session_and_steps(conn, session_id: int):
     session = await conn.fetchrow(
         "SELECT * FROM alpha_dream_sessions WHERE id = $1",
@@ -301,6 +316,7 @@ async def dream_health(request: Request):
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
+            halt_flags = await _active_dream_halt_flags(conn)
             stale_rows = await conn.fetch(
                 """
                 SELECT id, status, temporal_workflow_id, temporal_run_id,
@@ -315,12 +331,13 @@ async def dream_health(request: Request):
             )
     heartbeat = read_worker_heartbeat()
     temporal_reachable = await temporal_server_reachable()
+    healthy = heartbeat["fresh"] and temporal_reachable and not stale_rows
+    runnable = healthy and not halt_flags
     return {
-        "status": "ok"
-        if heartbeat["fresh"] and temporal_reachable and not stale_rows
-        else "degraded",
+        "status": "ok" if runnable else "degraded",
         "worker_heartbeat": heartbeat,
         "temporal_server_reachable": temporal_reachable,
+        "active_halt_flags": halt_flags,
         "stale_running_sessions": [dict(row) for row in stale_rows],
     }
 
@@ -334,6 +351,7 @@ async def start_session(request: Request, session_id: int):
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
+            _raise_if_dream_halt_active(await _active_dream_halt_flags(conn))
             session = await conn.fetchrow(
                 """
                 SELECT id, status, trigger, goal_type, goal_text, prompt_version,
@@ -585,6 +603,7 @@ async def execute_readonly_session(
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
+            _raise_if_dream_halt_active(await _active_dream_halt_flags(conn))
             session = await conn.fetchrow(
                 """
                 SELECT id, status, review_verdict
@@ -750,14 +769,7 @@ async def execute_gated_session(
         async with conn.transaction():
             await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
             halt_flags = await _active_dream_halt_flags(conn)
-            if halt_flags:
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "reason": "dream_halt_flag_active",
-                        "active_flags": halt_flags,
-                    },
-                )
+            _raise_if_dream_halt_active(halt_flags)
 
             session, steps = await _fetch_dream_session_and_steps(conn, session_id)
             if session["status"] not in ("completed", "running"):
@@ -1052,6 +1064,8 @@ async def update_step(request: Request, step_id: int, req: UpdateStepRequest):
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
+            if req.status in ("running", "completed"):
+                _raise_if_dream_halt_active(await _active_dream_halt_flags(conn))
             step = await conn.fetchrow(
                 "SELECT * FROM alpha_dream_steps WHERE id = $1", step_id
             )

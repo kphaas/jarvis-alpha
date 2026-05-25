@@ -4,7 +4,7 @@ Private AI Infrastructure — Clean-Break Rebuild
 Performance · Scalability · Reliability · Security · Autonomous Operations
 
 **April 2026 · github.com/kphaas/jarvis-alpha · main**
-Alpha-0, Alpha-1, Alpha-2 complete · Alpha-3 (Dream Mode) in progress · Alpha-5 (containerization) planned
+Alpha-0, Alpha-1, Alpha-2 complete · Alpha-3 (Dream Mode) production hardening · Alpha-5 (containerization) planned
 
 **Supersedes:** Architecture Review V1 (April 2026 — retired by ADR-0002)
 **Related:** ADR-0001 (Docker adoption), ADR-0002 (State native, compute containerized), ADR-0003 (Progressive secrets), ADR-0004 (Alpha-5 execution standards)
@@ -103,7 +103,7 @@ jarvis-alpha is a clean-break rebuild of jarvis-core, not an evolution of it. De
 | Loki + Grafana (observability) | Brain | TBD | HTTPS | PLANNED (Phase 5.1) |
 | `registry:2` (image registry) | Brain | 5000 | HTTPS Tailscale cert | PLANNED (Phase 5.2) |
 | Fluentbit forwarders | All | internal | LaunchAgent | PLANNED (Phase 5.1) |
-| Overnight Dream Mode (Temporal workflow) | Brain | via Temporal | LaunchAgent | IN PROGRESS (D3.4 live run next) |
+| Overnight Dream Mode (Temporal workflow) | Brain | via Temporal | LaunchAgent | LIVE, HARDENING |
 | Voice UI | Endpoint | — | — | NOT YET PORTED |
 
 ---
@@ -430,13 +430,13 @@ bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh
 
 | # | Task | Why | Effort |
 |---|---|---|---|
-| 1 | D3.4 Temporal worker LaunchAgent install + first live workflow run | Prove planner/reviewer workflow on Brain | 1 session |
-| 2 | Dream Mode step execution + briefing handoff | Move from approved plans to executed overnight output | 1-2 sessions |
-| 3 | TD-94 watchdog `-15` SIGTERM investigation | P1 open | 0.5 session |
-| 4 | Audit trigger backfill (4 of 10 missing in prod) | Data integrity | 0.5 session |
-| 5 | Wire real UDM Pro API in gateway/routes/unifi.py (AI-1) | Stubs ship no data | 1 session |
-| 6 | Alpha-5 Phase 5.0 kickoff | Per ALPHA5_MIGRATION_PLAN.md | 2-3 sessions |
-| 7 | jarvis-financial kickoff | Apr 21 commitment | 1 session |
+| 1 | Dream Mode bounded write executor design + first allowlisted handler | Move beyond approval queuing without arbitrary side effects | 1-2 sessions |
+| 2 | Dream Mode post-action verifier + compensation runner | Required before T5/admin/deploy writes | 1-2 sessions |
+| 3 | RLSContext implementation slab for Dream + watchdog callers | Replace ad hoc platform elevation with typed caller context | 1-2 sessions |
+| 4 | TD-94 watchdog `-15` SIGTERM investigation | P1 open | 0.5 session |
+| 5 | Audit trigger backfill (4 of 10 missing in prod) | Data integrity | 0.5 session |
+| 6 | Wire real UDM Pro API in gateway/routes/unifi.py (AI-1) | Stubs ship no data | 1 session |
+| 7 | Alpha-5 Phase 5.0 kickoff | Per ALPHA5_MIGRATION_PLAN.md | 2-3 sessions |
 
 ---
 
@@ -447,7 +447,7 @@ bash ~/jarvis-alpha/scripts/jarvisalpha_pull.sh
 | Alpha-0 | Foundation | Repo scaffold, schema, config, stubs, GitHub infra | COMPLETE |
 | Alpha-1 | Brain Middleware + UI Shell | JWT, CORS, RLS middleware, Buddy agent, PIN gate, Health/Mesh/Home pages, apiFetch, auto-scp | COMPLETE |
 | Alpha-2 | TaskGraph + DB Wiring | asyncpg pool, TaskGraph DAG + executor, kill switch, circuit breaker, watchdog, Child RLS, Approval Gateway T1-T5, Service Identity RS256, route classification (142 routes, zero gaps), PATTERNS.md + DB_CONTRACTS.md + SERVICE_CONTRACTS.md | COMPLETE |
-| Alpha-3 | Dream Mode + Voice | D1 safety (invariants + cost caps + kill switch), D2 planner + reviewer, Temporal POC + D3 design + D3.1 schema + D3.2 production stack; D3.3 workflow + activity impl in branch; **D3.4 worker install + first live run = NEXT**; voice UI port | IN PROGRESS |
+| Alpha-3 | Dream Mode + Voice | D1 safety (invariants + cost caps + kill switch), D2 planner + reviewer, Temporal production stack, live planner/reviewer workflow, Temporal worker LaunchAgent, kill signal, health endpoint, read-only execution slice, approval-gated write path, morning briefing surface; bounded write executor and voice UI remain | IN PROGRESS |
 | Alpha-4 | Cut Over | jarvis-core → jarvis-alpha migration, decommission jarvis-core services | PLANNED (after Alpha-3) |
 | **Alpha-5** | **Containerization** | **OrbStack runtime + state/compute split + progressive secrets + per-node Compose + private registry + cert renewal + rotation automation. See ALPHA5_MIGRATION_PLAN.md for 9-phase sequence. Locks: ADR-0002, ADR-0003, ADR-0004.** | **PLANNED** |
 | Alpha-6 | Vault + observability deepening | Infisical / Bitwarden deployment (Phase 5c per ADR-0003), Harbor upgrade if scanning / SBOM needed, tracing via OpenTelemetry | PLANNED |
