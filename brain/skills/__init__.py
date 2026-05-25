@@ -1,5 +1,6 @@
 """Skill execution primitives."""
 
+from brain.skills.notify import PushoverSkillError, PushoverSkillPayload, send_pushover
 from brain.skills.policy_gate import (
     SkillInvocation,
     SkillPolicyDecision,
@@ -14,4 +15,7 @@ __all__ = [
     "SkillPolicyGate",
     "SkillRunner",
     "SkillRunResult",
+    "PushoverSkillError",
+    "PushoverSkillPayload",
+    "send_pushover",
 ]
