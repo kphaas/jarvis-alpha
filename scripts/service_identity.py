@@ -6,6 +6,7 @@ Do not duplicate these constants elsewhere.
 
 VALID_ISS_ACTOR_PAIRS = {
     "brain": "service",
+    "forge": "service",
     "gateway": "service",
     "sandbox": "service",
     "buddy": "agent",
@@ -14,6 +15,12 @@ VALID_ISS_ACTOR_PAIRS = {
 
 DEFAULT_SCOPES = {
     "brain": ["service.internal", "health.read", "cloud.call"],
+    "forge": [
+        "forge.llm.call",
+        "forge.briefings.ingest",
+        "briefings.read",
+        "health.read",
+    ],
     "buddy": [
         "memory.evict",
         "memory.promote",
