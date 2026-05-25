@@ -24,7 +24,13 @@ def dream_workflow_id(session_id: int | str) -> str:
 
 
 def temporal_target() -> str:
-    host = os.environ.get("TEMPORAL_BIND_HOST", "127.0.0.1")
+    bind_ip = os.environ.get("TEMPORAL_BIND_IP")
+    host = (
+        os.environ.get("TEMPORAL_CLIENT_HOST")
+        or (bind_ip if bind_ip and bind_ip != "0.0.0.0" else None)
+        or os.environ.get("TEMPORAL_BIND_HOST")
+        or "127.0.0.1"
+    )
     port = os.environ.get("TEMPORAL_GRPC_PORT", "7233")
     return f"{host}:{port}"
 
