@@ -80,6 +80,38 @@ The initial seed covers foundation and near-term waves:
 | AI Solo Developer | Planned agents default disabled, so each wave can ship in small reversible slices. |
 | Code Production | Mutating skills carry explicit idempotency flags, body-access flags, scopes, and approval tiers. |
 
+## Runtime Policy Gate
+
+Agents must not call adapters directly. The required runtime path is:
+
+`agent -> SkillPolicyGate -> approval/cost/body/idempotency checks -> adapter`
+
+The gate reads `alpha_agents`, `alpha_skill_registry`, and `alpha_agent_runs`
+before execution. It returns one of three outcomes:
+
+| Outcome | Meaning |
+|---|---|
+| `allow` | The agent may invoke the skill adapter. |
+| `approval_required` | The skill is T4/T5 and must route through the approval queue first. |
+| `deny` | The call violates registry policy and must not execute. |
+
+The first enforced checks are:
+
+- agent exists, is `active`, and is `enabled`
+- skill exists and is `active`
+- skill is listed in the agent's `allowed_skills`
+- skill scope is listed in the agent's `allowed_scopes`
+- body reads require the derived body scope, such as `email.body.read`
+- mutating idempotent skills require an idempotency key
+- estimated cost must fit inside the agent's daily cap
+- T4/T5 skills require an approval grant before execution
+
+MCP comes later as a transport adapter over this gate:
+
+`MCP tool -> Alpha MCP server -> SkillPolicyGate -> adapter`
+
+MCP must never call provider adapters directly.
+
 ## First Seed Agents
 
 | Agent | State | Note |
@@ -93,11 +125,12 @@ The initial seed covers foundation and near-term waves:
 
 ## Next Build Recommendation
 
-After the registry PR lands, the next production slice should be:
+After the policy-gate PR lands, the next production slice should be:
 
 1. Implement `notify.send_pushover`.
-2. Add a `network_watchdog` run loop in disabled-by-default mode.
-3. Enable read-only UniFi controller data behind the registry contract.
+2. Add a `SkillRunner` wrapper that calls `SkillPolicyGate` before adapter execution.
+3. Add a `network_watchdog` run loop in disabled-by-default mode.
+4. Enable read-only UniFi controller data behind the registry contract.
 
 That path gives Alpha a real new agent without making Gmail, iMessage, or child
 surfaces the first test case.
