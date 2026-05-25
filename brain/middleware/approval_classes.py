@@ -157,6 +157,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/dream/plan": ["write", "external_call", "cost_incurring"],
     "POST /v1/dream/review": ["write", "external_call", "cost_incurring"],
     "GET /v1/dream/sessions/{session_id}": ["read"],
+    "GET /v1/dream/sessions/{session_id}/briefing": ["read"],
     "POST /v1/dream/sessions/{session_id}/start": [
         "write",
         "external_call",
@@ -170,6 +171,8 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/dream/sessions/{session_id}/complete": ["write"],
     "POST /v1/dream/sessions/{session_id}/kill": ["write"],
     "POST /v1/dream/sessions/{session_id}/execute-readonly": ["write"],
+    "POST /v1/dream/sessions/{session_id}/execute-gated": ["write"],
+    "POST /v1/dream/sessions/{session_id}/briefing/publish": ["write"],
     "PATCH /v1/dream/steps/{step_id}": ["write", "cost_incurring"],
     # --- FastAPI built-in docs — T1 read ---
     "GET /docs": ["read"],

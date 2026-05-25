@@ -384,6 +384,8 @@ The April 18 blocker list above is superseded for Dream Mode orchestration.
 | Canonical Dream smoke script | ✅ | `scripts/smoke_dream_temporal.sh` |
 | First read-only execution slice | ✅ | PR #119 adds `/v1/dream/sessions/{id}/execute-readonly` |
 | Route classification for D3.5 routes | ✅ | PR #120 |
+| Write-capable approval gate | ✅ | `/v1/dream/sessions/{id}/execute-gated` queues autonomous side effects for T4/T5 approval before execution |
+| Dream morning briefing surface | ✅ | Dream cleanup publishes `alpha_briefings` rows; `/briefing` UI and Buddy event path surface them |
 
 ## Live Verification
 
@@ -404,8 +406,8 @@ The April 18 blocker list above is superseded for Dream Mode orchestration.
 
 | Item | Status | Notes |
 |---|---|---|
-| Write-capable autonomous execution | ⏳ NEXT | Must sit behind approval tiering, kill-switch checks, and post-action verification |
-| Morning briefing generation/UI | ⏳ NEXT | Existing Buddy events record workflow completion; dedicated briefing surface remains |
+| Write-capable autonomous execution | 🟡 GATED | Approval gate, kill-switch check, and verification/compensation metadata are live; arbitrary write handlers remain allowlist-only future work |
+| Morning briefing generation/UI | ✅ LIVE | Dream sessions synthesize `dream_mode` briefings into `alpha_briefings`, Buddy events, and the `/briefing` UI |
 | Dendrite/Matrix notification path | ⏳ DEFERRED | Spec item remains separate from core Temporal execution |
 | Voice UI port | ⏳ PENDING | Still outside Dream D3.4/D3.5 |
 

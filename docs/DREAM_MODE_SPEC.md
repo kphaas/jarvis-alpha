@@ -666,12 +666,15 @@ This V1 spec predates the Temporal D3 implementation. Current production shape i
 | Health | ✅ Live | `/v1/dream/health` checks worker heartbeat, Temporal reachability, stale running sessions |
 | Canonical smoke | ✅ Live | `scripts/smoke_dream_temporal.sh` creates, starts, polls, health-checks, and read-only executes |
 | Read-only execution | ✅ First slice | `/v1/dream/sessions/{id}/execute-readonly` completes allowlisted `tool` / `canary` inspection steps only |
-| Write execution | ⏳ Deferred | Requires approval gates, compensation, verification, and kill-switch checks |
-| Briefing/Dendrite UI | ⏳ Deferred | Buddy event exists; dedicated morning briefing UX remains |
+| Write execution | 🟡 Approval-gated | `/v1/dream/sessions/{id}/execute-gated` checks halt flags, queues T4/T5 approvals, blocks side-effecting steps, and records verification/compensation requirements. Actual write handlers stay allowlisted future work. |
+| Briefing/UI | ✅ Live | Dream cleanup publishes `dream_mode` rows to `alpha_briefings`; `/briefing`, `/briefings/{batchRunId}`, and Buddy events surface the morning summary. |
+| Dendrite/Matrix | ⏳ Deferred | Buddy/Pushover-style notification remains the production path unless Matrix is revived. |
 
 The current production safety line is intentional: Dream may plan, review, persist,
-and execute only narrowly allowlisted read-only inspection steps. Code, cloud, LLM,
-and write-capable tool execution remain skipped by the D3.5 executor.
+execute narrowly allowlisted read-only inspection steps, and queue side-effecting
+steps for human approval. Code, cloud, LLM, and write-capable tool execution are
+not invoked directly by the Dream runtime until a bounded allowlisted executor
+and post-action verifier exist.
 
 ---
 
