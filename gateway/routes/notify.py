@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import subprocess
+from dataclasses import dataclass
+from typing import Literal
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field, model_validator
@@ -22,6 +25,15 @@ router = APIRouter(prefix="/v1/notify", tags=["notify"])
 
 PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json"
 PUSHOVER_TIMEOUT_SEC = 10
+MATTERMOST_TIMEOUT_SEC = 10
+MATTERMOST_CHANNEL_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
+
+@dataclass(frozen=True, slots=True)
+class MattermostConfig:
+    base_url: str
+    bot_token: str
+    channel_id: str
 
 
 class PushoverNotifyRequest(BaseModel):
@@ -51,6 +63,26 @@ class PushoverNotifyResponse(BaseModel):
     provider: str = "pushover"
     request_id: str | None = None
     receipt: str | None = None
+
+
+class MattermostNotifyRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=250)
+    message: str = Field(min_length=1, max_length=4000)
+    severity: Literal["debug", "info", "warning", "error", "critical"] = "info"
+    channel_key: str = Field(
+        default="alerts",
+        min_length=1,
+        max_length=32,
+        pattern=MATTERMOST_CHANNEL_KEY_RE.pattern,
+    )
+    root_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class MattermostNotifyResponse(BaseModel):
+    status: str
+    provider: str = "mattermost"
+    post_id: str
+    channel_id: str
 
 
 def _authorize_gateway_call(authorization: str) -> None:
@@ -108,6 +140,122 @@ def _pushover_payload(req: PushoverNotifyRequest) -> dict[str, str]:
     return payload
 
 
+def _mattermost_secret(name: str) -> str:
+    try:
+        value = get_secret(name).strip()
+    except KeyError as exc:
+        logger.error("mattermost_notify missing_config key=%s", name)
+        raise HTTPException(
+            status_code=500, detail="Mattermost is not configured"
+        ) from exc
+    if not value:
+        logger.error("mattermost_notify empty_config key=%s", name)
+        raise HTTPException(status_code=500, detail="Mattermost is not configured")
+    return value
+
+
+def _mattermost_channel_id(channel_key: str) -> str:
+    if not MATTERMOST_CHANNEL_KEY_RE.fullmatch(channel_key):
+        raise HTTPException(status_code=422, detail="Invalid Mattermost channel key")
+
+    secret_name = f"MATTERMOST_CHANNEL_{channel_key.upper()}_ID"
+    try:
+        return get_secret(secret_name).strip()
+    except KeyError:
+        if channel_key == "alerts":
+            return _mattermost_secret("MATTERMOST_DEFAULT_CHANNEL_ID")
+        logger.error("mattermost_notify missing_channel_config key=%s", channel_key)
+        raise HTTPException(
+            status_code=500, detail="Mattermost channel is not configured"
+        )
+
+
+def _mattermost_config(channel_key: str) -> MattermostConfig:
+    base_url = _mattermost_secret("MATTERMOST_URL").rstrip("/")
+    if not base_url.startswith(("https://", "http://")):
+        logger.error("mattermost_notify invalid_base_url")
+        raise HTTPException(status_code=500, detail="Mattermost URL is invalid")
+
+    bot_token = _mattermost_secret("MATTERMOST_BOT_TOKEN")
+    if len(bot_token) < 20:
+        logger.error("mattermost_notify invalid_bot_token")
+        raise HTTPException(status_code=500, detail="Mattermost token is invalid")
+
+    channel_id = _mattermost_channel_id(channel_key)
+    if len(channel_id) < 8:
+        logger.error("mattermost_notify invalid_channel_id key=%s", channel_key)
+        raise HTTPException(status_code=500, detail="Mattermost channel is invalid")
+
+    return MattermostConfig(
+        base_url=base_url,
+        bot_token=bot_token,
+        channel_id=channel_id,
+    )
+
+
+def _mattermost_message(req: MattermostNotifyRequest) -> str:
+    return "\n".join(
+        [
+            f"**{req.title}**",
+            "",
+            req.message,
+            "",
+            f"Severity: `{req.severity}`",
+        ]
+    )
+
+
+def _mattermost_payload(req: MattermostNotifyRequest) -> tuple[MattermostConfig, dict]:
+    config = _mattermost_config(req.channel_key)
+    payload = {
+        "channel_id": config.channel_id,
+        "message": _mattermost_message(req),
+        "props": {
+            "jarvis": {
+                "severity": req.severity,
+                "channel_key": req.channel_key,
+            }
+        },
+    }
+    if req.root_id:
+        payload["root_id"] = req.root_id
+    return config, payload
+
+
+def _post_mattermost_sync(
+    config: MattermostConfig,
+    payload: dict,
+) -> tuple[int, str]:
+    args = [
+        "curl",
+        "-sS",
+        "-m",
+        str(MATTERMOST_TIMEOUT_SEC),
+        "-X",
+        "POST",
+        "-H",
+        "Content-Type: application/json",
+        "-H",
+        f"Authorization: Bearer {config.bot_token}",
+        "-d",
+        json.dumps(payload),
+        f"{config.base_url}/api/v4/posts",
+    ]
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=MATTERMOST_TIMEOUT_SEC + 5,
+            check=False,
+        )
+        return result.returncode, result.stdout
+    except subprocess.TimeoutExpired:
+        return 124, '{"message":"timeout"}'
+    except Exception as exc:
+        return 1, json.dumps({"message": str(exc)})
+
+
 @router.post("/pushover", response_model=PushoverNotifyResponse)
 async def pushover_notify(
     req: PushoverNotifyRequest,
@@ -136,4 +284,40 @@ async def pushover_notify(
         status="sent",
         request_id=parsed.get("request"),
         receipt=parsed.get("receipt"),
+    )
+
+
+@router.post("/mattermost", response_model=MattermostNotifyResponse)
+async def mattermost_notify(
+    req: MattermostNotifyRequest,
+    authorization: str = Header(...),
+) -> MattermostNotifyResponse:
+    _authorize_gateway_call(authorization)
+    config, payload = _mattermost_payload(req)
+    rc, body = await asyncio.to_thread(_post_mattermost_sync, config, payload)
+    if rc != 0:
+        logger.error("mattermost_notify curl_failed rc=%s", rc)
+        raise HTTPException(status_code=502, detail="Mattermost transport failed")
+
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError as exc:
+        logger.error("mattermost_notify non_json_response")
+        raise HTTPException(
+            status_code=502, detail="Mattermost returned non-JSON"
+        ) from exc
+
+    post_id = parsed.get("id")
+    channel_id = parsed.get("channel_id")
+    if not post_id or not channel_id:
+        logger.error("mattermost_notify rejected has_message=%s", "message" in parsed)
+        raise HTTPException(status_code=502, detail="Mattermost rejected notification")
+
+    logger.info(
+        "mattermost_notify sent post_id=%s channel_key=%s", post_id, req.channel_key
+    )
+    return MattermostNotifyResponse(
+        status="sent",
+        post_id=post_id,
+        channel_id=channel_id,
     )

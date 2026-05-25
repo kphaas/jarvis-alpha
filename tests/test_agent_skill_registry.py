@@ -13,6 +13,8 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     names = {skill.name for skill in INITIAL_SKILLS}
 
     assert len(INITIAL_SKILLS) >= 10
+    assert "notify.send" in names
+    assert "notify.send_mattermost" in names
     assert "notify.send_pushover" in names
     assert "unifi.wan_status" in names
     assert "gmail.send" in names
@@ -22,9 +24,11 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert "smarthome.run_trusted_scene" in names
     assert "smarthome.unlock" in names
     assert "smarthome.alarm_disarm" in names
-    assert {skill.name: skill for skill in INITIAL_SKILLS}[
-        "notify.send_pushover"
-    ].status == "active"
+    skills = {skill.name: skill for skill in INITIAL_SKILLS}
+    assert skills["notify.send"].status == "active"
+    assert skills["notify.send"].metadata["primary"] == "mattermost"
+    assert skills["notify.send_mattermost"].status == "active"
+    assert skills["notify.send_pushover"].status == "active"
 
 
 def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_agents():

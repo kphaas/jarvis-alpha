@@ -50,6 +50,8 @@ the contract, persistence, and guarded control surface.
 
 The initial seed covers foundation and near-term waves:
 
+- `notify.send`
+- `notify.send_mattermost`
 - `notify.send_pushover`
 - `unifi.wan_status`
 - `unifi.clients`
@@ -118,25 +120,38 @@ MCP must never call provider adapters directly.
 
 | Agent | State | Note |
 |---|---|---|
-| `buddy` | active/enabled | Existing live housekeeping agent. |
+| `buddy` | active/enabled | Existing live housekeeping agent. Allowed to notify through Mattermost primary and Pushover fallback. |
 | `dream_mode` | active/enabled | Existing Temporal worker path. |
 | `ken_voice` | planned/disabled | First low-risk new agent candidate. Draft-only, no side effects. |
 | `network_watchdog` | planned/disabled | First read-only monitoring agent candidate. |
 | `inbox_watcher` | planned/disabled | Gmail read/classification path. |
 | `family_concierge` | planned/disabled | Child-facing request router. |
 
+## Notification Surface
+
+Mattermost is the primary Alpha ChatOps surface. Agents should call
+`notify.send`, not a provider-specific adapter. The provider-neutral skill sends
+to Mattermost through Gateway and can fall back to Pushover when ChatOps is
+unavailable.
+
+| Skill | Role | Provider | Notes |
+|---|---|---|---|
+| `notify.send` | Stable agent contract | Mattermost primary, Pushover fallback | T2, mutating, idempotency required. |
+| `notify.send_mattermost` | Direct ChatOps send | Mattermost REST API | Gateway owns `MATTERMOST_URL`, `MATTERMOST_BOT_TOKEN`, and channel IDs. |
+| `notify.send_pushover` | Wake-up fallback | Pushover | Gateway owns `PUSHOVER_USER_KEY` and `PUSHOVER_APP_TOKEN`. |
+
+Mattermost channel routing uses secret-backed channel keys. The first expected
+keys are `alerts`, `agents`, `dream`, and `approvals`, backed by
+`MATTERMOST_CHANNEL_<KEY>_ID` secrets. `MATTERMOST_DEFAULT_CHANNEL_ID` is the
+fallback for `alerts`.
+
 ## Next Build Recommendation
 
-`notify.send_pushover` is active. It is a Gateway-egress skill: Brain calls
-Gateway over Tailscale with `curl`; Gateway owns `PUSHOVER_USER_KEY` and
-`PUSHOVER_APP_TOKEN` and calls the Pushover API. The skill is T2, mutating, and
-requires an idempotency key.
-
-After the Pushover skill PR lands, the next production slice should be:
+After the Mattermost notification PR lands, the next production slice should be:
 
 1. Add a `network_watchdog` run loop in disabled-by-default mode.
 2. Enable read-only UniFi controller data behind the registry contract.
-3. Route watchdog alerts through `notify.send_pushover`.
+3. Route watchdog alerts through `notify.send`.
 
 That path gives Alpha a real new agent without making Gmail, iMessage, or child
 surfaces the first test case.
