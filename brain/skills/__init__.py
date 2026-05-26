@@ -1,5 +1,10 @@
 """Skill execution primitives."""
 
+from brain.skills.approval_bridge import (
+    SkillApprovalBridge,
+    SkillApprovalItem,
+    skill_parameters_hash,
+)
 from brain.skills.notify import (
     MattermostSkillError,
     MattermostSkillPayload,
@@ -11,7 +16,7 @@ from brain.skills.notify import (
     send_notify,
     send_pushover,
 )
-from brain.skills.handlers import all_skill_handlers
+from brain.skills.handlers import all_skill_handlers, build_skill_runner
 from brain.skills.obsidian import (
     ObsidianSkillError,
     notes_search,
@@ -40,6 +45,10 @@ __all__ = [
     "SkillRunner",
     "SkillRunResult",
     "all_skill_handlers",
+    "build_skill_runner",
+    "SkillApprovalBridge",
+    "SkillApprovalItem",
+    "skill_parameters_hash",
     "MattermostSkillError",
     "MattermostSkillPayload",
     "NotifySkillError",
