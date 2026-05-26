@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 import asyncpg
 
 from brain.agents.events import AgentEvent, emit_agent_event
+from brain.agents.chatops_smoke import maybe_run_chatops_smoke
+from brain.agents.network_watchdog import maybe_run_network_watchdog
 from brain.services.temporal_storage_monitor import (
     collect_temporal_storage_snapshot,
     temporal_storage_summary_body,
@@ -166,6 +168,7 @@ async def _run_cycle(pool: asyncpg.Pool) -> None:
     new_trace_id()
     await _expire_pending_approvals(pool)
     await _maybe_write_temporal_storage_summary(pool)
+    await _maybe_run_managed_agents(pool)
 
     async with pool.acquire() as conn:
         users = await conn.fetch(
@@ -212,6 +215,14 @@ async def _run_cycle(pool: asyncpg.Pool) -> None:
             logger.error("Buddy cycle error for user %s: %s", user_id, e)
 
     logger.info("Buddy cycle complete at %s", datetime.now(timezone.utc).isoformat())
+
+
+async def _maybe_run_managed_agents(pool: asyncpg.Pool) -> None:
+    for runner in (maybe_run_chatops_smoke, maybe_run_network_watchdog):
+        try:
+            await runner(pool)
+        except Exception as exc:
+            logger.warning("managed agent runner failed: %s", exc)
 
 
 async def run_buddy() -> None:

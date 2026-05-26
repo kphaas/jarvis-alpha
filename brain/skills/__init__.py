@@ -17,6 +17,13 @@ from brain.skills.policy_gate import (
     SkillPolicyGate,
 )
 from brain.skills.runner import SkillCall, SkillRunResult, SkillRunner
+from brain.skills.unifi import (
+    UniFiSkillError,
+    clients,
+    health_check,
+    unifi_skill_handlers,
+    wan_status,
+)
 
 __all__ = [
     "SkillCall",
@@ -34,4 +41,9 @@ __all__ = [
     "send_mattermost",
     "send_notify",
     "send_pushover",
+    "UniFiSkillError",
+    "clients",
+    "health_check",
+    "unifi_skill_handlers",
+    "wan_status",
 ]
