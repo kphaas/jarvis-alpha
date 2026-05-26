@@ -1,0 +1,228 @@
+"""Mattermost ChatOps command endpoint.
+
+Phase 2 is intentionally read-only. Mattermost can ask Alpha for status, but it
+cannot approve, kill, deploy, or mutate state through this route.
+"""
+
+from __future__ import annotations
+
+import hmac
+from dataclasses import dataclass
+
+from fastapi import APIRouter, Form, HTTPException
+from pydantic import BaseModel
+
+from brain.config.secrets import get_secret
+from brain.db.rls import platform_admin_connection
+from jarvis_common.logging_config import get_logger
+
+logger = get_logger("alpha_brain")
+
+router = APIRouter(prefix="/v1/chatops", tags=["chatops"])
+
+
+class MattermostCommandResponse(BaseModel):
+    response_type: str = "ephemeral"
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class AlphaCommand:
+    name: str
+    args: tuple[str, ...] = ()
+
+
+def _check_mattermost_token(token: str) -> None:
+    try:
+        expected = get_secret("MATTERMOST_COMMAND_TOKEN").strip()
+    except KeyError as exc:
+        logger.error("mattermost_command missing_token")
+        raise HTTPException(
+            status_code=503,
+            detail="Mattermost commands are not configured",
+        ) from exc
+
+    if not expected or not hmac.compare_digest(token, expected):
+        logger.warning("mattermost_command bad_token")
+        raise HTTPException(status_code=403, detail="Invalid Mattermost token")
+
+
+def parse_alpha_command(text: str | None) -> AlphaCommand:
+    parts = (text or "help").strip().split()
+    if not parts:
+        return AlphaCommand(name="help")
+    return AlphaCommand(name=parts[0].lower(), args=tuple(parts[1:]))
+
+
+@router.post("/mattermost/command", response_model=MattermostCommandResponse)
+async def mattermost_command(
+    token: str = Form(...),
+    text: str = Form(default="help"),
+    user_name: str = Form(default="unknown"),
+) -> MattermostCommandResponse:
+    _check_mattermost_token(token)
+    command = parse_alpha_command(text)
+    audit_actor = f"mattermost:{user_name or 'unknown'}"
+
+    try:
+        async with platform_admin_connection(
+            source="http",
+            audit_actor=audit_actor,
+        ) as conn:
+            if command.name in {"help", ""}:
+                body = _help_text()
+            elif command.name == "health":
+                body = await _health_text(conn)
+            elif command.name == "agents":
+                body = await _agents_text(conn)
+            elif command.name == "approvals":
+                body = await _approvals_text(conn)
+            elif command.name in {"dreams", "dream"}:
+                body = await _dreams_text(conn, command.args)
+            else:
+                body = _unknown_text(command.name)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "mattermost_command failed command=%s", command.name, exc_info=True
+        )
+        raise HTTPException(status_code=500, detail="Command failed") from exc
+
+    logger.info("mattermost_command ok user=%s command=%s", user_name, command.name)
+    return MattermostCommandResponse(text=body)
+
+
+def _help_text() -> str:
+    return "\n".join(
+        [
+            "**Alpha read-only commands**",
+            "`/alpha health` - Brain, Temporal, and Dream worker status",
+            "`/alpha agents` - agent registry summary",
+            "`/alpha approvals` - pending approval queue",
+            "`/alpha dreams [n]` - recent Dream sessions",
+        ]
+    )
+
+
+def _unknown_text(name: str) -> str:
+    return f"Unknown Alpha command `{name}`.\n\n{_help_text()}"
+
+
+async def _health_text(conn) -> str:
+    counts = await conn.fetchrow(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE status = 'running') AS running_dreams,
+            COUNT(*) FILTER (WHERE status = 'pending') AS pending_dreams,
+            COUNT(*) FILTER (WHERE status = 'failed') AS failed_dreams
+        FROM public.alpha_dream_sessions
+        """
+    )
+    pending_approvals = await conn.fetchval(
+        """
+        SELECT COUNT(*)
+        FROM public.alpha_approval_queue
+        WHERE status = 'pending'
+          AND expires_at > NOW()
+        """
+    )
+    enabled_agents = await conn.fetchval(
+        """
+        SELECT COUNT(*)
+        FROM public.alpha_agents
+        WHERE status = 'active'
+          AND enabled = true
+        """
+    )
+    return "\n".join(
+        [
+            "**Alpha Health**",
+            f"Active agents: `{enabled_agents or 0}`",
+            f"Pending approvals: `{pending_approvals or 0}`",
+            (
+                "Dream sessions: "
+                f"`{counts['running_dreams'] or 0}` running, "
+                f"`{counts['pending_dreams'] or 0}` pending, "
+                f"`{counts['failed_dreams'] or 0}` failed"
+            ),
+        ]
+    )
+
+
+async def _agents_text(conn) -> str:
+    rows = await conn.fetch(
+        """
+        SELECT agent_id, display_name, status, enabled, risk_tier, cadence, metadata
+        FROM public.alpha_agents
+        ORDER BY status ASC, enabled DESC, agent_id ASC
+        LIMIT 20
+        """
+    )
+    lines = ["**Alpha Agents**"]
+    for row in rows:
+        enabled = "on" if row["enabled"] else "off"
+        lines.append(
+            f"- `{row['agent_id']}` {enabled} · {row['status']} · "
+            f"{row['risk_tier']} · {row['cadence'] or 'manual'}"
+        )
+    return "\n".join(lines)
+
+
+async def _approvals_text(conn) -> str:
+    rows = await conn.fetch(
+        """
+        SELECT id, risk_tier, description, requested_at, expires_at
+        FROM public.alpha_approval_queue
+        WHERE status = 'pending'
+          AND expires_at > NOW()
+        ORDER BY requested_at ASC
+        LIMIT 5
+        """
+    )
+    if not rows:
+        return "**Alpha Approvals**\nNo pending approvals."
+
+    lines = ["**Alpha Approvals**"]
+    for row in rows:
+        lines.append(
+            f"- `{row['risk_tier']}` `{row['id']}` {row['description']} "
+            f"(expires {row['expires_at'].isoformat()})"
+        )
+    return "\n".join(lines)
+
+
+async def _dreams_text(conn, args: tuple[str, ...]) -> str:
+    limit = _bounded_limit(args, default=5, maximum=10)
+    rows = await conn.fetch(
+        """
+        SELECT id, status, trigger, goal_type, step_count, steps_completed,
+               steps_failed, steps_blocked, cost_actual_usd, created_at
+        FROM public.alpha_dream_sessions
+        ORDER BY created_at DESC
+        LIMIT $1
+        """,
+        limit,
+    )
+    if not rows:
+        return "**Alpha Dreams**\nNo Dream sessions found."
+
+    lines = [f"**Alpha Dreams** last `{limit}`"]
+    for row in rows:
+        lines.append(
+            f"- `#{row['id']}` {row['status']} · {row['goal_type']} · "
+            f"{row['steps_completed']}/{row['step_count']} complete · "
+            f"failed `{row['steps_failed']}` blocked `{row['steps_blocked']}` · "
+            f"${float(row['cost_actual_usd'] or 0):.2f}"
+        )
+    return "\n".join(lines)
+
+
+def _bounded_limit(args: tuple[str, ...], *, default: int, maximum: int) -> int:
+    if not args:
+        return default
+    try:
+        value = int(args[0])
+    except ValueError:
+        return default
+    return max(1, min(value, maximum))

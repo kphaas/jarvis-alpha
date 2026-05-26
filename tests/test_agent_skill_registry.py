@@ -16,6 +16,7 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert "notify.send" in names
     assert "notify.send_mattermost" in names
     assert "notify.send_pushover" in names
+    assert "chatops.command_read" in names
     assert "unifi.wan_status" in names
     assert "gmail.send" in names
     assert "gmail.send_vip" in names
@@ -38,8 +39,13 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
 
     assert agents["buddy"].enabled is True
     assert agents["dream_mode"].enabled is True
+    assert agents["approval_triage"].enabled is True
+    assert agents["watchdog"].enabled is True
     assert agents["ken_voice"].enabled is False
     assert agents["network_watchdog"].enabled is False
+    assert "notify.send" in agents["dream_mode"].allowed_skills
+    assert "notify.send" in agents["approval_triage"].allowed_skills
+    assert agents["approval_triage"].metadata["mattermost_channel_key"] == "needs_input"
 
 
 def test_skill_name_requires_dot_separated_snake_case():

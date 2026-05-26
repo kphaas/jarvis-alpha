@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
+from brain.agents.events import AgentEvent, emit_agent_event
 from brain.db.pool import get_pool
 from brain.db.rls import platform_admin_connection, rls_connection
 from brain.dream.briefing import DREAM_BRIEFING_SOURCE, build_dream_briefing
@@ -178,6 +179,38 @@ def _request_audit_actor(request: Request) -> str:
         or getattr(request.state, "user_id", None)
         or "system"
     )
+
+
+async def _emit_dream_event(
+    pool,
+    *,
+    event_type: str,
+    title: str,
+    message: str,
+    severity: str = "info",
+    session_id: int,
+    payload: dict | None = None,
+) -> None:
+    try:
+        await emit_agent_event(
+            AgentEvent(
+                agent_id="dream_mode",
+                event_type=event_type,
+                title=title,
+                message=message,
+                severity=severity,
+                payload={"session_id": session_id, **(payload or {})},
+                correlation_id=f"dream:{session_id}:{event_type}",
+            ),
+            pool=pool,
+        )
+    except Exception:
+        logger.error(
+            "DREAM_AGENT_EVENT_FAILED session_id=%d event_type=%s",
+            session_id,
+            event_type,
+            exc_info=True,
+        )
 
 
 async def _fetch_dream_session_and_steps(conn, session_id: int):
@@ -502,6 +535,22 @@ async def start_session(request: Request, session_id: int):
         started.workflow_id,
         started.run_id,
     )
+    await _emit_dream_event(
+        pool,
+        event_type="dream.started",
+        title=f"Dream session {session_id} started",
+        message=(
+            f"Temporal workflow `{started.workflow_id}` started for Dream "
+            f"session `{session_id}`."
+        ),
+        session_id=session_id,
+        payload={
+            "workflow_id": started.workflow_id,
+            "run_id": started.run_id,
+            "trigger": session["trigger"],
+            "goal_type": session["goal_type"],
+        },
+    )
     return {
         "session_id": session_id,
         "status": "running",
@@ -573,6 +622,15 @@ async def kill_session(request: Request, session_id: int, req: KillRequest):
             )
     logger.warning(
         "DREAM_SESSION_KILLED session_id=%d reason=%s", session_id, req.reason
+    )
+    await _emit_dream_event(
+        pool,
+        event_type="dream.killed",
+        title=f"Dream session {session_id} killed",
+        message=f"Dream session `{session_id}` was killed: {req.reason}",
+        severity="critical",
+        session_id=session_id,
+        payload={"reason": req.reason, "temporal_signal": signal_status},
     )
     return {
         "session_id": session_id,
@@ -1009,6 +1067,23 @@ async def execute_gated_session(
         len(already_queued),
         len(skipped),
     )
+    if queued:
+        await _emit_dream_event(
+            pool,
+            event_type="dream.approvals_queued",
+            title=f"Dream session {session_id} queued write approvals",
+            message=(
+                f"Dream session `{session_id}` queued `{len(queued)}` write "
+                "approval request(s)."
+            ),
+            severity="needs_input",
+            session_id=session_id,
+            payload={
+                "queued": queued,
+                "already_queued": already_queued,
+                "skipped_count": len(skipped),
+            },
+        )
     return {
         "session_id": session_id,
         "queued": queued,
@@ -1254,6 +1329,24 @@ async def execute_approved_session(
         len(failed),
         len(skipped),
     )
+    if executed or failed:
+        await _emit_dream_event(
+            pool,
+            event_type="dream.approved_execution",
+            title=f"Dream session {session_id} approved execution complete",
+            message=(
+                f"Dream session `{session_id}` approved writes: "
+                f"`{len(executed)}` executed, `{len(failed)}` failed, "
+                f"`{len(skipped)}` skipped."
+            ),
+            severity="error" if failed else "info",
+            session_id=session_id,
+            payload={
+                "executed": executed,
+                "failed": failed,
+                "skipped": skipped,
+            },
+        )
     return {
         "session_id": session_id,
         "executed": executed,

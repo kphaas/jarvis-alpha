@@ -29,8 +29,8 @@ The first implementation slice creates the control plane before new agents run:
 |---|---|
 | `alpha_skill_registry` | Durable catalog of callable skills, scopes, approval tier, mutability, body access, and idempotency requirements. |
 | `alpha_agents` | Durable catalog of managed agents, risk tier, enabled state, allowed skills/scopes, launch label, cost cap, and policy metadata. |
-| `alpha_agent_runs` | Future run ledger for managed agent executions. |
-| `alpha_agent_events` | Future event ledger for agent observability. |
+| `alpha_agent_runs` | Run ledger for managed agent executions. |
+| `alpha_agent_events` | Durable event ledger for agent observability, notification delivery status, and Mattermost routing. |
 
 ## API Surface
 
@@ -39,12 +39,16 @@ The first implementation slice creates the control plane before new agents run:
 | `GET /v1/skills` | List registered skills. | T2 security read |
 | `GET /v1/skills/{skill_name}` | Read one skill spec. | T2 security read |
 | `GET /v1/agents` | List registered agents. | T2 security read |
+| `GET /v1/agents/status` | List agent health, last run, and last event summary. | T2 security read |
 | `GET /v1/agents/{agent_id}` | Read one agent spec. | T2 security read |
+| `GET /v1/agents/{agent_id}/events` | Read recent durable AgentEvents. | T2 security read |
+| `GET /v1/agents/{agent_id}/runs` | Read recent agent run ledger rows. | T2 security read |
 | `POST /v1/agents/{agent_id}/enable` | Enable an agent in the registry. | T5 admin control |
 | `POST /v1/agents/{agent_id}/disable` | Disable an agent in the registry. | T5 admin control |
+| `POST /v1/chatops/mattermost/command` | Token-authenticated read-only Mattermost slash command endpoint. | T2 security read |
 
-The first registry PR does not create new long-running agents. It only creates
-the contract, persistence, and guarded control surface.
+The registry does not make Mattermost the internal coordination bus. Agents
+persist AgentEvents first, then optionally notify the operator surface.
 
 ## First Seed Skills
 
@@ -53,6 +57,7 @@ The initial seed covers foundation and near-term waves:
 - `notify.send`
 - `notify.send_mattermost`
 - `notify.send_pushover`
+- `chatops.command_read`
 - `unifi.wan_status`
 - `unifi.clients`
 - `unifi.health_check`
@@ -121,7 +126,9 @@ MCP must never call provider adapters directly.
 | Agent | State | Note |
 |---|---|---|
 | `buddy` | active/enabled | Existing live housekeeping agent. Allowed to notify through Mattermost primary and Pushover fallback. |
-| `dream_mode` | active/enabled | Existing Temporal worker path. |
+| `dream_mode` | active/enabled | Existing Temporal worker path. Emits start, approval, kill, and final-state AgentEvents. |
+| `approval_triage` | active/enabled | Approval queue events routed to `needs-input`. |
+| `watchdog` | active/enabled | Infrastructure health events routed to `alerts`. |
 | `ken_voice` | planned/disabled | First low-risk new agent candidate. Draft-only, no side effects. |
 | `network_watchdog` | planned/disabled | First read-only monitoring agent candidate. |
 | `inbox_watcher` | planned/disabled | Gmail read/classification path. |
@@ -148,13 +155,21 @@ channel override for `needs-input` and `alerts`. Optional
 `MATTERMOST_CHANNEL_<KEY>_NAME` secrets can override channel names; bot REST
 mode still supports `MATTERMOST_CHANNEL_<KEY>_ID` for later phases.
 
+The first Mattermost command surface is read-only. Configure one slash command,
+for example `/alpha`, to post to `/v1/chatops/mattermost/command` with the
+shared `MATTERMOST_COMMAND_TOKEN` on Brain. Supported commands are `health`,
+`agents`, `approvals`, and `dreams [n]`. No Mattermost route can approve, kill,
+deploy, change caps, or mutate Alpha state in v0.9.
+
 ## Next Build Recommendation
 
-After the Mattermost notification PR lands, the next production slice should be:
+After the AgentEvent and Mattermost command slice lands, the next production
+slice should be:
 
 1. Add a `network_watchdog` run loop in disabled-by-default mode.
 2. Enable read-only UniFi controller data behind the registry contract.
-3. Route watchdog alerts through `notify.send`.
+3. Emit new-device, WAN flap, switch/AP health, and controller-error
+   AgentEvents through `notify.send`.
 
 That path gives Alpha a real new agent without making Gmail, iMessage, or child
 surfaces the first test case.

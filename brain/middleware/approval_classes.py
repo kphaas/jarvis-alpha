@@ -226,9 +226,14 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/skills": ["read", "security_read"],
     "GET /v1/skills/{skill_name}": ["read", "security_read"],
     "GET /v1/agents": ["read", "security_read"],
+    "GET /v1/agents/status": ["read", "security_read"],
     "GET /v1/agents/{agent_id}": ["read", "security_read"],
+    "GET /v1/agents/{agent_id}/events": ["read", "security_read"],
+    "GET /v1/agents/{agent_id}/runs": ["read", "security_read"],
     "POST /v1/agents/{agent_id}/enable": ["admin"],
     "POST /v1/agents/{agent_id}/disable": ["admin"],
+    # --- ChatOps command ingress — read-only, token-authenticated by route ---
+    "POST /v1/chatops/mattermost/command": ["read", "security_read"],
     # --- Admin panel ---
     "GET /admin": ["admin"],
     "POST /admin": ["admin"],

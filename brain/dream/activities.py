@@ -11,6 +11,8 @@ import json
 
 from temporalio import activity
 
+from brain.agents.events import AgentEvent, emit_agent_event
+from brain.db.pool import get_pool
 from brain.dream._db import activity_db
 from brain.dream.briefing import build_dream_briefing
 from brain.dream.planning import (
@@ -295,6 +297,31 @@ async def flush_cleanup_activity(
             priority,
             json.dumps(buddy_payload),
         )
+
+    pool = get_pool()
+    if pool:
+        try:
+            await emit_agent_event(
+                AgentEvent(
+                    agent_id="dream_mode",
+                    event_type=f"dream.{final_status}",
+                    title=title,
+                    message=body,
+                    severity="error"
+                    if final_status == "failed"
+                    else "critical"
+                    if final_status in {"killed", "aborted"}
+                    else "info",
+                    payload=buddy_payload,
+                    correlation_id=f"dream:{cleanup_spec.session_id}:cleanup",
+                ),
+                pool=pool,
+            )
+        except Exception:
+            activity.logger.exception(
+                "flush_cleanup_activity agent event failed session_id=%s",
+                cleanup_spec.session_id,
+            )
 
     return {
         "session_status": final_status,

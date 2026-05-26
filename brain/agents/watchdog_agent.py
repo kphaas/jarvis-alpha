@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 
 import asyncpg
 
+from brain.agents.events import AgentEvent, emit_agent_event
 from brain.config.secrets import get_secret
 from jarvis_common.logging_config import get_logger, new_trace_id
 
@@ -119,7 +120,7 @@ async def _log_event(
 ) -> None:
     try:
         async with pool.acquire() as conn:
-            await conn.execute(
+            event_id = await conn.fetchval(
                 "SELECT public.record_watchdog_event($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
                 svc.name,
                 svc.node,
@@ -144,8 +145,79 @@ async def _log_event(
             current_state,
             action_taken or "-",
         )
+        try:
+            await emit_agent_event(
+                AgentEvent(
+                    agent_id="watchdog",
+                    event_type=f"watchdog.{event_type}",
+                    title=f"Watchdog {event_type}: {svc.name}",
+                    message=_watchdog_message(
+                        svc=svc,
+                        event_type=event_type,
+                        previous_state=previous_state,
+                        current_state=current_state,
+                        http_status=http_status,
+                        latency_ms=latency_ms,
+                        error_message=error_message,
+                        action_taken=action_taken,
+                    ),
+                    severity=_watchdog_severity(event_type),
+                    channel_key="alerts",
+                    mattermost_source="watchdog",
+                    payload={
+                        "watchdog_event_id": str(event_id) if event_id else None,
+                        "service_name": svc.name,
+                        "node": svc.node,
+                        "event_type": event_type,
+                        "previous_state": previous_state,
+                        "current_state": current_state,
+                        "http_status": http_status,
+                        "latency_ms": latency_ms,
+                        "error_message": error_message,
+                        "action_taken": action_taken,
+                    },
+                    correlation_id=f"watchdog:{svc.trace_id}:{event_type}",
+                ),
+                pool=pool,
+            )
+        except Exception:
+            logger.error("failed to emit watchdog agent event", exc_info=True)
     except Exception as e:
         logger.error("failed to log watchdog event: %s", e, exc_info=True)
+
+
+def _watchdog_severity(event_type: str) -> str:
+    if event_type in {"down", "restart_failed"}:
+        return "critical"
+    if event_type in {"degraded", "check_error", "restart_triggered"}:
+        return "warning"
+    return "info"
+
+
+def _watchdog_message(
+    *,
+    svc: ServiceState,
+    event_type: str,
+    previous_state: str,
+    current_state: str,
+    http_status: int | None,
+    latency_ms: float | None,
+    error_message: str | None,
+    action_taken: str | None,
+) -> str:
+    lines = [
+        f"Service `{svc.name}` on `{svc.node}` reported `{event_type}`.",
+        f"State: `{previous_state}` -> `{current_state}`.",
+    ]
+    if http_status is not None:
+        lines.append(f"HTTP: `{http_status}`.")
+    if latency_ms is not None:
+        lines.append(f"Latency: `{latency_ms:.0f}ms`.")
+    if error_message:
+        lines.append(f"Error: {error_message}")
+    if action_taken:
+        lines.append(f"Action: {action_taken}")
+    return "\n".join(lines)
 
 
 def _is_local_service(service_name: str) -> bool:
