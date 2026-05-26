@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 import asyncpg
 
+from brain.agents.events import AgentEvent, emit_agent_event
 from brain.services.temporal_storage_monitor import (
     collect_temporal_storage_snapshot,
     temporal_storage_summary_body,
@@ -50,6 +51,13 @@ def _normalize_buddy_priority(priority: int | str | None) -> int:
     return 2
 
 
+def _payload_for_agent_event(payload_json: str):
+    try:
+        return json.loads(payload_json)
+    except (TypeError, json.JSONDecodeError):
+        return {"raw": str(payload_json)}
+
+
 async def _write_event(
     pool: asyncpg.Pool,
     *,
@@ -69,7 +77,7 @@ async def _write_event(
     p_event_type = _normalize_buddy_event_type(event_type)
 
     async with pool.acquire() as conn:
-        return await conn.fetchval(
+        event_id = await conn.fetchval(
             "SELECT public.record_buddy_event($1, $2, $3, $4, $5, $6, $7)",
             user_id if user_id else "system",
             p_event_type,
@@ -79,6 +87,29 @@ async def _write_event(
             source,
             payload_json,
         )
+    if p_priority >= 3 or p_event_type == "alert":
+        try:
+            await emit_agent_event(
+                AgentEvent(
+                    agent_id="buddy",
+                    event_type=f"buddy.{p_event_type}",
+                    title=title,
+                    message=body or title,
+                    severity="warning" if p_priority < 4 else "critical",
+                    payload={
+                        "buddy_event_id": str(event_id),
+                        "source": source,
+                        "user_id": user_id or "system",
+                        "payload": _payload_for_agent_event(payload_json),
+                    },
+                    correlation_id=f"buddy:{event_id}",
+                ),
+                pool=pool,
+            )
+        except Exception:
+            logger.error("buddy agent event notify failed", exc_info=True)
+
+    return event_id
 
 
 # TD: alpha_approval_queue/audit writes are bare DML. Wrap in SECDEF when those

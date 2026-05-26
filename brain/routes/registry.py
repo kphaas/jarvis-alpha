@@ -60,6 +60,70 @@ class AgentListOut(BaseModel):
     agents: list[AgentOut]
 
 
+class AgentEventOut(BaseModel):
+    id: str
+    agent_id: str
+    run_id: str | None = None
+    event_type: str
+    severity: str
+    title: str
+    message: str
+    correlation_id: str | None = None
+    channel_key: str
+    notification_status: str
+    notification_error: str | None = None
+    payload: dict = Field(default_factory=dict)
+    notification_result: dict = Field(default_factory=dict)
+    created_at: str
+    notified_at: str | None = None
+
+
+class AgentEventListOut(BaseModel):
+    count: int
+    events: list[AgentEventOut]
+
+
+class AgentRunOut(BaseModel):
+    id: str
+    agent_id: str
+    status: str
+    trigger_type: str
+    trace_id: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    cost_usd: float
+    error_text: str | None = None
+    metadata: dict = Field(default_factory=dict)
+    created_at: str
+
+
+class AgentRunListOut(BaseModel):
+    count: int
+    runs: list[AgentRunOut]
+
+
+class AgentStatusOut(BaseModel):
+    agent_id: str
+    display_name: str
+    status: str
+    enabled: bool
+    risk_tier: str
+    cadence: str | None = None
+    launch_label: str | None = None
+    mattermost_channel_key: str | None = None
+    last_run_status: str | None = None
+    last_run_at: str | None = None
+    last_event_type: str | None = None
+    last_event_severity: str | None = None
+    last_event_title: str | None = None
+    last_event_at: str | None = None
+
+
+class AgentStatusListOut(BaseModel):
+    count: int
+    agents: list[AgentStatusOut]
+
+
 def _jsonb(value) -> dict:
     if value is None:
         return {}
@@ -103,6 +167,70 @@ def _agent_from_row(row) -> AgentOut:
         model_policy=_jsonb(row["model_policy"]),
         approval_policy=_jsonb(row["approval_policy"]),
         metadata=_jsonb(row["metadata"]),
+    )
+
+
+def _iso(value) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _agent_event_from_row(row) -> AgentEventOut:
+    return AgentEventOut(
+        id=str(row["id"]),
+        agent_id=row["agent_id"],
+        run_id=str(row["run_id"]) if row["run_id"] else None,
+        event_type=row["event_type"],
+        severity=row["severity"],
+        title=row["title"],
+        message=row["message"],
+        correlation_id=row["correlation_id"],
+        channel_key=row["channel_key"],
+        notification_status=row["notification_status"],
+        notification_error=row["notification_error"],
+        payload=_jsonb(row["payload"]),
+        notification_result=_jsonb(row["notification_result"]),
+        created_at=_iso(row["created_at"]) or "",
+        notified_at=_iso(row["notified_at"]),
+    )
+
+
+def _agent_run_from_row(row) -> AgentRunOut:
+    return AgentRunOut(
+        id=str(row["id"]),
+        agent_id=row["agent_id"],
+        status=row["status"],
+        trigger_type=row["trigger_type"],
+        trace_id=row["trace_id"],
+        started_at=_iso(row["started_at"]),
+        completed_at=_iso(row["completed_at"]),
+        cost_usd=float(row["cost_usd"] or 0),
+        error_text=row["error_text"],
+        metadata=_jsonb(row["metadata"]),
+        created_at=_iso(row["created_at"]) or "",
+    )
+
+
+def _agent_status_from_row(row) -> AgentStatusOut:
+    metadata = _jsonb(row["metadata"])
+    return AgentStatusOut(
+        agent_id=row["agent_id"],
+        display_name=row["display_name"],
+        status=row["status"],
+        enabled=row["enabled"],
+        risk_tier=row["risk_tier"],
+        cadence=row["cadence"],
+        launch_label=row["launch_label"],
+        mattermost_channel_key=metadata.get("mattermost_channel_key"),
+        last_run_status=row["last_run_status"],
+        last_run_at=_iso(row["last_run_at"]),
+        last_event_type=row["last_event_type"],
+        last_event_severity=row["last_event_severity"],
+        last_event_title=row["last_event_title"],
+        last_event_at=_iso(row["last_event_at"]),
     )
 
 
@@ -189,6 +317,44 @@ async def list_agents(
     return AgentListOut(count=len(rows), agents=[_agent_from_row(row) for row in rows])
 
 
+@router.get("/agents/status", response_model=AgentStatusListOut)
+async def list_agent_statuses(request: Request) -> AgentStatusListOut:
+    check_scopes(request, "agents.read")
+    async with rls_connection(request) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT a.agent_id, a.display_name, a.status, a.enabled, a.risk_tier,
+                   a.cadence, a.launch_label, a.metadata,
+                   lr.status AS last_run_status,
+                   lr.created_at AS last_run_at,
+                   le.event_type AS last_event_type,
+                   le.severity AS last_event_severity,
+                   le.title AS last_event_title,
+                   le.created_at AS last_event_at
+            FROM public.alpha_agents a
+            LEFT JOIN LATERAL (
+                SELECT status, created_at
+                FROM public.alpha_agent_runs
+                WHERE agent_id = a.agent_id
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) lr ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT event_type, severity, title, created_at
+                FROM public.alpha_agent_events
+                WHERE agent_id = a.agent_id
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) le ON TRUE
+            ORDER BY a.status ASC, a.agent_id ASC
+            """
+        )
+    return AgentStatusListOut(
+        count=len(rows),
+        agents=[_agent_status_from_row(row) for row in rows],
+    )
+
+
 @router.get("/agents/{agent_id}", response_model=AgentOut)
 async def get_agent(agent_id: str, request: Request) -> AgentOut:
     check_scopes(request, "agents.read")
@@ -206,6 +372,80 @@ async def get_agent(agent_id: str, request: Request) -> AgentOut:
     if not row:
         raise HTTPException(status_code=404, detail="Agent not found")
     return _agent_from_row(row)
+
+
+@router.get("/agents/{agent_id}/events", response_model=AgentEventListOut)
+async def list_agent_events(
+    agent_id: str,
+    request: Request,
+    limit: int = Query(default=25, ge=1, le=100),
+    severity: Literal[
+        "debug", "info", "needs_input", "warning", "error", "critical", "all"
+    ] = Query(default="all"),
+) -> AgentEventListOut:
+    check_scopes(request, "agents.read")
+    filters = ["agent_id = $1"]
+    params: list = [agent_id]
+    if severity != "all":
+        params.append(severity)
+        filters.append(f"severity = ${len(params)}")
+    params.append(limit)
+    where = " AND ".join(filters)
+    async with rls_connection(request) as conn:
+        agent_exists = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM public.alpha_agents WHERE agent_id = $1)",
+            agent_id,
+        )
+        if not agent_exists:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        rows = await conn.fetch(
+            f"""
+            SELECT id, agent_id, run_id, event_type, severity, title, message,
+                   correlation_id, channel_key, notification_status,
+                   notification_error, payload, notification_result, created_at,
+                   notified_at
+            FROM public.alpha_agent_events
+            WHERE {where}
+            ORDER BY created_at DESC
+            LIMIT ${len(params)}
+            """,
+            *params,
+        )
+    return AgentEventListOut(
+        count=len(rows),
+        events=[_agent_event_from_row(row) for row in rows],
+    )
+
+
+@router.get("/agents/{agent_id}/runs", response_model=AgentRunListOut)
+async def list_agent_runs(
+    agent_id: str,
+    request: Request,
+    limit: int = Query(default=25, ge=1, le=100),
+) -> AgentRunListOut:
+    check_scopes(request, "agents.read")
+    async with rls_connection(request) as conn:
+        agent_exists = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM public.alpha_agents WHERE agent_id = $1)",
+            agent_id,
+        )
+        if not agent_exists:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        rows = await conn.fetch(
+            """
+            SELECT id, agent_id, status, trigger_type, trace_id, started_at,
+                   completed_at, cost_usd, error_text, metadata, created_at
+            FROM public.alpha_agent_runs
+            WHERE agent_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            agent_id,
+            limit,
+        )
+    return AgentRunListOut(
+        count=len(rows), runs=[_agent_run_from_row(row) for row in rows]
+    )
 
 
 @router.post("/agents/{agent_id}/enable", response_model=AgentOut)

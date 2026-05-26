@@ -21,11 +21,14 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from brain.agents.events import AgentEvent, emit_agent_event
 from brain.db.pool import get_pool
 from brain.db.rls import rls_connection
 from brain.middleware.scopes import check_scopes
+from jarvis_common.logging_config import get_logger
 
 router = APIRouter(prefix="/v1/watchdog", tags=["watchdog"])
+logger = get_logger("alpha_brain")
 
 
 # ─── Models ──────────────────────────────────────────────────────────────────
@@ -230,6 +233,35 @@ async def ingest_event(
             body.action_taken,
             body.trace_id,
         )
+
+    try:
+        await emit_agent_event(
+            AgentEvent(
+                agent_id="watchdog",
+                event_type=f"watchdog.{body.event_type}",
+                title=f"Watchdog {body.event_type}: {body.service_name}",
+                message=(
+                    f"Service `{body.service_name}` on `{body.node}` reported "
+                    f"`{body.event_type}`."
+                ),
+                severity="critical"
+                if body.event_type in {"down", "restart_failed"}
+                else "warning"
+                if body.event_type in {"degraded", "check_error", "restart_triggered"}
+                else "info",
+                channel_key="alerts",
+                mattermost_source="watchdog",
+                payload={
+                    "watchdog_event_id": str(new_id) if new_id is not None else None,
+                    **body.model_dump(),
+                },
+                correlation_id=f"watchdog:{body.trace_id or new_id}:{body.event_type}",
+            ),
+            pool=pool,
+        )
+    except Exception:
+        # Ingest must preserve the observability row even if ChatOps is degraded.
+        logger.error("watchdog ingest agent event emit failed", exc_info=True)
 
     return WatchdogEventIngestResponse(
         id=str(new_id) if new_id is not None else "",

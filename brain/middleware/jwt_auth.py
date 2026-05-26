@@ -60,6 +60,7 @@ SKIP_PATHS = {
     "/v1/metrics/power/current",
     "/v1/metrics/power/history",
     "/v1/metrics/power/rollup",
+    "/v1/chatops/mattermost/command",
     "/admin",
     "/wp-login.php",
     "/.env",

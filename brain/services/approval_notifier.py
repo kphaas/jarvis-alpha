@@ -2,14 +2,15 @@
 Approval notification service.
 
 Generates rich context for T4/T5 approval requests and delivers them.
-Phase 2: log + buddy event
-Phase 3: add Pushover / mobile push
 
-Gateway is sole internet egress — when Pushover is added, Brain will
-POST to Gateway which forwards to Pushover API.
+Approvals are persisted as Buddy events for the UI and as AgentEvents for the
+ChatOps surface. The provider-neutral notify skill sends through Gateway, where
+Mattermost is primary and Pushover remains the wake-up fallback.
 """
 
 import json
+
+from brain.agents.events import AgentEvent, emit_agent_event
 from brain.db.pool import get_pool
 from jarvis_common.logging_config import get_logger
 
@@ -137,11 +138,7 @@ async def send_approval_notification(
     actor_type: str,
     overnight: bool = False,
 ) -> bool:
-    """Send approval notification. Currently logs + writes buddy event.
-
-    Phase 3: add Pushover via Gateway.
-    Returns True if notification was delivered.
-    """
+    """Send approval notification through Buddy UI and AgentEvent ChatOps paths."""
     notif = build_notification(
         queue_id=queue_id,
         tier=tier,
@@ -175,8 +172,22 @@ async def send_approval_notification(
             logger.error("Failed to write approval buddy event", exc_info=True)
             return False
 
-    # Phase 3: POST to Gateway /v1/notify/pushover
-    # url = f"{GATEWAY_URL}/v1/notify/pushover"
-    # await async_post(url, json=notif)
+        try:
+            await emit_agent_event(
+                AgentEvent(
+                    agent_id="approval_triage",
+                    event_type="approval.queued",
+                    title=notif["title"],
+                    message=notif["body"],
+                    severity="needs_input",
+                    channel_key="needs_input",
+                    payload=notif["payload"],
+                    correlation_id=f"approval:{queue_id}",
+                ),
+                pool=pool,
+            )
+        except Exception:
+            logger.error("Failed to emit approval agent event", exc_info=True)
+            return False
 
     return True
