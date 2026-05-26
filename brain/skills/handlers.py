@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from brain.skills.canary import canary_skill_handlers
 from brain.skills.notify import notify_skill_handlers
 from brain.skills.obsidian import obsidian_skill_handlers
 from brain.skills.approval_bridge import SkillApprovalBridge
@@ -16,6 +17,7 @@ def all_skill_handlers() -> dict[str, Any]:
 
     handlers: dict[str, Any] = {}
     for provider_handlers in (
+        canary_skill_handlers(),
         notify_skill_handlers(),
         unifi_skill_handlers(),
         obsidian_skill_handlers(),

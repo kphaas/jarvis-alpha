@@ -563,6 +563,33 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             },
         ),
     ),
+    SkillSpec(
+        name="approval.canary_t4",
+        domain="approval",
+        action="canary_t4",
+        description="No-op T4 canary for proving SkillRunner approval queue replay.",
+        approval_tier="T4",
+        scope="approval.canary",
+        status="active",
+        mutates_state=True,
+        idempotency_required=True,
+        metadata=_skill_metadata(
+            data_classification="ops",
+            side_effect_class="control_plane",
+            timeout_s=5,
+            retry_policy="idempotent_retry_once",
+            rate_limit="5/day/operator",
+            egress_mode="none",
+            provider=None,
+            compensation="not_applicable_no_external_side_effect",
+            test_ref="tests/test_approval_canary_skill.py",
+            extra={
+                "execution_path": "skill_runner",
+                "approval_queue_bridge": "enabled",
+                "canary": True,
+            },
+        ),
+    ),
 )
 
 
@@ -698,6 +725,27 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
             "mattermost_channel_key": "alpha_events",
             "poll_interval_seconds": 30,
             "manual_run_enabled": True,
+        },
+    ),
+    AgentSpec(
+        agent_id="approval_canary",
+        display_name="Approval Canary",
+        purpose="Disabled no-op agent used only to prove SkillRunner T4 approval queue replay.",
+        risk_tier="T4",
+        status="active",
+        enabled=False,
+        cadence="manual_test_only",
+        allowed_skills=["approval.canary_t4"],
+        allowed_scopes=["approval.canary"],
+        cost_daily_cap_usd=0.0,
+        approval_policy={
+            "writes": "approval_queue",
+            "external_side_effects": "blocked",
+        },
+        metadata={
+            "mattermost_channel_key": "needs_input",
+            "manual_run_enabled": False,
+            "canary": True,
         },
     ),
     AgentSpec(
