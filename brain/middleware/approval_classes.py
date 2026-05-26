@@ -18,6 +18,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/unifi/wan": ["read"],
     "GET /v1/unifi/clients": ["read"],
     "GET /v1/unifi/summary": ["read"],
+    "GET /v1/unifi/health-check": ["read"],
     "GET /v1/tasks/graphs": ["read"],
     "GET /v1/approval": ["read"],
     "GET /v1/security/status": ["read", "security_read"],

@@ -18,6 +18,7 @@ const Errors = lazy(() => import('./pages/Errors'))
 const Mesh = lazy(() => import('./pages/Mesh'))
 const Approvals = lazy(() => import('./pages/Approvals'))
 const Security = lazy(() => import('./pages/Security'))
+const Agents = lazy(() => import('./pages/Agents'))
 const Briefing = lazy(() => import('./pages/Briefing'))
 const BriefingDetail = lazy(() => import('./pages/BriefingDetail'))
 
@@ -46,7 +47,7 @@ export default function App() {
                   <Route path="/mesh" element={<Mesh theme={theme} token={brainToken} />} />
                   <Route path="/health" element={<Health theme={theme} token={brainToken} />} />
                   <Route path="/errors" element={<Errors theme={theme} />} />
-                  <Route path="/agents" element={<Placeholder label="Agents" phase="Next session" />} />
+                  <Route path="/agents" element={<Agents />} />
                   <Route path="/ops" element={<Placeholder label="Ops" phase="Next session" />} />
                   <Route path="/approvals" element={<Approvals />} />
                   <Route path="/security" element={<Security />} />

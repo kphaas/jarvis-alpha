@@ -1,56 +1,17 @@
-"""
-Alpha Brain UniFi proxy — calls alpha Gateway only (never UDM Pro directly).
-"""
-
-import asyncio
-import json
-import os
-import subprocess
-from typing import Any
+"""Alpha Brain UniFi proxy — calls alpha Gateway only."""
 
 from fastapi import APIRouter, HTTPException
 
-from brain.core.config import GATEWAY_URL
+from brain.services import unifi_client
 
 router = APIRouter(tags=["unifi"])
 
 
-def _gateway_get(path: str) -> dict[str, Any]:
-    base = GATEWAY_URL.rstrip("/")
-    token = os.environ.get("GATEWAY_TOKEN", "")
-    url = f"{base}{path}"
+async def _proxy(path: str):
     try:
-        proc = subprocess.run(
-            ["curl", "-sk", "-H", f"x-jarvis-token: {token}", url],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-        if proc.returncode != 0:
-            err = (proc.stderr or "").strip() or f"curl exit {proc.returncode}"
-            return {"ok": False, "error": err}
-        raw = (proc.stdout or "").strip()
-        if not raw:
-            return {"ok": False, "error": "empty response"}
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            return {"ok": False, "error": str(e)}
-        return {"ok": True, "data": data}
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": "timeout"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-async def _proxy(path: str) -> Any:
-    result = await asyncio.to_thread(_gateway_get, path)
-    if not result.get("ok"):
-        raise HTTPException(
-            status_code=502, detail=result.get("error", "gateway error")
-        )
-    return result["data"]
+        return await unifi_client.gateway_get(path)
+    except unifi_client.UniFiGatewayError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/v1/unifi/status")
@@ -71,3 +32,8 @@ async def unifi_clients():
 @router.get("/v1/unifi/summary")
 async def unifi_summary():
     return await _proxy("/v1/unifi/summary")
+
+
+@router.get("/v1/unifi/health-check")
+async def unifi_health_check():
+    return await _proxy("/v1/unifi/health-check")
