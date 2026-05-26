@@ -12,6 +12,7 @@ from brain.agents.manual_run import manual_run_eligibility, run_agent_now
 from brain.db.pool import get_pool
 from brain.db.rls import rls_connection
 from brain.middleware.scopes import check_scopes
+from brain.registry.models import SkillManifestV1
 from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
@@ -31,6 +32,7 @@ class SkillOut(BaseModel):
     body_access: bool
     idempotency_required: bool
     owner: str
+    manifest: SkillManifestV1 | None = None
     metadata: dict = Field(default_factory=dict)
 
 
@@ -145,6 +147,8 @@ def _jsonb(value) -> dict:
 
 
 def _skill_from_row(row) -> SkillOut:
+    metadata = _jsonb(row["metadata"])
+    manifest = metadata.get("manifest")
     return SkillOut(
         name=row["skill_name"],
         domain=row["domain"],
@@ -157,7 +161,8 @@ def _skill_from_row(row) -> SkillOut:
         body_access=row["body_access"],
         idempotency_required=row["idempotency_required"],
         owner=row["owner"],
-        metadata=_jsonb(row["metadata"]),
+        manifest=SkillManifestV1.model_validate(manifest) if manifest else None,
+        metadata=metadata,
     )
 
 

@@ -7,7 +7,69 @@ before dynamic registry editing is introduced.
 
 from __future__ import annotations
 
+from typing import Any
+
 from brain.registry.models import AgentSpec, SkillSpec
+
+
+def _skill_metadata(
+    *,
+    data_classification: str = "none",
+    side_effect_class: str = "read",
+    timeout_s: int = 30,
+    retry_policy: str = "none",
+    rate_limit: str = "default",
+    cost_mode: str = "none",
+    max_usd_per_call: float = 0.0,
+    model_policy: str | None = None,
+    egress_mode: str = "none",
+    provider: str | None = None,
+    allowed_hosts: list[str] | None = None,
+    compensation: str = "not_applicable",
+    test_ref: str = "tests/test_agent_skill_registry.py",
+    runbook_ref: str = "docs/JARVIS_Alpha_Skills_Agents_Catalog_v0_9.md",
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the compact Skill Manifest v1 metadata block.
+
+    Provider credentials, URLs, and secret names stay outside the manifest.
+    This is governance metadata: risk, egress, runtime, cost, and audit shape.
+    """
+
+    metadata: dict[str, Any] = {
+        "manifest": {
+            "manifest_version": 1,
+            "data_classification": data_classification,
+            "side_effect_class": side_effect_class,
+            "input_schema_ref": "registry://schemas/skill-input/default-v1",
+            "output_schema_ref": "registry://schemas/skill-output/default-v1",
+            "runtime": {
+                "timeout_s": timeout_s,
+                "retry_policy": retry_policy,
+                "rate_limit": rate_limit,
+            },
+            "cost": {
+                "mode": cost_mode,
+                "max_usd_per_call": max_usd_per_call,
+                "model_policy": model_policy,
+            },
+            "egress": {
+                "mode": egress_mode,
+                "provider": provider,
+                "allowed_hosts": allowed_hosts or [],
+            },
+            "audit": {
+                "event_name": "skill.invoke",
+                "redact_fields": ["token", "secret", "body"],
+            },
+            "compensation": compensation,
+            "test_ref": test_ref,
+            "runbook_ref": runbook_ref,
+        }
+    }
+    if extra:
+        metadata.update(extra)
+    return metadata
 
 
 INITIAL_SKILLS: tuple[SkillSpec, ...] = (
@@ -21,11 +83,22 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         mutates_state=True,
         idempotency_required=True,
         status="active",
-        metadata={
-            "primary": "mattermost",
-            "delivery": "incoming_webhook",
-            "fallback": "pushover",
-        },
+        metadata=_skill_metadata(
+            data_classification="ops",
+            side_effect_class="operator_notification",
+            timeout_s=10,
+            retry_policy="fallback_to_pushover",
+            rate_limit="60/minute/system",
+            egress_mode="gateway",
+            provider="mattermost",
+            compensation="send_followup_correction",
+            test_ref="tests/test_notify_skill.py",
+            extra={
+                "primary": "mattermost",
+                "delivery": "incoming_webhook",
+                "fallback": "pushover",
+            },
+        ),
     ),
     SkillSpec(
         name="notify.send_mattermost",
@@ -37,12 +110,23 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         mutates_state=True,
         idempotency_required=True,
         status="active",
-        metadata={
-            "egress": "gateway",
-            "provider": "mattermost",
-            "delivery": "incoming_webhook",
-            "rest_api": "phase2",
-        },
+        metadata=_skill_metadata(
+            data_classification="ops",
+            side_effect_class="operator_notification",
+            timeout_s=10,
+            retry_policy="none",
+            rate_limit="60/minute/system",
+            egress_mode="gateway",
+            provider="mattermost",
+            compensation="send_followup_correction",
+            test_ref="tests/test_notify_skill.py",
+            extra={
+                "egress": "gateway",
+                "provider": "mattermost",
+                "delivery": "incoming_webhook",
+                "rest_api": "phase2",
+            },
+        ),
     ),
     SkillSpec(
         name="notify.send_pushover",
@@ -54,7 +138,18 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         mutates_state=True,
         idempotency_required=True,
         status="active",
-        metadata={"egress": "gateway", "provider": "pushover", "role": "fallback"},
+        metadata=_skill_metadata(
+            data_classification="ops",
+            side_effect_class="operator_notification",
+            timeout_s=10,
+            retry_policy="none",
+            rate_limit="60/minute/system",
+            egress_mode="gateway",
+            provider="pushover",
+            compensation="send_followup_correction",
+            test_ref="tests/test_notify_skill.py",
+            extra={"egress": "gateway", "provider": "pushover", "role": "fallback"},
+        ),
     ),
     SkillSpec(
         name="unifi.wan_status",
@@ -64,6 +159,13 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         approval_tier="T1",
         scope="network.read",
         status="active",
+        metadata=_skill_metadata(
+            data_classification="security",
+            egress_mode="gateway",
+            provider="unifi",
+            rate_limit="30/minute/agent",
+            test_ref="tests/test_agent_runtime_network.py",
+        ),
     ),
     SkillSpec(
         name="unifi.clients",
@@ -73,6 +175,13 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         approval_tier="T1",
         scope="network.read",
         status="active",
+        metadata=_skill_metadata(
+            data_classification="security",
+            egress_mode="gateway",
+            provider="unifi",
+            rate_limit="30/minute/agent",
+            test_ref="tests/test_agent_runtime_network.py",
+        ),
     ),
     SkillSpec(
         name="unifi.health_check",
@@ -82,7 +191,14 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         approval_tier="T1",
         scope="network.read",
         status="active",
-        metadata={"adapter": "gateway_unifi"},
+        metadata=_skill_metadata(
+            data_classification="security",
+            egress_mode="gateway",
+            provider="unifi",
+            rate_limit="30/minute/agent",
+            test_ref="tests/test_agent_runtime_network.py",
+            extra={"adapter": "gateway_unifi"},
+        ),
     ),
     SkillSpec(
         name="unifi.daughters_screentime",
@@ -93,7 +209,18 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         scope="network.screentime",
         mutates_state=True,
         idempotency_required=True,
-        metadata={"child_profile_block": False},
+        metadata=_skill_metadata(
+            data_classification="child",
+            side_effect_class="physical_world",
+            timeout_s=20,
+            retry_policy="idempotent_retry_once",
+            rate_limit="10/hour/child",
+            egress_mode="gateway",
+            provider="unifi",
+            compensation="restore_previous_network_state",
+            test_ref="tests/test_skill_policy_gate.py",
+            extra={"child_profile_block": False},
+        ),
     ),
     SkillSpec(
         name="gmail.search_threads",
@@ -102,6 +229,15 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         description="Search Gmail threads across configured accounts.",
         approval_tier="T1",
         scope="email.read",
+        metadata=_skill_metadata(
+            data_classification="personal",
+            timeout_s=20,
+            retry_policy="transient_retry",
+            rate_limit="60/minute/account",
+            egress_mode="gateway",
+            provider="gmail",
+            test_ref="tests/services/test_gmail_client.py",
+        ),
     ),
     SkillSpec(
         name="gmail.read_thread",
@@ -111,6 +247,15 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         approval_tier="T1",
         scope="email.read",
         body_access=True,
+        metadata=_skill_metadata(
+            data_classification="message_body",
+            timeout_s=20,
+            retry_policy="transient_retry",
+            rate_limit="60/minute/account",
+            egress_mode="gateway",
+            provider="gmail",
+            test_ref="tests/services/test_gmail_client.py",
+        ),
     ),
     SkillSpec(
         name="gmail.draft_reply",
@@ -121,6 +266,17 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         scope="email.write",
         mutates_state=True,
         idempotency_required=True,
+        metadata=_skill_metadata(
+            data_classification="message_body",
+            side_effect_class="write",
+            timeout_s=20,
+            retry_policy="idempotent_retry_once",
+            rate_limit="20/minute/account",
+            egress_mode="gateway",
+            provider="gmail",
+            compensation="delete_or_replace_draft",
+            test_ref="tests/test_skill_policy_gate.py",
+        ),
     ),
     SkillSpec(
         name="gmail.send",
@@ -132,6 +288,17 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         mutates_state=True,
         body_access=True,
         idempotency_required=True,
+        metadata=_skill_metadata(
+            data_classification="message_body",
+            side_effect_class="external_send",
+            timeout_s=20,
+            retry_policy="idempotent_retry_once",
+            rate_limit="10/hour/operator",
+            egress_mode="gateway",
+            provider="gmail",
+            compensation="send_correction_or_followup",
+            test_ref="tests/test_skill_policy_gate.py",
+        ),
     ),
     SkillSpec(
         name="gmail.send_vip",
@@ -143,7 +310,18 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         mutates_state=True,
         body_access=True,
         idempotency_required=True,
-        metadata={"vip_store": "~/jarvis/.secrets/vip_groups.enc"},
+        metadata=_skill_metadata(
+            data_classification="message_body",
+            side_effect_class="external_send",
+            timeout_s=20,
+            retry_policy="idempotent_retry_once",
+            rate_limit="vip_group_policy",
+            egress_mode="gateway",
+            provider="gmail",
+            compensation="send_correction_or_followup",
+            test_ref="tests/test_skill_policy_gate.py",
+            extra={"vip_store": "~/jarvis/.secrets/vip_groups.enc"},
+        ),
     ),
     SkillSpec(
         name="imessage.read",
@@ -153,6 +331,15 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         approval_tier="T1",
         scope="imessage.read",
         body_access=True,
+        metadata=_skill_metadata(
+            data_classification="message_body",
+            timeout_s=20,
+            retry_policy="transient_retry",
+            rate_limit="60/minute/bridge",
+            egress_mode="tailscale",
+            provider="bluebubbles",
+            test_ref="tests/test_agent_skill_registry.py",
+        ),
     ),
     SkillSpec(
         name="imessage.send",
@@ -164,6 +351,17 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         mutates_state=True,
         body_access=True,
         idempotency_required=True,
+        metadata=_skill_metadata(
+            data_classification="message_body",
+            side_effect_class="external_send",
+            timeout_s=20,
+            retry_policy="idempotent_retry_once",
+            rate_limit="10/hour/operator",
+            egress_mode="tailscale",
+            provider="bluebubbles",
+            compensation="send_correction_or_followup",
+            test_ref="tests/test_skill_policy_gate.py",
+        ),
     ),
     SkillSpec(
         name="imessage.send_vip",
@@ -175,7 +373,18 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         mutates_state=True,
         body_access=True,
         idempotency_required=True,
-        metadata={"vip_store": "~/jarvis/.secrets/vip_groups.enc"},
+        metadata=_skill_metadata(
+            data_classification="message_body",
+            side_effect_class="external_send",
+            timeout_s=20,
+            retry_policy="idempotent_retry_once",
+            rate_limit="vip_group_policy",
+            egress_mode="tailscale",
+            provider="bluebubbles",
+            compensation="send_correction_or_followup",
+            test_ref="tests/test_skill_policy_gate.py",
+            extra={"vip_store": "~/jarvis/.secrets/vip_groups.enc"},
+        ),
     ),
     SkillSpec(
         name="smarthome.run_trusted_scene",
@@ -186,6 +395,17 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         scope="smarthome.scene",
         mutates_state=True,
         idempotency_required=True,
+        metadata=_skill_metadata(
+            data_classification="personal",
+            side_effect_class="physical_world",
+            timeout_s=15,
+            retry_policy="idempotent_retry_once",
+            rate_limit="30/hour/home",
+            egress_mode="tailscale",
+            provider="home_assistant",
+            compensation="run_inverse_scene_or_restore_state",
+            test_ref="tests/test_skill_policy_gate.py",
+        ),
     ),
     SkillSpec(
         name="smarthome.run_scene",
@@ -196,6 +416,17 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         scope="smarthome.write",
         mutates_state=True,
         idempotency_required=True,
+        metadata=_skill_metadata(
+            data_classification="personal",
+            side_effect_class="physical_world",
+            timeout_s=15,
+            retry_policy="idempotent_retry_once",
+            rate_limit="10/hour/home",
+            egress_mode="tailscale",
+            provider="home_assistant",
+            compensation="run_inverse_scene_or_restore_state",
+            test_ref="tests/test_skill_policy_gate.py",
+        ),
     ),
     SkillSpec(
         name="smarthome.set_device",
@@ -206,6 +437,17 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         scope="smarthome.write",
         mutates_state=True,
         idempotency_required=True,
+        metadata=_skill_metadata(
+            data_classification="personal",
+            side_effect_class="physical_world",
+            timeout_s=15,
+            retry_policy="idempotent_retry_once",
+            rate_limit="10/hour/home",
+            egress_mode="tailscale",
+            provider="home_assistant",
+            compensation="restore_previous_device_state",
+            test_ref="tests/test_skill_policy_gate.py",
+        ),
     ),
     SkillSpec(
         name="smarthome.unlock",
@@ -216,6 +458,17 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         scope="smarthome.security",
         mutates_state=True,
         idempotency_required=True,
+        metadata=_skill_metadata(
+            data_classification="security",
+            side_effect_class="physical_world",
+            timeout_s=15,
+            retry_policy="idempotent_retry_once",
+            rate_limit="2/hour/home",
+            egress_mode="tailscale",
+            provider="home_assistant",
+            compensation="lock_device_again_and_alert",
+            test_ref="tests/test_skill_policy_gate.py",
+        ),
     ),
     SkillSpec(
         name="smarthome.alarm_disarm",
@@ -226,6 +479,17 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         scope="smarthome.security",
         mutates_state=True,
         idempotency_required=True,
+        metadata=_skill_metadata(
+            data_classification="security",
+            side_effect_class="physical_world",
+            timeout_s=15,
+            retry_policy="idempotent_retry_once",
+            rate_limit="2/day/home",
+            egress_mode="tailscale",
+            provider="home_assistant",
+            compensation="arm_alarm_again_and_alert",
+            test_ref="tests/test_skill_policy_gate.py",
+        ),
     ),
     SkillSpec(
         name="tasks.create",
@@ -236,6 +500,17 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         scope="tasks.write",
         mutates_state=True,
         idempotency_required=True,
+        metadata=_skill_metadata(
+            data_classification="personal",
+            side_effect_class="write",
+            timeout_s=10,
+            retry_policy="idempotent_retry_once",
+            rate_limit="60/minute/operator",
+            egress_mode="local",
+            provider="obsidian_tasks",
+            compensation="delete_or_mark_created_task_cancelled",
+            test_ref="tests/test_agent_skill_registry.py",
+        ),
     ),
     SkillSpec(
         name="notes.search",
@@ -244,6 +519,15 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         description="Search the Obsidian vault.",
         approval_tier="T1",
         scope="notes.read",
+        metadata=_skill_metadata(
+            data_classification="personal",
+            timeout_s=10,
+            retry_policy="none",
+            rate_limit="120/minute/operator",
+            egress_mode="local",
+            provider="obsidian",
+            test_ref="tests/test_agent_skill_registry.py",
+        ),
     ),
     SkillSpec(
         name="chatops.command_read",
@@ -253,7 +537,16 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         approval_tier="T1",
         scope="chatops.read",
         status="active",
-        metadata={"surface": "mattermost", "write_commands": "blocked"},
+        metadata=_skill_metadata(
+            data_classification="ops",
+            timeout_s=10,
+            retry_policy="none",
+            rate_limit="30/minute/operator",
+            egress_mode="local",
+            provider="mattermost",
+            test_ref="tests/test_agent_events_chatops.py",
+            extra={"surface": "mattermost", "write_commands": "blocked"},
+        ),
     ),
 )
 

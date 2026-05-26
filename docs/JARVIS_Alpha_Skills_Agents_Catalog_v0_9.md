@@ -32,6 +32,28 @@ The first implementation slice creates the control plane before new agents run:
 | `alpha_agent_runs` | Run ledger for managed agent executions. |
 | `alpha_agent_events` | Durable event ledger for agent observability, notification delivery status, and Mattermost routing. |
 
+## Skill Manifest v1
+
+Every skill row carries a typed manifest under `metadata.manifest`. The manifest
+is the production governance contract for skills: it gives the UI, policy gate,
+tests, and future MCP tooling the same facts.
+
+| Field | Purpose |
+|---|---|
+| `data_classification` | `none`, `ops`, `personal`, `message_body`, `child`, `financial`, `medical`, or `security`. Body-handling skills must be `message_body`. |
+| `side_effect_class` | `read`, `write`, `external_send`, `physical_world`, `operator_notification`, or `control_plane`. Mutating skills cannot be `read`. |
+| `runtime` | Timeout, retry policy, and rate-limit contract. |
+| `cost` | Cost mode and max per call. Cloud-backed skills must declare their model/cost posture before activation. |
+| `egress` | `none`, `local`, `gateway`, or `tailscale`, plus provider label. No URLs or secrets live here. |
+| `audit` | Event name and fields to redact before logs, Mattermost, or future agent traces. |
+| `compensation` | Named rollback/follow-up posture for side-effecting skills. |
+| `test_ref` / `runbook_ref` | Verification and operator documentation pointers. |
+
+The database enforces the manifest shape with
+`alpha_skill_registry_manifest_v1_check`. The Python catalog validates the same
+shape through `SkillManifestV1`, so drift is caught before deploy and at the DB
+boundary.
+
 ## API Surface
 
 | Route | Purpose | Tier |
@@ -148,6 +170,18 @@ MCP must never call provider adapters directly.
 | `inbox_watcher` | planned/disabled | Gmail read/classification path. |
 | `family_concierge` | planned/disabled | Child-facing request router. |
 
+### Dream Mode Agent Ledger
+
+Dream Mode remains a Temporal workflow, but it is also an Alpha agent for
+governance. Final cleanup calls `upsert_dream_agent_run(session_id)`, which
+mirrors `alpha_dream_sessions` into `alpha_agent_runs` using
+`agent_id = 'dream_mode'`. The bridge is a `SECURITY DEFINER` function with
+internal `rls.role = platform_admin`, so the Agents UI can show Dream history
+without teaching every route how to join Dream-specific tables.
+
+Backfilled rows include session ID, workflow IDs, trigger, goal type, reviewer
+verdict, step counts, final status, cost, and briefing publication status.
+
 ## Notification Surface
 
 Mattermost is the primary Alpha ChatOps surface. Agents should call
@@ -178,14 +212,16 @@ output is summary-only and must not print raw MACs, IPs, or client payloads.
 
 ## Next Build Recommendation
 
-After the AgentEvent and Mattermost command slice lands, the next production
+After Skill Manifest v1 and the Dream ledger bridge land, the next production
 slice should be:
 
-1. Complete the 24-hour soak review for `chatops_smoke` and the disabled
-   `network_watchdog` posture.
-2. If soak is clean, enable `network_watchdog` and watch notification noise for
-   one day.
-3. Start Gmail read-only only after the encrypted body vault, redaction helper,
+1. Add a registry drift check that compares code seed specs, DB rows, and UI
+   manifest coverage.
+2. Reconcile the remaining catalog skills against handlers: active skills must
+   have handlers, planned skills must have explicit blocked posture.
+3. If Dream 48-hour soak stays clean, promote Dream Mode from soak to production
+   accepted and keep ledger mirroring as the operator history.
+4. Start Gmail read-only only after the encrypted body vault, redaction helper,
    and VIP-group fail-closed contract are deployed.
 
 That path gives Alpha a real new agent without making Gmail, iMessage, or child
