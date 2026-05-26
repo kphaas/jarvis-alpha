@@ -19,6 +19,7 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert "approval.canary_t4" in names
     assert "chatops.command_read" in names
     assert "unifi.wan_status" in names
+    assert "weather.current" in names
     assert "gmail.send" in names
     assert "gmail.send_vip" in names
     assert "imessage.send" in names
@@ -37,6 +38,12 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert skills["approval.canary_t4"].approval_tier == "T4"
     assert skills["approval.canary_t4"].metadata["approval_queue_bridge"] == "enabled"
     assert skills["approval.canary_t4"].metadata["canary"] is True
+    assert skills["weather.current"].status == "active"
+    assert skills["weather.current"].approval_tier == "T1"
+    assert (
+        skills["weather.current"].metadata["manifest"]["egress"]["provider"]
+        == "open_meteo"
+    )
 
 
 def test_initial_skill_catalog_has_complete_manifest_v1_contracts():
@@ -86,6 +93,8 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert "notify.send" in agents["dream_mode"].allowed_skills
     assert "notify.send" in agents["approval_triage"].allowed_skills
     assert agents["approval_triage"].metadata["mattermost_channel_key"] == "needs_input"
+    assert "weather.current" in agents["family_concierge"].allowed_skills
+    assert "weather.read" in agents["family_concierge"].allowed_scopes
 
 
 def test_skill_name_requires_dot_separated_snake_case():

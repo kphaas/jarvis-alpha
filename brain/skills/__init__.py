@@ -40,6 +40,7 @@ from brain.skills.unifi import (
     unifi_skill_handlers,
     wan_status,
 )
+from brain.skills.weather import current, weather_skill_handlers
 
 __all__ = [
     "SkillCall",
@@ -73,4 +74,6 @@ __all__ = [
     "health_check",
     "unifi_skill_handlers",
     "wan_status",
+    "current",
+    "weather_skill_handlers",
 ]

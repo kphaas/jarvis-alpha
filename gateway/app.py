@@ -6,6 +6,7 @@ from gateway.routes.admin import admin_router
 from gateway.routes.cloud_routes import router as cloud_router
 from gateway.routes.notify import router as notify_router
 from gateway.routes.unifi import router as unifi_router
+from gateway.routes.weather import router as weather_router
 from gateway.cost_emitter import flush_loop
 
 logger = get_logger("alpha_gateway")
@@ -28,6 +29,7 @@ app = FastAPI(title="jarvis-alpha gateway", version="alpha-1", lifespan=lifespan
 app.include_router(cloud_router)
 app.include_router(unifi_router)
 app.include_router(notify_router)
+app.include_router(weather_router)
 app.include_router(admin_router)
 
 
