@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from decimal import Decimal
+from uuid import UUID
 
 from brain.dream import activities
 from brain.dream.types import PersistPlanSpec, PlanSessionSpec, ReviewPlanSpec
@@ -43,6 +44,33 @@ class FakeConn:
     async def execute(self, query, *args):
         self.executed.append((query, args))
         return "OK"
+
+
+class FakeFlushConn:
+    def __init__(self):
+        self.agent_run_id = UUID("33333333-3333-3333-3333-333333333333")
+        self.executed = []
+        self.fetchvals = []
+
+    async def execute(self, query, *args):
+        self.executed.append((query, args))
+        return "OK"
+
+    async def fetchrow(self, query, *args):
+        if "SELECT * FROM alpha_dream_sessions" in query:
+            return None
+        if "INSERT INTO alpha_buddy_events" in query:
+            return {"id": 99}
+        return None
+
+    async def fetch(self, query, *args):
+        return []
+
+    async def fetchval(self, query, *args):
+        self.fetchvals.append((query, args))
+        if "upsert_dream_agent_run" in query:
+            return self.agent_run_id
+        return None
 
 
 def _plan() -> DreamPlan:
@@ -203,3 +231,35 @@ async def test_persist_plan_activity_replaces_steps_and_updates_session(monkeypa
     assert any("DELETE FROM alpha_dream_steps" in query for query in queries)
     assert any("INSERT INTO alpha_dream_steps" in query for query in queries)
     assert any("review_verdict" in query for query in queries)
+
+
+async def test_flush_cleanup_activity_upserts_dream_agent_run(monkeypatch):
+    conn = FakeFlushConn()
+    patch_activity_db(monkeypatch, conn)
+    emitted = {}
+
+    monkeypatch.setattr(activities.activity, "info", lambda: "unit-test")
+    monkeypatch.setattr(activities, "get_pool", lambda: object())
+
+    async def fake_emit_agent_event(event, *, pool=None):
+        emitted["event"] = event
+        emitted["pool"] = pool
+        return None
+
+    monkeypatch.setattr(activities, "emit_agent_event", fake_emit_agent_event)
+
+    result = await activities.flush_cleanup_activity(
+        "dream:w:cleanup:7",
+        activities.CleanupSpec(
+            session_id="7",
+            completed_steps=["one"],
+            failed_steps=[],
+            final_status="completed",
+            briefing_summary="Dream completed cleanly.",
+        ),
+    )
+
+    assert result["agent_run_id"] == str(conn.agent_run_id)
+    assert any("upsert_dream_agent_run" in query for query, _ in conn.fetchvals)
+    assert emitted["event"].run_id == conn.agent_run_id
+    assert emitted["event"].payload["agent_run_id"] == str(conn.agent_run_id)

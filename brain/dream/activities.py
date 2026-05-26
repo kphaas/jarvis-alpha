@@ -199,6 +199,7 @@ async def flush_cleanup_activity(
     )
 
     briefing_row = None
+    agent_run_id = None
     async with activity_db() as conn:
         await conn.execute(
             """
@@ -272,6 +273,13 @@ async def flush_cleanup_activity(
             buddy_payload["briefing_id"] = briefing_row["id"]
             buddy_payload["briefing_batch_run_id"] = briefing_row["batch_run_id"]
 
+        agent_run_id = await conn.fetchval(
+            "SELECT public.upsert_dream_agent_run($1)",
+            int(cleanup_spec.session_id),
+        )
+        if agent_run_id:
+            buddy_payload["agent_run_id"] = str(agent_run_id)
+
         buddy_row = await conn.fetchrow(
             """
             INSERT INTO alpha_buddy_events (
@@ -313,6 +321,7 @@ async def flush_cleanup_activity(
                     if final_status in {"killed", "aborted"}
                     else "info",
                     payload=buddy_payload,
+                    run_id=agent_run_id,
                     correlation_id=f"dream:{cleanup_spec.session_id}:cleanup",
                 ),
                 pool=pool,
@@ -325,6 +334,7 @@ async def flush_cleanup_activity(
 
     return {
         "session_status": final_status,
+        "agent_run_id": str(agent_run_id) if agent_run_id else None,
         "buddy_event_id": str(buddy_row["id"]),
         "briefing_id": briefing_row["id"] if briefing_row else None,
         "briefing_batch_run_id": briefing_row["batch_run_id"] if briefing_row else None,

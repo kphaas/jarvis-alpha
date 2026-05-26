@@ -10,6 +10,7 @@ import {
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
+  SquareActivity,
   Workflow,
 } from 'lucide-react'
 import { apiJson } from '../lib/apiFetch'
@@ -76,6 +77,26 @@ export default function Governance() {
   const activeAgents = useMemo(() => agents.filter((agent) => agent.status === 'active'), [agents])
   const enabledAgents = useMemo(() => agents.filter((agent) => agent.enabled), [agents])
   const domains = useMemo(() => uniqueSorted(skills.map((skill) => skill.domain)), [skills])
+  const manifestSkills = useMemo(
+    () => skills.filter((skill) => skill.manifest?.manifest_version === 1),
+    [skills]
+  )
+  const missingManifest = useMemo(
+    () => skills.filter((skill) => skill.manifest?.manifest_version !== 1),
+    [skills]
+  )
+  const sideEffectRows = useMemo(() => {
+    return uniqueSorted(manifestSkills.map((skill) => skill.manifest?.side_effect_class ?? 'unknown')).map((effect) => ({
+      label: effect,
+      count: manifestSkills.filter((skill) => skill.manifest?.side_effect_class === effect).length,
+    }))
+  }, [manifestSkills])
+  const dataClassRows = useMemo(() => {
+    return uniqueSorted(manifestSkills.map((skill) => skill.manifest?.data_classification ?? 'unknown')).map((classification) => ({
+      label: classification,
+      count: manifestSkills.filter((skill) => skill.manifest?.data_classification === classification).length,
+    }))
+  }, [manifestSkills])
 
   const scopeRows = useMemo(() => {
     return uniqueSorted(skills.map((skill) => skill.scope)).map((scope) => {
@@ -132,11 +153,12 @@ export default function Governance() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Stat label="Registered Skills" value={skills.length} icon={<Database className="w-5 h-5 text-sky-400" />} border={border} panel={panel} muted={muted} />
         <Stat label="Registered Agents" value={agents.length} icon={<Workflow className="w-5 h-5 text-emerald-400" />} border={border} panel={panel} muted={muted} />
         <Stat label="Body Access" value={bodySkills.length} icon={<Lock className="w-5 h-5 text-amber-400" />} border={border} panel={panel} muted={muted} />
         <Stat label="T4/T5 Skills" value={highRiskSkills.length} icon={<ShieldAlert className="w-5 h-5 text-rose-400" />} border={border} panel={panel} muted={muted} />
+        <Stat label="Manifest v1" value={manifestSkills.length} icon={<SquareActivity className="w-5 h-5 text-emerald-400" />} border={border} panel={panel} muted={muted} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_420px] gap-4">
@@ -202,7 +224,7 @@ export default function Governance() {
             <Coverage label="Policy gate" ok={true} border={border} panel={panel} muted={muted} />
             <Coverage label="Approval routing" ok={highRiskSkills.length > 0} border={border} panel={panel} muted={muted} />
             <Coverage label="Body-access rail" ok={bodySkills.length > 0} border={border} panel={panel} muted={muted} />
-            <Coverage label="Registry drift check" ok={false} border={border} panel={panel} muted={muted} />
+            <Coverage label="Skill Manifest v1" ok={skills.length > 0 && missingManifest.length === 0} border={border} panel={panel} muted={muted} />
             <Coverage label="Governance audit ledger" ok={false} border={border} panel={panel} muted={muted} />
             <Coverage label="T5 policy editor" ok={false} border={border} panel={panel} muted={muted} />
           </div>
@@ -225,6 +247,11 @@ export default function Governance() {
             <SkillLine key={skill.name} skill={skill} muted={muted} />
           ))}
         </Panel>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <ManifestBreakdown title="Data Classifications" rows={dataClassRows} border={border} panel={strongPanel} muted={muted} />
+        <ManifestBreakdown title="Side Effects" rows={sideEffectRows} border={border} panel={strongPanel} muted={muted} />
       </div>
 
       <section className={`rounded-lg border ${border} ${strongPanel} overflow-hidden`}>
@@ -298,6 +325,39 @@ function Panel({ title, count, border, panel, muted, children }: { title: string
         {count === 0 ? (
           <div className={`p-4 text-sm ${muted}`}>None</div>
         ) : children}
+      </div>
+    </section>
+  )
+}
+
+function ManifestBreakdown({
+  title,
+  rows,
+  border,
+  panel,
+  muted,
+}: {
+  title: string
+  rows: { label: string; count: number }[]
+  border: string
+  panel: string
+  muted: string
+}) {
+  return (
+    <section className={`rounded-lg border ${border} ${panel} overflow-hidden`}>
+      <div className={`px-4 py-3 border-b ${border} flex items-center justify-between`}>
+        <div className="font-semibold">{title}</div>
+        <div className={`text-xs ${muted}`}>{rows.reduce((total, row) => total + row.count, 0)}</div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4">
+        {rows.length === 0 ? (
+          <div className={`text-sm ${muted}`}>No manifest rows loaded.</div>
+        ) : rows.map((row) => (
+          <div key={row.label} className={`rounded-lg border ${border} p-3 min-h-20`}>
+            <div className={`text-xs font-semibold ${muted}`}>{row.label}</div>
+            <div className="mt-2 text-2xl font-bold">{row.count}</div>
+          </div>
+        ))}
       </div>
     </section>
   )

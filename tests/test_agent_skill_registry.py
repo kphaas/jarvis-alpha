@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
 from brain.registry.catalog import INITIAL_AGENTS, INITIAL_SKILLS
-from brain.registry.models import AgentSpec, SkillSpec
+from brain.registry.models import AgentSpec, SkillManifestV1, SkillSpec
 from brain.routes.registry import _agent_from_row, _skill_from_row
 
 
@@ -32,6 +32,38 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert skills["notify.send_mattermost"].status == "active"
     assert skills["notify.send_mattermost"].metadata["delivery"] == "incoming_webhook"
     assert skills["notify.send_pushover"].status == "active"
+
+
+def test_initial_skill_catalog_has_complete_manifest_v1_contracts():
+    for skill in INITIAL_SKILLS:
+        manifest = SkillManifestV1.model_validate(skill.metadata["manifest"])
+
+        assert manifest.manifest_version == 1
+        assert manifest.input_schema_ref.startswith("registry://schemas/")
+        assert manifest.output_schema_ref.startswith("registry://schemas/")
+        assert manifest.runtime.timeout_s > 0
+        assert manifest.audit.event_name == "skill.invoke"
+        assert manifest.test_ref
+        assert manifest.runbook_ref == "docs/JARVIS_Alpha_Skills_Agents_Catalog_v0_9.md"
+        if skill.body_access:
+            assert manifest.data_classification == "message_body"
+        if skill.mutates_state:
+            assert manifest.side_effect_class != "read"
+        else:
+            assert manifest.side_effect_class == "read"
+
+
+def test_skill_requires_manifest_v1():
+    with pytest.raises(ValidationError, match="manifest v1"):
+        SkillSpec(
+            name="notes.search",
+            domain="notes",
+            action="search",
+            description="Search notes",
+            approval_tier="T1",
+            scope="notes.read",
+            metadata={},
+        )
 
 
 def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_agents():
@@ -113,6 +145,30 @@ def test_skill_row_conversion_accepts_jsonb_string():
 
     assert out.name == "gmail.send"
     assert out.metadata == {"vip_policy": "non_vip_t4"}
+
+
+def test_skill_row_conversion_promotes_manifest_field():
+    skill = next(item for item in INITIAL_SKILLS if item.name == "notify.send")
+    row = {
+        "skill_name": skill.name,
+        "domain": skill.domain,
+        "action": skill.action,
+        "description": skill.description,
+        "approval_tier": skill.approval_tier,
+        "scope": skill.scope,
+        "status": skill.status,
+        "mutates_state": skill.mutates_state,
+        "body_access": skill.body_access,
+        "idempotency_required": skill.idempotency_required,
+        "owner": skill.owner,
+        "metadata": json.dumps(skill.metadata),
+    }
+
+    out = _skill_from_row(row)
+
+    assert out.manifest is not None
+    assert out.manifest.side_effect_class == "operator_notification"
+    assert out.metadata["primary"] == "mattermost"
 
 
 def test_agent_row_conversion_casts_arrays_and_cost_cap():

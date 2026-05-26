@@ -1,3 +1,41 @@
+export interface SkillRuntimeManifest {
+  timeout_s: number
+  retry_policy: string
+  rate_limit: string
+}
+
+export interface SkillCostManifest {
+  mode: string
+  max_usd_per_call: number
+  model_policy: string | null
+}
+
+export interface SkillEgressManifest {
+  mode: string
+  provider: string | null
+  allowed_hosts: string[]
+}
+
+export interface SkillAuditManifest {
+  event_name: string
+  redact_fields: string[]
+}
+
+export interface SkillManifest {
+  manifest_version: 1
+  data_classification: string
+  side_effect_class: string
+  input_schema_ref: string
+  output_schema_ref: string
+  runtime: SkillRuntimeManifest
+  cost: SkillCostManifest
+  egress: SkillEgressManifest
+  audit: SkillAuditManifest
+  compensation: string
+  test_ref: string
+  runbook_ref: string
+}
+
 export interface Skill {
   name: string
   domain: string
@@ -10,6 +48,7 @@ export interface Skill {
   body_access: boolean
   idempotency_required: boolean
   owner: string
+  manifest: SkillManifest | null
   metadata: Record<string, unknown>
 }
 

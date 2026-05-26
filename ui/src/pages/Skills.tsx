@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import {
   AlertTriangle,
   CheckCircle2,
+  Clock3,
   Database,
   Filter,
   KeyRound,
@@ -12,10 +13,11 @@ import {
   Search,
   ShieldAlert,
   ShieldCheck,
+  SquareActivity,
   Wrench,
 } from 'lucide-react'
 import { apiJson } from '../lib/apiFetch'
-import { compactJson, uniqueSorted, type Agent, type AgentList, type Skill, type SkillList } from '../lib/registryTypes'
+import { compactJson, uniqueSorted, type Agent, type AgentList, type Skill, type SkillList, type SkillManifest } from '../lib/registryTypes'
 import { useAppStore } from '../store'
 
 const ALL = 'all'
@@ -112,6 +114,7 @@ export default function Skills() {
     mutating: skills.filter((skill) => skill.mutates_state).length,
     body: skills.filter((skill) => skill.body_access).length,
     highRisk: skills.filter((skill) => ['T4', 'T5'].includes(skill.approval_tier)).length,
+    manifest: skills.filter((skill) => skill.manifest?.manifest_version === 1).length,
   }), [skills])
 
   return (
@@ -138,11 +141,12 @@ export default function Skills() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Stat label="Active" value={stats.active} icon={<CheckCircle2 className="w-5 h-5 text-emerald-400" />} border={border} panel={panel} muted={muted} />
         <Stat label="Mutating" value={stats.mutating} icon={<Database className="w-5 h-5 text-sky-400" />} border={border} panel={panel} muted={muted} />
         <Stat label="Body Access" value={stats.body} icon={<Lock className="w-5 h-5 text-amber-400" />} border={border} panel={panel} muted={muted} />
         <Stat label="T4/T5" value={stats.highRisk} icon={<ShieldAlert className="w-5 h-5 text-rose-400" />} border={border} panel={panel} muted={muted} />
+        <Stat label="Manifest v1" value={stats.manifest} icon={<SquareActivity className="w-5 h-5 text-emerald-400" />} border={border} panel={panel} muted={muted} />
       </div>
 
       <section className={`rounded-lg border ${border} ${strongPanel} p-3`}>
@@ -242,6 +246,14 @@ export default function Skills() {
                   <FlagCard label="Idempotency Required" active={selected.idempotency_required} border={border} panel={panel} muted={muted} />
                 </div>
 
+                {selected.manifest ? (
+                  <SkillManifestPanel manifest={selected.manifest} border={border} panel={panel} muted={muted} />
+                ) : (
+                  <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-4 text-sm text-amber-300">
+                    Skill Manifest v1 is missing for this skill.
+                  </div>
+                )}
+
                 <div className={`rounded-lg border ${border} ${panel} p-4`}>
                   <div className="text-sm font-semibold">Allowed Agents</div>
                   <div className="mt-3 flex flex-wrap gap-2">
@@ -263,6 +275,37 @@ export default function Skills() {
         </section>
       </div>
     </motion.div>
+  )
+}
+
+function SkillManifestPanel({ manifest, border, panel, muted }: { manifest: SkillManifest; border: string; panel: string; muted: string }) {
+  return (
+    <div className={`rounded-lg border ${border} ${panel} p-4`}>
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <SquareActivity className="w-4 h-4 text-emerald-400" />
+        Skill Manifest v{manifest.manifest_version}
+      </div>
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Info label="Data" value={manifest.data_classification} icon={<Lock className="w-4 h-4" />} border={border} panel="bg-transparent" muted={muted} />
+        <Info label="Effect" value={manifest.side_effect_class} icon={<Wrench className="w-4 h-4" />} border={border} panel="bg-transparent" muted={muted} />
+        <Info label="Egress" value={`${manifest.egress.mode}${manifest.egress.provider ? ` · ${manifest.egress.provider}` : ''}`} icon={<ShieldCheck className="w-4 h-4" />} border={border} panel="bg-transparent" muted={muted} />
+      </div>
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Info label="Runtime" value={`${manifest.runtime.timeout_s}s · ${manifest.runtime.retry_policy}`} icon={<Clock3 className="w-4 h-4" />} border={border} panel="bg-transparent" muted={muted} />
+        <Info label="Rate Limit" value={manifest.runtime.rate_limit} icon={<ShieldAlert className="w-4 h-4" />} border={border} panel="bg-transparent" muted={muted} />
+        <Info label="Cost" value={`${manifest.cost.mode} · $${manifest.cost.max_usd_per_call.toFixed(4)}`} icon={<Database className="w-4 h-4" />} border={border} panel="bg-transparent" muted={muted} />
+      </div>
+      <div className={`mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs ${muted}`}>
+        <div className={`rounded-lg border ${border} p-3 min-h-20`}>
+          <div className="font-semibold">Audit</div>
+          <div className="mt-2 break-words">{manifest.audit.event_name} · redact {manifest.audit.redact_fields.join(', ') || 'none'}</div>
+        </div>
+        <div className={`rounded-lg border ${border} p-3 min-h-20`}>
+          <div className="font-semibold">Runbook</div>
+          <div className="mt-2 break-words">{manifest.runbook_ref}</div>
+        </div>
+      </div>
+    </div>
   )
 }
 
