@@ -1,3 +1,4 @@
+from brain.agents.manual_run import manual_run_eligibility
 from brain.agents.chatops_smoke import format_chatops_smoke_message
 from brain.agents.network_watchdog import client_keys, network_events_from_snapshot
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
@@ -108,3 +109,44 @@ def test_unifi_health_route_is_read_classified():
 
     assert classes == ["read"]
     assert determine_risk_tier(classes) == "T1"
+
+
+def test_agent_manual_run_route_is_admin_classified():
+    classes = classify_route("POST", "/v1/agents/chatops_smoke/run")
+
+    assert "admin" in classes
+    assert determine_risk_tier(classes) == "T5"
+
+
+def test_manual_run_requires_explicit_low_risk_enabled_opt_in():
+    allowed = manual_run_eligibility(
+        {
+            "agent_id": "chatops_smoke",
+            "status": "active",
+            "enabled": True,
+            "risk_tier": "T1",
+            "metadata": {"manual_run_enabled": True},
+        }
+    )
+    disabled = manual_run_eligibility(
+        {
+            "agent_id": "network_watchdog",
+            "status": "active",
+            "enabled": False,
+            "risk_tier": "T1",
+            "metadata": {"manual_run_enabled": True},
+        }
+    )
+    unmapped = manual_run_eligibility(
+        {
+            "agent_id": "dream_mode",
+            "status": "active",
+            "enabled": True,
+            "risk_tier": "T4",
+            "metadata": {"manual_run_enabled": True},
+        }
+    )
+
+    assert allowed.allowed is True
+    assert disabled.reason == "agent_disabled"
+    assert unmapped.reason == "manual_runner_not_registered"
