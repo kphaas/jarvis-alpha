@@ -498,6 +498,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         description="Create an Obsidian Tasks markdown checkbox.",
         approval_tier="T2",
         scope="tasks.write",
+        status="active",
         mutates_state=True,
         idempotency_required=True,
         metadata=_skill_metadata(
@@ -509,7 +510,12 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             egress_mode="local",
             provider="obsidian_tasks",
             compensation="delete_or_mark_created_task_cancelled",
-            test_ref="tests/test_agent_skill_registry.py",
+            test_ref="tests/test_obsidian_skills.py",
+            extra={
+                "execution_path": "skill_runner",
+                "config_secret": "OBSIDIAN_VAULT_PATH",
+                "default_path_secret": "OBSIDIAN_TASKS_INBOX",
+            },
         ),
     ),
     SkillSpec(
@@ -519,6 +525,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         description="Search the Obsidian vault.",
         approval_tier="T1",
         scope="notes.read",
+        status="active",
         metadata=_skill_metadata(
             data_classification="personal",
             timeout_s=10,
@@ -526,7 +533,11 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             rate_limit="120/minute/operator",
             egress_mode="local",
             provider="obsidian",
-            test_ref="tests/test_agent_skill_registry.py",
+            test_ref="tests/test_obsidian_skills.py",
+            extra={
+                "execution_path": "skill_runner",
+                "config_secret": "OBSIDIAN_VAULT_PATH",
+            },
         ),
     ),
     SkillSpec(
@@ -545,7 +556,11 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             egress_mode="local",
             provider="mattermost",
             test_ref="tests/test_agent_events_chatops.py",
-            extra={"surface": "mattermost", "write_commands": "blocked"},
+            extra={
+                "surface": "mattermost",
+                "write_commands": "blocked",
+                "execution_path": "fastapi_route",
+            },
         ),
     ),
 )
@@ -580,7 +595,13 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
         cadence="on_demand",
         launch_label="com.jarvis.alpha.temporal.worker",
         allowed_skills=["notes.search", "notify.send", "tasks.create"],
-        allowed_scopes=["dream.execute", "approval.request", "notify.send"],
+        allowed_scopes=[
+            "dream.execute",
+            "approval.request",
+            "notes.read",
+            "notify.send",
+            "tasks.write",
+        ],
         cost_daily_cap_usd=1.0,
         approval_policy={"writes": "approval_queue", "allowlist_only": True},
         metadata={"mattermost_channel_key": "alpha_events"},

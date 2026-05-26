@@ -110,6 +110,20 @@ The initial seed covers foundation and near-term waves:
 | AI Solo Developer | Planned agents default disabled, so each wave can ship in small reversible slices. |
 | Code Production | Mutating skills carry explicit idempotency flags, body-access flags, scopes, and approval tiers. |
 
+## Handler Coverage Guard
+
+Active SkillRunner skills must have a concrete handler, and concrete handlers
+must exist in the registry. The focused guard lives in
+`brain/registry/drift.py`, with a runnable check at
+`scripts/check_skill_registry_coverage.py` and pytest coverage in
+`tests/test_skill_handler_coverage.py`.
+
+The guard also blocks accidental activation of T4/T5 skills unless the skill
+metadata explicitly declares `approval_queue_bridge = enabled`. This matters
+because the route-level approval queue is live, but the agent-to-skill T4/T5
+retry bridge is not yet wired. Until that bridge lands, high-risk skills stay
+`planned` or `disabled`.
+
 ## Messaging Privacy Rail
 
 Wave 0 creates the storage boundary before Gmail or iMessage write paths are
@@ -149,6 +163,13 @@ The first enforced checks are:
 - mutating idempotent skills require an idempotency key
 - estimated cost must fit inside the agent's daily cap
 - T4/T5 skills require an approval grant before execution
+
+Route-level T4/T5 approvals are already handled by the Alpha Approvals tab
+through `alpha_approval_queue`, `brain/middleware/approval.py`, and
+`brain/routes/approvals.py`. Agent skill calls currently stop at
+`approval_required`; the next bridge must enqueue the skill request, return the
+approval item to the operator, and replay with `approval_granted=True` only
+after approval.
 
 MCP comes later as a transport adapter over this gate:
 
@@ -210,19 +231,33 @@ shared `MATTERMOST_COMMAND_TOKEN` on Brain. Supported commands are `health`,
 approve, kill, deploy, change caps, or mutate Alpha state in v0.9. Network
 output is summary-only and must not print raw MACs, IPs, or client payloads.
 
+## Obsidian Notes And Tasks
+
+The first non-notification Dream skills are now local-only Obsidian handlers:
+
+| Skill | State | Approval | Handler |
+|---|---|---|---|
+| `notes.search` | active | T1 | Searches markdown notes under `OBSIDIAN_VAULT_PATH`, skipping hidden and tool directories. |
+| `tasks.create` | active | T2 | Appends an Obsidian Tasks checkbox with a required idempotency marker. |
+
+Production configuration uses `OBSIDIAN_VAULT_PATH`; `tasks.create` optionally
+uses `OBSIDIAN_TASKS_INBOX` and otherwise defaults to `Inbox.md`. Paths are
+vault-relative only: absolute paths, hidden paths, traversal, and non-markdown
+targets are rejected.
+
 ## Next Build Recommendation
 
-After Skill Manifest v1 and the Dream ledger bridge land, the next production
-slice should be:
+After the registry drift guard and Obsidian seed handlers land, the next
+production slices should be:
 
-1. Add a registry drift check that compares code seed specs, DB rows, and UI
-   manifest coverage.
-2. Reconcile the remaining catalog skills against handlers: active skills must
-   have handlers, planned skills must have explicit blocked posture.
-3. If Dream 48-hour soak stays clean, promote Dream Mode from soak to production
+1. Add the SkillRunner T4/T5 approval bridge so agent skills can use the
+   existing Approvals tab without bypassing policy.
+2. If Dream 48-hour soak stays clean, promote Dream Mode from soak to production
    accepted and keep ledger mirroring as the operator history.
-4. Start Gmail read-only only after the encrypted body vault, redaction helper,
+3. Start Gmail read-only only after the encrypted body vault, redaction helper,
    and VIP-group fail-closed contract are deployed.
+4. Then begin inbox classification with read-only, redacted summaries before
+   any email write paths are activated.
 
 That path gives Alpha a real new agent without making Gmail, iMessage, or child
 surfaces the first test case.
