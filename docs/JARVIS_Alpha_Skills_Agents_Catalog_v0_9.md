@@ -119,10 +119,9 @@ must exist in the registry. The focused guard lives in
 `tests/test_skill_handler_coverage.py`.
 
 The guard also blocks accidental activation of T4/T5 skills unless the skill
-metadata explicitly declares `approval_queue_bridge = enabled`. This matters
-because the route-level approval queue is live, but the agent-to-skill T4/T5
-retry bridge is not yet wired. Until that bridge lands, high-risk skills stay
-`planned` or `disabled`.
+metadata explicitly declares `approval_queue_bridge = enabled`. High-risk skills
+must stay `planned` or `disabled` until their handler is present, bridge-tested,
+and marked with that metadata.
 
 ## Messaging Privacy Rail
 
@@ -166,10 +165,11 @@ The first enforced checks are:
 
 Route-level T4/T5 approvals are already handled by the Alpha Approvals tab
 through `alpha_approval_queue`, `brain/middleware/approval.py`, and
-`brain/routes/approvals.py`. Agent skill calls currently stop at
-`approval_required`; the next bridge must enqueue the skill request, return the
-approval item to the operator, and replay with `approval_granted=True` only
-after approval.
+`brain/routes/approvals.py`. Agent skill calls use
+`brain/skills/approval_bridge.py`: first call queues a deterministic approval
+item, Ken approves or denies it in the existing Approvals tab, and the agent must
+retry the exact same skill call before SkillRunner consumes the approved row and
+executes with `approval_granted=True`.
 
 MCP comes later as a transport adapter over this gate:
 
@@ -247,11 +247,11 @@ targets are rejected.
 
 ## Next Build Recommendation
 
-After the registry drift guard and Obsidian seed handlers land, the next
-production slices should be:
+After the registry drift guard, Obsidian seed handlers, and SkillRunner approval
+bridge land, the next production slices should be:
 
-1. Add the SkillRunner T4/T5 approval bridge so agent skills can use the
-   existing Approvals tab without bypassing policy.
+1. Add a small inactive T4 canary skill test path to prove approve/retry/consume
+   end-to-end without touching Gmail, iMessage, smart home, or firewall state.
 2. If Dream 48-hour soak stays clean, promote Dream Mode from soak to production
    accepted and keep ledger mirroring as the operator history.
 3. Start Gmail read-only only after the encrypted body vault, redaction helper,

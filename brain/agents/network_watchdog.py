@@ -11,8 +11,8 @@ import asyncpg
 from brain.agents.events import AgentEvent, emit_agent_event
 from brain.agents.runtime import AgentRuntime, AgentRuntimeConfig
 from brain.db.rls import platform_admin_connection
+from brain.skills.handlers import build_skill_runner
 from brain.skills.policy_gate import SkillInvocation
-from brain.skills.runner import SkillRunner
 from brain.skills.unifi import unifi_skill_handlers
 
 NETWORK_WATCHDOG_AGENT_ID = "network_watchdog"
@@ -67,7 +67,7 @@ async def collect_and_emit_network_events(
     run_id: UUID,
     previous_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    runner = SkillRunner(handlers=unifi_skill_handlers())
+    runner = build_skill_runner(handlers=unifi_skill_handlers())
     async with platform_admin_connection(
         source="buddy",
         audit_actor=NETWORK_WATCHDOG_AGENT_ID,

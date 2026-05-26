@@ -45,6 +45,7 @@ ACTION_CONTEXT = {
     "deploy": "Deploys code or configuration changes to a live node.",
     "child_facing": "Affects content or settings visible to Ryleigh or Sloane. Extra caution required.",
     "code_execution": "Runs generated or planned code. Requires a bounded executor and verification.",
+    "agent_skill": "Originated from SkillRunner. The agent must retry the same approved skill call before it can execute.",
     "dream_autonomous": "Originated from an autonomous Dream Mode plan. Human approval is required before side effects.",
     "unclassified": "This route has no security classification. Blocked by default until classified.",
 }
