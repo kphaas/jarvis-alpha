@@ -80,6 +80,7 @@ The initial seed covers foundation and near-term waves:
 - `notify.send`
 - `notify.send_mattermost`
 - `notify.send_pushover`
+- `approval.canary_t4`
 - `chatops.command_read`
 - `unifi.wan_status`
 - `unifi.clients`
@@ -188,6 +189,7 @@ MCP must never call provider adapters directly.
 | `ken_voice` | planned/disabled | First low-risk new agent candidate. Draft-only, no side effects. |
 | `chatops_smoke` | active/enabled | Scheduled and manual notification-path smoke agent. |
 | `network_watchdog` | active/disabled | First read-only monitoring agent candidate. Manual run is gated by T5 and stays disabled until soak review. |
+| `approval_canary` | active/disabled | No-op T4 canary for approve/retry/consume proof. Not manually runnable. |
 | `inbox_watcher` | planned/disabled | Gmail read/classification path. |
 | `family_concierge` | planned/disabled | Child-facing request router. |
 
@@ -245,19 +247,31 @@ uses `OBSIDIAN_TASKS_INBOX` and otherwise defaults to `Inbox.md`. Paths are
 vault-relative only: absolute paths, hidden paths, traversal, and non-markdown
 targets are rejected.
 
+## Approval Canary
+
+`approval.canary_t4` is a no-op T4 skill with
+`approval_queue_bridge = enabled`. It exists to prove the SkillRunner approval
+path before real high-risk skills are activated:
+
+`agent call -> approval queue -> Approvals tab decision -> same call retry -> handler executes -> queue row consumed`
+
+The paired `approval_canary` agent is `active` but `enabled = false`, has no
+manual runner, and has no external side effects. It is not a product feature;
+it is a production safety test hook.
+
 ## Next Build Recommendation
 
-After the registry drift guard, Obsidian seed handlers, and SkillRunner approval
-bridge land, the next production slices should be:
+After the registry drift guard, Obsidian seed handlers, SkillRunner approval
+bridge, and inactive approval canary land, the next production slices should be:
 
-1. Add a small inactive T4 canary skill test path to prove approve/retry/consume
-   end-to-end without touching Gmail, iMessage, smart home, or firewall state.
-2. If Dream 48-hour soak stays clean, promote Dream Mode from soak to production
+1. If Dream 48-hour soak stays clean, promote Dream Mode from soak to production
    accepted and keep ledger mirroring as the operator history.
-3. Start Gmail read-only only after the encrypted body vault, redaction helper,
+2. Start Gmail read-only only after the encrypted body vault, redaction helper,
    and VIP-group fail-closed contract are deployed.
-4. Then begin inbox classification with read-only, redacted summaries before
+3. Then begin inbox classification with read-only, redacted summaries before
    any email write paths are activated.
+4. Design the child avatar/tablet surface as a request client of Alpha, not as
+   an autonomous agent with independent privileges.
 
 That path gives Alpha a real new agent without making Gmail, iMessage, or child
 surfaces the first test case.

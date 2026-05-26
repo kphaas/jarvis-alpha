@@ -16,6 +16,7 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert "notify.send" in names
     assert "notify.send_mattermost" in names
     assert "notify.send_pushover" in names
+    assert "approval.canary_t4" in names
     assert "chatops.command_read" in names
     assert "unifi.wan_status" in names
     assert "gmail.send" in names
@@ -32,6 +33,10 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert skills["notify.send_mattermost"].status == "active"
     assert skills["notify.send_mattermost"].metadata["delivery"] == "incoming_webhook"
     assert skills["notify.send_pushover"].status == "active"
+    assert skills["approval.canary_t4"].status == "active"
+    assert skills["approval.canary_t4"].approval_tier == "T4"
+    assert skills["approval.canary_t4"].metadata["approval_queue_bridge"] == "enabled"
+    assert skills["approval.canary_t4"].metadata["canary"] is True
 
 
 def test_initial_skill_catalog_has_complete_manifest_v1_contracts():
@@ -75,6 +80,9 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["watchdog"].enabled is True
     assert agents["ken_voice"].enabled is False
     assert agents["network_watchdog"].enabled is False
+    assert agents["approval_canary"].enabled is False
+    assert agents["approval_canary"].risk_tier == "T4"
+    assert "approval.canary_t4" in agents["approval_canary"].allowed_skills
     assert "notify.send" in agents["dream_mode"].allowed_skills
     assert "notify.send" in agents["approval_triage"].allowed_skills
     assert agents["approval_triage"].metadata["mattermost_channel_key"] == "needs_input"

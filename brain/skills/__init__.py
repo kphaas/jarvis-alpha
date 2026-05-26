@@ -5,6 +5,10 @@ from brain.skills.approval_bridge import (
     SkillApprovalItem,
     skill_parameters_hash,
 )
+from brain.skills.canary import (
+    approval_canary_t4,
+    canary_skill_handlers,
+)
 from brain.skills.notify import (
     MattermostSkillError,
     MattermostSkillPayload,
@@ -49,6 +53,8 @@ __all__ = [
     "SkillApprovalBridge",
     "SkillApprovalItem",
     "skill_parameters_hash",
+    "approval_canary_t4",
+    "canary_skill_handlers",
     "MattermostSkillError",
     "MattermostSkillPayload",
     "NotifySkillError",
