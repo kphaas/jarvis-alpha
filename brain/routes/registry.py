@@ -343,17 +343,20 @@ async def list_agent_statuses(request: Request) -> AgentStatusListOut:
             SELECT a.agent_id, a.display_name, a.status, a.enabled, a.risk_tier,
                    a.cadence, a.launch_label, a.metadata,
                    lr.status AS last_run_status,
-                   lr.created_at AS last_run_at,
+                   lr.last_run_at AS last_run_at,
                    le.event_type AS last_event_type,
                    le.severity AS last_event_severity,
                    le.title AS last_event_title,
                    le.created_at AS last_event_at
             FROM public.alpha_agents a
             LEFT JOIN LATERAL (
-                SELECT status, created_at
+                SELECT
+                    status,
+                    COALESCE(completed_at, started_at, created_at) AS last_run_at
                 FROM public.alpha_agent_runs
                 WHERE agent_id = a.agent_id
-                ORDER BY created_at DESC
+                ORDER BY COALESCE(completed_at, started_at, created_at) DESC,
+                         created_at DESC
                 LIMIT 1
             ) lr ON TRUE
             LEFT JOIN LATERAL (
@@ -454,7 +457,8 @@ async def list_agent_runs(
                    completed_at, cost_usd, error_text, metadata, created_at
             FROM public.alpha_agent_runs
             WHERE agent_id = $1
-            ORDER BY created_at DESC
+            ORDER BY COALESCE(completed_at, started_at, created_at) DESC,
+                     created_at DESC
             LIMIT $2
             """,
             agent_id,
