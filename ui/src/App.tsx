@@ -19,6 +19,8 @@ const Mesh = lazy(() => import('./pages/Mesh'))
 const Approvals = lazy(() => import('./pages/Approvals'))
 const Security = lazy(() => import('./pages/Security'))
 const Agents = lazy(() => import('./pages/Agents'))
+const Skills = lazy(() => import('./pages/Skills'))
+const Governance = lazy(() => import('./pages/Governance'))
 const Briefing = lazy(() => import('./pages/Briefing'))
 const BriefingDetail = lazy(() => import('./pages/BriefingDetail'))
 
@@ -48,10 +50,11 @@ export default function App() {
                   <Route path="/health" element={<Health theme={theme} token={brainToken} />} />
                   <Route path="/errors" element={<Errors theme={theme} />} />
                   <Route path="/agents" element={<Agents />} />
+                  <Route path="/skills" element={<Skills />} />
                   <Route path="/ops" element={<Placeholder label="Ops" phase="Next session" />} />
                   <Route path="/approvals" element={<Approvals />} />
                   <Route path="/security" element={<Security />} />
-                  <Route path="/governance" element={<Placeholder label="Governance" phase="Next session" />} />
+                  <Route path="/governance" element={<Governance />} />
                   <Route path="/cost" element={<Navigate to="/costs" replace />} />
                   <Route path="/costs" element={<CostCenter />} />
                   <Route path="/documents" element={<Placeholder label="Documents" phase="Next session" />} />
