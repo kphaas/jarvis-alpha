@@ -7,7 +7,9 @@ cannot approve, kill, deploy, or mutate state through this route.
 from __future__ import annotations
 
 import hmac
+import json
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import APIRouter, Form, HTTPException
 from pydantic import BaseModel
@@ -75,6 +77,8 @@ async def mattermost_command(
                 body = await _health_text(conn)
             elif command.name == "agents":
                 body = await _agents_text(conn)
+            elif command.name == "network":
+                body = await _network_text(conn)
             elif command.name == "approvals":
                 body = await _approvals_text(conn)
             elif command.name in {"dreams", "dream"}:
@@ -99,6 +103,7 @@ def _help_text() -> str:
             "**Alpha read-only commands**",
             "`/alpha health` - Brain, Temporal, and Dream worker status",
             "`/alpha agents` - agent registry summary",
+            "`/alpha network` - read-only Network Watchdog summary",
             "`/alpha approvals` - pending approval queue",
             "`/alpha dreams [n]` - recent Dream sessions",
         ]
@@ -169,6 +174,76 @@ async def _agents_text(conn) -> str:
     return "\n".join(lines)
 
 
+async def _network_text(conn) -> str:
+    agent = await conn.fetchrow(
+        """
+        SELECT agent_id, display_name, status, enabled, cadence, metadata
+        FROM public.alpha_agents
+        WHERE agent_id = 'network_watchdog'
+        """
+    )
+    if not agent:
+        return "**Alpha Network**\nNetwork Watchdog is not registered."
+
+    last_run = await conn.fetchrow(
+        """
+        SELECT status, trigger_type, started_at, completed_at, error_text, created_at
+        FROM public.alpha_agent_runs
+        WHERE agent_id = 'network_watchdog'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """
+    )
+    events = await conn.fetch(
+        """
+        SELECT event_type, severity, title, notification_status, created_at
+        FROM public.alpha_agent_events
+        WHERE agent_id = 'network_watchdog'
+        ORDER BY created_at DESC
+        LIMIT 3
+        """
+    )
+
+    metadata = _jsonb(agent["metadata"])
+    enabled = "on" if agent["enabled"] else "off"
+    lines = [
+        "**Alpha Network**",
+        (
+            f"Network Watchdog: `{enabled}` · `{agent['status']}` · "
+            f"cadence `{agent['cadence'] or 'manual'}`"
+        ),
+        (
+            "Last observed: "
+            f"WAN `{metadata.get('last_wan_status', 'unknown')}` · "
+            f"health `{metadata.get('last_health_status', 'unknown')}` · "
+            f"client baseline `{len(metadata.get('last_client_keys') or [])}`"
+        ),
+    ]
+    if last_run:
+        completed_at = last_run["completed_at"] or last_run["created_at"]
+        lines.append(
+            "Last run: "
+            f"`{last_run['status']}` via `{last_run['trigger_type']}` "
+            f"at `{completed_at.isoformat() if completed_at else 'unknown'}`"
+        )
+        if last_run["error_text"]:
+            lines.append("Last run error: redacted; check Alpha logs.")
+    else:
+        lines.append("Last run: `none`")
+
+    if events:
+        lines.append("Recent network events:")
+        for event in events:
+            lines.append(
+                f"- `{event['severity']}` `{event['event_type']}` "
+                f"{event['title']} ({event['notification_status']})"
+            )
+    else:
+        lines.append("Recent network events: none")
+
+    return "\n".join(lines)
+
+
 async def _approvals_text(conn) -> str:
     rows = await conn.fetch(
         """
@@ -226,3 +301,11 @@ def _bounded_limit(args: tuple[str, ...], *, default: int, maximum: int) -> int:
     except ValueError:
         return default
     return max(1, min(value, maximum))
+
+
+def _jsonb(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        return json.loads(value)
+    return dict(value)

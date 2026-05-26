@@ -13,7 +13,7 @@ import {
   RefreshCw,
   ShieldCheck,
 } from 'lucide-react'
-import { apiJson } from '../lib/apiFetch'
+import { apiFetch, apiJson } from '../lib/apiFetch'
 import { useAppStore } from '../store'
 
 interface AgentStatus {
@@ -103,6 +103,13 @@ interface AgentManualRun {
   error_text: string | null
 }
 
+interface ApprovalGateResponse {
+  detail: 'approval_required'
+  queue_id: string
+  tier: string
+  action_class: string
+}
+
 const REFRESH_MS = 30_000
 
 function statusColor(status: string, enabled: boolean) {
@@ -155,6 +162,7 @@ export default function Agents() {
   const [acting, setActing] = useState<string | null>(null)
   const [runningNow, setRunningNow] = useState<string | null>(null)
   const [runResult, setRunResult] = useState<AgentManualRun | null>(null)
+  const [approvalNotice, setApprovalNotice] = useState<ApprovalGateResponse | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -220,10 +228,13 @@ export default function Agents() {
   const setEnabled = async (agentId: string, enabled: boolean) => {
     setActing(agentId)
     setRunResult(null)
+    setApprovalNotice(null)
     try {
-      await apiJson<Agent>(`/v1/agents/${agentId}/${enabled ? 'enable' : 'disable'}`, {
-        method: 'POST',
-      })
+      const response = await postAgentControl<Agent>(`/v1/agents/${agentId}/${enabled ? 'enable' : 'disable'}`)
+      if (response.approval) {
+        setApprovalNotice(response.approval)
+        return
+      }
       await load()
       await loadDetails(agentId)
     } catch (err) {
@@ -236,11 +247,14 @@ export default function Agents() {
   const runNow = async (agentId: string) => {
     setRunningNow(agentId)
     setRunResult(null)
+    setApprovalNotice(null)
     try {
-      const result = await apiJson<AgentManualRun>(`/v1/agents/${agentId}/run`, {
-        method: 'POST',
-      })
-      setRunResult(result)
+      const response = await postAgentControl<AgentManualRun>(`/v1/agents/${agentId}/run`)
+      if (response.approval) {
+        setApprovalNotice(response.approval)
+      } else if (response.data) {
+        setRunResult(response.data)
+      }
       await load()
       await loadDetails(agentId)
     } catch (err) {
@@ -283,6 +297,13 @@ export default function Agents() {
         <div className="min-h-11 flex items-center gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 text-sm text-emerald-400">
           <CheckCircle2 className="w-4 h-4 shrink-0" />
           Manual run {runResult.status ?? 'queued'} for {runResult.agent_id}
+        </div>
+      )}
+
+      {approvalNotice && (
+        <div className="min-h-11 flex items-center gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 text-sm text-amber-400">
+          <ShieldCheck className="w-4 h-4 shrink-0" />
+          Approval queued: {approvalNotice.tier} / {approvalNotice.queue_id}
         </div>
       )}
 
@@ -457,6 +478,38 @@ export default function Agents() {
         </section>
       </div>
     </motion.div>
+  )
+}
+
+async function postAgentControl<T>(path: string): Promise<{ data?: T; approval?: ApprovalGateResponse }> {
+  const res = await apiFetch(path, { method: 'POST' })
+  const body = await parseJsonBody(res)
+  if (res.ok) {
+    return { data: body as T }
+  }
+  if (res.status === 403 && isApprovalGateResponse(body)) {
+    return { approval: body }
+  }
+  const detail = body && typeof body === 'object' && 'detail' in body ? String(body.detail) : `HTTP ${res.status}`
+  throw new Error(detail)
+}
+
+async function parseJsonBody(res: Response): Promise<unknown> {
+  try {
+    return await res.json()
+  } catch {
+    return null
+  }
+}
+
+function isApprovalGateResponse(value: unknown): value is ApprovalGateResponse {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { detail?: unknown }).detail === 'approval_required' &&
+    typeof (value as { queue_id?: unknown }).queue_id === 'string' &&
+    typeof (value as { tier?: unknown }).tier === 'string' &&
+    typeof (value as { action_class?: unknown }).action_class === 'string'
   )
 }
 
