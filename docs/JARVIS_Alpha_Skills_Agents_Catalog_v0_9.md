@@ -45,6 +45,7 @@ The first implementation slice creates the control plane before new agents run:
 | `GET /v1/agents/{agent_id}/runs` | Read recent agent run ledger rows. | T2 security read |
 | `POST /v1/agents/{agent_id}/enable` | Enable an agent in the registry. | T5 admin control |
 | `POST /v1/agents/{agent_id}/disable` | Disable an agent in the registry. | T5 admin control |
+| `POST /v1/agents/{agent_id}/run` | Manually trigger an explicitly opted-in T1/T2 agent. | T5 admin control |
 | `POST /v1/chatops/mattermost/command` | Token-authenticated read-only Mattermost slash command endpoint. | T2 security read |
 
 The registry does not make Mattermost the internal coordination bus. Agents
@@ -86,6 +87,18 @@ The initial seed covers foundation and near-term waves:
 | Enterprise Architect | Ports, adapters, skills, and agents stay separable; provider choices do not leak into agent policy. |
 | AI Solo Developer | Planned agents default disabled, so each wave can ship in small reversible slices. |
 | Code Production | Mutating skills carry explicit idempotency flags, body-access flags, scopes, and approval tiers. |
+
+## Messaging Privacy Rail
+
+Wave 0 creates the storage boundary before Gmail or iMessage write paths are
+active:
+
+| Item | State | Boundary |
+|---|---|---|
+| `brain/privacy/redaction.py` | Active helper | Message-body-like fields become deterministic hashes before logs or ChatOps payloads. |
+| `brain/privacy/vip_groups.py` | Active contract | `vip_groups.enc` loading is fail-closed until a decryptor and a chmod-600 encrypted file are configured. |
+| `alpha_message_body_vault` | DB foundation | Gmail/iMessage bodies are pgcrypto-encrypted, FORCE-RLS protected, and retention-bound. |
+| Decrypt/read function | Not present | No body retrieval function ships in Wave 0; future reads need explicit `*.body.read` scope and PIN-gated audit. |
 
 ## Runtime Policy Gate
 
@@ -130,7 +143,8 @@ MCP must never call provider adapters directly.
 | `approval_triage` | active/enabled | Approval queue events routed to `needs-input`. |
 | `watchdog` | active/enabled | Infrastructure health events routed to `alerts`. |
 | `ken_voice` | planned/disabled | First low-risk new agent candidate. Draft-only, no side effects. |
-| `network_watchdog` | planned/disabled | First read-only monitoring agent candidate. |
+| `chatops_smoke` | active/enabled | Scheduled and manual notification-path smoke agent. |
+| `network_watchdog` | active/disabled | First read-only monitoring agent candidate. Manual run is gated by T5 and stays disabled until soak review. |
 | `inbox_watcher` | planned/disabled | Gmail read/classification path. |
 | `family_concierge` | planned/disabled | Child-facing request router. |
 
@@ -158,18 +172,21 @@ mode still supports `MATTERMOST_CHANNEL_<KEY>_ID` for later phases.
 The first Mattermost command surface is read-only. Configure one slash command,
 for example `/alpha`, to post to `/v1/chatops/mattermost/command` with the
 shared `MATTERMOST_COMMAND_TOKEN` on Brain. Supported commands are `health`,
-`agents`, `approvals`, and `dreams [n]`. No Mattermost route can approve, kill,
-deploy, change caps, or mutate Alpha state in v0.9.
+`agents`, `network`, `approvals`, and `dreams [n]`. No Mattermost route can
+approve, kill, deploy, change caps, or mutate Alpha state in v0.9. Network
+output is summary-only and must not print raw MACs, IPs, or client payloads.
 
 ## Next Build Recommendation
 
 After the AgentEvent and Mattermost command slice lands, the next production
 slice should be:
 
-1. Add a `network_watchdog` run loop in disabled-by-default mode.
-2. Enable read-only UniFi controller data behind the registry contract.
-3. Emit new-device, WAN flap, switch/AP health, and controller-error
-   AgentEvents through `notify.send`.
+1. Complete the 24-hour soak review for `chatops_smoke` and the disabled
+   `network_watchdog` posture.
+2. If soak is clean, enable `network_watchdog` and watch notification noise for
+   one day.
+3. Start Gmail read-only only after the encrypted body vault, redaction helper,
+   and VIP-group fail-closed contract are deployed.
 
 That path gives Alpha a real new agent without making Gmail, iMessage, or child
 surfaces the first test case.
