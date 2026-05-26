@@ -11,6 +11,13 @@ from brain.skills.notify import (
     send_notify,
     send_pushover,
 )
+from brain.skills.handlers import all_skill_handlers
+from brain.skills.obsidian import (
+    ObsidianSkillError,
+    notes_search,
+    obsidian_skill_handlers,
+    tasks_create,
+)
 from brain.skills.policy_gate import (
     SkillInvocation,
     SkillPolicyDecision,
@@ -32,6 +39,7 @@ __all__ = [
     "SkillPolicyGate",
     "SkillRunner",
     "SkillRunResult",
+    "all_skill_handlers",
     "MattermostSkillError",
     "MattermostSkillPayload",
     "NotifySkillError",
@@ -41,6 +49,10 @@ __all__ = [
     "send_mattermost",
     "send_notify",
     "send_pushover",
+    "ObsidianSkillError",
+    "notes_search",
+    "obsidian_skill_handlers",
+    "tasks_create",
     "UniFiSkillError",
     "clients",
     "health_check",
