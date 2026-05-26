@@ -247,6 +247,19 @@ uses `OBSIDIAN_TASKS_INBOX` and otherwise defaults to `Inbox.md`. Paths are
 vault-relative only: absolute paths, hidden paths, traversal, and non-markdown
 targets are rejected.
 
+## Weather
+
+`weather.current` is the first governed real-world read skill for child-facing
+and operator-facing assistants. It is active, T1, read-only, and must execute
+through SkillRunner. Brain never calls the public weather API directly: the
+handler calls Alpha Gateway, and Gateway calls Open-Meteo with a 10-minute
+cache. Gateway uses configured home coordinates by default, or explicit
+latitude/longitude when a caller provides both.
+
+| Skill | State | Approval | Provider | Guardrail |
+|---|---|---|---|---|
+| `weather.current` | active | T1 | Open-Meteo via Gateway | No address geocoding, no broad web/search access, cache TTL 600s. |
+
 ## Approval Canary
 
 `approval.canary_t4` is a no-op T4 skill with

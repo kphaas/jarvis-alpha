@@ -15,6 +15,7 @@ def test_guard_includes_obsidian_skills_declared_for_dream_mode():
 
     assert "notes.search" in handlers
     assert "tasks.create" in handlers
+    assert "weather.current" in handlers
     assert "approval.canary_t4" in handlers
 
 
