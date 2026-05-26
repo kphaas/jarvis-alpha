@@ -8,6 +8,8 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from brain.agents.manual_run import manual_run_eligibility, run_agent_now
+from brain.db.pool import get_pool
 from brain.db.rls import rls_connection
 from brain.middleware.scopes import check_scopes
 from jarvis_common.logging_config import get_logger
@@ -122,6 +124,16 @@ class AgentStatusOut(BaseModel):
 class AgentStatusListOut(BaseModel):
     count: int
     agents: list[AgentStatusOut]
+
+
+class AgentManualRunOut(BaseModel):
+    agent_id: str
+    executed: bool
+    run_id: str | None = None
+    status: str | None = None
+    trace_id: str | None = None
+    skipped_reason: str | None = None
+    error_text: str | None = None
 
 
 def _jsonb(value) -> dict:
@@ -458,6 +470,51 @@ async def enable_agent(agent_id: str, request: Request) -> AgentOut:
 async def disable_agent(agent_id: str, request: Request) -> AgentOut:
     check_scopes(request, "agents.write")
     return await _set_agent_enabled(agent_id, request, enabled=False)
+
+
+@router.post("/agents/{agent_id}/run", response_model=AgentManualRunOut)
+async def run_agent(agent_id: str, request: Request) -> AgentManualRunOut:
+    check_scopes(request, "agents.write")
+    async with rls_connection(request) as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT agent_id, status, enabled, risk_tier, metadata
+            FROM public.alpha_agents
+            WHERE agent_id = $1
+            """,
+            agent_id,
+        )
+    eligibility = manual_run_eligibility(
+        {
+            "agent_id": row["agent_id"],
+            "status": row["status"],
+            "enabled": row["enabled"],
+            "risk_tier": row["risk_tier"],
+            "metadata": _jsonb(row["metadata"]),
+        }
+        if row
+        else None
+    )
+    if not eligibility.allowed:
+        status_code = 404 if eligibility.reason == "unknown_agent" else 409
+        raise HTTPException(status_code=status_code, detail=eligibility.reason)
+
+    result = await run_agent_now(agent_id, pool=get_pool())
+    logger.info(
+        "AGENT_MANUAL_RUN agent_id=%s executed=%s run_id=%s",
+        agent_id,
+        result.executed,
+        result.run_id,
+    )
+    return AgentManualRunOut(
+        agent_id=result.agent_id,
+        executed=result.executed,
+        run_id=str(result.run_id) if result.run_id else None,
+        status=result.status,
+        trace_id=result.trace_id,
+        skipped_reason=result.skipped_reason,
+        error_text=result.error_text,
+    )
 
 
 async def _set_agent_enabled(

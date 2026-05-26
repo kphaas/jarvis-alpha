@@ -44,6 +44,24 @@ async def maybe_run_network_watchdog(pool: asyncpg.Pool) -> bool:
     return True
 
 
+async def run_network_watchdog_now(pool: asyncpg.Pool):
+    runtime = AgentRuntime(
+        AgentRuntimeConfig(
+            agent_id=NETWORK_WATCHDOG_AGENT_ID,
+            trigger_type="manual",
+            source="http",
+        ),
+        pool=pool,
+    )
+    state = await runtime.load_state()
+    previous_metadata = state.metadata if state else {}
+
+    async def _run(run_id: UUID) -> dict[str, Any]:
+        return await collect_and_emit_network_events(pool, run_id, previous_metadata)
+
+    return await runtime.run_once(_run)
+
+
 async def collect_and_emit_network_events(
     pool: asyncpg.Pool,
     run_id: UUID,

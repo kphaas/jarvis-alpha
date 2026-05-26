@@ -93,6 +93,16 @@ interface AgentRunList {
   runs: AgentRun[]
 }
 
+interface AgentManualRun {
+  agent_id: string
+  executed: boolean
+  run_id: string | null
+  status: string | null
+  trace_id: string | null
+  skipped_reason: string | null
+  error_text: string | null
+}
+
 const REFRESH_MS = 30_000
 
 function statusColor(status: string, enabled: boolean) {
@@ -143,6 +153,8 @@ export default function Agents() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [acting, setActing] = useState<string | null>(null)
+  const [runningNow, setRunningNow] = useState<string | null>(null)
+  const [runResult, setRunResult] = useState<AgentManualRun | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -207,6 +219,7 @@ export default function Agents() {
 
   const setEnabled = async (agentId: string, enabled: boolean) => {
     setActing(agentId)
+    setRunResult(null)
     try {
       await apiJson<Agent>(`/v1/agents/${agentId}/${enabled ? 'enable' : 'disable'}`, {
         method: 'POST',
@@ -219,6 +232,28 @@ export default function Agents() {
       setActing(null)
     }
   }
+
+  const runNow = async (agentId: string) => {
+    setRunningNow(agentId)
+    setRunResult(null)
+    try {
+      const result = await apiJson<AgentManualRun>(`/v1/agents/${agentId}/run`, {
+        method: 'POST',
+      })
+      setRunResult(result)
+      await load()
+      await loadDetails(agentId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Manual run failed')
+    } finally {
+      setRunningNow(null)
+    }
+  }
+
+  const canRunSelected =
+    selectedAgent?.enabled === true &&
+    selectedAgent.status === 'active' &&
+    selectedAgent.metadata.manual_run_enabled === true
 
   return (
     <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="space-y-5 max-w-7xl">
@@ -241,6 +276,13 @@ export default function Agents() {
         <div className="min-h-11 flex items-center gap-2 rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 text-sm text-rose-400">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           {error}
+        </div>
+      )}
+
+      {runResult && (
+        <div className="min-h-11 flex items-center gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 text-sm text-emerald-400">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          Manual run {runResult.status ?? 'queued'} for {runResult.agent_id}
         </div>
       )}
 
@@ -322,19 +364,30 @@ export default function Agents() {
                   </div>
                   <div className={`mt-1 text-sm ${muted}`}>{selectedAgent.purpose}</div>
                 </div>
-                <button
-                  disabled={acting === selectedAgent.agent_id}
-                  onClick={() => setEnabled(selectedAgent.agent_id, !selectedAgent.enabled)}
-                  title={selectedAgent.enabled ? 'Disable agent' : 'Enable agent'}
-                  className={`min-h-11 px-3 rounded-lg border flex items-center gap-2 text-sm font-semibold disabled:opacity-40 ${
-                    selectedAgent.enabled
-                      ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
-                      : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                  }`}
-                >
-                  {selectedAgent.enabled ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                  {selectedAgent.enabled ? 'Disable' : 'Enable'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    disabled={!canRunSelected || runningNow === selectedAgent.agent_id}
+                    onClick={() => runNow(selectedAgent.agent_id)}
+                    title="Run now"
+                    className="min-h-11 px-3 rounded-lg border border-sky-500/30 bg-sky-500/10 text-sky-400 flex items-center gap-2 text-sm font-semibold disabled:opacity-40"
+                  >
+                    <Play className="w-4 h-4" />
+                    Run Now
+                  </button>
+                  <button
+                    disabled={acting === selectedAgent.agent_id}
+                    onClick={() => setEnabled(selectedAgent.agent_id, !selectedAgent.enabled)}
+                    title={selectedAgent.enabled ? 'Disable agent' : 'Enable agent'}
+                    className={`min-h-11 px-3 rounded-lg border flex items-center gap-2 text-sm font-semibold disabled:opacity-40 ${
+                      selectedAgent.enabled
+                        ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+                        : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                    }`}
+                  >
+                    {selectedAgent.enabled ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                    {selectedAgent.enabled ? 'Disable' : 'Enable'}
+                  </button>
+                </div>
               </div>
 
               <div className="p-4 space-y-4">

@@ -37,6 +37,18 @@ async def maybe_run_chatops_smoke(pool: asyncpg.Pool) -> bool:
     return True
 
 
+async def run_chatops_smoke_now(pool: asyncpg.Pool):
+    runtime = AgentRuntime(
+        AgentRuntimeConfig(
+            agent_id=CHATOPS_SMOKE_AGENT_ID,
+            trigger_type="manual",
+            source="http",
+        ),
+        pool=pool,
+    )
+    return await runtime.run_once(lambda run_id: _emit_smoke_event(pool, run_id))
+
+
 async def _emit_smoke_event(pool: asyncpg.Pool, run_id: UUID) -> dict[str, Any]:
     snapshot = await collect_chatops_health(pool)
     title = "Alpha ChatOps smoke"

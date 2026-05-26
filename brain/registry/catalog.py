@@ -360,6 +360,7 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
         metadata={
             "mattermost_channel_key": "alpha_events",
             "smoke_interval_seconds": 21600,
+            "manual_run_enabled": True,
         },
     ),
     AgentSpec(
@@ -382,6 +383,7 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
         metadata={
             "mattermost_channel_key": "alpha_events",
             "poll_interval_seconds": 30,
+            "manual_run_enabled": True,
         },
     ),
     AgentSpec(
