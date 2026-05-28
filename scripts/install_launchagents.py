@@ -49,6 +49,7 @@ SERVICE_NODE_MAP = {
     "com.jarvis.alpha.executor": "brain",
     "com.jarvis.alpha.fluentbit": "brain",
     "com.jarvis.alpha.loki": "brain",
+    "com.jarvis.alpha.pg_backup": "brain",
     "com.jarvis.alpha.power.brain": "brain",
     "com.jarvis.alpha.rotate.brain_service": "brain",
     "com.jarvis.alpha.rotate.buddy": "brain",
@@ -60,6 +61,7 @@ SERVICE_NODE_MAP = {
     "com.jarvis.alpha.power.endpoint": "endpoint",
     "com.jarvis.alpha.rotate.endpoint": "endpoint",
     "com.jarvis.alpha.power.sandbox": "sandbox",
+    "com.jarvis.alpha.restore_drill": "sandbox",
     "com.jarvis.alpha.rotate.sandbox": "sandbox",
 }
 
