@@ -21,7 +21,7 @@ backup work and Session 1.5 httpx guard work.
 | AUDIT-3 | `/health` does not probe DB / Ollama / Temporal | P1 | ❌ OPEN | `brain/routes/health.py:127-129` returns `{"status":"ok","node":"brain","service":"jarvis-alpha"}` only — no dependency probe | Session 2 candidate |
 | AUDIT-4 | Possible Brain → public internet violation (V2 §1) | P1 | 🟢 GUARD-LANDED | `tests/test_no_external_urls.py` (PR #153, 319 lines) enforces invariant across all `brain/*.py`. **5 real violations documented as strict-xfail TDs**: see TD-S15-1..4 below | PR #153, TD-S15-1..4 |
 | AUDIT-5 | 15/20 LaunchAgent plists hardcode `/Users/<user>/` | P1 | 🟡 PARTIAL | `ls launchagents/*.template.plist` = 7 (was 5 pre-Session 1); `ls launchagents/*.plist` (non-template) = 15. New work added 2 templates; the 15 legacy hardcoded plists remain | Alpha-5 Phase 5.0 |
-| AUDIT-6 | Loki + Fluentbit plists present, shippers inactive | P1 | ❌ OPEN | `common/jarvis_common/logging_config.py:100-102` — `stdout_handler = logging.StreamHandler(sys.stdout)` is the only handler attached; no Loki/Fluentbit shipper code path. `brain/config/logging_config.py` is a re-export shim | Session 2 candidate |
+| AUDIT-6 | Loki ingest live, labeling broken + coverage incomplete | P1 | 🟡 PARTIAL | Pipeline confirmed working: Brain Fluentbit (PID 84515) + Loki (PID 84530) shipping ~14k lines/hr. Real defects: (1) `~/fluent-bit/fluent-bit.yaml` has no JSON parser stage so `label_keys: $service,$level` resolve against the empty `{"log": ...}` envelope → all logs collapse to `service_name=unknown_service`; (2) Brain tails 9 of 14 services (temporal trio, pg_backup, rotate pair, school-email, self-logs untailed); (3) Endpoint Fluentbit running, config unconfirmed; (4) Gateway + Sandbox have no shipper. Original `logging_config.py:100-102` evidence was a misread — Python stdout-only is intentional architecture (launchd captures stdout → Fluentbit tails the files). See `docs/observability/LABEL_TAXONOMY.md`. | Phase 4c (Session 2) |
 | AUDIT-7 | No rollback script | P1 | ❌ OPEN | `scripts/jarvisalpha_rollback.sh` and `scripts/jarvisalpha_revert.sh` do not exist. `scripts/jarvisalpha_deploy.sh` remains forward-only (Phase 6 of Session 1 deploy confirmed via `gh pr merge --squash` revert path only) | Session 2 candidate |
 | AUDIT-8 | `/health/agents` only surfaces 3 of 8+ LaunchAgents | P2 | ❌ OPEN | `brain/routes/health.py:19-25` — `BRAIN_AGENTS = ["com.jarvis.alpha.brain", "com.jarvis.alpha.buddy", "com.jarvis.ollama"]`. Missing: executor, watchdog, temporal.server, temporal.ui, fluentbit, loki, power.brain, pg_backup (the last one is new from Session 1) | Quick win |
 | AUDIT-9 | Rate-limit docstring/constant mismatch | P2 | ❌ OPEN | `brain/middleware/rate_limit_middleware.py:12` `MAX_REQUESTS = 300`; `:20` docstring says "100 req/min per user_id". One-line fix | Quick win |
@@ -77,7 +77,7 @@ Each TD has a `@pytest.mark.xfail(strict=True)` test in `tests/test_no_external_
 
 ### 🟡 P1 — observability cluster
 - **AUDIT-3** (deep `/health` probe)
-- **AUDIT-6** (activate Fluentbit → Loki shipper)
+- **AUDIT-6** (fix Fluentbit JSON parser → restore `service`/`level` labels; reclassified 🟡 PARTIAL — pipeline already ingesting; fleet extension deferred)
 - **AUDIT-7** (rollback script — symmetric inverse of `jarvisalpha_deploy.sh`)
 - **AUDIT-8** (extend `BRAIN_AGENTS` list)
 
@@ -103,7 +103,7 @@ Each TD has a `@pytest.mark.xfail(strict=True)` test in `tests/test_no_external_
 
 ### Session 2 — Observability Hardening
 - AUDIT-3: deep `/health/ready` probe (DB pool + Ollama generate + Temporal client)
-- AUDIT-6: activate Fluentbit → Loki shipper on Brain; smoke-test Grafana board
+- AUDIT-6 (Phase 4c): add JSON parser to `~/fluent-bit/fluent-bit.yaml` on Brain so `service`/`level` labels populate; verify via `/loki/api/v1/label/service/values`. Fleet extension (Gateway/Sandbox shipper, Endpoint config audit, missing 5 Brain tails) deferred to Session 3+
 - AUDIT-7: write `scripts/jarvisalpha_rollback.sh` (symmetric inverse of deploy)
 - AUDIT-8: extend `BRAIN_AGENTS` to all 8+ agents
 - Quick wins folded in: AUDIT-9, AUDIT-12
@@ -149,7 +149,8 @@ All references verified against current main `7037ab1` (2026-05-28):
 | `brain/routes/health.py:127-129` | shallow health endpoint | AUDIT-3 evidence |
 | `brain/routes/health.py:19-25` | `BRAIN_AGENTS` short list | AUDIT-8 evidence |
 | `brain/middleware/rate_limit_middleware.py:12,20` | 300 vs "100 req/min" | AUDIT-9 evidence |
-| `common/jarvis_common/logging_config.py:100-102` | stdout-only handler | AUDIT-6 evidence |
+| `~/fluent-bit/fluent-bit.yaml` (Brain) | missing `parsers:` block — outputs reference `$service`/`$level` against unparsed `{"log":...}` envelope | AUDIT-6 evidence |
+| `common/jarvis_common/logging_config.py:97-104` | structured JSON emit to stdout (intentional — launchd→Fluentbit pipeline) | AUDIT-6 architecture context |
 | `brain/routes/dev.py:116` | `api.github.com` literal | TD-S15-1 |
 | `brain/services/gmail_client.py:162,183,195` | Google OAuth + Gmail literals | TD-S15-2 |
 | `brain/routes/costs.py:458,462,559` | Anthropic admin + Cloud Billing | TD-S15-3, -4 |
