@@ -17,7 +17,7 @@ _request_log: dict[str, deque] = defaultdict(deque)
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """
-    Sliding window rate limit: 100 req/min per user_id.
+    Sliding window rate limit: 300 req/min per user_id.
     Returns 429 with Retry-After header on breach.
     """
 
