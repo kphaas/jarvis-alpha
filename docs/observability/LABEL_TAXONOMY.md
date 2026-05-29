@@ -122,9 +122,9 @@ The current Python codebase emits values via `get_logger(service)` calls. Observ
 
 Phase 4c is the parser-fix PR. Descriptive steps — the PR refines:
 
-1. Edit `~/jarvis-alpha/fluent-bit/fluent-bit.yaml.template` (the source template that `jarvisalpha_pull.sh` renders):
-   - Add a `parsers:` block defining `json_log` (format: `json`, `time_key: ts`, `time_format: %Y-%m-%dT%H:%M:%S.%f%z`)
-   - Add `parser: json_log` to each `tail` input
+1. Edit `config/observability/brain/fluent-bit.yaml` (the source template that `jarvisalpha_pull.sh` renders):
+   - Add a `parsers:` block defining `json_log` (format: `json`, `time_key: ts`)
+   - Add `parser: json_log` to each JSON-with-`ts` `tail` input only (`brain.buddy`, `brain.executor`, `brain.watchdog`); leave RAW/mixed inputs (uvicorn access logs, `*_error.log`, `power_sampler`) untouched — those are tracked as Phase 4c follow-up TDs
 2. Render via `jarvisalpha_pull.sh` on Brain → reload Fluentbit (LaunchAgent restart)
 3. Verify within 2 minutes:
    - `curl http://127.0.0.1:3100/loki/api/v1/label/service/values` returns multiple values, not `["unknown_service"]`

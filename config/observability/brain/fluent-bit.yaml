@@ -5,6 +5,11 @@ service:
   log_level: info
   storage.path: {{HOME}}/fluent-bit/db/
 
+parsers:
+  - name: json_log
+    format: json
+    time_key: ts
+
 pipeline:
   inputs:
     - name: tail
@@ -24,6 +29,7 @@ pipeline:
       path: {{REPO_DIR}}/logs/alpha_buddy.log
       read_from_head: false
       db: {{HOME}}/fluent-bit/db/buddy.db
+      parser: json_log
 
     - name: tail
       tag: brain.buddy_error
@@ -36,6 +42,7 @@ pipeline:
       path: {{REPO_DIR}}/logs/executor.log
       read_from_head: false
       db: {{HOME}}/fluent-bit/db/executor.db
+      parser: json_log
 
     - name: tail
       tag: brain.executor_error
@@ -48,6 +55,7 @@ pipeline:
       path: {{REPO_DIR}}/logs/watchdog.log
       read_from_head: false
       db: {{HOME}}/fluent-bit/db/watchdog.db
+      parser: json_log
 
     - name: tail
       tag: brain.watchdog_error
