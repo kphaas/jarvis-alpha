@@ -7,7 +7,14 @@ import subprocess
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
+from brain.health_probes import (
+    ProbeResult,
+    probe_db_pool,
+    probe_ollama,
+    probe_temporal,
+)
 from brain.services.temporal_storage_monitor import collect_temporal_storage_snapshot
 from jarvis_common.logging_config import get_logger
 
@@ -138,6 +145,50 @@ def _parse_launchctl() -> list:
 @router.get("/health")
 async def health():
     return {"status": "ok", "node": "brain", "service": "jarvis-alpha"}
+
+
+def _check_body(r: ProbeResult) -> dict:
+    return {
+        "ok": r.ok,
+        "latency_ms": r.latency_ms,
+        "last_error_msg": r.last_error_msg,
+    }
+
+
+@router.get("/health/ready")
+async def health_ready():
+    """Deep readiness probe (AUDIT-3).
+
+    Probes the three critical dependencies in parallel (fresh, uncached):
+    DB pool, Ollama, Temporal. Returns HTTP 200 if all pass, HTTP 503 if any
+    fails (including timeout). Status report only — no auto-recovery, no alert
+    firing, no retry. Existing /health stays a shallow liveness check.
+    """
+    db, ollama, temporal = await asyncio.gather(
+        probe_db_pool(),
+        probe_ollama(),
+        probe_temporal(),
+        return_exceptions=False,
+    )
+
+    checks = {
+        "db": _check_body(db),
+        "ollama": _check_body(ollama),
+        "temporal": _check_body(temporal),
+    }
+    all_ok = db.ok and ollama.ok and temporal.ok
+    body = {
+        "status": "ok" if all_ok else "degraded",
+        "checks": checks,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+
+    if all_ok:
+        return body
+
+    failed = [name for name, c in checks.items() if not c["ok"]]
+    log.warning("health_ready degraded — failed checks: %s", ",".join(failed))
+    return JSONResponse(status_code=503, content=body)
 
 
 @router.get("/v1/health/agents")

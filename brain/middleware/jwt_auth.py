@@ -51,6 +51,7 @@ def _get_public_key(iss: str | None) -> str:
 
 SKIP_PATHS = {
     "/health",
+    "/health/ready",
     "/docs",
     "/openapi.json",
     "/redoc",
