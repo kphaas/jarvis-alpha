@@ -224,7 +224,7 @@ These were in original Session 2 scope but deferred per Option A+B decision.
 ### 5.2 AUDIT-6 Phase 4c — Fluentbit JSON parser fix
 
 **Locked design (from LABEL_TAXONOMY.md §7):**
-1. Edit `~/jarvis-alpha/fluent-bit/fluent-bit.yaml.template`
+1. Edit `config/observability/brain/fluent-bit.yaml` (path corrected in Phase 4c — the original `fluent-bit/fluent-bit.yaml.template` reference was stale; this file is the rendered-by-`jarvisalpha_pull.sh` template)
 2. Add `parsers:` block defining `json_log` (format: `json`, `time_key: ts`)
 3. Add `parser: json_log` to each `tail` input
 4. Render via `jarvisalpha_pull.sh` on Brain → reload Fluentbit
