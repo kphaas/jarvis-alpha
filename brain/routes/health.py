@@ -20,6 +20,17 @@ BRAIN_AGENTS = [
     # Alpha core
     "com.jarvis.alpha.brain",
     "com.jarvis.alpha.buddy",
+    "com.jarvis.alpha.executor",
+    "com.jarvis.alpha.watchdog",
+    # Observability
+    "com.jarvis.alpha.fluentbit",
+    "com.jarvis.alpha.loki",
+    # Temporal
+    "com.jarvis.alpha.temporal.server",
+    "com.jarvis.alpha.temporal.ui",
+    "com.jarvis.alpha.temporal.worker",
+    # Telemetry
+    "com.jarvis.alpha.power.brain",
     # Infrastructure
     "com.jarvis.ollama",
 ]

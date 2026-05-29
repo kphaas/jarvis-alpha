@@ -63,6 +63,7 @@ Each TD has a `@pytest.mark.xfail(strict=True)` test in `tests/test_no_external_
 | TD-WAL-STREAM | Current RPO is 24h (nightly backup). Alpha-6 candidate: WAL streaming via `pg_receivewal` on Unraid for sub-24h RPO once workload warrants | P3 |
 | TD-SECRETS-BAK-MAY7 | Pre-session `~/.secrets.bak.20260507-135749` on Sandbox left intact during Session 1 shred — predates this work, Ken decision required | P3 |
 | TD-ENDPOINT-KEY-DOC | Sandbox→Endpoint deploy key created in TD-S1M1 closure. The canonical Endpoint deploy key likely lives on Air (no mesh-internal route had Endpoint access). Document where it lives, and whether the deploy-controller key should be reproducible from a documented seed | P2 |
+| TD-AGENT-CATEGORIZATION | `/health/agents` endpoint treats all listed `BRAIN_AGENTS` as "expected always-on." Scheduled agents (`pg_backup`, `rotate.brain_service`, `rotate.buddy`, `school-email`) remain UN-tracked because including them in a flat always-on list would generate false-alarm "not running" reports when idle between scheduled fires. Future work: add `BRAIN_SCHEDULED_AGENTS` list + modify `brain/routes/health.py` to report scheduled agents with `expected_state: scheduled` semantics. Filed during AUDIT-8 closure, Session 2 Phase 4-1b | P2 |
 
 ### 2c — TDs from session 1 handoff that are NOW CLOSED
 
