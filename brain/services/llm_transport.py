@@ -45,12 +45,13 @@ def _gateway_url() -> str:
 
 
 def _service_token() -> str:
-    tok = os.environ.get("ALPHA_BRAIN_SERVICE_TOKEN", "").strip()
-    if not tok:
-        raise GatewayTransportError(
-            "ALPHA_BRAIN_SERVICE_TOKEN not set in environment — cannot call Gateway"
-        )
-    return tok
+    for name in ("GATEWAY_TOKEN", "ALPHA_BRAIN_SERVICE_TOKEN", "ALPHA_SERVICE_TOKEN"):
+        tok = os.environ.get(name, "").strip()
+        if tok:
+            return tok
+    raise GatewayTransportError(
+        "GATEWAY_TOKEN, ALPHA_BRAIN_SERVICE_TOKEN, or ALPHA_SERVICE_TOKEN not set in environment — cannot call Gateway"
+    )
 
 
 def _post_sync(

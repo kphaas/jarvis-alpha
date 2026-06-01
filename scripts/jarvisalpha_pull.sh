@@ -123,7 +123,7 @@ needs_restart_brain() {
 
 needs_reload_school_email() {
   [ -z "$CHANGED_FILES" ] && return 1
-  echo "$CHANGED_FILES" | grep -qE '(^launchagents/com\.jarvis\.alpha\.school-email\.template\.plist$|^scripts/start_alpha_school_email\.sh$|^scripts/install_launchagents\.py$)'
+  echo "$CHANGED_FILES" | grep -qE '(^launchagents/com\.jarvis\.alpha\.(school-email|gmail-health)\.template\.plist$|^scripts/start_alpha_(school_email|gmail_health)\.sh$|^scripts/install_launchagents\.py$)'
 }
 
 needs_restart_temporal_worker() {
@@ -386,6 +386,7 @@ elif [ "$NODE_SHORT" = "brain" ]; then
 fi
 
 SCHOOL_EMAIL_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.school-email.plist"
+GMAIL_HEALTH_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.gmail-health.plist"
 if [ "$NODE_SHORT" = "brain" ] && needs_reload_school_email; then
   echo ""
   echo "Refreshing Alpha School Email LaunchAgent..."
@@ -410,6 +411,18 @@ if [ "$NODE_SHORT" = "brain" ] && needs_reload_school_email; then
   else
     emit fail restart node="$NODE_SHORT" service="alpha-school-email" dur_ms=$(($(time_ms) - SCHOOL_START)) error="plist missing after install"
     echo "❌ School email LaunchAgent plist missing after install"
+    exit 1
+  fi
+  if [ -f "$GMAIL_HEALTH_PLIST" ]; then
+    launchctl unload "$GMAIL_HEALTH_PLIST" 2>/dev/null || true
+    launchctl load "$GMAIL_HEALTH_PLIST"
+    GMAIL_HEALTH_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.gmail-health" {print $1}' | head -1)
+    [ "$GMAIL_HEALTH_PID" = "-" ] && GMAIL_HEALTH_PID=0
+    echo "✅ Gmail health LaunchAgent refreshed"
+    emit ok restart node="$NODE_SHORT" service="alpha-gmail-health" pid="${GMAIL_HEALTH_PID:-0}" dur_ms=$(($(time_ms) - SCHOOL_START))
+  else
+    emit fail restart node="$NODE_SHORT" service="alpha-gmail-health" dur_ms=$(($(time_ms) - SCHOOL_START)) error="plist missing after install"
+    echo "❌ Gmail health LaunchAgent plist missing after install"
     exit 1
   fi
 elif [ "$NODE_SHORT" = "brain" ]; then

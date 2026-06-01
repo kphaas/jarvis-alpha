@@ -47,6 +47,23 @@ class SchoolEmailScanRunOut(BaseModel):
     error_message: str | None = None
 
 
+class GmailOAuthHealthOut(BaseModel):
+    id: UUID | None = None
+    status: Literal["ok", "failed", "unknown"]
+    checked_at: datetime | None = None
+    last_successful_refresh_at: datetime | None = None
+    token_expires_in: int | None = None
+    scope: str | None = None
+    error_type: str | None = None
+    error_subtype: str | None = None
+    error_message: str | None = None
+    oauth_mode: str
+    refresh_token_issued_at: datetime | None = None
+    refresh_token_expires_at: datetime | None = None
+    refresh_token_days_remaining: int | None = None
+    reconnect_recommended: bool
+
+
 class SchoolEventCandidateOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

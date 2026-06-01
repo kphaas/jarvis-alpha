@@ -146,7 +146,9 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/school-email/candidates": ["read", "security_read"],
     "GET /v1/school-email/actions": ["read", "security_read"],
     "GET /v1/school-email/scan-runs/latest": ["read", "security_read"],
+    "GET /v1/school-email/gmail/health": ["read", "security_read"],
     "POST /v1/school-email/scan": ["write", "external_call"],
+    "POST /v1/school-email/gmail/health/check": ["write", "external_call"],
     "POST /v1/school-email/candidates/{candidate_id}/status": ["write"],
     "POST /v1/school-email/actions/{candidate_id}/status": ["write"],
     # --- MCP registry — T1 read, write T2 ---

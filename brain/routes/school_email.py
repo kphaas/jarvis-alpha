@@ -11,6 +11,7 @@ from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
 from brain.models.school_email import (
     CandidateStatusUpdate,
+    GmailOAuthHealthOut,
     SchoolActionCandidateList,
     SchoolActionCandidateOut,
     SchoolEmailScanResponse,
@@ -20,12 +21,28 @@ from brain.models.school_email import (
 )
 from brain.services.school_email_agent import scan_school_email
 from brain.services.school_email_repository import latest_scan_run
+from brain.services.gmail_oauth_health import (
+    GmailOAuthHealth,
+    check_gmail_oauth_health,
+    latest_gmail_oauth_health,
+    _oauth_mode,
+)
 
 router = APIRouter(prefix="/v1/school-email", tags=["school-email"])
 
 
 def _check_school_scope(request: Request) -> None:
     check_scopes(request, "school_email.read", "school_email.write")
+
+
+def _health_out(health: GmailOAuthHealth | None) -> GmailOAuthHealthOut:
+    if health is None:
+        return GmailOAuthHealthOut(
+            status="unknown",
+            oauth_mode=_oauth_mode(),
+            reconnect_recommended=True,
+        )
+    return GmailOAuthHealthOut(**health.__dict__)
 
 
 def _candidate_from_row(row) -> SchoolEventCandidateOut:
@@ -142,6 +159,26 @@ async def get_latest_school_email_scan(
     async with get_pool().acquire() as conn:
         row = await latest_scan_run(conn)
     return SchoolEmailScanRunOut(**dict(row)) if row else None
+
+
+@router.get("/gmail/health", response_model=GmailOAuthHealthOut)
+async def get_gmail_oauth_health(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> GmailOAuthHealthOut:
+    _check_school_scope(request)
+    async with get_pool().acquire() as conn:
+        health = await latest_gmail_oauth_health(conn)
+    return _health_out(health)
+
+
+@router.post("/gmail/health/check", response_model=GmailOAuthHealthOut)
+async def check_gmail_oauth(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> GmailOAuthHealthOut:
+    check_scopes(request, "school_email.scan", "school_email.write")
+    return _health_out(await check_gmail_oauth_health(trigger="api"))
 
 
 @router.get("/candidates", response_model=SchoolEventCandidateList)
