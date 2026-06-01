@@ -76,6 +76,13 @@ def _hash_pin(new_pin: str) -> str:
     return bcrypt.hashpw(new_pin.encode("utf-8"), bcrypt.gensalt()).decode()
 
 
+def _session_hours() -> int:
+    try:
+        return max(int(os.environ.get("ALPHA_SESSION_HOURS", "24")), 1)
+    except ValueError:
+        return 24
+
+
 async def _sync_family_pin_or_409(profile_id: str, pin_hash: str) -> None:
     try:
         await sync_family_pin_hash(profile_id, pin_hash)
@@ -176,7 +183,7 @@ async def authenticate_pin(req: PinRequest):
         else ["ask", "chat.read", "health.read", "vault.read"],
         "jti": str(uuid.uuid4()),
         "iat": now,
-        "exp": now + (30 * 86400),  # 30 days
+        "exp": now + (_session_hours() * 3600),
     }
 
     if profile["child_age"] is not None:

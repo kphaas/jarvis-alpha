@@ -16,8 +16,10 @@ def _token(monkeypatch):
 
 
 async def test_missing_token_raises(monkeypatch):
+    monkeypatch.delenv("GATEWAY_TOKEN", raising=False)
     monkeypatch.delenv("ALPHA_BRAIN_SERVICE_TOKEN", raising=False)
-    with pytest.raises(GatewayTransportError, match="SERVICE_TOKEN not set"):
+    monkeypatch.delenv("ALPHA_SERVICE_TOKEN", raising=False)
+    with pytest.raises(GatewayTransportError, match="ALPHA_SERVICE_TOKEN not set"):
         await call_gateway_cloud(
             provider="anthropic",
             model="claude-haiku",

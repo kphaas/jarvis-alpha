@@ -48,6 +48,7 @@ SERVICE_NODE_MAP = {
     "com.jarvis.alpha.buddy": "brain",
     "com.jarvis.alpha.executor": "brain",
     "com.jarvis.alpha.fluentbit": "brain",
+    "com.jarvis.alpha.gmail-health": "brain",
     "com.jarvis.alpha.loki": "brain",
     "com.jarvis.alpha.pg_backup": "brain",
     "com.jarvis.alpha.power.brain": "brain",

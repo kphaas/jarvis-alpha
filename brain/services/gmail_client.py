@@ -24,7 +24,20 @@ class GmailConfigError(RuntimeError):
 
 
 class GmailClientError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        error_type: str | None = None,
+        error_subtype: str | None = None,
+        error_description: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_type = error_type
+        self.error_subtype = error_subtype
+        self.error_description = error_description
 
 
 @dataclass(frozen=True)
@@ -158,7 +171,7 @@ class GmailClient:
         )
         self.user_id = user_id or _secret("ALPHA_GMAIL_USER_ID", DEFAULT_GMAIL_USER)
 
-    async def _access_token(self) -> str:
+    async def refresh_access_token_payload(self) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.post(
                 GMAIL_TOKEN_URL,
@@ -170,10 +183,23 @@ class GmailClient:
                 },
             )
         if response.status_code >= 400:
+            error_payload: dict[str, Any] = {}
+            try:
+                error_payload = response.json()
+            except Exception:
+                error_payload = {}
             raise GmailClientError(
-                f"Gmail OAuth refresh failed: {response.status_code}"
+                f"Gmail OAuth refresh failed: {response.status_code}",
+                status_code=response.status_code,
+                error_type=error_payload.get("error"),
+                error_subtype=error_payload.get("error_subtype"),
+                error_description=error_payload.get("error_description"),
             )
-        token = response.json().get("access_token")
+        return response.json()
+
+    async def _access_token(self) -> str:
+        payload = await self.refresh_access_token_payload()
+        token = payload.get("access_token")
         if not token:
             raise GmailClientError("Gmail OAuth response missing access_token")
         return str(token)
