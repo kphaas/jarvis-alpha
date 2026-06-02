@@ -39,7 +39,7 @@ export function corsPoints(perimeter: Perimeter | null): number {
 export function childPoints(child: ChildProfileStatus | null): number {
   if (!child?.profiles?.length) return 0
   const ps = child.profiles
-  if (ps.every((p) => p.db_layer === true)) return 10
+  if (ps.every((p) => p.db_layer === true && p.content_filter === true && p.surface_filter !== false)) return 10
   if (ps.every((p) => p.app_layer === true && p.db_layer === false)) return 5
   return 0
 }

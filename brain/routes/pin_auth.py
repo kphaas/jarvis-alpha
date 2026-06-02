@@ -83,6 +83,14 @@ def _session_hours() -> int:
         return 24
 
 
+def _profile_scopes(role: str) -> list[str]:
+    if role == "admin":
+        return ["*"]
+    if role == "child":
+        return ["ask", "chat.read", "health.read"]
+    return ["ask", "chat.read", "health.read", "vault.read"]
+
+
 async def _sync_family_pin_or_409(profile_id: str, pin_hash: str) -> None:
     try:
         await sync_family_pin_hash(profile_id, pin_hash)
@@ -178,9 +186,7 @@ async def authenticate_pin(req: PinRequest):
         "display_name": profile["display_name"],
         "actor_type": "user",
         "max_rating": profile["max_rating"],
-        "scopes": ["*"]
-        if profile["role"] == "admin"
-        else ["ask", "chat.read", "health.read", "vault.read"],
+        "scopes": _profile_scopes(profile["role"]),
         "jti": str(uuid.uuid4()),
         "iat": now,
         "exp": now + (_session_hours() * 3600),

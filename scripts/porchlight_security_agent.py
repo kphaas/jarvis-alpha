@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlencode, urlparse
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
@@ -52,11 +53,16 @@ CLOUDFLARE_ACCESS_URL = os.getenv(
     "PORCHLIGHT_CLOUDFLARE_ACCESS_URL",
     "https://family.kmfh.cloud",
 )
+CLOUDFLARE_API_BASE = os.getenv(
+    "PORCHLIGHT_CLOUDFLARE_API_BASE",
+    "https://api.cloudflare.com/client/v4",
+)
 PORCHLIGHT_CHANNEL_KEY = "security_alerts"
 DEFAULT_PORCHLIGHT_SSH_KEY = Path.home() / ".ssh" / "porchlight_monitor"
 
 NODE_MAP_PATH = SCRIPT_DIR / "node_ssh_map.json"
 SECRET_ROTATION_CONFIG = SCRIPT_DIR / "secrets_rotation.json"
+ROUTES_DIR = REPO_ROOT / "brain" / "routes"
 
 SECURITY_LAUNCHAGENTS: dict[str, set[str]] = {
     "brain": {
@@ -84,6 +90,21 @@ TOKEN_LOG_COMMAND = (
 )
 
 SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+REVIEWED_ROUTE_DB_ACCESS: dict[str, str] = {
+    "approvals.py": "PIN bootstrap reads Ken profile before request RLS exists; decisions use rls_connection/SECDEF.",
+    "briefings.py": "Briefing ingestion/read paths are scope-gated service/admin routes; follow-up is to migrate to explicit service RLS context.",
+    "chat.py": "Primary chat persistence uses rls_connection; remaining direct access is a legacy compatibility path pending route split.",
+    "costs.py": "Cost collection is admin/service-scoped infrastructure data, not child profile content.",
+    "dev.py": "Development-only diagnostics; protected by auth middleware outside explicit skip paths.",
+    "dream.py": "Dream control plane uses service/admin paths with platform-admin policies; broader refactor is tracked separately.",
+    "dream_planning.py": "Model policy lookup is platform-admin service configuration and sets rls.role inside transaction.",
+    "honeypot.py": "Unauthenticated decoy endpoints must log before user auth; event review remains protected.",
+    "internal_cost.py": "Internal cost ingestion is service-scoped and explicitly checks cost.report scope.",
+    "mesh.py": "Mesh status is infrastructure telemetry, not profile content.",
+    "pin_auth.py": "Authentication bootstrap must read active profiles before issuing JWT/RLS context.",
+    "prompts.py": "Prompt registry is global system configuration; write path is auth-protected and pending RLS wrapper.",
+    "watchdog.py": "Watchdog ingest path is service-scoped; user-facing events use rls_connection.",
+}
 
 
 @dataclass(frozen=True)
@@ -672,6 +693,339 @@ def check_cloudflare_access(
     )
 
 
+def _secret_or_env(name: str) -> str | None:
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+    try:
+        return get_secret(name).strip()
+    except Exception:
+        return None
+
+
+def _cloudflare_expected_hosts() -> list[str]:
+    configured = os.getenv("PORCHLIGHT_CLOUDFLARE_EXPECTED_HOSTS", "").strip()
+    if configured:
+        hosts = [item.strip().lower() for item in configured.split(",")]
+        return sorted({host for host in hosts if host})
+    host = urlparse(CLOUDFLARE_ACCESS_URL).hostname
+    return [host.lower()] if host else []
+
+
+def _cloudflare_api_get(
+    path: str,
+    *,
+    params: dict[str, str] | None = None,
+    command: Callable[..., CommandResult] = run_command,
+) -> tuple[int, dict]:
+    token = _secret_or_env("CLOUDFLARE_API_TOKEN")
+    if not token:
+        return 0, {"success": False, "errors": [{"message": "missing_token"}]}
+    query = f"?{urlencode(params)}" if params else ""
+    result = command(
+        [
+            "curl",
+            "-sS",
+            "--max-time",
+            "20",
+            "-H",
+            f"Authorization: Bearer {token}",
+            f"{CLOUDFLARE_API_BASE.rstrip('/')}{path}{query}",
+        ],
+        timeout=25,
+    )
+    if result.returncode != 0:
+        return result.returncode, {
+            "success": False,
+            "errors": [{"message": (result.stderr or result.stdout).strip()[:500]}],
+        }
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return 1, {"success": False, "errors": [{"message": "invalid_json"}]}
+    return 0, payload if isinstance(payload, dict) else {"success": False}
+
+
+def _cloudflare_account_id() -> str | None:
+    return _secret_or_env("CLOUDFLARE_ACCOUNT_ID")
+
+
+def _app_hostnames(app: dict) -> set[str]:
+    hosts = set()
+    for key in ("domain", "aud", "hostname"):
+        value = app.get(key)
+        if isinstance(value, str) and value:
+            host = value.split("/", 1)[0].lower()
+            hosts.add(host)
+    for nested_key in ("domains", "self_hosted_domains"):
+        value = app.get(nested_key)
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, str) and item:
+                    hosts.add(item.split("/", 1)[0].lower())
+    return hosts
+
+
+def _policy_has_everyone_rule(policy: dict) -> bool:
+    for rule_key in ("include", "exclude", "require"):
+        rules = policy.get(rule_key)
+        if not isinstance(rules, list):
+            continue
+        for rule in rules:
+            if isinstance(rule, dict) and "everyone" in rule:
+                return True
+    return False
+
+
+def check_cloudflare_access_policy_drift(
+    command: Callable[..., CommandResult] = run_command,
+) -> CheckResult:
+    account_id = _cloudflare_account_id()
+    expected_hosts = _cloudflare_expected_hosts()
+    if not account_id or not _secret_or_env("CLOUDFLARE_API_TOKEN"):
+        return CheckResult(
+            name="cloudflare_access_policy_drift",
+            status="warn",
+            severity="medium",
+            summary="Cloudflare API credentials are not configured for Access policy monitoring.",
+            detail="Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN on Brain secrets.",
+            metadata={"expected_hosts": expected_hosts},
+        )
+
+    rc, payload = _cloudflare_api_get(
+        f"/accounts/{account_id}/access/apps",
+        command=command,
+    )
+    if rc != 0 or payload.get("success") is not True:
+        return CheckResult(
+            name="cloudflare_access_policy_drift",
+            status="fail",
+            severity="high",
+            summary="Could not list Cloudflare Access applications.",
+            detail=json.dumps(payload.get("errors") or payload)[:500],
+            metadata={"expected_hosts": expected_hosts},
+        )
+
+    apps = payload.get("result") if isinstance(payload.get("result"), list) else []
+    matched = []
+    risky_policies: list[str] = []
+    no_policy_apps: list[str] = []
+    for app in apps:
+        if not isinstance(app, dict):
+            continue
+        hostnames = _app_hostnames(app)
+        if expected_hosts and not (hostnames & set(expected_hosts)):
+            continue
+        app_id = str(app.get("id") or "")
+        name = str(app.get("name") or app_id or "unknown")
+        matched.append({"id": app_id, "name": name, "hostnames": sorted(hostnames)})
+        policies = app.get("policies")
+        if not isinstance(policies, list) and app_id:
+            _rc, policy_payload = _cloudflare_api_get(
+                f"/accounts/{account_id}/access/apps/{app_id}/policies",
+                command=command,
+            )
+            policies = (
+                policy_payload.get("result")
+                if isinstance(policy_payload.get("result"), list)
+                else []
+            )
+        if not policies:
+            no_policy_apps.append(name)
+            continue
+        for policy in policies:
+            if not isinstance(policy, dict):
+                continue
+            action = str(policy.get("decision") or policy.get("action") or "").lower()
+            policy_name = str(policy.get("name") or policy.get("id") or "unknown")
+            if action == "bypass":
+                risky_policies.append(f"{name}.{policy_name}: bypass")
+            if _policy_has_everyone_rule(policy):
+                risky_policies.append(f"{name}.{policy_name}: everyone")
+
+    if expected_hosts and not matched:
+        return CheckResult(
+            name="cloudflare_access_policy_drift",
+            status="fail",
+            severity="critical",
+            summary="No Cloudflare Access application matched the expected protected hostnames.",
+            detail=", ".join(expected_hosts),
+            metadata={"expected_hosts": expected_hosts, "apps_seen": len(apps)},
+        )
+    if risky_policies or no_policy_apps:
+        details = []
+        if risky_policies:
+            details.append("risky policies: " + ", ".join(risky_policies[:8]))
+        if no_policy_apps:
+            details.append("apps without policies: " + ", ".join(no_policy_apps[:8]))
+        return CheckResult(
+            name="cloudflare_access_policy_drift",
+            status="fail",
+            severity="critical",
+            summary="Cloudflare Access policy drift needs review.",
+            detail="; ".join(details),
+            metadata={
+                "expected_hosts": expected_hosts,
+                "matched": matched,
+                "risky_policies": risky_policies,
+                "no_policy_apps": no_policy_apps,
+            },
+        )
+
+    return CheckResult(
+        name="cloudflare_access_policy_drift",
+        status="pass",
+        severity="info",
+        summary=f"Cloudflare Access policy shape is safe for {len(matched)} protected app(s).",
+        metadata={"expected_hosts": expected_hosts, "matched": matched},
+    )
+
+
+def check_cloudflare_audit_logs(
+    command: Callable[..., CommandResult] = run_command,
+    now: datetime | None = None,
+    window_hours: int = 24,
+) -> CheckResult:
+    account_id = _cloudflare_account_id()
+    if not account_id or not _secret_or_env("CLOUDFLARE_API_TOKEN"):
+        return CheckResult(
+            name="cloudflare_audit_logs",
+            status="warn",
+            severity="medium",
+            summary="Cloudflare audit-log monitoring is not configured.",
+            detail="Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN on Brain secrets.",
+        )
+
+    now = now or datetime.now(UTC)
+    since = (now - timedelta(hours=window_hours)).isoformat().replace("+00:00", "Z")
+    before = now.isoformat().replace("+00:00", "Z")
+    rc, payload = _cloudflare_api_get(
+        f"/accounts/{account_id}/logs/audit",
+        params={"since": since, "before": before, "per_page": "100"},
+        command=command,
+    )
+    if rc != 0 or payload.get("success") is not True:
+        return CheckResult(
+            name="cloudflare_audit_logs",
+            status="fail",
+            severity="high",
+            summary="Could not retrieve Cloudflare account audit logs.",
+            detail=json.dumps(payload.get("errors") or payload)[:500],
+        )
+
+    logs = payload.get("result") if isinstance(payload.get("result"), list) else []
+    access_related: list[dict[str, str]] = []
+    failures: list[str] = []
+    for entry in logs:
+        if not isinstance(entry, dict):
+            continue
+        haystack = json.dumps(entry, sort_keys=True, default=str).lower()
+        if not any(term in haystack for term in ("access", "zero trust", "tunnel")):
+            continue
+        action = entry.get("action") if isinstance(entry.get("action"), dict) else {}
+        actor = entry.get("actor") if isinstance(entry.get("actor"), dict) else {}
+        resource = (
+            entry.get("resource") if isinstance(entry.get("resource"), dict) else {}
+        )
+        item = {
+            "when": str(entry.get("when") or ""),
+            "actor": str(actor.get("email") or actor.get("id") or "unknown"),
+            "action": str(action.get("type") or "unknown"),
+            "result": str(action.get("result")),
+            "resource": str(resource.get("type") or resource.get("id") or "unknown"),
+        }
+        access_related.append(item)
+        if action.get("result") is False:
+            failures.append(f"{item['when']} {item['actor']} {item['action']}")
+
+    if failures:
+        return CheckResult(
+            name="cloudflare_audit_logs",
+            status="fail",
+            severity="high",
+            summary="Cloudflare Access/Zero Trust audit logs contain failed control-plane actions.",
+            detail="; ".join(failures[:8]),
+            metadata={"window_hours": window_hours, "events": access_related[:20]},
+        )
+    if access_related:
+        return CheckResult(
+            name="cloudflare_audit_logs",
+            status="warn",
+            severity="medium",
+            summary="Cloudflare Access/Zero Trust changed within the audit window.",
+            detail="; ".join(
+                f"{item['when']} {item['actor']} {item['action']}"
+                for item in access_related[:8]
+            ),
+            metadata={"window_hours": window_hours, "events": access_related[:20]},
+        )
+
+    return CheckResult(
+        name="cloudflare_audit_logs",
+        status="pass",
+        severity="info",
+        summary=f"No Cloudflare Access/Zero Trust audit-log changes in {window_hours} hours.",
+        metadata={"window_hours": window_hours, "events_checked": len(logs)},
+    )
+
+
+def check_route_db_access(
+    routes_dir: Path = ROUTES_DIR,
+    reviewed: dict[str, str] = REVIEWED_ROUTE_DB_ACCESS,
+) -> CheckResult:
+    raw_access: dict[str, int] = {}
+    uses_rls_helper: list[str] = []
+    for path in sorted(routes_dir.glob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        count = (
+            text.count("pool.acquire(")
+            + text.count("asyncpg.connect(")
+            + text.count("create_pool(")
+        )
+        if count:
+            raw_access[path.name] = count
+        if "rls_connection(" in text or "platform_admin_connection(" in text:
+            uses_rls_helper.append(path.name)
+
+    unreviewed = sorted(set(raw_access) - set(reviewed))
+    stale_reviews = sorted(set(reviewed) - set(raw_access))
+    metadata = {
+        "raw_route_files": raw_access,
+        "reviewed": reviewed,
+        "uses_rls_helper": uses_rls_helper,
+        "unreviewed": unreviewed,
+        "stale_reviews": stale_reviews,
+    }
+
+    if unreviewed:
+        return CheckResult(
+            name="route_db_access_review",
+            status="fail",
+            severity="high",
+            summary="One or more route modules use direct DB access without a reviewed RLS rationale.",
+            detail=", ".join(unreviewed),
+            metadata=metadata,
+        )
+
+    if stale_reviews:
+        return CheckResult(
+            name="route_db_access_review",
+            status="warn",
+            severity="low",
+            summary="Route DB access allowlist has stale entries to clean up.",
+            detail=", ".join(stale_reviews),
+            metadata=metadata,
+        )
+
+    return CheckResult(
+        name="route_db_access_review",
+        status="pass",
+        severity="info",
+        summary=f"{len(raw_access)} route modules with direct DB access have reviewed RLS rationales.",
+        metadata=metadata,
+    )
+
+
 def build_report(checks: list[CheckResult]) -> dict[str, object]:
     failing = [check for check in checks if check.status == "fail"]
     warning = [check for check in checks if check.status == "warn"]
@@ -912,6 +1266,9 @@ def run_sweep(args: argparse.Namespace) -> dict[str, object]:
             max_age_hours=args.max_token_log_age_hours,
         ),
         check_cloudflare_access(args.cloudflare_access_url),
+        check_cloudflare_access_policy_drift(),
+        check_cloudflare_audit_logs(window_hours=args.cloudflare_audit_window_hours),
+        check_route_db_access(),
     ]
     return build_report(checks)
 
@@ -951,6 +1308,12 @@ def parse_args() -> argparse.Namespace:
         "--cloudflare-access-url",
         default=CLOUDFLARE_ACCESS_URL,
         help="Public URL expected to be gated by Cloudflare Access",
+    )
+    parser.add_argument(
+        "--cloudflare-audit-window-hours",
+        type=int,
+        default=24,
+        help="Cloudflare audit-log lookback window in hours",
     )
     return parser.parse_args()
 

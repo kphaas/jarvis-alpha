@@ -29,11 +29,16 @@ export interface RlsStatus {
 }
 
 export interface ChildProfile {
+  id?: string
   name: string
-  age: number
+  age: number | null
+  max_rating?: string
+  scopes?: string[]
+  allowed_surfaces?: string[]
   app_layer: boolean
   db_layer: boolean
   content_filter: boolean
+  surface_filter?: boolean
   notes: string
 }
 
@@ -41,6 +46,10 @@ export interface ChildProfileStatus {
   profiles: ChildProfile[]
   overall: string
   recommendation: string
+  sensitive_tables?: Record<string, { rls: boolean; force_rls: boolean; policy_count: number }>
+  missing_tables?: string[]
+  weak_tables?: string[]
+  legacy_child_policies?: string[]
 }
 
 export interface PortCheck {

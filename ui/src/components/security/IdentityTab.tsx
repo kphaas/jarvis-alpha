@@ -254,11 +254,41 @@ export function IdentityTab({
                         >
                           content_filter {p.content_filter ? "on" : "off"}
                         </span>
+                        <span
+                          className={`px-2 py-0.5 rounded border ${
+                            p.surface_filter
+                              ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-400"
+                              : "border-rose-500/30 bg-rose-500/15 text-rose-400"
+                          }`}
+                        >
+                          avatar_surface {p.surface_filter ? "on" : "off"}
+                        </span>
+                      </div>
+                      <div className={`rounded-xl border ${border} px-3 py-2 text-[10px] font-mono ${muted}`}>
+                        <p>
+                          surfaces: {(p.allowed_surfaces ?? []).join(", ") || "none"}
+                        </p>
+                        <p className="mt-1">
+                          scopes: {(p.scopes ?? []).join(", ") || "none"}
+                        </p>
+                        {p.max_rating && (
+                          <p className="mt-1">rating ceiling: {p.max_rating}</p>
+                        )}
                       </div>
                       <p className={`text-xs ${muted} leading-relaxed`}>{p.notes}</p>
                     </div>
                   ))}
                 </div>
+                {(child.weak_tables?.length || child.legacy_child_policies?.length) ? (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200/90">
+                    {child.weak_tables?.length ? (
+                      <p className="font-mono">weak tables: {child.weak_tables.join(", ")}</p>
+                    ) : null}
+                    {child.legacy_child_policies?.length ? (
+                      <p className="font-mono mt-1">legacy policies: {child.legacy_child_policies.join(", ")}</p>
+                    ) : null}
+                  </div>
+                ) : null}
                 {child.overall !== "full" && (
                   <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200/90">
                     {child.recommendation}
