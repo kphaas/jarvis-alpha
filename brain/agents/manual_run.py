@@ -16,6 +16,7 @@ from brain.agents.network_watchdog import (
     NETWORK_WATCHDOG_AGENT_ID,
     run_network_watchdog_now,
 )
+from brain.agents.porchlight import PORCHLIGHT_AGENT_ID, run_porchlight_now
 from brain.agents.runtime import AgentRunResult
 
 ManualRunner = Callable[[asyncpg.Pool], Awaitable[AgentRunResult]]
@@ -23,6 +24,7 @@ ManualRunner = Callable[[asyncpg.Pool], Awaitable[AgentRunResult]]
 MANUAL_RUNNERS: dict[str, ManualRunner] = {
     CHATOPS_SMOKE_AGENT_ID: run_chatops_smoke_now,
     NETWORK_WATCHDOG_AGENT_ID: run_network_watchdog_now,
+    PORCHLIGHT_AGENT_ID: run_porchlight_now,
 }
 
 LOW_RISK_MANUAL_TIERS = {"T1", "T2"}

@@ -15,7 +15,17 @@ export interface RlsStatus {
   total_tables: number
   rls_enabled: number
   rls_disabled: number
-  tables: { table: string; rls: string; policy: string }[]
+  force_rls_enabled?: number
+  force_rls_disabled?: number
+  protected_tables?: number
+  tables: {
+    table: string
+    rls: string
+    force_rls?: string
+    policy: string
+    policy_count?: number
+    protected?: boolean
+  }[]
 }
 
 export interface ChildProfile {
@@ -130,4 +140,68 @@ export interface McpRegistry {
   active: number
   planned: number
   servers: McpServer[]
+}
+
+export interface PorchlightCheck {
+  name: string
+  status: "pass" | "warn" | "fail" | string
+  severity: "info" | "low" | "medium" | "high" | "critical" | string
+  summary: string
+  detail?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface PorchlightReport {
+  agent: string
+  generated_at: string
+  status: "pass" | "warn" | "fail" | string
+  severity: "info" | "low" | "medium" | "high" | "critical" | string
+  counts: {
+    checks: number
+    failing: number
+    warning: number
+    passing: number
+  }
+  checks: PorchlightCheck[]
+}
+
+export interface PorchlightResponse {
+  report_path: string
+  report: PorchlightReport
+}
+
+export interface AgentManualRunResponse {
+  agent_id: string
+  executed: boolean
+  run_id: string | null
+  status: string | null
+  trace_id: string | null
+  skipped_reason: string | null
+  error_text: string | null
+}
+
+export interface KeyturnerSecret {
+  secret_name: string
+  description: string
+  secret_class: string
+  rotation_days: number
+  requires_approval: boolean
+  status: "healthy" | "due_soon" | "due" | "failed" | "untracked" | string
+  last_rotated_at: string | null
+  next_due_at: string | null
+  days_until_due: number | null
+  verify_status: string | null
+}
+
+export interface KeyturnerStatus {
+  agent_id: string
+  display_name: string
+  mode: string
+  counts: {
+    managed: number
+    healthy: number
+    attention: number
+    approval_gated: number
+  }
+  secrets: KeyturnerSecret[]
 }

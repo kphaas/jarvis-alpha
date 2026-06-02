@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jarvis.alpha.porchlight</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{HOME}}/jarvis-alpha/.venv/bin/python3</string>
+    <string>{{HOME}}/jarvis-alpha/scripts/porchlight_security_agent.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>{{HOME}}/jarvis-alpha</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>JARVIS_NODE</key>
+    <string>brain</string>
+    <key>SECRETS_FILE</key>
+    <string>{{HOME}}/jarvis/.secrets</string>
+    <key>PORCHLIGHT_SSH_KEY</key>
+    <string>{{HOME}}/.ssh/porchlight_monitor</string>
+    <key>GIT_TERMINAL_PROMPT</key>
+    <string>0</string>
+  </dict>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>35</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>{{HOME}}/jarvis-alpha/logs/porchlight.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{HOME}}/jarvis-alpha/logs/porchlight_error.log</string>
+</dict>
+</plist>

@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { RotateCw, AlertTriangle, Shield, CheckCircle, XCircle, Loader2 } from 'lucide-react'
-import type { RotatableKey, RotationResult, SecretAuditEvent } from '../../types/security'
+import type { KeyturnerStatus, RotatableKey, RotationResult, SecretAuditEvent } from '../../types/security'
 import {
   SectionSkeleton, SectionUnavailable, relativeAccessedLabel,
   secretSourceBadgeClass, validateKeyFormat, type SecurityThemeProps,
@@ -9,10 +9,13 @@ import {
 interface KeysTabProps extends SecurityThemeProps {
   rotatableKeys: RotatableKey[]
   secretsAuditEvents: SecretAuditEvent[]
+  keyturnerStatus: KeyturnerStatus | null
   loadRotatableKeys: boolean
   loadSecretsAudit: boolean
+  loadKeyturner: boolean
   errRotatableKeys: boolean
   errSecretsAudit: boolean
+  errKeyturner: boolean
   rotatingKey: RotatableKey | null
   newKeyValue: string
   rotationLoading: boolean
@@ -28,9 +31,9 @@ interface KeysTabProps extends SecurityThemeProps {
 
 export function KeysTab({
   isDark, border, subtle, muted,
-  rotatableKeys, secretsAuditEvents,
-  loadRotatableKeys, loadSecretsAudit,
-  errRotatableKeys, errSecretsAudit,
+  rotatableKeys, secretsAuditEvents, keyturnerStatus,
+  loadRotatableKeys, loadSecretsAudit, loadKeyturner,
+  errRotatableKeys, errSecretsAudit, errKeyturner,
   rotatingKey, newKeyValue, rotationLoading, rotationResult, formatError,
   setRotatingKey, setNewKeyValue, setFormatError, setRotationResult,
   closeRotationModal, handleRotate,
@@ -43,11 +46,67 @@ export function KeysTab({
         >
           <section>
             <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest mb-1">
-              API key management
+              Keyturner rotation desk
             </p>
             <p className={`text-xs font-mono ${muted} mb-4`}>
-              Rotate cloud provider API keys with zero-downtime rollback
+              One agent owns approved key and password rotations; existing scripts remain the tested actuators.
             </p>
+            <div className={`rounded-2xl border ${border} ${subtle} p-4 mb-4 text-xs leading-relaxed ${muted}`}>
+              Keyturner handles cloud API keys, service tokens, admin PIN rotation, and manual DB-password
+              rotation plans. Database passwords stay approval-gated because they require role changes,
+              secret-file updates, service restarts, health checks, and rollback checkpoints.
+            </div>
+            {loadKeyturner && !keyturnerStatus ? (
+              <SectionSkeleton border={border} subtle={subtle} />
+            ) : errKeyturner || !keyturnerStatus ? (
+              <SectionUnavailable border={border} subtle={subtle} />
+            ) : (
+              <div className={`rounded-2xl border ${border} ${subtle} p-5 mb-4`}>
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-bold">{keyturnerStatus.display_name}</p>
+                    <p className={`text-xs font-mono ${muted} mt-1`}>
+                      {keyturnerStatus.counts.managed} managed · {keyturnerStatus.counts.approval_gated} approval-gated · {keyturnerStatus.mode}
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-center">
+                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2">
+                      <p className="text-lg font-bold font-mono text-emerald-400">{keyturnerStatus.counts.healthy}</p>
+                      <p className={`text-[9px] font-mono uppercase ${muted}`}>healthy</p>
+                    </div>
+                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2">
+                      <p className="text-lg font-bold font-mono text-amber-300">{keyturnerStatus.counts.attention}</p>
+                      <p className={`text-[9px] font-mono uppercase ${muted}`}>attention</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-4 grid grid-cols-1 gap-2">
+                  {keyturnerStatus.secrets.map((secret) => {
+                    const statusClass = secret.status === "healthy"
+                      ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-400"
+                      : secret.status === "due_soon"
+                        ? "border-amber-500/30 bg-amber-500/15 text-amber-300"
+                        : "border-rose-500/30 bg-rose-500/15 text-rose-400";
+                    return (
+                      <div key={secret.secret_name} className={`rounded-xl border ${border} px-3 py-2`}>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="text-xs font-bold font-mono">{secret.secret_name}</p>
+                            <p className={`text-[10px] font-mono ${muted}`}>
+                              {secret.secret_class} · {secret.rotation_days}d cadence
+                              {secret.next_due_at ? ` · due ${secret.next_due_at}` : ""}
+                            </p>
+                          </div>
+                          <span className={`w-fit rounded border px-2 py-0.5 text-[10px] font-mono font-bold ${statusClass}`}>
+                            {secret.status}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {loadRotatableKeys && rotatableKeys.length === 0 ? (
               <SectionSkeleton border={border} subtle={subtle} />
             ) : errRotatableKeys && rotatableKeys.length === 0 ? (

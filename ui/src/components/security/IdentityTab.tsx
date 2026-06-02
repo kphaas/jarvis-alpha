@@ -7,8 +7,8 @@ interface IdentityTabProps extends SecurityThemeProps {
   jwt: JwtCheck | null
   rls: RlsStatus | null
   child: ChildProfileStatus | null
-  protectedTables: { table: string; rls: string; policy: string }[]
-  unprotectedTables: { table: string; rls: string; policy: string }[]
+  protectedTables: { table: string; rls: string; force_rls?: string; policy: string; policy_count?: number }[]
+  unprotectedTables: { table: string; rls: string; force_rls?: string; policy: string; policy_count?: number }[]
   loadJwt: boolean
   loadRls: boolean
   loadChild: boolean
@@ -95,6 +95,7 @@ export function IdentityTab({
               {!loadRls && rls && (
                 <span className="text-xs font-mono opacity-60">
                   {rls.rls_enabled}/{rls.total_tables} tables with RLS
+                  {rls.force_rls_enabled !== undefined ? ` · ${rls.force_rls_enabled}/${rls.total_tables} FORCE` : ""}
                 </span>
               )}
             </div>
@@ -117,6 +118,9 @@ export function IdentityTab({
                             RLS
                           </th>
                           <th className="text-left px-4 py-2 font-mono uppercase opacity-40">
+                            Force
+                          </th>
+                          <th className="text-left px-4 py-2 font-mono uppercase opacity-40">
                             Policy
                           </th>
                         </tr>
@@ -130,12 +134,17 @@ export function IdentityTab({
                                 enabled
                               </span>
                             </td>
+                            <td className="px-4 py-2">
+                              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/15 text-emerald-400">
+                                {t.force_rls ?? "enabled"}
+                              </span>
+                            </td>
                             <td className="px-4 py-2 font-mono opacity-80">{t.policy}</td>
                           </tr>
                         ))}
                         {protectedTables.length === 0 && (
                           <tr>
-                            <td colSpan={3} className="px-4 py-4 text-center opacity-40 font-mono">
+                            <td colSpan={4} className="px-4 py-4 text-center opacity-40 font-mono">
                               None
                             </td>
                           </tr>
@@ -157,6 +166,9 @@ export function IdentityTab({
                             RLS
                           </th>
                           <th className="text-left px-4 py-2 font-mono uppercase opacity-40">
+                            Force
+                          </th>
+                          <th className="text-left px-4 py-2 font-mono uppercase opacity-40">
                             Policy
                           </th>
                         </tr>
@@ -167,7 +179,12 @@ export function IdentityTab({
                             <td className="px-4 py-2 font-mono">{t.table}</td>
                             <td className="px-4 py-2">
                               <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border border-white/10 bg-white/5 text-zinc-400">
-                                disabled
+                                {t.rls}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2">
+                              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border border-white/10 bg-white/5 text-zinc-400">
+                                {t.force_rls ?? "disabled"}
                               </span>
                             </td>
                             <td className="px-4 py-2 font-mono opacity-80">{t.policy}</td>
@@ -175,7 +192,7 @@ export function IdentityTab({
                         ))}
                         {unprotectedTables.length === 0 && (
                           <tr>
-                            <td colSpan={3} className="px-4 py-4 text-center opacity-40 font-mono">
+                            <td colSpan={4} className="px-4 py-4 text-center opacity-40 font-mono">
                               None
                             </td>
                           </tr>
