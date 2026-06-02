@@ -464,40 +464,15 @@ def _verify_jwt_exp(token: str, *, now: datetime | None = None) -> tuple[str, st
     return "passed", f"JWT expires in {hours_left:.1f} hours"
 
 
-REMOTE_JWT_VERIFY_HELPER = r"""
-import base64, json, pathlib, sys
-from datetime import datetime, timezone
-path = pathlib.Path(sys.argv[1]).expanduser()
-key = sys.argv[2]
-min_hours = float(sys.argv[3])
-value = None
-for line in path.read_text().splitlines():
-    if line.startswith(key + "="):
-        value = line.split("=", 1)[1].strip()
-        break
-if not value:
-    print(json.dumps({"status": "failed", "detail": "secret not found"}))
-    raise SystemExit(0)
-try:
-    parts = value.split(".")
-    payload = parts[1] + "=" * (-len(parts[1]) % 4)
-    claims = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
-    exp = int(claims["exp"])
-    hours = (datetime.fromtimestamp(exp, timezone.utc) - datetime.now(timezone.utc)).total_seconds() / 3600
-except Exception as exc:
-    print(json.dumps({"status": "failed", "detail": "JWT expiration could not be decoded: " + exc.__class__.__name__}))
-    raise SystemExit(0)
-if hours <= 0:
-    status = "failed"
-    detail = "JWT is expired"
-elif hours < min_hours:
-    status = "warning"
-    detail = f"JWT expires in {hours:.1f} hours"
-else:
-    status = "passed"
-    detail = f"JWT expires in {hours:.1f} hours"
-print(json.dumps({"status": status, "detail": detail}))
-"""
+REMOTE_SECRET_READ_HELPER = (
+    "import pathlib, sys; "
+    "path=pathlib.Path(sys.argv[1]).expanduser(); key=sys.argv[2]; "
+    "value=''; "
+    "\nfor line in path.read_text().splitlines():\n"
+    "    if line.startswith(key + '='):\n"
+    "        value = line.split('=', 1)[1].strip(); break\n"
+    "print(value)"
+)
 
 
 def _remote_jwt_verify(
@@ -516,24 +491,19 @@ def _remote_jwt_verify(
         [
             "python3",
             "-c",
-            shlex.quote(REMOTE_JWT_VERIFY_HELPER),
+            shlex.quote(REMOTE_SECRET_READ_HELPER),
             shlex.quote(node_info["secrets_path"]),
             shlex.quote(secret_key),
-            shlex.quote(str(JWT_VERIFY_MIN_HOURS)),
         ]
     )
     result = ssh(node_info["ssh_target"], command)
     if result.returncode != 0:
-        return "failed", "remote JWT probe failed"
-    try:
-        payload = json.loads(result.stdout.strip().splitlines()[-1])
-    except (IndexError, json.JSONDecodeError):
-        return "failed", "remote JWT probe returned invalid JSON"
-    status = str(payload.get("status") or "failed")
-    detail = str(payload.get("detail") or "")
-    if status not in {"passed", "warning", "failed", "skipped"}:
-        return "failed", "remote JWT probe returned invalid status"
-    return status, detail
+        detail = (result.stderr or result.stdout).strip()[:160]
+        return "failed", f"remote JWT probe failed: {detail or 'ssh command failed'}"
+    token = result.stdout.strip()
+    if not token:
+        return "failed", "remote JWT secret is not configured"
+    return _verify_jwt_exp(token)
 
 
 def _secret_value_for_probe(name: str, spec: dict[str, object]) -> str | None:
@@ -555,6 +525,10 @@ def _verify_cloudflare_api(
     token = _secret_or_env("CLOUDFLARE_API_TOKEN")
     if not token:
         return "failed", "Cloudflare API token is not configured"
+    account_id = _cloudflare_account_id()
+    path = (
+        f"/accounts/{account_id}/tokens/verify" if account_id else "/user/tokens/verify"
+    )
     result = command(
         [
             "curl",
@@ -563,7 +537,7 @@ def _verify_cloudflare_api(
             "20",
             "-H",
             f"Authorization: Bearer {token}",
-            f"{CLOUDFLARE_API_BASE.rstrip('/')}/user/tokens/verify",
+            f"{CLOUDFLARE_API_BASE.rstrip()}{path}",
         ],
         timeout=25,
     )
@@ -714,10 +688,20 @@ def _verify_secret_live(
         )
     if verify_type == "gmail_oauth_health":
         return _verify_latest_gmail_health(psql=psql)
-    if verify_type in {"gateway_health", "family_smoke"}:
+    if verify_type == "gateway_health":
         if not _secret_value_for_probe(name, spec):
             return "failed", "secret is not configured"
         return _verify_health_url(spec, command=command)
+    if verify_type == "family_smoke":
+        status, detail = _verify_health_url(spec, command=command)
+        if status == "failed":
+            return status, detail
+        if not _secret_value_for_probe(name, spec):
+            return (
+                "warning",
+                "Family smoke PIN is not available to Porchlight; API health is reachable",
+            )
+        return status, detail
     return "skipped", f"{verify_type} is side-effecting or not implemented"
 
 
