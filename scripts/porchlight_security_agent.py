@@ -181,6 +181,16 @@ def run_ssh(ssh_target: str, remote_command: str, timeout: int = 30) -> CommandR
     )
 
 
+def remote_ssh_probe_enabled() -> bool:
+    configured = os.getenv("PORCHLIGHT_REMOTE_SSH_ENABLED", "").strip().lower()
+    if configured in {"1", "true", "yes"}:
+        return True
+    key_path = os.getenv("PORCHLIGHT_SSH_KEY", "").strip()
+    if key_path and Path(key_path).expanduser().is_file():
+        return True
+    return current_node_name() is None
+
+
 def current_node_name() -> str | None:
     node = os.getenv("JARVIS_NODE", "").strip().lower()
     if node in SECURITY_LAUNCHAGENTS:
@@ -408,14 +418,19 @@ def check_security_launchagents(
 ) -> CheckResult:
     node_map = node_map or load_json(NODE_MAP_PATH)
     local_node = current_node_name()
+    remote_probe_enabled = remote_ssh_probe_enabled()
     missing_by_node: dict[str, list[str]] = {}
     unreachable: dict[str, str] = {}
     loaded_by_node: dict[str, list[str]] = {}
+    skipped_remote: dict[str, str] = {}
 
     for node, expected in SECURITY_LAUNCHAGENTS.items():
         if node == local_node:
             result = run_command(["launchctl", "list"])
         else:
+            if not remote_probe_enabled:
+                skipped_remote[node] = "remote SSH probe not configured"
+                continue
             target = node_map[node]["ssh_target"]
             result = ssh(target, "launchctl list")
         if result.returncode != 0:
@@ -443,6 +458,22 @@ def check_security_launchagents(
                 "missing_by_node": missing_by_node,
                 "unreachable": unreachable,
                 "loaded_by_node": loaded_by_node,
+                "skipped_remote": skipped_remote,
+            },
+        )
+
+    if skipped_remote:
+        local_count = sum(len(labels) for labels in loaded_by_node.values())
+        return CheckResult(
+            name="security_launchagents",
+            status="warn",
+            severity="medium",
+            summary="Local security LaunchAgents are loaded, but remote nodes were not probed.",
+            detail="; ".join(f"{node}: {msg}" for node, msg in skipped_remote.items()),
+            metadata={
+                "loaded_by_node": loaded_by_node,
+                "skipped_remote": skipped_remote,
+                "local_loaded_count": local_count,
             },
         )
 
@@ -493,15 +524,20 @@ def check_token_rotation_logs(
 ) -> CheckResult:
     node_map = node_map or load_json(NODE_MAP_PATH)
     local_node = current_node_name()
+    remote_probe_enabled = remote_ssh_probe_enabled()
     now = now or datetime.now(UTC)
     cutoff = now - timedelta(hours=max_age_hours)
     stale: dict[str, str] = {}
     recent: dict[str, str] = {}
+    skipped_remote: dict[str, str] = {}
 
     for node, expected_log_nodes in TOKEN_LOG_NODES.items():
         if node == local_node:
             result = run_command(["/bin/sh", "-lc", TOKEN_LOG_COMMAND])
         else:
+            if not remote_probe_enabled:
+                skipped_remote[node] = "remote SSH probe not configured"
+                continue
             target = node_map[node]["ssh_target"]
             result = ssh(target, TOKEN_LOG_COMMAND)
         if result.returncode != 0:
@@ -537,7 +573,26 @@ def check_token_rotation_logs(
             severity="high",
             summary="Some service-token rotation logs are stale or missing.",
             detail="; ".join(f"{node}: {msg}" for node, msg in stale.items()),
-            metadata={"stale": stale, "recent": recent, "max_age_hours": max_age_hours},
+            metadata={
+                "stale": stale,
+                "recent": recent,
+                "skipped_remote": skipped_remote,
+                "max_age_hours": max_age_hours,
+            },
+        )
+
+    if skipped_remote:
+        return CheckResult(
+            name="token_rotation_logs",
+            status="warn",
+            severity="medium",
+            summary="Local service-token logs are fresh, but remote nodes were not probed.",
+            detail="; ".join(f"{node}: {msg}" for node, msg in skipped_remote.items()),
+            metadata={
+                "recent": recent,
+                "skipped_remote": skipped_remote,
+                "max_age_hours": max_age_hours,
+            },
         )
 
     return CheckResult(
