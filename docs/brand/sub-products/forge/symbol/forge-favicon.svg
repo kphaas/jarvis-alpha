@@ -1,0 +1,3 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="32" height="32">
+<defs><linearGradient id="fring" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#FFD9A0"/><stop offset="100%" stop-color="#FF8A3D"/></linearGradient></defs><circle cx="50" cy="50" r="32" fill="none" stroke="url(#fring)" stroke-width="9"/><circle cx="50" cy="16" r="7" fill="#62D8C4"/><path d="M36 38 L62 38 L73 41.5 L62 45 L60 45 L58 50 L62 50 L66 63 L34 63 L38 50 L42 50 L40 45 L36 45 Z" fill="#F2EFE9"/>
+</svg>
