@@ -7,6 +7,9 @@ def test_security_launchagents_warns_when_remote_probe_not_configured(monkeypatc
     monkeypatch.setenv("JARVIS_NODE", "brain")
     monkeypatch.delenv("PORCHLIGHT_REMOTE_SSH_ENABLED", raising=False)
     monkeypatch.delenv("PORCHLIGHT_SSH_KEY", raising=False)
+    monkeypatch.setattr(
+        porchlight, "DEFAULT_PORCHLIGHT_SSH_KEY", porchlight.Path("/missing/key")
+    )
 
     def fake_run_command(args, timeout=30, input_text=None):
         assert args == ["launchctl", "list"]
@@ -48,6 +51,9 @@ def test_token_rotation_logs_warns_when_remote_probe_not_configured(monkeypatch)
     monkeypatch.setenv("JARVIS_NODE", "brain")
     monkeypatch.delenv("PORCHLIGHT_REMOTE_SSH_ENABLED", raising=False)
     monkeypatch.delenv("PORCHLIGHT_SSH_KEY", raising=False)
+    monkeypatch.setattr(
+        porchlight, "DEFAULT_PORCHLIGHT_SSH_KEY", porchlight.Path("/missing/key")
+    )
 
     def fake_run_command(args, timeout=30, input_text=None):
         assert args == ["/bin/sh", "-lc", porchlight.TOKEN_LOG_COMMAND]
@@ -84,3 +90,17 @@ def test_token_rotation_logs_warns_when_remote_probe_not_configured(monkeypatch)
         "gateway": "remote SSH probe not configured",
         "sandbox": "remote SSH probe not configured",
     }
+
+
+def test_remote_probe_enabled_when_default_key_exists(monkeypatch):
+    monkeypatch.setenv("JARVIS_NODE", "brain")
+    monkeypatch.delenv("PORCHLIGHT_REMOTE_SSH_ENABLED", raising=False)
+    monkeypatch.delenv("PORCHLIGHT_SSH_KEY", raising=False)
+
+    class FakePath:
+        def is_file(self):
+            return True
+
+    monkeypatch.setattr(porchlight, "DEFAULT_PORCHLIGHT_SSH_KEY", FakePath())
+
+    assert porchlight.remote_ssh_probe_enabled() is True

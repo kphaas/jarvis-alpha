@@ -36,6 +36,7 @@ async def test_secrets_rotate_delegates_without_returning_secret(monkeypatch):
     async def fake_rotate_key(req):
         seen["key_name"] = req.key_name
         seen["new_value"] = req.new_value
+        seen["rotation_id"] = req.rotation_id
         return SimpleNamespace(
             status="rotated",
             rotation_id="rotation-123",
@@ -44,13 +45,23 @@ async def test_secrets_rotate_delegates_without_returning_secret(monkeypatch):
             new_key_health="passed",
         )
 
-    monkeypatch.setattr("brain.skills.secrets.rotate_key", fake_rotate_key)
+    monkeypatch.setattr("brain.skills.secrets.rotate_key_via_gateway", fake_rotate_key)
 
     result = await rotate_secret(
-        _call({"key_name": "ANTHROPIC_API_KEY", "new_value": "sk-ant-secret"})
+        _call(
+            {
+                "key_name": "ANTHROPIC_API_KEY",
+                "new_value": "sk-ant-secret",
+                "rotation_id": "rotation-123",
+            }
+        )
     )
 
-    assert seen == {"key_name": "ANTHROPIC_API_KEY", "new_value": "sk-ant-secret"}
+    assert seen == {
+        "key_name": "ANTHROPIC_API_KEY",
+        "new_value": "sk-ant-secret",
+        "rotation_id": "rotation-123",
+    }
     assert result == {
         "status": "rotated",
         "rotation_id": "rotation-123",
