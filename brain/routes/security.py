@@ -18,6 +18,7 @@ from brain.config.node_addresses import (
     ENDPOINT_URL,
     SANDBOX_URL,
 )
+from brain.routes.pin_auth import _profile_scopes
 
 logger = get_logger("alpha_brain")
 security_router = APIRouter(prefix="/v1/security", tags=["security"])
@@ -29,6 +30,27 @@ _PORCHLIGHT_REPORT_PATH = Path(
         "PORCHLIGHT_REPORT_PATH",
         str(_REPO_ROOT / "logs" / "porchlight_security_report.json"),
     )
+)
+_CHILD_SENSITIVE_TABLES = (
+    "alpha_profiles",
+    "chat_threads",
+    "chat_messages",
+    "alpha_conversation_memory",
+    "alpha_semantic_memory",
+    "alpha_message_body_vault",
+    "vault_documents",
+    "alpha_dream_sessions",
+    "alpha_task_graphs",
+)
+_LEGACY_CHILD_POLICIES = (
+    "child_memory_rating",
+    "child_memory_write",
+    "child_dream_isolation",
+    "child_dream_step_isolation",
+    "child_task_isolation",
+    "child_content_rating",
+    "child_message_isolation",
+    "child_thread_isolation",
 )
 
 
@@ -336,28 +358,125 @@ async def rls_status():
 
 
 @security_router.get("/child-profiles")
-async def child_profiles():
+async def child_profiles(request: Request):
+    from brain.db.pool import get_pool
+    from brain.db.rls import platform_admin_connection
+    from brain.middleware.scopes import check_scopes
+
+    check_scopes(request, "security.read", "security_read")
+    pool = get_pool()
+    async with platform_admin_connection(
+        source="http", audit_actor="security_child_profiles", pool=pool
+    ) as conn:
+        profile_rows = await conn.fetch(
+            """
+            SELECT id, display_name, role, child_age, max_rating
+            FROM public.alpha_profiles
+            WHERE active = true AND role = 'child'
+            ORDER BY id
+            """
+        )
+        rls_rows = await conn.fetch(
+            """
+            SELECT c.relname,
+                   c.relrowsecurity AS rls_enabled,
+                   c.relforcerowsecurity AS force_enabled,
+                   COALESCE(p.policy_count, 0) AS policy_count
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            LEFT JOIN (
+                SELECT polrelid, COUNT(*) AS policy_count
+                FROM pg_policy
+                GROUP BY polrelid
+            ) p ON p.polrelid = c.oid
+            WHERE n.nspname = 'public'
+              AND c.relname = ANY($1::text[])
+            """,
+            list(_CHILD_SENSITIVE_TABLES),
+        )
+        legacy_rows = await conn.fetch(
+            """
+            SELECT tablename, policyname
+            FROM pg_policies
+            WHERE schemaname = 'public'
+              AND policyname = ANY($1::text[])
+            ORDER BY tablename, policyname
+            """,
+            list(_LEGACY_CHILD_POLICIES),
+        )
+
+    table_status = {
+        row["relname"]: {
+            "rls": bool(row["rls_enabled"]),
+            "force_rls": bool(row["force_enabled"]),
+            "policy_count": int(row["policy_count"]),
+        }
+        for row in rls_rows
+    }
+    missing_tables = [
+        table for table in _CHILD_SENSITIVE_TABLES if table not in table_status
+    ]
+    weak_tables = [
+        table
+        for table, status in table_status.items()
+        if not status["rls"] or not status["force_rls"] or status["policy_count"] < 1
+    ]
+    legacy_policies = [f"{row['tablename']}.{row['policyname']}" for row in legacy_rows]
+    db_layer_ok = not missing_tables and not weak_tables
+    policy_hygiene_ok = not legacy_policies
+
+    profiles = []
+    for row in profile_rows:
+        scopes = _profile_scopes(row["role"])
+        scopes_ok = scopes == ["ask", "chat.read", "health.read"]
+        surfaces = ["voice", "avatar"]
+        profiles.append(
+            {
+                "id": row["id"],
+                "name": row["display_name"],
+                "age": row["child_age"],
+                "max_rating": row["max_rating"],
+                "scopes": scopes,
+                "allowed_surfaces": surfaces,
+                "app_layer": scopes_ok,
+                "db_layer": db_layer_ok,
+                "content_filter": row["max_rating"] in {"all_ages", "age_8_plus"},
+                "surface_filter": "dashboard" not in surfaces,
+                "notes": (
+                    "Child profile is limited to Avatar/voice surfaces and non-vault scopes."
+                    if scopes_ok
+                    else "Child profile has broader scopes than expected."
+                ),
+            }
+        )
+
+    overall = "full"
+    recommendations: list[str] = []
+    if not profiles:
+        overall = "attention"
+        recommendations.append("No active child profiles were found.")
+    if not db_layer_ok:
+        overall = "attention"
+        recommendations.append("Review child-sensitive table RLS/FORCE RLS coverage.")
+    if not policy_hygiene_ok:
+        overall = "attention"
+        recommendations.append(
+            "Drop legacy child policies after confirming replacements."
+        )
+    if any(not p["app_layer"] or not p["content_filter"] for p in profiles):
+        overall = "attention"
+        recommendations.append("Tighten child scopes or rating ceilings.")
+
     return {
-        "profiles": [
-            {
-                "name": "Ryleigh",
-                "age": 8,
-                "app_layer": True,
-                "db_layer": True,
-                "content_filter": True,
-                "notes": "App-layer content filtering active. Database RLS and FORCE RLS are enforced across public Alpha tables.",
-            },
-            {
-                "name": "Sloane",
-                "age": 5,
-                "app_layer": True,
-                "db_layer": True,
-                "content_filter": True,
-                "notes": "App-layer content filtering active. Database RLS and FORCE RLS are enforced across public Alpha tables.",
-            },
-        ],
-        "overall": "full",
-        "recommendation": "Continue child-specific route smokes and Porchlight RLS drift monitoring.",
+        "profiles": profiles,
+        "overall": overall,
+        "recommendation": " ".join(recommendations)
+        if recommendations
+        else "Avatar child-safety controls are enforced by profile scopes plus database RLS/FORCE RLS.",
+        "sensitive_tables": table_status,
+        "missing_tables": missing_tables,
+        "weak_tables": weak_tables,
+        "legacy_child_policies": legacy_policies,
     }
 
 
@@ -465,12 +584,33 @@ async def keyturner_status(request: Request):
     for name in sorted(configured.keys()):
         spec = configured[name] if isinstance(configured[name], dict) else {}
         row = ledger.get(name)
+        verify_type = (
+            spec.get("verify", {}).get("type")
+            if isinstance(spec.get("verify"), dict)
+            else ""
+        )
         secret_class = "db_password" if spec.get("requires_alter_role") else "secret"
-        if name.endswith("_TOKEN"):
-            secret_class = "service_token"
         if name.endswith("_API_KEY"):
             secret_class = "api_key"
-        if name == "ALPHA_PIN":
+        elif verify_type == "jwt_exp" or name.startswith("ALPHA_SERVICE_TOKEN"):
+            secret_class = "service_jwt"
+        elif name.endswith("_TOKEN"):
+            secret_class = "service_token"
+        if "GMAIL_REFRESH_TOKEN" in name:
+            secret_class = "oauth_refresh_token"
+        elif "GMAIL_CLIENT_SECRET" in name:
+            secret_class = "oauth_client_secret"
+        elif name.startswith("CLOUDFLARE_API"):
+            secret_class = "cloudflare_api_token"
+        elif name.startswith("CLOUDFLARE_TUNNEL"):
+            secret_class = "cloudflare_tunnel_token"
+        elif name.startswith("MATTERMOST_WEBHOOK"):
+            secret_class = "webhook_url"
+        elif name.startswith("MATTERMOST_"):
+            secret_class = "mattermost_token"
+        elif name.startswith("PUSHOVER_"):
+            secret_class = "pushover_token"
+        elif name in {"ALPHA_PIN", "JARVIS_FAMILY_SMOKE_PIN"}:
             secret_class = "admin_pin"
 
         if row is None:
