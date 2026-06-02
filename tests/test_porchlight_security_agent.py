@@ -1,7 +1,105 @@
-from datetime import UTC, datetime
+import base64
+import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import scripts.porchlight_security_agent as porchlight
+
+
+def _unsigned_jwt(exp: datetime) -> str:
+    header = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
+    payload = (
+        base64.urlsafe_b64encode(json.dumps({"exp": int(exp.timestamp())}).encode())
+        .rstrip(b"=")
+        .decode()
+    )
+    return f"{header}.{payload}."
+
+
+def test_jwt_live_verification_passes_when_exp_is_far_enough_out():
+    now = datetime(2026, 6, 2, 12, 0, tzinfo=UTC)
+    token = _unsigned_jwt(now + timedelta(hours=30))
+
+    status, detail = porchlight._verify_jwt_exp(token, now=now)
+
+    assert status == "passed"
+    assert "30.0 hours" in detail
+
+
+def test_jwt_live_verification_fails_when_expired():
+    now = datetime(2026, 6, 2, 12, 0, tzinfo=UTC)
+    token = _unsigned_jwt(now - timedelta(minutes=1))
+
+    status, detail = porchlight._verify_jwt_exp(token, now=now)
+
+    assert status == "failed"
+    assert detail == "JWT is expired"
+
+
+def test_secret_live_verification_fails_for_bad_cloudflare_token(tmp_path, monkeypatch):
+    config_path = tmp_path / "secrets_rotation.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "secrets": {
+                    "CLOUDFLARE_API_TOKEN": {
+                        "verify": {"type": "cloudflare_api"},
+                        "nodes": ["brain"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(porchlight, "get_secret", lambda name: "token-abc")
+
+    def fake_command(args, timeout=30, input_text=None):
+        assert args[-1].endswith("/user/tokens/verify")
+        return porchlight.CommandResult(
+            0,
+            json.dumps({"success": False, "errors": [{"message": "invalid"}]}),
+            "",
+        )
+
+    result = porchlight.check_secret_live_verification(
+        node_map={},
+        config_path=config_path,
+        command=fake_command,
+    )
+
+    assert result.status == "fail"
+    assert result.severity == "critical"
+    assert "CLOUDFLARE_API_TOKEN" in result.detail
+
+
+def test_secret_live_verification_warns_for_stale_gmail_health(tmp_path):
+    config_path = tmp_path / "secrets_rotation.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "secrets": {
+                    "ALPHA_GMAIL_REFRESH_TOKEN": {
+                        "verify": {"type": "gmail_oauth_health"},
+                        "nodes": ["brain"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_psql(query):
+        assert "alpha_gmail_oauth_health" in query
+        return porchlight.CommandResult(0, "ok|2026-06-01 00:00:00+00||\n", "")
+
+    result = porchlight.check_secret_live_verification(
+        node_map={},
+        config_path=config_path,
+        psql=fake_psql,
+    )
+
+    assert result.status == "warn"
+    assert "ALPHA_GMAIL_REFRESH_TOKEN" in result.detail
 
 
 def test_security_launchagents_warns_when_remote_probe_not_configured(monkeypatch):
