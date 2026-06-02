@@ -464,17 +464,6 @@ def _verify_jwt_exp(token: str, *, now: datetime | None = None) -> tuple[str, st
     return "passed", f"JWT expires in {hours_left:.1f} hours"
 
 
-REMOTE_SECRET_READ_HELPER = (
-    "import pathlib, sys; "
-    "path=pathlib.Path(sys.argv[1]).expanduser(); key=sys.argv[2]; "
-    "value=''; "
-    "\nfor line in path.read_text().splitlines():\n"
-    "    if line.startswith(key + '='):\n"
-    "        value = line.split('=', 1)[1].strip(); break\n"
-    "print(value)"
-)
-
-
 def _remote_jwt_verify(
     node: str,
     secret_key: str,
@@ -487,23 +476,22 @@ def _remote_jwt_verify(
         return "skipped", "node is not in SSH map"
     if not remote_ssh_probe_enabled():
         return "skipped", "remote SSH probe not configured"
-    command = " ".join(
-        [
-            "python3",
-            "-c",
-            shlex.quote(REMOTE_SECRET_READ_HELPER),
-            shlex.quote(node_info["secrets_path"]),
-            shlex.quote(secret_key),
-        ]
-    )
+    if secret_key != "ALPHA_SERVICE_TOKEN":
+        return "skipped", f"remote JWT key {secret_key} is not allowlisted"
+    command = f"porchlight jwt-exp {secret_key} {JWT_VERIFY_MIN_HOURS}"
     result = ssh(node_info["ssh_target"], command)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()[:160]
         return "failed", f"remote JWT probe failed: {detail or 'ssh command failed'}"
-    token = result.stdout.strip()
-    if not token:
-        return "failed", "remote JWT secret is not configured"
-    return _verify_jwt_exp(token)
+    try:
+        payload = json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        return "failed", "remote JWT probe returned invalid JSON"
+    status = str(payload.get("status") or "failed")
+    detail = str(payload.get("detail") or "")
+    if status not in {"passed", "warning", "failed", "skipped"}:
+        return "failed", "remote JWT probe returned invalid status"
+    return status, detail
 
 
 def _secret_value_for_probe(name: str, spec: dict[str, object]) -> str | None:
