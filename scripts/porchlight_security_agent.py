@@ -66,6 +66,7 @@ SECRET_ROTATION_CONFIG = SCRIPT_DIR / "secrets_rotation.json"
 ROUTES_DIR = REPO_ROOT / "brain" / "routes"
 SECRET_VERIFY_MAX_AGE_HOURS = 36
 JWT_VERIFY_MIN_HOURS = 24
+DEFAULT_CLOUDFLARE_EXPECTED_ACTORS = {"kennethphaas@gmail.com"}
 
 SECURITY_LAUNCHAGENTS: dict[str, set[str]] = {
     "brain": {
@@ -445,7 +446,12 @@ def _decode_jwt_payload(token: str) -> dict[str, object]:
     return json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
 
 
-def _verify_jwt_exp(token: str, *, now: datetime | None = None) -> tuple[str, str]:
+def _verify_jwt_exp(
+    token: str,
+    *,
+    now: datetime | None = None,
+    min_hours: float = JWT_VERIFY_MIN_HOURS,
+) -> tuple[str, str]:
     now = now or datetime.now(UTC)
     try:
         payload = _decode_jwt_payload(token)
@@ -459,7 +465,7 @@ def _verify_jwt_exp(token: str, *, now: datetime | None = None) -> tuple[str, st
     hours_left = (expires_at - now).total_seconds() / 3600
     if hours_left <= 0:
         return "failed", "JWT is expired"
-    if hours_left < JWT_VERIFY_MIN_HOURS:
+    if hours_left < min_hours:
         return "warning", f"JWT expires in {hours_left:.1f} hours"
     return "passed", f"JWT expires in {hours_left:.1f} hours"
 
@@ -469,6 +475,7 @@ def _remote_jwt_verify(
     secret_key: str,
     node_map: dict[str, dict[str, str]],
     *,
+    min_hours: float = JWT_VERIFY_MIN_HOURS,
     ssh: Callable[[str, str], CommandResult] = run_ssh,
 ) -> tuple[str, str]:
     node_info = node_map.get(node)
@@ -478,7 +485,7 @@ def _remote_jwt_verify(
         return "skipped", "remote SSH probe not configured"
     if secret_key != "ALPHA_SERVICE_TOKEN":
         return "skipped", f"remote JWT key {secret_key} is not allowlisted"
-    command = f"porchlight jwt-exp {secret_key} {JWT_VERIFY_MIN_HOURS}"
+    command = f"porchlight jwt-exp {secret_key} {min_hours:g}"
     result = ssh(node_info["ssh_target"], command)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()[:160]
@@ -643,6 +650,53 @@ def _verify_health_url(
     return "passed", f"{len(urls)} health URL(s) reachable"
 
 
+def _verify_family_smoke_auth(
+    spec: dict[str, object],
+    pin: str,
+    *,
+    command: Callable[..., CommandResult] = run_command,
+) -> tuple[str, str]:
+    restarts = spec.get("restarts")
+    if not isinstance(restarts, list):
+        return "skipped", "no Family smoke auth URL configured"
+    health_url = next(
+        (
+            str(item.get("health_url"))
+            for item in restarts
+            if isinstance(item, dict) and item.get("health_url")
+        ),
+        "",
+    )
+    if not health_url.endswith("/health"):
+        return "skipped", "Family smoke auth URL could not be derived"
+    auth_url = health_url[: -len("/health")] + "/v1/auth/pin"
+    result = command(
+        [
+            "curl",
+            "-sk",
+            "--max-time",
+            "20",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            json.dumps({"name": "smoke_test_parent", "pin": pin}),
+            auth_url,
+        ],
+        timeout=25,
+    )
+    if result.returncode != 0:
+        return "failed", "Family smoke auth request failed"
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return "failed", "Family smoke auth returned invalid JSON"
+    if payload.get("token") and payload.get("role") == "parent":
+        return "passed", "Family smoke auth passed for synthetic parent"
+    return "failed", "Family smoke auth did not return a synthetic parent token"
+
+
 def _verify_secret_live(
     name: str,
     spec: dict[str, object],
@@ -659,13 +713,20 @@ def _verify_secret_live(
     if verify_type == "jwt_exp":
         nodes = spec.get("nodes") if isinstance(spec.get("nodes"), list) else []
         secret_key = str(spec.get("secret_key") or name)
+        min_hours = float(verify.get("min_hours") or JWT_VERIFY_MIN_HOURS)
         local_node = current_node_name()
         if len(nodes) == 1 and nodes[0] != local_node:
-            return _remote_jwt_verify(str(nodes[0]), secret_key, node_map, ssh=ssh)
+            return _remote_jwt_verify(
+                str(nodes[0]),
+                secret_key,
+                node_map,
+                min_hours=min_hours,
+                ssh=ssh,
+            )
         token = _secret_value_for_probe(name, spec)
         if not token:
             return "failed", "JWT secret is not configured"
-        return _verify_jwt_exp(token)
+        return _verify_jwt_exp(token, min_hours=min_hours)
     if verify_type == "cloudflare_api":
         return _verify_cloudflare_api(command=command)
     if verify_type == "github_api":
@@ -684,12 +745,13 @@ def _verify_secret_live(
         status, detail = _verify_health_url(spec, command=command)
         if status == "failed":
             return status, detail
-        if not _secret_value_for_probe(name, spec):
+        pin = _secret_value_for_probe(name, spec)
+        if not pin:
             return (
                 "warning",
                 "Family smoke PIN is not available to Porchlight; API health is reachable",
             )
-        return status, detail
+        return _verify_family_smoke_auth(spec, pin, command=command)
     return "skipped", f"{verify_type} is side-effecting or not implemented"
 
 
@@ -1033,6 +1095,13 @@ def _cloudflare_expected_hosts() -> list[str]:
     return [host.lower()] if host else []
 
 
+def _cloudflare_expected_actors() -> set[str]:
+    configured = os.getenv("PORCHLIGHT_CLOUDFLARE_EXPECTED_ACTORS", "").strip()
+    if configured:
+        return {item.strip().lower() for item in configured.split(",") if item.strip()}
+    return set(DEFAULT_CLOUDFLARE_EXPECTED_ACTORS)
+
+
 def _cloudflare_api_get(
     path: str,
     *,
@@ -1098,6 +1167,24 @@ def _policy_has_everyone_rule(policy: dict) -> bool:
     return False
 
 
+def _policy_broad_rule_details(policy: dict) -> list[str]:
+    details: list[str] = []
+    for rule_key in ("include", "exclude", "require"):
+        rules = policy.get(rule_key)
+        if not isinstance(rules, list):
+            continue
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            if "email_domain" in rule:
+                details.append(f"{rule_key}: email_domain")
+            if "everyone" in rule:
+                details.append(f"{rule_key}: everyone")
+            if "common_name" in rule:
+                details.append(f"{rule_key}: common_name")
+    return details
+
+
 def check_cloudflare_access_policy_drift(
     command: Callable[..., CommandResult] = run_command,
 ) -> CheckResult:
@@ -1161,8 +1248,8 @@ def check_cloudflare_access_policy_drift(
             policy_name = str(policy.get("name") or policy.get("id") or "unknown")
             if action == "bypass":
                 risky_policies.append(f"{name}.{policy_name}: bypass")
-            if _policy_has_everyone_rule(policy):
-                risky_policies.append(f"{name}.{policy_name}: everyone")
+            for detail in _policy_broad_rule_details(policy):
+                risky_policies.append(f"{name}.{policy_name}: {detail}")
 
     if expected_hosts and not matched:
         return CheckResult(
@@ -1236,7 +1323,10 @@ def check_cloudflare_audit_logs(
 
     logs = payload.get("result") if isinstance(payload.get("result"), list) else []
     access_related: list[dict[str, str]] = []
+    expected_changes: list[dict[str, str]] = []
+    unexpected_changes: list[str] = []
     failures: list[str] = []
+    expected_actors = _cloudflare_expected_actors()
     for entry in logs:
         if not isinstance(entry, dict):
             continue
@@ -1258,6 +1348,13 @@ def check_cloudflare_audit_logs(
         access_related.append(item)
         if action.get("result") is False:
             failures.append(f"{item['when']} {item['actor']} {item['action']}")
+            continue
+        if item["actor"].lower() in expected_actors:
+            expected_changes.append(item)
+        else:
+            unexpected_changes.append(
+                f"{item['when']} {item['actor']} {item['action']}"
+            )
 
     if failures:
         return CheckResult(
@@ -1268,17 +1365,34 @@ def check_cloudflare_audit_logs(
             detail="; ".join(failures[:8]),
             metadata={"window_hours": window_hours, "events": access_related[:20]},
         )
-    if access_related:
+    if unexpected_changes:
         return CheckResult(
             name="cloudflare_audit_logs",
             status="warn",
             severity="medium",
-            summary="Cloudflare Access/Zero Trust changed within the audit window.",
+            summary="Unexpected Cloudflare Access/Zero Trust changes occurred within the audit window.",
+            detail="; ".join(unexpected_changes[:8]),
+            metadata={
+                "window_hours": window_hours,
+                "events": access_related[:20],
+                "expected_actors": sorted(expected_actors),
+            },
+        )
+    if expected_changes:
+        return CheckResult(
+            name="cloudflare_audit_logs",
+            status="pass",
+            severity="info",
+            summary="Only expected Cloudflare Access/Zero Trust changes occurred within the audit window.",
             detail="; ".join(
                 f"{item['when']} {item['actor']} {item['action']}"
-                for item in access_related[:8]
+                for item in expected_changes[:8]
             ),
-            metadata={"window_hours": window_hours, "events": access_related[:20]},
+            metadata={
+                "window_hours": window_hours,
+                "events": access_related[:20],
+                "expected_actors": sorted(expected_actors),
+            },
         )
 
     return CheckResult(
@@ -1443,6 +1557,29 @@ def agent_event_title(report: dict[str, object]) -> str:
     if report["status"] == "pass":
         return "Porchlight security sweep"
     return "Porchlight security alert"
+
+
+ROUTINE_WARNING_CHECKS = {
+    "secret_rotation",
+}
+
+
+def has_notifiable_security_condition(report: dict[str, object]) -> bool:
+    for raw_check in report.get("checks", []):
+        if not isinstance(raw_check, dict):
+            continue
+        status = raw_check.get("status")
+        severity = str(raw_check.get("severity") or "info")
+        name = str(raw_check.get("name") or "")
+        if status == "fail":
+            return True
+        if status != "warn":
+            continue
+        if SEVERITY_RANK.get(severity, 0) >= SEVERITY_RANK["high"]:
+            return True
+        if name not in ROUTINE_WARNING_CHECKS:
+            return True
+    return False
 
 
 def record_agent_event(
@@ -1645,10 +1782,9 @@ def main() -> int:
     report = run_sweep(args)
     write_report(report)
 
-    should_post = (
-        args.always_report
-        or report["status"] == "fail"
-        or (args.report_warnings and report["status"] == "warn")
+    should_post = args.always_report or (
+        (report["status"] == "fail" or args.report_warnings)
+        and has_notifiable_security_condition(report)
     )
     if not args.no_buddy_event and should_post:
         agent_result = post_agent_event_alert(report)

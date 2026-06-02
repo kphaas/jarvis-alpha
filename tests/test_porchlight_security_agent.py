@@ -26,6 +26,16 @@ def test_jwt_live_verification_passes_when_exp_is_far_enough_out():
     assert "30.0 hours" in detail
 
 
+def test_jwt_live_verification_uses_configured_threshold():
+    now = datetime(2026, 6, 2, 12, 0, tzinfo=UTC)
+    token = _unsigned_jwt(now + timedelta(hours=23))
+
+    status, detail = porchlight._verify_jwt_exp(token, now=now, min_hours=1)
+
+    assert status == "passed"
+    assert "23.0 hours" in detail
+
+
 def test_jwt_live_verification_fails_when_expired():
     now = datetime(2026, 6, 2, 12, 0, tzinfo=UTC)
     token = _unsigned_jwt(now - timedelta(minutes=1))
@@ -61,6 +71,91 @@ def test_remote_jwt_verify_uses_restricted_porchlight_command(monkeypatch):
     assert seen == {
         "target": "gate@example",
         "command": "porchlight jwt-exp ALPHA_SERVICE_TOKEN 24",
+    }
+
+
+def test_remote_jwt_verify_uses_configured_threshold(monkeypatch):
+    monkeypatch.setenv("PORCHLIGHT_REMOTE_SSH_ENABLED", "true")
+    seen = {}
+
+    def fake_ssh(target, command):
+        seen["target"] = target
+        seen["command"] = command
+        return porchlight.CommandResult(
+            0,
+            json.dumps({"status": "passed", "detail": "JWT expires in 23.0 hours"}),
+            "",
+        )
+
+    status, detail = porchlight._remote_jwt_verify(
+        "endpoint",
+        "ALPHA_SERVICE_TOKEN",
+        {"endpoint": {"ssh_target": "endpoint@example", "secrets_path": "/ignored"}},
+        min_hours=1,
+        ssh=fake_ssh,
+    )
+
+    assert status == "passed"
+    assert detail == "JWT expires in 23.0 hours"
+    assert seen == {
+        "target": "endpoint@example",
+        "command": "porchlight jwt-exp ALPHA_SERVICE_TOKEN 1",
+    }
+
+
+def test_family_smoke_live_verification_authenticates_synthetic_parent(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "secrets_rotation.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "secrets": {
+                    "JARVIS_FAMILY_SMOKE_PIN": {
+                        "secret_key": "FAMILY_SMOKE_PIN",
+                        "verify": {"type": "family_smoke"},
+                        "restarts": [
+                            {
+                                "health_url": "https://family.test/health",
+                            }
+                        ],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_secret(name):
+        if name == "FAMILY_SMOKE_PIN":
+            return "123456"
+        raise KeyError(name)
+
+    monkeypatch.setattr(porchlight, "get_secret", fake_secret)
+
+    def fake_command(args, timeout=30, input_text=None):
+        if args[-1] == "https://family.test/health":
+            return porchlight.CommandResult(0, "200", "")
+        if args[-1] == "https://family.test/v1/auth/pin":
+            payload = json.loads(args[args.index("-d") + 1])
+            assert payload == {"name": "smoke_test_parent", "pin": "123456"}
+            return porchlight.CommandResult(
+                0,
+                json.dumps({"token": "synthetic-token", "role": "parent"}),
+                "",
+            )
+        raise AssertionError(args)
+
+    result = porchlight.check_secret_live_verification(
+        node_map={},
+        config_path=config_path,
+        command=fake_command,
+    )
+
+    assert result.status == "pass"
+    assert result.metadata["results"]["JARVIS_FAMILY_SMOKE_PIN"] == {
+        "status": "passed",
+        "detail": "Family smoke auth passed for synthetic parent",
     }
 
 
@@ -387,6 +482,80 @@ def test_cloudflare_policy_drift_fails_for_bypass(monkeypatch):
     assert "bypass" in result.detail
 
 
+def test_cloudflare_policy_drift_fails_for_email_domain_rule(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "token-abc")
+    monkeypatch.setenv("PORCHLIGHT_CLOUDFLARE_EXPECTED_HOSTS", "family.at-0.com")
+
+    def fake_command(args, timeout=30, input_text=None):
+        url = args[-1]
+        if url.endswith("/accounts/acct-123/access/apps"):
+            return porchlight.CommandResult(
+                0,
+                porchlight.json.dumps(
+                    {
+                        "success": True,
+                        "result": [
+                            {
+                                "id": "app-1",
+                                "name": "JARVIS Family",
+                                "domain": "family.at-0.com",
+                                "policies": [
+                                    {
+                                        "id": "pol-1",
+                                        "name": "Domain allow",
+                                        "decision": "allow",
+                                        "include": [
+                                            {"email_domain": {"domain": "example.com"}}
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                "",
+            )
+        raise AssertionError(url)
+
+    result = porchlight.check_cloudflare_access_policy_drift(command=fake_command)
+
+    assert result.status == "fail"
+    assert result.severity == "critical"
+    assert "email_domain" in result.detail
+
+
+def test_cloudflare_audit_logs_passes_on_expected_actor_change(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "token-abc")
+    monkeypatch.setenv("PORCHLIGHT_CLOUDFLARE_EXPECTED_ACTORS", "ken@example.com")
+
+    def fake_command(args, timeout=30, input_text=None):
+        assert "/accounts/acct-123/logs/audit" in args[-1]
+        return porchlight.CommandResult(
+            0,
+            porchlight.json.dumps(
+                {
+                    "success": True,
+                    "result": [
+                        {
+                            "when": "2026-06-02T15:00:00Z",
+                            "actor": {"email": "ken@example.com"},
+                            "action": {"type": "update", "result": True},
+                            "resource": {"type": "access_application"},
+                        }
+                    ],
+                }
+            ),
+            "",
+        )
+
+    result = porchlight.check_cloudflare_audit_logs(command=fake_command)
+
+    assert result.status == "pass"
+    assert result.summary.startswith("Only expected Cloudflare")
+
+
 def test_cloudflare_audit_logs_warns_on_recent_access_change(monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
     monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "token-abc")
@@ -416,3 +585,34 @@ def test_cloudflare_audit_logs_warns_on_recent_access_change(monkeypatch):
     assert result.status == "warn"
     assert result.severity == "medium"
     assert "ken@example.com" in result.detail
+
+
+def test_notification_filter_suppresses_routine_rotation_warning():
+    report = porchlight.build_report(
+        [
+            porchlight.CheckResult(
+                name="secret_rotation",
+                status="warn",
+                severity="medium",
+                summary="Secret rotation has upcoming/manual items to review.",
+                detail="ALPHA_BUDDY_TOKEN due in 7 days",
+            )
+        ]
+    )
+
+    assert porchlight.has_notifiable_security_condition(report) is False
+
+
+def test_notification_filter_keeps_unexpected_warning():
+    report = porchlight.build_report(
+        [
+            porchlight.CheckResult(
+                name="cloudflare_audit_logs",
+                status="warn",
+                severity="medium",
+                summary="Unexpected Cloudflare Access changes occurred.",
+            )
+        ]
+    )
+
+    assert porchlight.has_notifiable_security_condition(report) is True
