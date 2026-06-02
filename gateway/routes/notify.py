@@ -43,6 +43,7 @@ MATTERMOST_DEFAULT_CHANNEL_NAMES = {
     "forge_events": "forge-events",
     "needs_input": "needs-input",
     "alerts": "alerts",
+    "security_alerts": "security-alerts",
 }
 
 MATTERMOST_SOURCE_WEBHOOK_KEYS = {
@@ -208,6 +209,8 @@ def _mattermost_channel_name(channel_key: str) -> str:
 
 
 def _routed_channel_key(req: MattermostNotifyRequest) -> str:
+    if req.channel_key == "security_alerts":
+        return "security_alerts"
     if req.source == "watchdog":
         return "alerts"
     if req.severity in {"error", "critical"}:
@@ -221,10 +224,8 @@ def _mattermost_webhook_url(req: MattermostNotifyRequest) -> str | None:
     routed_channel = _routed_channel_key(req)
     source_key = MATTERMOST_SOURCE_WEBHOOK_KEYS[req.source]
     return (
-        _optional_mattermost_secret(source_key)
-        or _optional_mattermost_secret(
-            f"MATTERMOST_WEBHOOK_URL_{routed_channel.upper()}"
-        )
+        _optional_mattermost_secret(f"MATTERMOST_WEBHOOK_URL_{routed_channel.upper()}")
+        or _optional_mattermost_secret(source_key)
         or _optional_mattermost_secret("MATTERMOST_WEBHOOK_URL")
     )
 
