@@ -79,7 +79,10 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/security/porchlight": ["read", "security_read"],
     "GET /v1/security/keyturner-status": ["read", "security_read"],
     "GET /v1/security/rotatable-keys": ["read", "security_read"],
-    "POST /v1/security/rotate-key": ["admin"],
+    # Keyturner owns its own T4 approval bridge inside the route. The outer
+    # route must pass through so SkillRunner can queue/consume the exact
+    # secrets.rotate request without storing the new secret value.
+    "POST /v1/security/rotate-key": ["write", "security_write", "keyturner_rotate"],
     # --- Logs — T2 security_read ---
     "GET /v1/logs/analyze-patterns": ["read", "security_read"],
     "GET /v1/logs/diagnose": ["read", "security_read"],
