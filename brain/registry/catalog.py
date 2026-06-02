@@ -635,8 +635,10 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             compensation="restore_previous_secret_and_restart_services",
             test_ref="tests/test_agent_skill_registry.py",
             extra={
-                "execution_path": "rotation_scripts",
+                "execution_path": "skill_runner",
+                "approval_queue_bridge": "enabled",
                 "approval_required": True,
+                "actuator": "gateway_rotation_proxy",
                 "handled_secret_classes": [
                     "api_key",
                     "service_token",

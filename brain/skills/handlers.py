@@ -9,6 +9,7 @@ from brain.skills.notify import notify_skill_handlers
 from brain.skills.obsidian import obsidian_skill_handlers
 from brain.skills.approval_bridge import SkillApprovalBridge
 from brain.skills.runner import SkillRunner, SkillHandler
+from brain.skills.secrets import secrets_skill_handlers
 from brain.skills.unifi import unifi_skill_handlers
 from brain.skills.weather import weather_skill_handlers
 
@@ -23,6 +24,7 @@ def all_skill_handlers() -> dict[str, Any]:
         unifi_skill_handlers(),
         weather_skill_handlers(),
         obsidian_skill_handlers(),
+        secrets_skill_handlers(),
     ):
         duplicate_names = set(handlers).intersection(provider_handlers)
         if duplicate_names:
