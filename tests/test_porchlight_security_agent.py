@@ -37,6 +37,8 @@ def test_jwt_live_verification_fails_when_expired():
 
 
 def test_secret_live_verification_fails_for_bad_cloudflare_token(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
+    monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
     config_path = tmp_path / "secrets_rotation.json"
     config_path.write_text(
         json.dumps(
