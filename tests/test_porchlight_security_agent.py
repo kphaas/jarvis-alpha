@@ -36,6 +36,34 @@ def test_jwt_live_verification_fails_when_expired():
     assert detail == "JWT is expired"
 
 
+def test_remote_jwt_verify_uses_restricted_porchlight_command(monkeypatch):
+    monkeypatch.setenv("PORCHLIGHT_REMOTE_SSH_ENABLED", "true")
+    seen = {}
+
+    def fake_ssh(target, command):
+        seen["target"] = target
+        seen["command"] = command
+        return porchlight.CommandResult(
+            0,
+            json.dumps({"status": "passed", "detail": "JWT expires in 30.0 hours"}),
+            "",
+        )
+
+    status, detail = porchlight._remote_jwt_verify(
+        "gateway",
+        "ALPHA_SERVICE_TOKEN",
+        {"gateway": {"ssh_target": "gate@example", "secrets_path": "/ignored"}},
+        ssh=fake_ssh,
+    )
+
+    assert status == "passed"
+    assert detail == "JWT expires in 30.0 hours"
+    assert seen == {
+        "target": "gate@example",
+        "command": "porchlight jwt-exp ALPHA_SERVICE_TOKEN 24",
+    }
+
+
 def test_secret_live_verification_fails_for_bad_cloudflare_token(tmp_path, monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
     monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
