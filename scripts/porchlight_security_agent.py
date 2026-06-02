@@ -8,6 +8,7 @@ report, and optionally posts one summarized Buddy event through record_buddy_eve
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import shlex
@@ -63,6 +64,8 @@ DEFAULT_PORCHLIGHT_SSH_KEY = Path.home() / ".ssh" / "porchlight_monitor"
 NODE_MAP_PATH = SCRIPT_DIR / "node_ssh_map.json"
 SECRET_ROTATION_CONFIG = SCRIPT_DIR / "secrets_rotation.json"
 ROUTES_DIR = REPO_ROOT / "brain" / "routes"
+SECRET_VERIFY_MAX_AGE_HOURS = 36
+JWT_VERIFY_MIN_HOURS = 24
 
 SECURITY_LAUNCHAGENTS: dict[str, set[str]] = {
     "brain": {
@@ -431,6 +434,352 @@ ORDER BY secret_name;
         severity="info",
         summary=f"Secret rotation ledger is healthy for {len(seen)} tracked secrets.",
         metadata={"secrets": seen},
+    )
+
+
+def _decode_jwt_payload(token: str) -> dict[str, object]:
+    parts = token.split(".")
+    if len(parts) < 2:
+        raise ValueError("not a JWT")
+    payload = parts[1] + "=" * (-len(parts[1]) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+
+
+def _verify_jwt_exp(token: str, *, now: datetime | None = None) -> tuple[str, str]:
+    now = now or datetime.now(UTC)
+    try:
+        payload = _decode_jwt_payload(token)
+        exp = int(payload["exp"])
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return (
+            "failed",
+            f"JWT expiration could not be decoded: {exc.__class__.__name__}",
+        )
+    expires_at = datetime.fromtimestamp(exp, tz=UTC)
+    hours_left = (expires_at - now).total_seconds() / 3600
+    if hours_left <= 0:
+        return "failed", "JWT is expired"
+    if hours_left < JWT_VERIFY_MIN_HOURS:
+        return "warning", f"JWT expires in {hours_left:.1f} hours"
+    return "passed", f"JWT expires in {hours_left:.1f} hours"
+
+
+REMOTE_JWT_VERIFY_HELPER = r"""
+import base64, json, pathlib, sys
+from datetime import datetime, timezone
+path = pathlib.Path(sys.argv[1]).expanduser()
+key = sys.argv[2]
+min_hours = float(sys.argv[3])
+value = None
+for line in path.read_text().splitlines():
+    if line.startswith(key + "="):
+        value = line.split("=", 1)[1].strip()
+        break
+if not value:
+    print(json.dumps({"status": "failed", "detail": "secret not found"}))
+    raise SystemExit(0)
+try:
+    parts = value.split(".")
+    payload = parts[1] + "=" * (-len(parts[1]) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+    exp = int(claims["exp"])
+    hours = (datetime.fromtimestamp(exp, timezone.utc) - datetime.now(timezone.utc)).total_seconds() / 3600
+except Exception as exc:
+    print(json.dumps({"status": "failed", "detail": "JWT expiration could not be decoded: " + exc.__class__.__name__}))
+    raise SystemExit(0)
+if hours <= 0:
+    status = "failed"
+    detail = "JWT is expired"
+elif hours < min_hours:
+    status = "warning"
+    detail = f"JWT expires in {hours:.1f} hours"
+else:
+    status = "passed"
+    detail = f"JWT expires in {hours:.1f} hours"
+print(json.dumps({"status": status, "detail": detail}))
+"""
+
+
+def _remote_jwt_verify(
+    node: str,
+    secret_key: str,
+    node_map: dict[str, dict[str, str]],
+    *,
+    ssh: Callable[[str, str], CommandResult] = run_ssh,
+) -> tuple[str, str]:
+    node_info = node_map.get(node)
+    if not node_info:
+        return "skipped", "node is not in SSH map"
+    if not remote_ssh_probe_enabled():
+        return "skipped", "remote SSH probe not configured"
+    command = " ".join(
+        [
+            "python3",
+            "-c",
+            shlex.quote(REMOTE_JWT_VERIFY_HELPER),
+            shlex.quote(node_info["secrets_path"]),
+            shlex.quote(secret_key),
+            shlex.quote(str(JWT_VERIFY_MIN_HOURS)),
+        ]
+    )
+    result = ssh(node_info["ssh_target"], command)
+    if result.returncode != 0:
+        return "failed", "remote JWT probe failed"
+    try:
+        payload = json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        return "failed", "remote JWT probe returned invalid JSON"
+    status = str(payload.get("status") or "failed")
+    detail = str(payload.get("detail") or "")
+    if status not in {"passed", "warning", "failed", "skipped"}:
+        return "failed", "remote JWT probe returned invalid status"
+    return status, detail
+
+
+def _secret_value_for_probe(name: str, spec: dict[str, object]) -> str | None:
+    key = str(spec.get("secret_key") or name)
+    try:
+        return get_secret(key).strip()
+    except Exception:
+        if key != name:
+            try:
+                return get_secret(name).strip()
+            except Exception:
+                return None
+        return None
+
+
+def _verify_cloudflare_api(
+    command: Callable[..., CommandResult] = run_command,
+) -> tuple[str, str]:
+    token = _secret_or_env("CLOUDFLARE_API_TOKEN")
+    if not token:
+        return "failed", "Cloudflare API token is not configured"
+    result = command(
+        [
+            "curl",
+            "-sS",
+            "--max-time",
+            "20",
+            "-H",
+            f"Authorization: Bearer {token}",
+            f"{CLOUDFLARE_API_BASE.rstrip('/')}/user/tokens/verify",
+        ],
+        timeout=25,
+    )
+    if result.returncode != 0:
+        return "failed", "Cloudflare token verify request failed"
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return "failed", "Cloudflare token verify returned invalid JSON"
+    if payload.get("success") is True:
+        return "passed", "Cloudflare token verified"
+    return "failed", json.dumps(payload.get("errors") or payload)[:240]
+
+
+def _verify_github_api(
+    token: str | None,
+    expect_login: str | None,
+    command: Callable[..., CommandResult] = run_command,
+) -> tuple[str, str]:
+    if not token:
+        return "failed", "GitHub token is not configured"
+    result = command(
+        [
+            "curl",
+            "-sS",
+            "--max-time",
+            "20",
+            "-H",
+            f"Authorization: token {token}",
+            "https://api.github.com/user",
+        ],
+        timeout=25,
+    )
+    if result.returncode != 0:
+        return "failed", "GitHub token probe failed"
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return "failed", "GitHub token probe returned invalid JSON"
+    login = str(payload.get("login") or "")
+    if expect_login and login != expect_login:
+        return "failed", "GitHub token login did not match expected account"
+    return "passed", "GitHub token verified"
+
+
+def _verify_latest_gmail_health(
+    psql: Callable[[str], CommandResult] = run_psql,
+    now: datetime | None = None,
+) -> tuple[str, str]:
+    now = now or datetime.now(UTC)
+    query = """
+SELECT status,
+       COALESCE(checked_at::text, ''),
+       COALESCE(error_type, ''),
+       COALESCE(error_subtype, '')
+FROM public.alpha_gmail_oauth_health
+ORDER BY checked_at DESC
+LIMIT 1;
+""".strip()
+    result = psql(query)
+    if result.returncode != 0:
+        return "failed", "Could not read Gmail OAuth health ledger"
+    rows = parse_psql_rows(result.stdout)
+    if not rows:
+        return "warning", "No Gmail OAuth health check has been recorded"
+    status, checked_at, error_type, error_subtype = (rows[0] + ["", "", "", ""])[:4]
+    checked = _parse_timestamp(checked_at)
+    if checked is None:
+        return "warning", "Latest Gmail OAuth health timestamp is invalid"
+    age_hours = (now - checked).total_seconds() / 3600
+    if status != "ok":
+        detail = " ".join(part for part in (error_type, error_subtype) if part)
+        return "failed", f"Gmail OAuth health is {status}: {detail}".strip()
+    if age_hours > SECRET_VERIFY_MAX_AGE_HOURS:
+        return "warning", f"Gmail OAuth health is stale ({age_hours:.1f} hours old)"
+    return "passed", f"Gmail OAuth health ok ({age_hours:.1f} hours old)"
+
+
+def _verify_health_url(
+    spec: dict[str, object],
+    *,
+    command: Callable[..., CommandResult] = run_command,
+) -> tuple[str, str]:
+    restarts = spec.get("restarts")
+    if not isinstance(restarts, list):
+        return "skipped", "no health URL configured"
+    urls = [
+        str(item.get("health_url"))
+        for item in restarts
+        if isinstance(item, dict) and item.get("health_url")
+    ]
+    if not urls:
+        return "skipped", "no health URL configured"
+    failures = []
+    for url in urls:
+        result = command(
+            [
+                "curl",
+                "-sk",
+                "--max-time",
+                "15",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                url,
+            ],
+            timeout=20,
+        )
+        code = (result.stdout or "").strip()
+        if result.returncode != 0 or not code.startswith(("2", "3")):
+            failures.append(f"{url} HTTP {code or result.returncode}")
+    if failures:
+        return "failed", "; ".join(failures[:3])
+    return "passed", f"{len(urls)} health URL(s) reachable"
+
+
+def _verify_secret_live(
+    name: str,
+    spec: dict[str, object],
+    *,
+    node_map: dict[str, dict[str, str]],
+    psql: Callable[[str], CommandResult] = run_psql,
+    command: Callable[..., CommandResult] = run_command,
+    ssh: Callable[[str, str], CommandResult] = run_ssh,
+) -> tuple[str, str]:
+    verify = spec.get("verify") if isinstance(spec.get("verify"), dict) else {}
+    verify_type = str(verify.get("type") or "none")
+    if verify_type == "none":
+        return "skipped", "no live probe configured"
+    if verify_type == "jwt_exp":
+        nodes = spec.get("nodes") if isinstance(spec.get("nodes"), list) else []
+        secret_key = str(spec.get("secret_key") or name)
+        local_node = current_node_name()
+        if len(nodes) == 1 and nodes[0] != local_node:
+            return _remote_jwt_verify(str(nodes[0]), secret_key, node_map, ssh=ssh)
+        token = _secret_value_for_probe(name, spec)
+        if not token:
+            return "failed", "JWT secret is not configured"
+        return _verify_jwt_exp(token)
+    if verify_type == "cloudflare_api":
+        return _verify_cloudflare_api(command=command)
+    if verify_type == "github_api":
+        return _verify_github_api(
+            _secret_value_for_probe(name, spec),
+            str(verify.get("expect_login") or ""),
+            command=command,
+        )
+    if verify_type == "gmail_oauth_health":
+        return _verify_latest_gmail_health(psql=psql)
+    if verify_type in {"gateway_health", "family_smoke"}:
+        if not _secret_value_for_probe(name, spec):
+            return "failed", "secret is not configured"
+        return _verify_health_url(spec, command=command)
+    return "skipped", f"{verify_type} is side-effecting or not implemented"
+
+
+def check_secret_live_verification(
+    node_map: dict[str, dict[str, str]] | None = None,
+    config_path: Path = SECRET_ROTATION_CONFIG,
+    psql: Callable[[str], CommandResult] = run_psql,
+    command: Callable[..., CommandResult] = run_command,
+    ssh: Callable[[str, str], CommandResult] = run_ssh,
+) -> CheckResult:
+    node_map = node_map or load_json(NODE_MAP_PATH)
+    config = load_json(config_path)
+    configured = config.get("secrets", {})
+    results: dict[str, dict[str, str]] = {}
+    failed: list[str] = []
+    warning: list[str] = []
+
+    for name, raw_spec in configured.items():
+        spec = raw_spec if isinstance(raw_spec, dict) else {}
+        status, detail = _verify_secret_live(
+            name,
+            spec,
+            node_map=node_map,
+            psql=psql,
+            command=command,
+            ssh=ssh,
+        )
+        results[name] = {"status": status, "detail": detail}
+        if status == "failed":
+            failed.append(f"{name}: {detail}")
+        elif status == "warning":
+            warning.append(f"{name}: {detail}")
+
+    verified_count = sum(1 for item in results.values() if item["status"] == "passed")
+    skipped_count = sum(1 for item in results.values() if item["status"] == "skipped")
+    if failed:
+        return CheckResult(
+            name="secret_live_verification",
+            status="fail",
+            severity="critical",
+            summary="One or more managed secrets failed live verification.",
+            detail="; ".join((failed + warning)[:10]),
+            metadata={"results": results},
+        )
+    if warning:
+        return CheckResult(
+            name="secret_live_verification",
+            status="warn",
+            severity="medium",
+            summary="One or more managed secrets need live-verification attention.",
+            detail="; ".join(warning[:10]),
+            metadata={"results": results},
+        )
+    return CheckResult(
+        name="secret_live_verification",
+        status="pass",
+        severity="info",
+        summary=(
+            f"Live verification passed for {verified_count} managed secret(s); "
+            f"{skipped_count} probe(s) are skipped by design."
+        ),
+        metadata={"results": results},
     )
 
 
@@ -1260,6 +1609,7 @@ def run_sweep(args: argparse.Namespace) -> dict[str, object]:
     checks = [
         check_database_rls(),
         check_secret_rotation(),
+        check_secret_live_verification(node_map=node_map),
         check_security_launchagents(node_map=node_map),
         check_token_rotation_logs(
             node_map=node_map,
