@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AT0 · Brand Standards</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Hanken+Grotesk:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --obsidian:#0A0B0D;--ink:#0E1014;--surface:#15181F;--surface-2:#1A1F29;--line:#262C38;
+    --beacon:#F2B65A;--beacon-hot:#FF8A3D;--beacon-soft:#7A5E2E;--cool:#62D8C4;
+    --text:#F2EFE9;--muted:#8A8F99;--muted-2:#5A606C;--bad:#E5645A;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--obsidian);color:var(--text);font-family:'Hanken Grotesk',sans-serif;
+    font-weight:300;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+    background:radial-gradient(1100px 650px at 84% -8%,rgba(242,182,90,.09),transparent 60%),
+               radial-gradient(800px 700px at -12% 108%,rgba(98,216,196,.045),transparent 55%)}
+  .wrap{position:relative;z-index:1;max-width:920px;margin:0 auto;padding:0 24px}
+  b,strong{font-weight:600;color:var(--text)}
+
+  /* TOC NAV */
+  nav{position:sticky;top:0;z-index:40;backdrop-filter:blur(14px);
+    background:rgba(10,11,13,.8);border-bottom:1px solid var(--line)}
+  .nav-in{max-width:920px;margin:0 auto;padding:12px 24px;display:flex;gap:18px;overflow-x:auto;
+    font-family:'Space Mono',monospace;font-size:12px;letter-spacing:.08em}
+  .nav-in a{color:var(--muted);white-space:nowrap;text-decoration:none;transition:color .2s}
+  .nav-in a:hover{color:var(--beacon)}
+
+  /* COVER */
+  .cover{padding:78px 0 56px;border-bottom:1px solid var(--line);text-align:center}
+  .wordmark{display:inline-flex;align-items:center;gap:8px;position:relative}
+  .at{font-family:'Chakra Petch',sans-serif;font-weight:700;line-height:1;letter-spacing:-.02em;
+    background:linear-gradient(180deg,#F2EFE9 52%,#E5B16A 108%);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .cover .at{font-size:clamp(64px,16vw,116px)}
+  .cover .mk{width:clamp(72px,18vw,124px);height:clamp(72px,18vw,124px);
+    filter:drop-shadow(0 0 26px rgba(242,182,90,.3))}
+  .cover h1{font-family:'Space Mono',monospace;font-weight:400;font-size:13px;letter-spacing:.4em;
+    text-transform:uppercase;color:var(--beacon);margin-top:30px}
+  .cover .v{font-family:'Space Mono',monospace;font-size:12px;color:var(--muted-2);margin-top:8px;letter-spacing:.1em}
+
+  section{padding:56px 0;border-bottom:1px solid var(--line)}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:30px}
+  .sec-num{font-family:'Space Mono',monospace;color:var(--beacon);font-size:13px;letter-spacing:.2em}
+  .sec-title{font-family:'Chakra Petch',sans-serif;font-weight:600;font-size:clamp(22px,5vw,30px)}
+  .lede{color:var(--muted);font-size:16px;max-width:640px;margin-bottom:6px}
+  h3.sub{font-family:'Chakra Petch',sans-serif;font-weight:600;font-size:17px;margin:30px 0 14px;letter-spacing:.01em}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:680px){.grid2,.grid3{grid-template-columns:1fr}}
+
+  .panel{background:linear-gradient(160deg,var(--surface),var(--ink));border:1px solid var(--line);
+    border-radius:16px;padding:24px}
+  .tile{background:var(--ink);border:1px solid var(--line);border-radius:14px;padding:26px 18px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;min-height:150px}
+  .tile.lite{background:var(--text)}
+  .cap{font-family:'Space Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted-2)}
+  .tile.lite .cap{color:rgba(10,11,13,.55)}
+
+  ul.clean{list-style:none;margin-top:6px}
+  ul.clean li{position:relative;padding-left:22px;margin-bottom:10px;color:var(--muted);font-size:15px}
+  ul.clean li::before{content:"›";position:absolute;left:0;color:var(--beacon);font-weight:700}
+
+  /* attributes */
+  .attrs{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+  .attr{font-family:'Space Mono',monospace;font-size:12px;letter-spacing:.1em;color:var(--cool);
+    border:1px solid var(--line);border-radius:999px;padding:8px 15px}
+
+  /* color swatches */
+  .pal{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+  .sw{border-radius:14px;border:1px solid var(--line);height:150px;padding:16px;
+    display:flex;flex-direction:column;justify-content:flex-end}
+  .sw .nm{font-family:'Chakra Petch',sans-serif;font-weight:600;font-size:14px}
+  .sw .hex{font-family:'Space Mono',monospace;font-size:12px;margin-top:4px}
+  .sw .rgb{font-family:'Space Mono',monospace;font-size:10px;opacity:.7;margin-top:1px}
+  .sw.d{color:var(--text)} .sw.l{color:var(--obsidian)}
+  .ratio{display:flex;height:34px;border-radius:8px;overflow:hidden;margin-top:16px;border:1px solid var(--line)}
+  .ratio span{display:flex;align-items:center;justify-content:center;font-family:'Space Mono',monospace;font-size:10px}
+
+  /* type specimen */
+  .tspec{border:1px solid var(--line);border-radius:14px;padding:22px;margin-bottom:12px;background:var(--ink)}
+  .trole{font-family:'Space Mono',monospace;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--beacon);margin-bottom:14px}
+  .tname{font-family:'Chakra Petch',sans-serif;font-weight:700;font-size:13px;color:var(--muted);margin-bottom:10px;letter-spacing:.04em}
+  .tbig{font-family:'Chakra Petch',sans-serif;font-weight:700;font-size:32px;line-height:1.1}
+  .tmid{font-family:'Hanken Grotesk',sans-serif;font-weight:400;font-size:18px}
+  .tmono{font-family:'Space Mono',monospace;font-size:16px}
+  .tmeta{color:var(--muted-2);font-size:13px;margin-top:10px}
+
+  /* naming do/dont */
+  .name-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:560px){.name-grid{grid-template-columns:1fr}}
+  .nbox{border-radius:14px;padding:20px;border:1px solid var(--line)}
+  .nbox.ok{background:rgba(98,216,196,.06);border-color:rgba(98,216,196,.3)}
+  .nbox.no{background:rgba(229,100,90,.06);border-color:rgba(229,100,90,.3)}
+  .nbox .hd{font-family:'Space Mono',monospace;font-size:12px;letter-spacing:.16em;text-transform:uppercase;margin-bottom:12px}
+  .nbox.ok .hd{color:var(--cool)} .nbox.no .hd{color:var(--bad)}
+  .nbox .it{font-family:'Chakra Petch',sans-serif;font-size:18px;font-weight:600;margin-bottom:8px}
+  .nbox .it.no{color:var(--muted);text-decoration:line-through;text-decoration-color:var(--bad)}
+
+  /* misuse */
+  .dont{position:relative;overflow:hidden}
+  .dont .x{position:absolute;top:12px;right:12px;color:var(--bad);font-size:18px;font-weight:700}
+  .badmark{font-family:'Chakra Petch',sans-serif;font-weight:700;font-size:40px;display:inline-flex;align-items:center;gap:4px}
+
+  /* clear space */
+  .clearbox{border:1px dashed var(--beacon-soft);border-radius:12px;padding:30px;display:inline-flex;
+    align-items:center;gap:6px;position:relative}
+  .xlabel{font-family:'Space Mono',monospace;font-size:11px;color:var(--beacon)}
+
+  .footer{padding:40px 0 80px;text-align:center;font-family:'Space Mono',monospace;
+    font-size:12px;color:var(--muted-2);letter-spacing:.1em}
+  .spin-fast{transform-origin:50px 50px;animation:spin 3s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .ping{transform-origin:50px 50px;animation:ping 2.8s ease-out infinite}
+  @keyframes ping{0%{transform:scale(.6);opacity:.85}80%,100%{transform:scale(1.65);opacity:0}}
+  @media(prefers-reduced-motion:reduce){.spin-fast,.ping{animation:none}}
+</style>
+</head>
+<body>
+
+<!-- shared defs -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <radialGradient id="coreF" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#FFE3B8"/><stop offset="55%" stop-color="#F2B65A"/><stop offset="100%" stop-color="#FF8A3D"/></radialGradient>
+  <linearGradient id="ringF" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#FFD9A0"/><stop offset="100%" stop-color="#FF8A3D"/></linearGradient>
+  <linearGradient id="trailF" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#62D8C4" stop-opacity="0"/><stop offset="100%" stop-color="#62D8C4" stop-opacity=".75"/></linearGradient>
+</defs></svg>
+
+<nav><div class="nav-in">
+  <a href="#essence">01 Essence</a>
+  <a href="#logo">02 Logo</a>
+  <a href="#forms">03 Forms</a>
+  <a href="#space">04 Clear space</a>
+  <a href="#misuse">05 Misuse</a>
+  <a href="#naming">06 Naming</a>
+  <a href="#color">07 Color</a>
+  <a href="#type">08 Type</a>
+  <a href="#motion">09 Motion</a>
+</div></nav>
+
+<div class="wrap">
+
+  <!-- COVER -->
+  <header class="cover">
+    <div class="wordmark">
+      <span class="at">AT</span>
+      <svg class="mk" viewBox="0 0 100 100" aria-label="AT0">
+        <circle cx="50" cy="50" r="33" fill="none" stroke="#2C333F" stroke-width="6"/>
+        <circle class="ping" cx="50" cy="50" r="33" fill="none" stroke="#F2B65A" stroke-width="2"/>
+        <g class="spin-fast"><path d="M50 50 L50 17 A33 33 0 0 1 78 33 Z" fill="url(#trailF)" opacity=".55"/><circle cx="78" cy="33" r="5.2" fill="#62D8C4"/></g>
+        <circle cx="50" cy="50" r="33" fill="none" stroke="url(#ringF)" stroke-width="6"/>
+        <circle cx="50" cy="50" r="9" fill="url(#coreF)"/>
+      </svg>
+    </div>
+    <h1>Brand Standards</h1>
+    <div class="v">v1.0 · 2026 · spoken "Auto"</div>
+  </header>
+
+  <!-- 01 ESSENCE -->
+  <section id="essence">
+    <div class="sec-head"><span class="sec-num">01</span><span class="sec-title">Brand Essence</span></div>
+    <p class="lede">AT0 is a private, always-on intelligence that runs every domain of your life from one beacon. The brand should always feel like a trusted machine — advanced, calm, and in control.</p>
+    <h3 class="sub">Attributes</h3>
+    <div class="attrs">
+      <span class="attr">intelligent</span><span class="attr">future</span><span class="attr">trustworthy</span>
+      <span class="attr">always-on</span><span class="attr">precise</span><span class="attr">sci-fi / robotic</span>
+    </div>
+    <div class="grid2" style="margin-top:24px">
+      <div class="panel">
+        <h3 class="sub" style="margin-top:0">The idea in one line</h3>
+        <p style="color:var(--muted)">A beacon that never sleeps — amber signal you can trust, teal intelligence always scanning.</p>
+      </div>
+      <div class="panel">
+        <h3 class="sub" style="margin-top:0">Two-color meaning</h3>
+        <ul class="clean">
+          <li><b style="color:var(--beacon)">Beacon Amber</b> = presence, warmth, trust</li>
+          <li><b style="color:var(--cool)">Signal Teal</b> = intelligence, scanning, motion</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 02 LOGO -->
+  <section id="logo">
+    <div class="sec-head"><span class="sec-num">02</span><span class="sec-title">The Logo</span></div>
+    <p class="lede">The primary logo is the <b>AT0 wordmark</b>: "AT" in warm-tint Chakra Petch + the beacon mark as the "0". This is the locked, preferred form everywhere there is room.</p>
+
+    <div class="panel" style="text-align:center;padding:50px 20px;margin-top:8px">
+      <div class="wordmark">
+        <span class="at" style="font-size:84px">AT</span>
+        <svg class="mk" style="width:90px;height:90px" viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r="33" fill="none" stroke="#2C333F" stroke-width="6"/>
+          <circle class="ping" cx="50" cy="50" r="33" fill="none" stroke="#F2B65A" stroke-width="2"/>
+          <g class="spin-fast"><path d="M50 50 L50 17 A33 33 0 0 1 78 33 Z" fill="url(#trailF)" opacity=".55"/><circle cx="78" cy="33" r="5.2" fill="#62D8C4"/></g>
+          <circle cx="50" cy="50" r="33" fill="none" stroke="url(#ringF)" stroke-width="6"/>
+          <circle cx="50" cy="50" r="9" fill="url(#coreF)"/>
+        </svg>
+      </div>
+      <div class="cap" style="margin-top:24px">Primary logo · use this first</div>
+    </div>
+
+    <h3 class="sub">Anatomy — what each part means</h3>
+    <ul class="clean">
+      <li><b>The ring (0)</b> — a closed beacon ring in amber. The constant, trusted presence.</li>
+      <li><b>The core</b> — the glowing center; the brain.</li>
+      <li><b>The teal scanning node + trail</b> — intelligence always working. Never recolor or remove it.</li>
+      <li><b>The sonar ping</b> — a broadcasting beacon (digital/animated only).</li>
+      <li><b>"AT" warm tint</b> — warm-white fading to faint amber. Subtle, never a hard gradient.</li>
+    </ul>
+    <p style="color:var(--muted-2);font-size:14px;margin-top:14px">⚙️ <b>Live vs static:</b> use the animated mark (ping + sweep) in digital surfaces. For print, favicons, and tiny sizes, use the static mark — ring + core + teal node at rest, no motion.</p>
+  </section>
+
+  <!-- 03 FORMS -->
+  <section id="forms">
+    <div class="sec-head"><span class="sec-num">03</span><span class="sec-title">Allowed Forms</span></div>
+    <p class="lede">All approved lockups. Pick the one that fits the space — never invent a new arrangement.</p>
+    <div class="grid3" style="margin-top:8px">
+
+      <div class="tile">
+        <div class="wordmark"><span class="at" style="font-size:42px">AT</span>
+          <svg style="width:46px;height:46px" viewBox="0 0 100 100"><circle cx="50" cy="50" r="33" fill="none" stroke="url(#ringF)" stroke-width="8"/><circle cx="50" cy="17" r="6" fill="#62D8C4"/><circle cx="50" cy="50" r="9" fill="url(#coreF)"/></svg>
+        </div><div class="cap">Primary horizontal</div>
+      </div>
+
+      <div class="tile">
+        <div style="text-align:center">
+          <div class="wordmark"><span class="at" style="font-size:34px">AT</span>
+            <svg style="width:36px;height:36px" viewBox="0 0 100 100"><circle cx="50" cy="50" r="33" fill="none" stroke="url(#ringF)" stroke-width="9"/><circle cx="50" cy="17" r="7" fill="#62D8C4"/><circle cx="50" cy="50" r="9" fill="url(#coreF)"/></svg>
+          </div>
+          <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:.5em;color:var(--muted);margin-top:8px;padding-left:.5em">AUTO</div>
+        </div><div class="cap">Stacked + name</div>
+      </div>
+
+      <div class="tile">
+        <svg style="width:58px;height:58px" viewBox="0 0 100 100"><circle cx="50" cy="50" r="33" fill="none" stroke="url(#ringF)" stroke-width="7"/><circle cx="50" cy="17" r="6" fill="#62D8C4"/><circle cx="50" cy="50" r="9" fill="url(#coreF)"/></svg>
+        <div class="cap">Symbol only</div>
+      </div>
+
+      <div class="tile">
+        <div style="width:84px;height:84px;border-radius:20px;background:radial-gradient(120% 120% at 30% 20%,#23282F,#0A0B0D);border:1px solid #2c333f;display:flex;align-items:center;justify-content:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)">
+          <svg style="width:52px;height:52px;filter:drop-shadow(0 0 10px rgba(242,182,90,.5))" viewBox="0 0 100 100"><circle cx="50" cy="50" r="32" fill="none" stroke="url(#ringF)" stroke-width="8"/><circle cx="50" cy="18" r="6.5" fill="#62D8C4"/><circle cx="50" cy="50" r="9" fill="url(#coreF)"/></svg>
+        </div><div class="cap">App icon</div>
+      </div>
+
+      <div class="tile">
+        <div class="wordmark"><span class="at" style="font-size:42px;background:none;-webkit-text-fill-color:#F2EFE9;color:#F2EFE9">AT</span>
+          <svg style="width:46px;height:46px" viewBox="0 0 100 100"><circle cx="50" cy="50" r="33" fill="none" stroke="#F2EFE9" stroke-width="8"/><circle cx="50" cy="17" r="6" fill="#F2EFE9"/><circle cx="50" cy="50" r="9" fill="#F2EFE9"/></svg>
+        </div><div class="cap">Monochrome (1-color)</div>
+      </div>
+
+      <div class="tile lite">
+        <div class="wordmark"><span class="at" style="font-size:42px;background:none;-webkit-text-fill-color:#0A0B0D;color:#0A0B0D">AT</span>
+          <svg style="width:46px;height:46px" viewBox="0 0 100 100"><circle cx="50" cy="50" r="33" fill="none" stroke="#FF8A3D" stroke-width="8"/><circle cx="50" cy="17" r="6" fill="#1a8e7e"/><circle cx="50" cy="50" r="9" fill="#0A0B0D"/></svg>
+        </div><div class="cap">On light background</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 04 CLEAR SPACE -->
+  <section id="space">
+    <div class="sec-head"><span class="sec-num">04</span><span class="sec-title">Clear Space & Minimum Size</span></div>
+    <div class="grid2">
+      <div class="panel">
+        <h3 class="sub" style="margin-top:0">Clear space</h3>
+        <p style="color:var(--muted);margin-bottom:18px">Keep padding equal to <b>X</b> = the diameter of the "0" on all sides. Nothing intrudes.</p>
+        <div class="clearbox">
+          <span class="at" style="font-size:40px">AT</span>
+          <svg style="width:44px;height:44px" viewBox="0 0 100 100"><circle cx="50" cy="50" r="33" fill="none" stroke="url(#ringF)" stroke-width="8"/><circle cx="50" cy="17" r="6" fill="#62D8C4"/><circle cx="50" cy="50" r="9" fill="url(#coreF)"/></svg>
+          <span class="xlabel" style="position:absolute;top:8px;left:10px">↕ X</span>
+        </div>
+      </div>
+      <div class="panel">
+        <h3 class="sub" style="margin-top:0">Minimum size</h3>
+        <ul class="clean">
+          <li><b>Digital wordmark</b> — no smaller than 80px wide</li>
+          <li><b>Symbol only</b> — no smaller than 24px</li>
+          <li><b>Favicon</b> — use static symbol at 16–32px (drop the ping + sweep)</li>
+          <li><b>Print</b> — wordmark min 22mm wide</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 05 MISUSE -->
+  <section id="misuse">
+    <div class="sec-head"><span class="sec-num">05</span><span class="sec-title">Logo Misuse</span></div>
+    <p class="lede">The mark is locked. Never do any of these.</p>
+    <div class="grid3" style="margin-top:8px">
+      <div class="tile dont"><span class="x">✕</span>
+        <span class="badmark" style="transform:scaleX(1.5);color:#F2EFE9">AT0</span>
+        <div class="cap">Don't stretch / distort</div>
+      </div>
+      <div class="tile dont"><span class="x">✕</span>
+        <span class="badmark" style="color:#A875FF">AT<span style="display:inline-block;width:38px;height:38px;border:7px solid #A875FF;border-radius:50%"></span></span>
+        <div class="cap">Don't recolor</div>
+      </div>
+      <div class="tile dont"><span class="x">✕</span>
+        <span class="badmark" style="transform:rotate(-15deg);color:#F2EFE9">AT0</span>
+        <div class="cap">Don't rotate / tilt</div>
+      </div>
+      <div class="tile dont"><span class="x">✕</span>
+        <svg style="width:50px;height:50px" viewBox="0 0 100 100"><circle cx="50" cy="50" r="33" fill="none" stroke="url(#ringF)" stroke-width="7"/><circle cx="50" cy="50" r="9" fill="url(#coreF)"/></svg>
+        <div class="cap">Don't remove teal node</div>
+      </div>
+      <div class="tile dont"><span class="x">✕</span>
+        <span class="badmark" style="color:#F2EFE9;text-shadow:3px 3px 0 #FF8A3D,0 0 12px #62D8C4">AT0</span>
+        <div class="cap">Don't add shadows / FX</div>
+      </div>
+      <div class="tile dont"><span class="x">✕</span>
+        <span class="badmark" style="font-family:'Hanken Grotesk';font-weight:600;color:#F2EFE9">AT0</span>
+        <div class="cap">Don't change the font</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 06 NAMING -->
+  <section id="naming">
+    <div class="sec-head"><span class="sec-num">06</span><span class="sec-title">Naming — AT0 vs "Auto"</span></div>
+    <p class="lede">One product, two names. <b>AT0</b> is how it's written. <b>"Auto"</b> is how it's spoken.</p>
+
+    <div class="grid2" style="margin-top:8px">
+      <div class="panel">
+        <h3 class="sub" style="margin-top:0">Write it: <span style="color:var(--beacon)">AT0</span></h3>
+        <ul class="clean">
+          <li>Logos, headlines, UI labels, legal, code, file names</li>
+          <li>Capital <b>A</b>, capital <b>T</b>, numeral <b>0</b> (zero)</li>
+          <li>No hyphen, no space, no period</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3 class="sub" style="margin-top:0">Say it: <span style="color:var(--cool)">"Auto"</span></h3>
+        <ul class="clean">
+          <li>Voice UI, conversation, taglines, casual reference</li>
+          <li>Capitalized like a name: <b>Auto</b></li>
+          <li>First mention in copy: <b>AT0 ("Auto")</b>, then either</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3 class="sub">Correct vs incorrect</h3>
+    <div class="name-grid">
+      <div class="nbox ok">
+        <div class="hd">✓ Correct</div>
+        <div class="it">AT0</div>
+        <div class="it">Auto</div>
+        <div class="it" style="font-size:15px;font-weight:400;color:var(--muted)">AT0 ("Auto")</div>
+      </div>
+      <div class="nbox no">
+        <div class="hd">✕ Never</div>
+        <div class="it no">AT-0</div>
+        <div class="it no">AT 0</div>
+        <div class="it no">ATO (letter O)</div>
+        <div class="it no">At0 · ATU · A.T.0</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 07 COLOR -->
+  <section id="color">
+    <div class="sec-head"><span class="sec-num">07</span><span class="sec-title">Color System</span></div>
+    <p class="lede">Obsidian foundation, one warm <b>Beacon</b> signal, one cool <b>Teal</b> for intelligence. Restraint is the rule — color is a signal, not decoration.</p>
+
+    <h3 class="sub">Core palette</h3>
+    <div class="pal">
+      <div class="sw d" style="background:#0A0B0D"><div class="nm">Obsidian</div><div class="hex">#0A0B0D</div><div class="rgb">10 · 11 · 13</div></div>
+      <div class="sw d" style="background:#15181F"><div class="nm">Surface</div><div class="hex">#15181F</div><div class="rgb">21 · 24 · 31</div></div>
+      <div class="sw l" style="background:#F2B65A"><div class="nm">Beacon Amber</div><div class="hex">#F2B65A</div><div class="rgb">242 · 182 · 90</div></div>
+      <div class="sw l" style="background:#FF8A3D"><div class="nm">Beacon Hot</div><div class="hex">#FF8A3D</div><div class="rgb">255 · 138 · 61</div></div>
+      <div class="sw l" style="background:#62D8C4"><div class="nm">Signal Teal</div><div class="hex">#62D8C4</div><div class="rgb">98 · 216 · 196</div></div>
+      <div class="sw l" style="background:#F2EFE9"><div class="nm">Warm White</div><div class="hex">#F2EFE9</div><div class="rgb">242 · 239 · 233</div></div>
+    </div>
+
+    <h3 class="sub">Support neutrals</h3>
+    <div class="pal">
+      <div class="sw d" style="background:#262C38"><div class="nm">Line</div><div class="hex">#262C38</div></div>
+      <div class="sw d" style="background:#8A8F99"><div class="nm">Muted</div><div class="hex">#8A8F99</div></div>
+      <div class="sw d" style="background:#5A606C"><div class="nm">Muted Deep</div><div class="hex">#5A606C</div></div>
+    </div>
+
+    <h3 class="sub">Usage ratio</h3>
+    <div class="ratio">
+      <span style="background:#0A0B0D;color:#8A8F99;flex:70">70% OBSIDIAN</span>
+      <span style="background:#F2EFE9;color:#0A0B0D;flex:18">18% WHITE</span>
+      <span style="background:#F2B65A;color:#0A0B0D;flex:9">9% AMBER</span>
+      <span style="background:#62D8C4;color:#0A0B0D;flex:3">3%</span>
+    </div>
+    <p style="color:var(--muted-2);font-size:13px;margin-top:10px">Amber draws the eye to one thing at a time. Teal is an accent only — the scanning node, links, small highlights.</p>
+  </section>
+
+  <!-- 08 TYPE -->
+  <section id="type">
+    <div class="sec-head"><span class="sec-num">08</span><span class="sec-title">Typography</span></div>
+    <p class="lede">Three typefaces, three jobs. All free on Google Fonts.</p>
+
+    <div class="tspec">
+      <div class="trole">Display — the voice of the brand</div>
+      <div class="tname">Chakra Petch · 600 / 700</div>
+      <div class="tbig">AT0 — Online. Standing by.</div>
+      <div class="tmeta">Logo, headlines, product names. Technical-but-human. Use 600–700 weight.</div>
+    </div>
+    <div class="tspec">
+      <div class="trole">Body — everything people read</div>
+      <div class="tname">Hanken Grotesk · 300 / 400 / 500</div>
+      <div class="tmid">A private, always-on intelligence that runs every domain of your life from one beacon.</div>
+      <div class="tmeta">Paragraphs, UI copy, descriptions. Light/regular weights keep it calm.</div>
+    </div>
+    <div class="tspec">
+      <div class="trole">Mono — the machine voice</div>
+      <div class="tname">Space Mono · 400 / 700</div>
+      <div class="tmono">at0 · status: nominal · nodes 7/7 · cost $0.41</div>
+      <div class="tmeta">Status lines, telemetry, labels, eyebrows. The droid-readout texture.</div>
+    </div>
+    <p style="color:var(--muted-2);font-size:13px;margin-top:6px">Fallback stack: Chakra Petch → system-ui sans; Hanken Grotesk → -apple-system, sans-serif; Space Mono → ui-monospace, monospace.</p>
+  </section>
+
+  <!-- 09 MOTION -->
+  <section id="motion">
+    <div class="sec-head"><span class="sec-num">09</span><span class="sec-title">Motion</span></div>
+    <p class="lede">Motion is part of the identity — but it's slow and confident, never frantic. The brand breathes; it doesn't flash.</p>
+    <div class="grid3">
+      <div class="panel"><h3 class="sub" style="margin-top:0">Sweep</h3><p style="color:var(--muted)">Teal node circles the O. ~3s per rotation. Steady, like a scanner.</p></div>
+      <div class="panel"><h3 class="sub" style="margin-top:0">Ping</h3><p style="color:var(--muted)">Amber ring radiates outward every ~2.8s. The beacon broadcasting.</p></div>
+      <div class="panel"><h3 class="sub" style="margin-top:0">Respect reduced-motion</h3><p style="color:var(--muted)">Always honor <span style="font-family:'Space Mono'">prefers-reduced-motion</span> — fall back to the static mark.</p></div>
+    </div>
+  </section>
+
+  <div class="footer">AT0 · "AUTO" · BRAND STANDARDS v1.0 · © 2026</div>
+
+</div>
+</body>
+</html>

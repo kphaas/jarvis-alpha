@@ -1,0 +1,11 @@
+:root{
+  --obsidian:#0A0B0D;
+  --surface:#15181F;
+  --beacon:#F2B65A;     /* primary */
+  --beacon-hot:#FF8A3D;
+  --cool:#62D8C4;       /* intelligence accent */
+  --text:#F2EFE9;
+  --line:#262C38;
+  --muted:#8A8F99;
+  --muted-deep:#5A606C;
+}
