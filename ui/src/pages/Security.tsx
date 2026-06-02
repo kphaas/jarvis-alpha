@@ -10,14 +10,15 @@ import type {
   JwtCheck, RlsStatus, ChildProfileStatus, Perimeter, CertRow,
   LogEntry, RotatableKey, RotationResult, SecretAuditEvent,
   SecretsAuditResponse, HoneypotData, McpRegistry, LogsQueryResponse,
+  PorchlightResponse, PorchlightReport, AgentManualRunResponse, KeyturnerStatus,
 } from "../types/security";
 import {
   OverviewTab, IdentityTab, NetworkTab, CertsTab,
-  KeysTab, HoneypotTab, McpTab, EventsTab,
+  KeysTab, PorchlightTab, HoneypotTab, McpTab, EventsTab,
   computePostureScore, scoreColor, C_SCORE,
 } from "../components/security";
 
-const TABS = ["Overview", "Identity", "Network", "Certs", "Keys", "Honeypot", "MCP", "Events"] as const;
+const TABS = ["Overview", "Identity", "Network", "Certs", "Keys", "Porchlight", "Honeypot", "MCP", "Events"] as const;
 type TabId = (typeof TABS)[number];
 
 const TAB_ICONS: Record<string, typeof Shield> = {
@@ -26,6 +27,7 @@ const TAB_ICONS: Record<string, typeof Shield> = {
   Network: Globe,
   Certs: Lock,
   Keys: RotateCw,
+  Porchlight: Shield,
   Honeypot: Bug,
   MCP: Plug,
   Events: AlertTriangle,
@@ -70,6 +72,9 @@ export default function Security() {
   const [loadSecretsAudit, setLoadSecretsAudit] = useState(true);
   const [errRotatableKeys, setErrRotatableKeys] = useState(false);
   const [errSecretsAudit, setErrSecretsAudit] = useState(false);
+  const [keyturnerStatus, setKeyturnerStatus] = useState<KeyturnerStatus | null>(null);
+  const [loadKeyturner, setLoadKeyturner] = useState(true);
+  const [errKeyturner, setErrKeyturner] = useState(false);
 
   const [rotatingKey, setRotatingKey] = useState<RotatableKey | null>(null);
   const [newKeyValue, setNewKeyValue] = useState("");
@@ -84,6 +89,12 @@ export default function Security() {
   const [errHoneypot, setErrHoneypot] = useState(false);
   const [errMcp, setErrMcp] = useState(false);
 
+  const [porchlightReport, setPorchlightReport] = useState<PorchlightReport | null>(null);
+  const [loadPorchlight, setLoadPorchlight] = useState(true);
+  const [errPorchlight, setErrPorchlight] = useState(false);
+  const [runPorchlightLoading, setRunPorchlightLoading] = useState(false);
+  const [runPorchlightError, setRunPorchlightError] = useState<string | null>(null);
+
   const mounted = useRef(true);
   const fetchRunning = useRef(false);
 
@@ -94,12 +105,12 @@ export default function Security() {
     if (showLoading) {
       setLoadJwt(true); setLoadRls(true); setLoadChild(true);
       setLoadPerimeter(true); setLoadCerts(true); setLoadLogs(true);
-      setLoadRotatableKeys(true); setLoadSecretsAudit(true);
-      setLoadHoneypot(true); setLoadMcp(true);
+      setLoadRotatableKeys(true); setLoadSecretsAudit(true); setLoadKeyturner(true);
+      setLoadHoneypot(true); setLoadMcp(true); setLoadPorchlight(true);
     }
 
     try {
-      const [j, r, c, p, cert, logs, rk, sa, hp, mcp] = await Promise.all([
+      const [j, r, c, p, cert, logs, rk, sa, kt, hp, mcp, porch] = await Promise.all([
         apiJson<JwtCheck>("/v1/security/jwt-check").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<RlsStatus>("/v1/security/rls-status").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<ChildProfileStatus>("/v1/security/child-profiles").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
@@ -108,8 +119,10 @@ export default function Security() {
         apiJson<LogsQueryResponse>("/v1/logs/query?limit=20&level=WARNING&service=alpha_brain").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<{ keys: RotatableKey[] }>("/v1/security/rotatable-keys").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const, data: { keys: [] as RotatableKey[] } })),
         apiJson<SecretsAuditResponse>("/v1/security/secrets-audit?limit=20").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
+        apiJson<KeyturnerStatus>("/v1/security/keyturner-status").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<HoneypotData>("/v1/honeypot/events?limit=50").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<McpRegistry>("/v1/security/mcp/registry").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
+        apiJson<PorchlightResponse>("/v1/security/porchlight").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
       ]);
 
       if (!mounted.current) return;
@@ -128,15 +141,17 @@ export default function Security() {
       else { setRotatableKeys([]); setErrRotatableKeys(true); }
       if (sa.ok) { setSecretsAuditEvents(sa.data.events ?? []); setErrSecretsAudit(Boolean(sa.data.error)); }
       else { setSecretsAuditEvents([]); setErrSecretsAudit(true); }
+      if (kt.ok) { setKeyturnerStatus(kt.data); setErrKeyturner(false); } else { setKeyturnerStatus(null); setErrKeyturner(true); }
       if (hp.ok) { setHoneypotData(hp.data); setErrHoneypot(false); } else { setHoneypotData(null); setErrHoneypot(true); }
       if (mcp.ok) { setMcpRegistry(mcp.data); setErrMcp(false); } else { setMcpRegistry(null); setErrMcp(true); }
+      if (porch.ok) { setPorchlightReport(porch.data.report); setErrPorchlight(false); } else { setPorchlightReport(null); setErrPorchlight(true); }
     } finally {
       fetchRunning.current = false;
       if (mounted.current && showLoading) {
         setLoadJwt(false); setLoadRls(false); setLoadChild(false);
         setLoadPerimeter(false); setLoadCerts(false); setLoadLogs(false);
-        setLoadRotatableKeys(false); setLoadSecretsAudit(false);
-        setLoadHoneypot(false); setLoadMcp(false);
+        setLoadRotatableKeys(false); setLoadSecretsAudit(false); setLoadKeyturner(false);
+        setLoadHoneypot(false); setLoadMcp(false); setLoadPorchlight(false);
       }
     }
   }, []);
@@ -145,6 +160,22 @@ export default function Security() {
     setRotatingKey(null); setNewKeyValue(""); setFormatError(null);
     setRotationResult(null); setRotationLoading(false);
   }, []);
+
+  const handleRunPorchlight = useCallback(async () => {
+    setRunPorchlightLoading(true);
+    setRunPorchlightError(null);
+    try {
+      const result = await apiJson<AgentManualRunResponse>("/v1/agents/porchlight/run", { method: "POST" });
+      if (!result.executed) {
+        setRunPorchlightError(result.skipped_reason ?? result.error_text ?? "Porchlight did not run");
+      }
+      await fetchAll(false);
+    } catch (e) {
+      setRunPorchlightError(e instanceof Error ? e.message : "Porchlight run failed");
+    } finally {
+      setRunPorchlightLoading(false);
+    }
+  }, [fetchAll]);
 
   const handleRotate = useCallback(async () => {
     if (!rotatingKey || !newKeyValue) return;
@@ -182,8 +213,8 @@ export default function Security() {
   const checksTotal = (jwt?.total ?? 0) + (perimeter?.ports.length ?? 0);
   const shortestCertDays = certs && certs.length ? Math.min(...certs.map((c) => c.days_remaining)) : null;
   const sortedCerts = certs ? [...certs].sort((a, b) => a.days_remaining - b.days_remaining) : [];
-  const protectedTables = rls?.tables.filter((t) => t.rls === "enabled") ?? [];
-  const unprotectedTables = rls?.tables.filter((t) => t.rls !== "enabled") ?? [];
+  const protectedTables = rls?.tables.filter((t) => t.protected ?? t.rls === "enabled") ?? [];
+  const unprotectedTables = rls?.tables.filter((t) => !(t.protected ?? t.rls === "enabled")) ?? [];
   const nodeOrder = ["brain", "gateway", "endpoint", "sandbox"];
   const portsByNode = perimeter
     ? [...perimeter.ports].sort((a, b) => nodeOrder.indexOf(a.node) - nodeOrder.indexOf(b.node) || a.port - b.port)
@@ -266,13 +297,28 @@ export default function Security() {
         <KeysTab
           {...theme_props}
           rotatableKeys={rotatableKeys} secretsAuditEvents={secretsAuditEvents}
+          keyturnerStatus={keyturnerStatus}
           loadRotatableKeys={loadRotatableKeys} loadSecretsAudit={loadSecretsAudit}
+          loadKeyturner={loadKeyturner}
           errRotatableKeys={errRotatableKeys} errSecretsAudit={errSecretsAudit}
+          errKeyturner={errKeyturner}
           rotatingKey={rotatingKey} newKeyValue={newKeyValue}
           rotationLoading={rotationLoading} rotationResult={rotationResult} formatError={formatError}
           setRotatingKey={setRotatingKey} setNewKeyValue={setNewKeyValue}
           setFormatError={setFormatError} setRotationResult={setRotationResult}
           closeRotationModal={closeRotationModal} handleRotate={handleRotate}
+        />
+      )}
+
+      {activeTab === "Porchlight" && (
+        <PorchlightTab
+          {...theme_props}
+          report={porchlightReport}
+          loadPorchlight={loadPorchlight}
+          errPorchlight={errPorchlight}
+          runLoading={runPorchlightLoading}
+          runError={runPorchlightError}
+          onRun={() => void handleRunPorchlight()}
         />
       )}
 

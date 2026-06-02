@@ -136,9 +136,12 @@ async def rotate_key(req: RotateRequest = Body(...)):
             data = json.loads(result.stdout)
 
             from brain.db.pool import get_pool
+            from brain.db.rls import platform_admin_connection
 
             pool = get_pool()
-            async with pool.acquire() as conn:
+            async with platform_admin_connection(
+                source="http", audit_actor=f"keyturner:{req.key_name}", pool=pool
+            ) as conn:
                 await conn.execute(
                     """INSERT INTO secret_access_log (key_name, source, accessed_at, node)
                        VALUES ($1, $2, now(), $3)""",

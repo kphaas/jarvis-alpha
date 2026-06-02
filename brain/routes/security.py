@@ -6,9 +6,10 @@ import asyncio
 import json
 import os
 import subprocess
+from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from jarvis_common.logging_config import get_logger
 from brain.config.node_addresses import (
@@ -22,6 +23,13 @@ logger = get_logger("alpha_brain")
 security_router = APIRouter(prefix="/v1/security", tags=["security"])
 
 _PSQL = "/opt/homebrew/Cellar/postgresql@16/16.13/bin/psql"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PORCHLIGHT_REPORT_PATH = Path(
+    os.getenv(
+        "PORCHLIGHT_REPORT_PATH",
+        str(_REPO_ROOT / "logs" / "porchlight_security_report.json"),
+    )
+)
 
 
 def _curl_http_code(
@@ -59,13 +67,24 @@ def _curl_http_code(
 
 def _run_psql_rls_sync() -> str:
     query = """
-SELECT t.tablename,
-       CASE WHEN t.rowsecurity THEN 'enabled' ELSE 'disabled' END as rls_status,
-       COALESCE(p.policyname, 'none') as policy_name
-FROM pg_tables t
-LEFT JOIN pg_policies p ON t.tablename = p.tablename
-WHERE t.schemaname = 'public'
-ORDER BY t.tablename;
+SELECT c.relname,
+       c.relrowsecurity::text,
+       c.relforcerowsecurity::text,
+       COALESCE(p.policy_count, 0)::text,
+       COALESCE(p.policy_names, '') AS policy_names
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+LEFT JOIN (
+    SELECT polrelid,
+           COUNT(*) AS policy_count,
+           string_agg(polname::text, ',' ORDER BY polname::text) AS policy_names
+    FROM pg_policy
+    GROUP BY polrelid
+) p ON p.polrelid = c.oid
+WHERE n.nspname = 'public'
+  AND c.relkind = 'r'
+  AND c.relname NOT IN ('schema_migrations')
+ORDER BY c.relname;
 """
     r = subprocess.run(
         [
@@ -114,6 +133,38 @@ def _tailscale_status_sync() -> tuple[bool, int]:
 
 def _host_from_service_url(url: str) -> str:
     return urlparse(url).hostname or "localhost"
+
+
+def _load_porchlight_report() -> dict:
+    if not _PORCHLIGHT_REPORT_PATH.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Porchlight report has not been generated yet.",
+        )
+    try:
+        report = json.loads(_PORCHLIGHT_REPORT_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Porchlight report is not valid JSON.",
+        ) from exc
+    if not isinstance(report, dict):
+        raise HTTPException(
+            status_code=502,
+            detail="Porchlight report has an unexpected shape.",
+        )
+    return report
+
+
+def _load_rotation_config() -> dict:
+    path = _REPO_ROOT / "scripts" / "secrets_rotation.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"secrets": {}}
+    if not isinstance(data, dict):
+        return {"secrets": {}}
+    return data
 
 
 async def _probe_port(
@@ -227,42 +278,59 @@ async def jwt_check():
 @security_router.get("/rls-status")
 async def rls_status():
     raw = await asyncio.to_thread(_run_psql_rls_sync)
-    agg: dict[str, dict] = {}
+    tables_out: list[dict] = []
     for line in raw.splitlines():
         line = line.strip()
         if not line or "|" not in line:
             continue
-        parts = line.split("|", 2)
-        if len(parts) < 3:
+        parts = line.split("|", 4)
+        if len(parts) < 5:
             continue
-        table, rls_s, pol = parts[0].strip(), parts[1].strip(), parts[2].strip()
+        table = parts[0].strip()
         if not table:
             continue
-        if table not in agg:
-            agg[table] = {"rls": "disabled", "policy_names": set()}
-        if rls_s == "enabled":
-            agg[table]["rls"] = "enabled"
-        if pol and pol != "none":
-            agg[table]["policy_names"].add(pol)
+        rls_enabled_bool = parts[1].strip() == "true"
+        force_enabled_bool = parts[2].strip() == "true"
+        policy_count = int(parts[3].strip() or "0")
+        policy_str = parts[4].strip() or "none"
+        rls = "enabled" if rls_enabled_bool else "disabled"
+        force_rls = "enabled" if force_enabled_bool else "disabled"
+        tables_out.append(
+            {
+                "table": table,
+                "rls": rls,
+                "force_rls": force_rls,
+                "policy": policy_str,
+                "policy_count": policy_count,
+                "protected": rls_enabled_bool and force_enabled_bool,
+            }
+        )
 
-    tables_out: list[dict] = []
     rls_enabled = 0
     rls_disabled = 0
-    for name in sorted(agg.keys()):
-        row = agg[name]
+    force_rls_enabled = 0
+    force_rls_disabled = 0
+    protected_tables = 0
+    for row in tables_out:
         rls = row["rls"]
-        names = row["policy_names"]
-        policy_str = ",".join(sorted(names)) if names else "none"
         if rls == "enabled":
             rls_enabled += 1
         else:
             rls_disabled += 1
-        tables_out.append({"table": name, "rls": rls, "policy": policy_str})
+        if row["force_rls"] == "enabled":
+            force_rls_enabled += 1
+        else:
+            force_rls_disabled += 1
+        if row["protected"]:
+            protected_tables += 1
 
     return {
         "total_tables": len(tables_out),
         "rls_enabled": rls_enabled,
         "rls_disabled": rls_disabled,
+        "force_rls_enabled": force_rls_enabled,
+        "force_rls_disabled": force_rls_disabled,
+        "protected_tables": protected_tables,
         "tables": tables_out,
     }
 
@@ -275,21 +343,21 @@ async def child_profiles():
                 "name": "Ryleigh",
                 "age": 8,
                 "app_layer": True,
-                "db_layer": False,
+                "db_layer": True,
                 "content_filter": True,
-                "notes": "App-layer content filtering active. DB-layer RLS pending Alpha-2.",
+                "notes": "App-layer content filtering active. Database RLS and FORCE RLS are enforced across public Alpha tables.",
             },
             {
                 "name": "Sloane",
                 "age": 5,
                 "app_layer": True,
-                "db_layer": False,
+                "db_layer": True,
                 "content_filter": True,
-                "notes": "App-layer content filtering active. DB-layer RLS pending Alpha-2.",
+                "notes": "App-layer content filtering active. Database RLS and FORCE RLS are enforced across public Alpha tables.",
             },
         ],
-        "overall": "partial",
-        "recommendation": "Child profile RLS at database layer is the top security priority.",
+        "overall": "full",
+        "recommendation": "Continue child-specific route smokes and Porchlight RLS drift monitoring.",
     }
 
 
@@ -355,14 +423,121 @@ async def perimeter():
     }
 
 
+@security_router.get("/porchlight")
+async def porchlight_report(request: Request):
+    """Return the latest Porchlight security sweep report."""
+    from brain.middleware.scopes import check_scopes
+
+    check_scopes(request, "security.read", "security_read")
+    report = await asyncio.to_thread(_load_porchlight_report)
+    return {
+        "report_path": str(_PORCHLIGHT_REPORT_PATH),
+        "report": report,
+    }
+
+
+@security_router.get("/keyturner-status")
+async def keyturner_status(request: Request):
+    """Return Keyturner's managed rotation inventory without secret values."""
+    from brain.db.pool import get_pool
+    from brain.db.rls import platform_admin_connection
+    from brain.middleware.scopes import check_scopes
+
+    check_scopes(request, "security.read", "security_read")
+    config = _load_rotation_config()
+    configured = (
+        config.get("secrets") if isinstance(config.get("secrets"), dict) else {}
+    )
+    pool = get_pool()
+    async with platform_admin_connection(
+        source="http", audit_actor="security_keyturner_status", pool=pool
+    ) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT secret_name, last_rotated_at, rotation_days, next_due_at,
+                   days_until_due, last_verify_status
+            FROM public.v_secret_rotation_status
+            """
+        )
+
+    ledger = {row["secret_name"]: row for row in rows}
+    secrets = []
+    for name in sorted(configured.keys()):
+        spec = configured[name] if isinstance(configured[name], dict) else {}
+        row = ledger.get(name)
+        secret_class = "db_password" if spec.get("requires_alter_role") else "secret"
+        if name.endswith("_TOKEN"):
+            secret_class = "service_token"
+        if name.endswith("_API_KEY"):
+            secret_class = "api_key"
+        if name == "ALPHA_PIN":
+            secret_class = "admin_pin"
+
+        if row is None:
+            status = "untracked"
+            days_until_due = None
+            last_rotated_at = None
+            next_due_at = None
+            verify_status = None
+        else:
+            days_until_due = row["days_until_due"]
+            verify_status = row["last_verify_status"]
+            if verify_status == "failed":
+                status = "failed"
+            elif days_until_due is not None and days_until_due <= 0:
+                status = "due"
+            elif days_until_due is not None and days_until_due <= 14:
+                status = "due_soon"
+            else:
+                status = "healthy"
+            last_rotated_at = row["last_rotated_at"].isoformat()
+            next_due_at = row["next_due_at"].isoformat()
+
+        secrets.append(
+            {
+                "secret_name": name,
+                "description": spec.get("description", name),
+                "secret_class": secret_class,
+                "rotation_days": int(spec.get("rotation_days") or 0),
+                "requires_approval": bool(spec.get("requires_alter_role")),
+                "status": status,
+                "last_rotated_at": last_rotated_at,
+                "next_due_at": next_due_at,
+                "days_until_due": days_until_due,
+                "verify_status": verify_status,
+            }
+        )
+
+    counts = {
+        "managed": len(secrets),
+        "healthy": sum(1 for item in secrets if item["status"] == "healthy"),
+        "attention": sum(
+            1
+            for item in secrets
+            if item["status"] in {"untracked", "failed", "due", "due_soon"}
+        ),
+        "approval_gated": sum(1 for item in secrets if item["requires_approval"]),
+    }
+    return {
+        "agent_id": "keyturner",
+        "display_name": "Keyturner",
+        "mode": "approval_gated",
+        "counts": counts,
+        "secrets": secrets,
+    }
+
+
 @security_router.get("/secrets-audit")
 async def secrets_audit(limit: int = Query(default=50, ge=1, le=500)):
     """Return recent secret access events from Postgres."""
     try:
         from brain.db.pool import get_pool
+        from brain.db.rls import platform_admin_connection
 
         pool = get_pool()
-        async with pool.acquire() as conn:
+        async with platform_admin_connection(
+            source="http", audit_actor="security_secrets_audit", pool=pool
+        ) as conn:
             rows = await conn.fetch(
                 """
                 SELECT key_name, source, accessed_at, node

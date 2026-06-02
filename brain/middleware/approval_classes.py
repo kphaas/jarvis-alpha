@@ -76,6 +76,8 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/security/rls-status": ["read", "security_read"],
     "GET /v1/security/secrets-audit": ["read", "security_read"],
     "GET /v1/security/perimeter": ["read", "security_read"],
+    "GET /v1/security/porchlight": ["read", "security_read"],
+    "GET /v1/security/keyturner-status": ["read", "security_read"],
     "GET /v1/security/rotatable-keys": ["read", "security_read"],
     "POST /v1/security/rotate-key": ["admin"],
     # --- Logs — T2 security_read ---

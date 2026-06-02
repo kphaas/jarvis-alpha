@@ -152,14 +152,14 @@ export function OverviewTab({
               ) : (
                 <>
                   <p className={`text-3xl font-bold font-mono ${fg}`}>
-                    {rls.rls_enabled}/{rls.total_tables}
+                    {rls.protected_tables ?? rls.rls_enabled}/{rls.total_tables}
                   </p>
                   <p className="text-[10px] font-mono uppercase opacity-40 mt-1">
-                    RLS coverage
+                    RLS + FORCE coverage
                   </p>
                   <p className="text-xs font-mono opacity-50 mt-2">
                     {rls.total_tables
-                      ? `${Math.round((rls.rls_enabled / rls.total_tables) * 100)}% protected`
+                      ? `${Math.round(((rls.protected_tables ?? rls.rls_enabled) / rls.total_tables) * 100)}% protected`
                       : "—"}
                   </p>
                 </>

@@ -27,7 +27,8 @@ export function jwtPoints(jwt: JwtCheck | null): number {
 
 export function rlsPoints(rls: RlsStatus | null): number {
   if (!rls || rls.total_tables <= 0) return 0
-  return (rls.rls_enabled / rls.total_tables) * 15
+  const protectedCount = rls.protected_tables ?? rls.rls_enabled
+  return (protectedCount / rls.total_tables) * 15
 }
 
 export function corsPoints(perimeter: Perimeter | null): number {

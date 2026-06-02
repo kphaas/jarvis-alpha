@@ -17,6 +17,7 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert "notify.send_mattermost" in names
     assert "notify.send_pushover" in names
     assert "approval.canary_t4" in names
+    assert "secrets.rotate" in names
     assert "chatops.command_read" in names
     assert "unifi.wan_status" in names
     assert "weather.current" in names
@@ -38,6 +39,9 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert skills["approval.canary_t4"].approval_tier == "T4"
     assert skills["approval.canary_t4"].metadata["approval_queue_bridge"] == "enabled"
     assert skills["approval.canary_t4"].metadata["canary"] is True
+    assert skills["secrets.rotate"].status == "active"
+    assert skills["secrets.rotate"].approval_tier == "T4"
+    assert skills["secrets.rotate"].metadata["approval_required"] is True
     assert skills["weather.current"].status == "active"
     assert skills["weather.current"].approval_tier == "T1"
     assert (
@@ -85,6 +89,8 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["dream_mode"].enabled is True
     assert agents["approval_triage"].enabled is True
     assert agents["watchdog"].enabled is True
+    assert agents["porchlight"].enabled is True
+    assert agents["keyturner"].enabled is True
     assert agents["ken_voice"].enabled is False
     assert agents["network_watchdog"].enabled is False
     assert agents["approval_canary"].enabled is False
@@ -92,6 +98,11 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert "approval.canary_t4" in agents["approval_canary"].allowed_skills
     assert "notify.send" in agents["dream_mode"].allowed_skills
     assert "notify.send" in agents["approval_triage"].allowed_skills
+    assert agents["porchlight"].launch_label == "com.jarvis.alpha.porchlight"
+    assert agents["porchlight"].metadata["mattermost_channel_key"] == "security_alerts"
+    assert agents["keyturner"].risk_tier == "T4"
+    assert "secrets.rotate" in agents["keyturner"].allowed_skills
+    assert agents["keyturner"].metadata["mattermost_channel_key"] == "security_alerts"
     assert agents["approval_triage"].metadata["mattermost_channel_key"] == "needs_input"
     assert "weather.current" in agents["family_concierge"].allowed_skills
     assert "weather.read" in agents["family_concierge"].allowed_scopes

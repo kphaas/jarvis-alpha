@@ -150,3 +150,27 @@ def test_manual_run_requires_explicit_low_risk_enabled_opt_in():
     assert allowed.allowed is True
     assert disabled.reason == "agent_disabled"
     assert unmapped.reason == "manual_runner_not_registered"
+
+
+def test_porchlight_manual_run_allowed_but_keyturner_is_approval_gated():
+    porchlight = manual_run_eligibility(
+        {
+            "agent_id": "porchlight",
+            "status": "active",
+            "enabled": True,
+            "risk_tier": "T2",
+            "metadata": {"manual_run_enabled": True},
+        }
+    )
+    keyturner = manual_run_eligibility(
+        {
+            "agent_id": "keyturner",
+            "status": "active",
+            "enabled": True,
+            "risk_tier": "T4",
+            "metadata": {"manual_run_enabled": False},
+        }
+    )
+
+    assert porchlight.allowed is True
+    assert keyturner.reason == "manual_runner_not_registered"
