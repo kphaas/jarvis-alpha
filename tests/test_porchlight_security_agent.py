@@ -51,10 +51,18 @@ def test_secret_live_verification_fails_for_bad_cloudflare_token(tmp_path, monke
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(porchlight, "get_secret", lambda name: "token-abc")
+
+    def fake_secret(name):
+        if name == "CLOUDFLARE_ACCOUNT_ID":
+            return "acct-123"
+        if name == "CLOUDFLARE_API_TOKEN":
+            return "token-abc"
+        raise KeyError(name)
+
+    monkeypatch.setattr(porchlight, "get_secret", fake_secret)
 
     def fake_command(args, timeout=30, input_text=None):
-        assert args[-1].endswith("/user/tokens/verify")
+        assert args[-1].endswith("/accounts/acct-123/tokens/verify")
         return porchlight.CommandResult(
             0,
             json.dumps({"success": False, "errors": [{"message": "invalid"}]}),
