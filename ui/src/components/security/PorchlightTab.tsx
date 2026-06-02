@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { AlertTriangle, CheckCircle, Clock, Loader2, Play, XCircle } from 'lucide-react'
-import type { PorchlightReport } from '../../types/security'
+import type { PorchlightCheck, PorchlightReport } from '../../types/security'
 import { SectionSkeleton, SectionUnavailable, relativeAccessedLabel, type SecurityThemeProps } from './utils'
 
 interface PorchlightTabProps extends SecurityThemeProps {
@@ -22,6 +22,58 @@ function StatusIcon({ status }: { status: string }) {
   if (status === 'pass') return <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
   if (status === 'warn') return <AlertTriangle className="w-4 h-4 text-amber-300 shrink-0" />
   return <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function proofEntries(value: unknown): Array<[string, string]> {
+  return Object.entries(asRecord(value)).map(([key, raw]) => {
+    if (Array.isArray(raw)) return [key, raw.join(', ')]
+    if (typeof raw === 'string') {
+      const parsed = Date.parse(raw)
+      return [key, Number.isNaN(parsed) ? raw : new Date(parsed).toLocaleString()]
+    }
+    return [key, String(raw)]
+  })
+}
+
+function PorchlightProof({ check, muted }: { check: PorchlightCheck; muted: string }) {
+  const metadata = asRecord(check.metadata)
+  const tokenRecent = check.name === 'token_rotation_logs' ? proofEntries(metadata.recent) : []
+  const loadedByNode = check.name === 'security_launchagents' ? proofEntries(metadata.loaded_by_node) : []
+  const skippedRemote = proofEntries(metadata.skipped_remote)
+  const proof = tokenRecent.length ? tokenRecent : loadedByNode
+
+  if (!proof.length && !skippedRemote.length) return null
+
+  return (
+    <div className={`mt-3 grid grid-cols-1 gap-2 text-[11px] font-mono ${muted}`}>
+      {proof.length > 0 && (
+        <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
+          <p className="mb-1 text-[9px] uppercase opacity-50">remote proof</p>
+          <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+            {proof.map(([node, value]) => (
+              <div key={node} className="min-w-0">
+                <span className="font-bold opacity-80">{node}</span>
+                <span className="opacity-50"> · </span>
+                <span className="break-words">{value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {skippedRemote.length > 0 && (
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-amber-200">
+          <p className="mb-1 text-[9px] uppercase opacity-70">not probed</p>
+          {skippedRemote.map(([node, value]) => (
+            <div key={node}>{node} · {value}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function PorchlightTab({
@@ -114,6 +166,7 @@ export function PorchlightTab({
                     {check.detail && (
                       <p className={`mt-2 text-xs font-mono leading-relaxed ${muted}`}>{check.detail}</p>
                     )}
+                    <PorchlightProof check={check} muted={muted} />
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
                     <span className={`rounded border px-2 py-0.5 text-[10px] font-mono font-bold ${statusClass(check.status)}`}>
