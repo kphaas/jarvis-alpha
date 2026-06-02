@@ -231,3 +231,11 @@ def test_agent_enable_disable_routes_are_t5_admin_control_plane():
 
     assert determine_risk_tier(enable_classes) == "T5"
     assert determine_risk_tier(disable_classes) == "T5"
+
+
+def test_keyturner_rotation_route_lets_skillrunner_own_approval():
+    classes = classify_route("POST", "/v1/security/rotate-key")
+
+    assert "keyturner_rotate" in classes
+    assert "admin" not in classes
+    assert determine_risk_tier(classes) == "T2"
