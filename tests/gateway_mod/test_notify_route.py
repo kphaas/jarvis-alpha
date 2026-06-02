@@ -256,6 +256,46 @@ async def test_mattermost_notify_routes_needs_input_to_cross_cutting_channel(
 
 
 @pytest.mark.asyncio
+async def test_mattermost_notify_routes_security_alerts_to_dedicated_webhook(
+    monkeypatch,
+):
+    seen = {}
+
+    def secret(name: str) -> str:
+        if name == "MATTERMOST_WEBHOOK_URL_SECURITY_ALERTS":
+            return "https://mattermost.tail40ed36.ts.net/hooks/security"
+        if name == "MATTERMOST_WEBHOOK_URL_ALPHA_EVENTS":
+            return "https://mattermost.tail40ed36.ts.net/hooks/alpha"
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        raise KeyError(name)
+
+    def fake_post(config, payload):
+        seen["channel_key"] = config.channel_key
+        seen["url"] = config.url
+        seen["payload"] = payload
+        return 0, "ok"
+
+    monkeypatch.setattr("gateway.routes.notify.get_secret", secret)
+    monkeypatch.setattr("gateway.routes.notify._post_mattermost_sync", fake_post)
+
+    response = await mattermost_notify(
+        MattermostNotifyRequest(
+            title="Porchlight",
+            message="Security check failed",
+            severity="critical",
+            channel_key="security_alerts",
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert response.channel_key == "security_alerts"
+    assert seen["channel_key"] == "security_alerts"
+    assert seen["url"] == "https://mattermost.tail40ed36.ts.net/hooks/security"
+    assert seen["payload"]["channel"] == "security-alerts"
+
+
+@pytest.mark.asyncio
 async def test_mattermost_notify_rejects_bad_token(monkeypatch):
     called = False
 
