@@ -1,0 +1,19 @@
+AT0 — COLOR PALETTE
+spoken "Auto"
+
+CORE
+Obsidian        #0A0B0D    rgb(10,11,13)      base / background
+Surface         #15181F    rgb(21,24,31)      cards / panels
+Beacon Amber    #F2B65A    rgb(242,182,90)    PRIMARY brand color
+Beacon Hot      #FF8A3D    rgb(255,138,61)    core glow / gradient end
+Signal Teal     #62D8C4    rgb(98,216,196)    intelligence accent (scanning node)
+Warm White      #F2EFE9    rgb(242,239,233)   primary text
+
+NEUTRALS
+Line            #262C38    rgb(38,44,56)       borders / dividers
+Muted           #8A8F99    rgb(138,143,153)    secondary text
+Muted Deep      #5A606C    rgb(90,96,108)      tertiary text
+
+USAGE RATIO
+~70% Obsidian/neutrals · ~18% Warm White · ~9% Beacon Amber · ~3% Signal Teal
+Amber = one focal point at a time. Teal = accent only.

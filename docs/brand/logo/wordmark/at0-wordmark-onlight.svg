@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-14 -14 361.5 128.0">
+<defs>
+<radialGradient id="acore" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#FFE3B8"/><stop offset="55%" stop-color="#F2B65A"/><stop offset="100%" stop-color="#FF8A3D"/></radialGradient>
+<linearGradient id="aring" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#FFD9A0"/><stop offset="100%" stop-color="#FF8A3D"/></linearGradient>
+<linearGradient id="atrail" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#62D8C4" stop-opacity="0"/><stop offset="100%" stop-color="#62D8C4" stop-opacity=".75"/></linearGradient>
+</defs>
+<g transform="translate(-0.71 100.00) scale(0.1429 -0.1429)"><path d="M261 700H385L641 0H503L446 155H200L143 0H5ZM416 267 323 533H321L231 267ZM852 585H643V700H1197V585H988V0H852Z" fill="#0A0B0D"/></g>
+<g transform="translate(186.29 -23.61) scale(1.4722)"><circle cx="50" cy="50" r="33" fill="none" stroke="url(#aring)" stroke-width="6"/>
+<circle cx="50" cy="17" r="5.5" fill="#1A8E7E"/>
+<circle cx="50" cy="50" r="9" fill="#0A0B0D"/></g>
+</svg>
