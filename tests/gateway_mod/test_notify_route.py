@@ -158,7 +158,8 @@ async def test_mattermost_notify_sends_rest_payload(monkeypatch):
     assert seen["url"] == "https://mattermost.test/api/v4/posts"
     assert seen["token"] == "m" * 26
     assert seen["payload"]["channel_id"] == "alerts-channel-id"
-    assert "**Alpha**" in seen["payload"]["message"]
+    assert seen["payload"]["message"].startswith("ℹ️ **Alpha**")
+    assert "`INFO` · `JARVIS Alpha`" in seen["payload"]["message"]
     assert seen["payload"]["props"]["jarvis"]["severity"] == "info"
 
 
@@ -217,7 +218,7 @@ async def test_mattermost_notify_prefers_incoming_webhook(monkeypatch):
     assert seen["mode"] == "webhook"
     assert seen["url"] == "https://mattermost.tail40ed36.ts.net/hooks/alpha"
     assert seen["payload"]["channel"] == "alpha-events"
-    assert seen["payload"]["text"].startswith("**Alpha**")
+    assert seen["payload"]["text"].startswith("ℹ️ **Alpha**")
 
 
 @pytest.mark.asyncio
@@ -293,6 +294,8 @@ async def test_mattermost_notify_routes_security_alerts_to_dedicated_webhook(
     assert seen["channel_key"] == "security_alerts"
     assert seen["url"] == "https://mattermost.tail40ed36.ts.net/hooks/security"
     assert seen["payload"]["channel"] == "security-alerts"
+    assert seen["payload"]["text"].startswith("🔥 **Porchlight**")
+    assert "`CRITICAL` · `JARVIS Alpha`" in seen["payload"]["text"]
 
 
 @pytest.mark.asyncio

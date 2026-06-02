@@ -109,6 +109,8 @@ async def test_mattermost_webhook_routes_errors_to_alerts():
 
     assert ok is True
     assert seen["channel"] == "alerts"
+    assert seen["text"].startswith("🚨 **title**")
+    assert "`ERROR` · `JARVIS Gateway`" in seen["text"]
 
 
 async def test_mattermost_send_success_mocked():
@@ -117,13 +119,17 @@ async def test_mattermost_send_success_mocked():
         bot_token="m" * 26,
         channel_id="alerts-channel-id",
     )
-    with patch.object(
-        sink,
-        "_post_sync",
-        return_value=(0, '{"id":"post-1","channel_id":"alerts-channel-id"}'),
-    ):
+    seen = {}
+
+    def fake_post(payload):
+        seen.update(payload)
+        return 0, '{"id":"post-1","channel_id":"alerts-channel-id"}'
+
+    with patch.object(sink, "_post_sync", fake_post):
         ok = await sink.send(Severity.INFO, "title", "message")
     assert ok is True
+    assert seen["message"].startswith("ℹ️ **title**")
+    assert "`INFO` · `JARVIS Gateway`" in seen["message"]
 
 
 async def test_mattermost_send_rejected_mocked():

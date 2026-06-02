@@ -55,6 +55,28 @@ PUSHOVER_PRIORITY = {
     Severity.CRITICAL: 2,
 }
 
+MATTERMOST_SEVERITY_VISUALS = {
+    Severity.DEBUG: ("🔎", "DEBUG"),
+    Severity.INFO: ("ℹ️", "INFO"),
+    Severity.WARNING: ("⚠️", "WARNING"),
+    Severity.ERROR: ("🚨", "ERROR"),
+    Severity.CRITICAL: ("🔥", "CRITICAL"),
+}
+
+
+def _mattermost_alert_message(severity: Severity, title: str, message: str) -> str:
+    icon, label = MATTERMOST_SEVERITY_VISUALS[severity]
+    return "\n".join(
+        [
+            f"{icon} **{title[:250]}**",
+            f"`{label}` · `JARVIS Gateway`",
+            "",
+            message[:4000],
+            "",
+            f"Severity: `{severity.value}`",
+        ]
+    )
+
 
 class IAlertSink(ABC):
     """Abstract base for all alert sinks."""
@@ -156,15 +178,7 @@ class MattermostSink(IAlertSink):
     ) -> bool:
         payload = {
             "channel_id": self._channel_id,
-            "message": "\n".join(
-                [
-                    f"**{title[:250]}**",
-                    "",
-                    message[:4000],
-                    "",
-                    f"Severity: `{severity.value}`",
-                ]
-            ),
+            "message": _mattermost_alert_message(severity, title, message),
             "props": {
                 "jarvis": {
                     "severity": severity.value,
@@ -246,15 +260,7 @@ class MattermostWebhookSink(IAlertSink):
     ) -> bool:
         payload = {
             "channel": _mattermost_channel_for(severity, self._channel_name),
-            "text": "\n".join(
-                [
-                    f"**{title[:250]}**",
-                    "",
-                    message[:4000],
-                    "",
-                    f"Severity: `{severity.value}`",
-                ]
-            ),
+            "text": _mattermost_alert_message(severity, title, message),
             "props": {
                 "jarvis": {
                     "severity": severity.value,

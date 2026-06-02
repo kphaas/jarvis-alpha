@@ -52,6 +52,21 @@ MATTERMOST_SOURCE_WEBHOOK_KEYS = {
     "watchdog": "MATTERMOST_WEBHOOK_URL_WATCHDOG",
 }
 
+MATTERMOST_SEVERITY_VISUALS = {
+    "debug": ("🔎", "DEBUG"),
+    "info": ("ℹ️", "INFO"),
+    "needs_input": ("✋", "NEEDS INPUT"),
+    "warning": ("⚠️", "WARNING"),
+    "error": ("🚨", "ERROR"),
+    "critical": ("🔥", "CRITICAL"),
+}
+
+MATTERMOST_SOURCE_LABELS = {
+    "alpha": "JARVIS Alpha",
+    "forge": "JARVIS Forge",
+    "watchdog": "Watchdog",
+}
+
 
 class PushoverNotifyRequest(BaseModel):
     title: str = Field(min_length=1, max_length=250)
@@ -270,9 +285,12 @@ def _mattermost_config(req: MattermostNotifyRequest) -> MattermostConfig:
 
 
 def _mattermost_message(req: MattermostNotifyRequest) -> str:
+    icon, label = MATTERMOST_SEVERITY_VISUALS[req.severity]
+    source = MATTERMOST_SOURCE_LABELS[req.source]
     return "\n".join(
         [
-            f"**{req.title}**",
+            f"{icon} **{req.title}**",
+            f"`{label}` · `{source}`",
             "",
             req.message,
             "",
