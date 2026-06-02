@@ -226,8 +226,8 @@ export function KeysTab({
                       Paste your new API key from the {rotatingKey.provider} dashboard
                     </p>
                     <p className={`text-xs leading-relaxed ${muted} mb-4`}>
-                      The current key will be backed up. The new key will be tested against the
-                      provider API. If the test fails, the old key will be restored automatically.
+                      Keyturner will queue this as an approval-gated rotation. After approval,
+                      submit the same key again to execute the tested Gateway rotation with rollback.
                     </p>
                     <label className="block text-[10px] font-mono uppercase opacity-50 mb-1.5">
                       New API key
@@ -285,16 +285,16 @@ export function KeysTab({
                         {rotationLoading ? (
                           <span className="inline-flex items-center gap-2">
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            Testing key…
+                            Asking Keyturner…
                           </span>
                         ) : (
-                          "Rotate key"
+                          "Request rotation"
                         )}
                       </button>
                     </div>
                     {rotationLoading && (
                       <p className={`text-[10px] font-mono ${muted} mt-3`}>
-                        Testing key against provider…
+                        Sending request to Keyturner…
                       </p>
                     )}
                   </>
@@ -318,6 +318,22 @@ export function KeysTab({
                         )}
                       </div>
                     )}
+                    {rotationResult.status === "approval_required" && (
+                      <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 space-y-2">
+                        <div className="flex items-center gap-2 text-amber-300 font-bold text-sm">
+                          <AlertTriangle className="w-5 h-5 shrink-0" />
+                          Keyturner approval queued
+                        </div>
+                        <p className={`text-xs font-mono ${muted}`}>
+                          Approve the queued request, then submit this same key again to execute the rotation.
+                        </p>
+                        {rotationResult.approval_queue_id && (
+                          <p className={`text-[10px] font-mono ${muted}`}>
+                            Queue: {rotationResult.approval_queue_id}
+                          </p>
+                        )}
+                      </div>
+                    )}
                     {rotationResult.status === "rolled_back" && (
                       <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 space-y-2">
                         <div className="flex items-center gap-2 text-amber-300 font-bold text-sm">
@@ -329,7 +345,7 @@ export function KeysTab({
                         )}
                       </div>
                     )}
-                    {rotationResult.status !== "success" && rotationResult.status !== "rolled_back" && (
+                    {rotationResult.status !== "success" && rotationResult.status !== "rolled_back" && rotationResult.status !== "approval_required" && (
                       <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 space-y-2">
                         <div className="flex items-center gap-2 text-rose-400 font-bold text-sm">
                           <XCircle className="w-5 h-5 shrink-0" />

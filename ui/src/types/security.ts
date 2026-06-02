@@ -93,6 +93,8 @@ export interface RotationResult {
   error: string | null
   old_key_health: string | null
   new_key_health: string | null
+  approval_queue_id?: string | null
+  approval_status?: string | null
 }
 
 export interface SecretAuditEvent {

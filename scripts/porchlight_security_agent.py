@@ -53,6 +53,7 @@ CLOUDFLARE_ACCESS_URL = os.getenv(
     "https://family.kmfh.cloud",
 )
 PORCHLIGHT_CHANNEL_KEY = "security_alerts"
+DEFAULT_PORCHLIGHT_SSH_KEY = Path.home() / ".ssh" / "porchlight_monitor"
 
 NODE_MAP_PATH = SCRIPT_DIR / "node_ssh_map.json"
 SECRET_ROTATION_CONFIG = SCRIPT_DIR / "secrets_rotation.json"
@@ -167,10 +168,9 @@ def ssh_args_for_probe() -> list[str]:
         "StrictHostKeyChecking=yes",
     ]
     key_path = os.getenv("PORCHLIGHT_SSH_KEY", "").strip()
-    if key_path:
-        expanded = Path(key_path).expanduser()
-        if expanded.is_file():
-            args.extend(["-i", str(expanded), "-o", "IdentitiesOnly=yes"])
+    expanded = Path(key_path).expanduser() if key_path else DEFAULT_PORCHLIGHT_SSH_KEY
+    if expanded.is_file():
+        args.extend(["-i", str(expanded), "-o", "IdentitiesOnly=yes"])
     return args
 
 
@@ -186,7 +186,8 @@ def remote_ssh_probe_enabled() -> bool:
     if configured in {"1", "true", "yes"}:
         return True
     key_path = os.getenv("PORCHLIGHT_SSH_KEY", "").strip()
-    if key_path and Path(key_path).expanduser().is_file():
+    expanded = Path(key_path).expanduser() if key_path else DEFAULT_PORCHLIGHT_SSH_KEY
+    if expanded.is_file():
         return True
     return current_node_name() is None
 
