@@ -470,15 +470,6 @@ def _get_anthropic_mtd_sync() -> dict[str, Any]:
         }
 
 
-def _load_service_account_info(path: str) -> dict[str, Any] | None:
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return None
-    return data if isinstance(data, dict) else None
-
-
 def _extract_gcp_billing_total(data: dict[str, Any]) -> float:
     total = 0.0
     for k in ("costsTotal", "totalCost", "total_cost", "amount"):
@@ -532,22 +523,10 @@ async def _gemini_mtd_from_db() -> tuple[float, Optional[str]]:
 
 
 def _get_gemini_mtd_sync() -> dict[str, Any]:
-    key_path = os.environ.get("GCP_BILLING_KEY_PATH", "").strip()
-    account_id = os.environ.get("GCP_BILLING_ACCOUNT_ID", "").strip()
-    if not key_path or not account_id:
-        return {"_skip": True}
-
     try:
-        service_account_info = _load_service_account_info(key_path)
-        if not service_account_info:
-            return {"_skip": True}
         response = call_gateway_proxy_sync(
             "google_billing",
-            {
-                "service_account_info": service_account_info,
-                "account_id": account_id,
-                "currency_code": "USD",
-            },
+            {"currency_code": "USD"},
             timeout_s=60,
         )
         data = response.get("payload")

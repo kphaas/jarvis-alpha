@@ -28,6 +28,14 @@ def test_cloud_route_accepts_gateway_token(monkeypatch):
     cloud_routes._authorize_gateway_call("Bearer gateway-token")
 
 
+def test_google_billing_request_does_not_accept_brain_credentials():
+    fields = set(cloud_routes.GoogleBillingRequest.model_fields)
+
+    assert fields == {"currency_code"}
+    assert "service_account_info" not in fields
+    assert "account_id" not in fields
+
+
 @pytest.mark.asyncio
 async def test_github_issues_uses_fixed_github_endpoint(monkeypatch):
     monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")

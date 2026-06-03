@@ -1,3 +1,4 @@
+import json
 import hmac
 from typing import Any
 
@@ -58,8 +59,6 @@ class AnthropicAdminRequest(BaseModel):
 
 
 class GoogleBillingRequest(BaseModel):
-    service_account_info: dict[str, Any]
-    account_id: str
     currency_code: str = "USD"
 
 
@@ -249,9 +248,25 @@ async def google_billing(
         raise HTTPException(status_code=503, detail="google-auth not available")
 
     try:
+        account_id = get_secret("GCP_BILLING_ACCOUNT_ID").strip()
+        key_path = get_secret("GCP_BILLING_KEY_PATH").strip()
+    except KeyError as exc:
+        raise HTTPException(status_code=503, detail=f"{exc.args[0]} not configured")
+    if not account_id or not key_path:
+        raise HTTPException(status_code=503, detail="GCP billing is not configured")
+
+    try:
+        with open(key_path, encoding="utf-8") as f:
+            service_account_info = json.load(f)
+    except Exception:
+        raise HTTPException(status_code=503, detail="GCP billing key is not readable")
+    if not isinstance(service_account_info, dict):
+        raise HTTPException(status_code=503, detail="GCP billing key is invalid")
+
+    try:
         scopes = ["https://www.googleapis.com/auth/cloud-billing.readonly"]
         creds = service_account.Credentials.from_service_account_info(
-            req.service_account_info,
+            service_account_info,
             scopes=scopes,
         )
         creds.refresh(GARequest())
@@ -263,7 +278,7 @@ async def google_billing(
 
     async with httpx.AsyncClient(timeout=45.0) as client:
         response = await client.get(
-            f"https://cloudbilling.googleapis.com/v1/billingAccounts/{req.account_id}/reports",
+            f"https://cloudbilling.googleapis.com/v1/billingAccounts/{account_id}/reports",
             params={"currency_code": req.currency_code},
             headers={"Authorization": f"Bearer {token}"},
         )
