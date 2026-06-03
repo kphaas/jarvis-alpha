@@ -37,6 +37,7 @@ def test_keyturner_inventory_covers_security_operational_keys():
         "MATTERMOST_WEBHOOK_URL_SECURITY_ALERTS",
         "PUSHOVER_APP_TOKEN",
         "JARVIS_FAMILY_SMOKE_PIN",
+        "JARVIS_FAMILY_EXTERNAL_SMOKE_PIN",
     }
 
     missing = expected - set(secrets)

@@ -159,6 +159,62 @@ def test_family_smoke_live_verification_authenticates_synthetic_parent(
     }
 
 
+def test_family_external_smoke_live_verification_authenticates_synthetic_external(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "secrets_rotation.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "secrets": {
+                    "JARVIS_FAMILY_EXTERNAL_SMOKE_PIN": {
+                        "secret_key": "FAMILY_EXTERNAL_SMOKE_PIN",
+                        "verify": {"type": "family_external_smoke"},
+                        "restarts": [
+                            {
+                                "health_url": "https://family.test/health",
+                            }
+                        ],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_secret(name):
+        if name == "FAMILY_EXTERNAL_SMOKE_PIN":
+            return "654321"
+        raise KeyError(name)
+
+    monkeypatch.setattr(porchlight, "get_secret", fake_secret)
+
+    def fake_command(args, timeout=30, input_text=None):
+        if args[-1] == "https://family.test/health":
+            return porchlight.CommandResult(0, "200", "")
+        if args[-1] == "https://family.test/v1/auth/pin":
+            payload = json.loads(args[args.index("-d") + 1])
+            assert payload == {"name": "smoke_test_external", "pin": "654321"}
+            return porchlight.CommandResult(
+                0,
+                json.dumps({"token": "synthetic-token", "role": "external"}),
+                "",
+            )
+        raise AssertionError(args)
+
+    result = porchlight.check_secret_live_verification(
+        node_map={},
+        config_path=config_path,
+        command=fake_command,
+    )
+
+    assert result.status == "pass"
+    assert result.metadata["results"]["JARVIS_FAMILY_EXTERNAL_SMOKE_PIN"] == {
+        "status": "passed",
+        "detail": "Family smoke auth passed for synthetic external",
+    }
+
+
 def test_secret_live_verification_fails_for_bad_cloudflare_token(tmp_path, monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
     monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
@@ -395,6 +451,7 @@ def test_cloudflare_policy_drift_passes_for_email_policy(monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
     monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "token-abc")
     monkeypatch.setenv("PORCHLIGHT_CLOUDFLARE_EXPECTED_HOSTS", "family.at-0.com")
+    monkeypatch.delenv("PORCHLIGHT_CLOUDFLARE_EXPECTED_POLICY_EMAILS", raising=False)
 
     def fake_command(args, timeout=30, input_text=None):
         url = args[-1]
@@ -523,6 +580,176 @@ def test_cloudflare_policy_drift_fails_for_email_domain_rule(monkeypatch):
     assert result.status == "fail"
     assert result.severity == "critical"
     assert "email_domain" in result.detail
+
+
+def test_cloudflare_policy_drift_enforces_exact_expected_membership(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "token-abc")
+    monkeypatch.setenv("PORCHLIGHT_CLOUDFLARE_EXPECTED_HOSTS", "family.at-0.com")
+    monkeypatch.setenv(
+        "PORCHLIGHT_CLOUDFLARE_EXPECTED_POLICY_EMAILS",
+        "ken@example.com, meagan@example.com",
+    )
+
+    def fake_command(args, timeout=30, input_text=None):
+        url = args[-1]
+        if url.endswith("/accounts/acct-123/access/apps"):
+            return porchlight.CommandResult(
+                0,
+                porchlight.json.dumps(
+                    {
+                        "success": True,
+                        "result": [
+                            {
+                                "id": "app-1",
+                                "name": "JARVIS Family",
+                                "domain": "family.at-0.com",
+                            }
+                        ],
+                    }
+                ),
+                "",
+            )
+        if url.endswith("/accounts/acct-123/access/apps/app-1/policies"):
+            return porchlight.CommandResult(
+                0,
+                porchlight.json.dumps(
+                    {
+                        "success": True,
+                        "result": [
+                            {
+                                "id": "pol-1",
+                                "name": "Allowed family users",
+                                "decision": "allow",
+                                "include": [
+                                    {"email": {"email": "ken@example.com"}},
+                                    {"email": {"email": "meagan@example.com"}},
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                "",
+            )
+        raise AssertionError(url)
+
+    result = porchlight.check_cloudflare_access_policy_drift(command=fake_command)
+
+    assert result.status == "pass"
+    assert result.metadata["expected_policy_emails_count"] == 2
+    assert result.metadata["matched_policy_emails_count"] == 2
+
+
+def test_cloudflare_policy_drift_fails_for_unexpected_family_member(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "token-abc")
+    monkeypatch.setenv("PORCHLIGHT_CLOUDFLARE_EXPECTED_HOSTS", "family.at-0.com")
+    monkeypatch.setenv(
+        "PORCHLIGHT_CLOUDFLARE_EXPECTED_POLICY_EMAILS",
+        "ken@example.com, meagan@example.com",
+    )
+
+    def fake_command(args, timeout=30, input_text=None):
+        url = args[-1]
+        if url.endswith("/accounts/acct-123/access/apps"):
+            return porchlight.CommandResult(
+                0,
+                porchlight.json.dumps(
+                    {
+                        "success": True,
+                        "result": [
+                            {
+                                "id": "app-1",
+                                "name": "JARVIS Family",
+                                "domain": "family.at-0.com",
+                                "policies": [
+                                    {
+                                        "id": "pol-1",
+                                        "name": "Allowed family users",
+                                        "decision": "allow",
+                                        "include": [
+                                            {"email": {"email": "ken@example.com"}},
+                                            {
+                                                "email": {
+                                                    "email": "stranger@example.com"
+                                                }
+                                            },
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                "",
+            )
+        raise AssertionError(url)
+
+    result = porchlight.check_cloudflare_access_policy_drift(command=fake_command)
+
+    assert result.status == "fail"
+    assert result.severity == "critical"
+    assert "missing expected email" in result.detail
+    assert "unexpected email" in result.detail
+
+
+def test_cloudflare_policy_drift_fails_for_alpha_or_brain_public_app(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "token-abc")
+    monkeypatch.setenv("PORCHLIGHT_CLOUDFLARE_EXPECTED_HOSTS", "family.at-0.com")
+
+    def fake_command(args, timeout=30, input_text=None):
+        url = args[-1]
+        if url.endswith("/accounts/acct-123/access/apps"):
+            return porchlight.CommandResult(
+                0,
+                porchlight.json.dumps(
+                    {
+                        "success": True,
+                        "result": [
+                            {
+                                "id": "app-1",
+                                "name": "JARVIS Family",
+                                "domain": "family.at-0.com",
+                                "policies": [
+                                    {
+                                        "id": "pol-1",
+                                        "name": "Allowed family users",
+                                        "decision": "allow",
+                                        "include": [
+                                            {"email": {"email": "ken@example.com"}}
+                                        ],
+                                    }
+                                ],
+                            },
+                            {
+                                "id": "app-2",
+                                "name": "JARVIS Alpha",
+                                "domain": "alpha.at-0.com",
+                                "policies": [
+                                    {
+                                        "id": "pol-2",
+                                        "name": "Allowed users",
+                                        "decision": "allow",
+                                        "include": [
+                                            {"email": {"email": "ken@example.com"}}
+                                        ],
+                                    }
+                                ],
+                            },
+                        ],
+                    }
+                ),
+                "",
+            )
+        raise AssertionError(url)
+
+    result = porchlight.check_cloudflare_access_policy_drift(command=fake_command)
+
+    assert result.status == "fail"
+    assert result.severity == "critical"
+    assert "Alpha/Brain" in result.summary
+    assert "alpha.at-0.com" in result.detail
 
 
 def test_cloudflare_audit_logs_passes_on_expected_actor_change(monkeypatch):
