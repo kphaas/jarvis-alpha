@@ -14,9 +14,9 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from jarvis_common.secrets import get_secret
 from brain.db.pool import get_pool
 from brain.middleware.jwt_auth import require_auth
+from brain.services.gateway_egress import GatewayEgressError, call_gateway_proxy
 
 dev_router = APIRouter(prefix="/v1/dev", tags=["dev"])
 
@@ -104,23 +104,25 @@ def _strip_json_fence(text: str) -> str:
     return s.strip()
 
 
-async def _github_open_issues(owner: str, repo: str, token: str) -> list[dict]:
-    url = f"https://api.github.com/repos/{owner}/{repo}/issues"
-    params = {"state": "open", "labels": "bug", "per_page": "100"}
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "jarvis-alpha-dev-agent",
-    }
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        r = await client.get(url, params=params, headers=headers)
-    if r.status_code != 200:
+async def _github_open_issues(owner: str, repo: str) -> list[dict]:
+    try:
+        response = await call_gateway_proxy(
+            "github/issues",
+            {
+                "owner": owner,
+                "repo": repo,
+                "state": "open",
+                "labels": "bug",
+                "per_page": 100,
+            },
+            timeout_s=65,
+        )
+    except GatewayEgressError as exc:
         raise HTTPException(
             status_code=502,
-            detail=f"GitHub API error: HTTP {r.status_code}",
-        )
-    data = r.json()
+            detail=f"GitHub API error: {exc}",
+        ) from exc
+    data = response.get("items")
     if not isinstance(data, list):
         raise HTTPException(status_code=502, detail="GitHub API returned invalid JSON")
     out: list[dict] = []
@@ -219,11 +221,7 @@ async def dev_analyze(
         owner, repo = _parse_owner_repo(str(repo_slug))
         await _rls_dev(conn, request)
 
-    try:
-        token = get_secret("GITHUB_TOKEN")
-    except KeyError:
-        raise HTTPException(status_code=500, detail="GITHUB_TOKEN not configured")
-    issues = await _github_open_issues(owner, repo, token)
+    issues = await _github_open_issues(owner, repo)
     groups = await _ollama_group_issues(issues) if issues else []
 
     generated_at = datetime.now(timezone.utc).isoformat()
