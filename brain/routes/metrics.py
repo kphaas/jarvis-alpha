@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from brain.core.db import get_db
+from brain.db.rls import platform_admin_connection
 from brain.middleware.jwt_auth import require_auth
 
 router = APIRouter(prefix="/v1/metrics", tags=["metrics"])
@@ -40,20 +41,23 @@ def require_power_writer(request: Request) -> str:
 @router.post("/power")
 async def post_power(
     reading: PowerReading,
-    _: str = Depends(require_power_writer),
-    conn: asyncpg.Connection = Depends(get_db),
+    issuer: str = Depends(require_power_writer),
 ):
     try:
-        await conn.execute(
-            """
-            INSERT INTO alpha_power_readings (node_name, watts, cpu_pct, source)
-            VALUES ($1, $2, $3, $4)
-            """,
-            reading.node_name,
-            reading.watts,
-            reading.cpu_pct,
-            reading.source,
-        )
+        async with platform_admin_connection(
+            source="http",
+            audit_actor=f"metrics:{issuer}",
+        ) as conn:
+            await conn.execute(
+                """
+                INSERT INTO alpha_power_readings (node_name, watts, cpu_pct, source)
+                VALUES ($1, $2, $3, $4)
+                """,
+                reading.node_name,
+                reading.watts,
+                reading.cpu_pct,
+                reading.source,
+            )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return {
@@ -136,10 +140,12 @@ async def get_power_history(
 
 @router.post("/power/rollup")
 async def post_power_rollup(
-    _: str = Depends(require_power_writer),
-    conn: asyncpg.Connection = Depends(get_db),
+    issuer: str = Depends(require_power_writer),
 ):
-    async with conn.transaction():
+    async with platform_admin_connection(
+        source="http",
+        audit_actor=f"metrics:{issuer}",
+    ) as conn:
         await conn.execute(
             """
             INSERT INTO alpha_power_hourly (node_name, hour_start, avg_watts, sample_count)
