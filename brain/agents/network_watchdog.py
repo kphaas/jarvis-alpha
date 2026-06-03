@@ -128,6 +128,10 @@ async def collect_and_emit_network_events(
             "last_client_keys": client_keys(snapshot.get("clients")),
             "last_wan_status": snapshot.get("wan", {}).get("wan_status"),
             "last_health_status": snapshot.get("health", {}).get("status"),
+            "last_health_signature": health_signature(snapshot.get("health")),
+            "last_tls_public_key_pin_configured": tls_public_key_pin_configured(
+                snapshot.get("health")
+            ),
         }
     )
     return {"snapshot": snapshot, "event_ids": event_ids}
@@ -142,6 +146,8 @@ def network_events_from_snapshot(
     health = snapshot.get("health") or {}
     clients = snapshot.get("clients") or {}
 
+    current_wan_status = wan.get("wan_status")
+    previous_wan_status = previous_metadata.get("last_wan_status")
     if wan.get("error"):
         events.append(
             _event(
@@ -152,17 +158,22 @@ def network_events_from_snapshot(
                 {"wan": wan},
             )
         )
-    elif wan.get("wan_status") not in {None, "up", "ok"}:
+    elif (
+        current_wan_status not in {None, "up", "ok"}
+        and current_wan_status != previous_wan_status
+    ):
         events.append(
             _event(
                 "network.wan_degraded",
                 "WAN degraded",
-                f"WAN status is {wan.get('wan_status')}",
+                f"WAN status is {current_wan_status}",
                 "warning",
                 {"wan": wan},
             )
         )
 
+    current_health_signature = health_signature(health)
+    previous_health_signature = previous_metadata.get("last_health_signature")
     if health.get("error"):
         events.append(
             _event(
@@ -173,7 +184,10 @@ def network_events_from_snapshot(
                 {"health": health},
             )
         )
-    elif health.get("status") in {"degraded", "critical"}:
+    elif (
+        health.get("status") in {"degraded", "critical"}
+        and current_health_signature != previous_health_signature
+    ):
         events.append(
             _event(
                 "network.health_degraded",
@@ -185,7 +199,9 @@ def network_events_from_snapshot(
         )
 
     tls = health.get("tls") or {}
-    if isinstance(tls, dict) and tls.get("public_key_pin_configured") is False:
+    current_tls_pin = tls_public_key_pin_configured(health)
+    previous_tls_pin = previous_metadata.get("last_tls_public_key_pin_configured")
+    if current_tls_pin is False and previous_tls_pin is not False:
         events.append(
             _event(
                 "network.unifi_tls_unpinned",
@@ -214,6 +230,26 @@ def network_events_from_snapshot(
         )
 
     return events
+
+
+def health_signature(health_payload: Any) -> str | None:
+    if not isinstance(health_payload, dict):
+        return None
+    status = str(health_payload.get("status") or "unknown")
+    errors = health_payload.get("errors") or []
+    if not isinstance(errors, list):
+        errors = [str(errors)]
+    return "|".join([status, *sorted(str(error) for error in errors)])
+
+
+def tls_public_key_pin_configured(health_payload: Any) -> bool | None:
+    if not isinstance(health_payload, dict):
+        return None
+    tls = health_payload.get("tls")
+    if not isinstance(tls, dict):
+        return None
+    value = tls.get("public_key_pin_configured")
+    return value if isinstance(value, bool) else None
 
 
 def client_keys(clients_payload: Any) -> list[str]:

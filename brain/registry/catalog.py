@@ -861,7 +861,7 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
         purpose="Monitor UniFi WAN, switches, APs, new-device events, and network trust hardening.",
         risk_tier="T1",
         status="active",
-        enabled=False,
+        enabled=True,
         cadence="30s",
         allowed_skills=[
             "unifi.wan_status",

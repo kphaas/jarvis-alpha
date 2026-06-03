@@ -100,6 +100,32 @@ def test_network_watchdog_detects_unifi_tls_pin_drift():
     assert events[0].severity == "warning"
 
 
+def test_network_watchdog_debounces_repeated_degraded_health_and_tls_pin():
+    snapshot = {
+        "wan": {"wan_status": "unknown"},
+        "clients": {"clients": []},
+        "health": {
+            "status": "degraded",
+            "errors": ["offline_devices:1"],
+            "tls": {
+                "verification": "ca_cert",
+                "public_key_pin_configured": False,
+            },
+        },
+    }
+
+    events = network_events_from_snapshot(
+        snapshot,
+        {
+            "last_wan_status": "unknown",
+            "last_health_signature": "degraded|offline_devices:1",
+            "last_tls_public_key_pin_configured": False,
+        },
+    )
+
+    assert events == []
+
+
 def test_client_keys_prefers_stable_mac_and_dedupes():
     assert client_keys(
         {
