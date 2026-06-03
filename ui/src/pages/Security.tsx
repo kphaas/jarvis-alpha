@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   Shield, Key, Globe, Radio, AlertTriangle,
-  RotateCw, Bug, Plug, ShieldCheck,
+  RotateCw, Bug, Plug, ShieldCheck, Archive,
 } from "lucide-react";
 import { apiJson } from "../lib/apiFetch";
 import { useAppStore } from "../store";
@@ -15,11 +15,11 @@ import type {
 } from "../types/security";
 import {
   OverviewTab, IdentityTab, NetworkTab, SweepTab,
-  KeysTab, WardenTab, PorchlightTab, HoneypotTab, McpTab, EventsTab,
+  KeysTab, WardenTab, LedgerTab, PorchlightTab, HoneypotTab, McpTab, EventsTab,
   computePostureScore, scoreColor, C_SCORE,
 } from "../components/security";
 
-const TABS = ["Overview", "Identity", "Network", "Sweep", "Warden", "Keyturner", "Porchlight", "Tripwire", "MCP", "Events"] as const;
+const TABS = ["Overview", "Identity", "Network", "Sweep", "Warden", "Ledger", "Keyturner", "Porchlight", "Tripwire", "MCP", "Events"] as const;
 type TabId = (typeof TABS)[number];
 
 const TAB_ICONS: Record<string, typeof Shield> = {
@@ -28,6 +28,7 @@ const TAB_ICONS: Record<string, typeof Shield> = {
   Network: Globe,
   Sweep: Radio,
   Warden: ShieldCheck,
+  Ledger: Archive,
   Keyturner: RotateCw,
   Porchlight: Shield,
   Tripwire: Bug,
@@ -190,7 +191,7 @@ export default function Security() {
     setRunSweepLoading(true);
     setRunSweepError(null);
     try {
-      const result = await apiJson<AgentManualRunResponse>("/v1/agents/network_watchdog/run", { method: "POST" });
+      const result = await apiJson<AgentManualRunResponse>("/v1/agents/sweep/run", { method: "POST" });
       if (!result.executed) {
         setRunSweepError(result.skipped_reason ?? result.error_text ?? "Sweep did not run");
       }
@@ -329,6 +330,15 @@ export default function Security() {
 
       {activeTab === "Warden" && (
         <WardenTab
+          {...theme_props}
+          wardenStatus={wardenStatus}
+          loadWarden={loadWarden}
+          errWarden={errWarden}
+        />
+      )}
+
+      {activeTab === "Ledger" && (
+        <LedgerTab
           {...theme_props}
           wardenStatus={wardenStatus}
           loadWarden={loadWarden}

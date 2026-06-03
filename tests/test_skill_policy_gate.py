@@ -7,7 +7,7 @@ from brain.skills.policy_gate import SkillInvocation, SkillPolicyGate
 
 def _agent(**overrides):
     row = {
-        "agent_id": "network_watchdog",
+        "agent_id": "sweep",
         "status": "active",
         "enabled": True,
         "allowed_skills": ["unifi.wan_status"],
@@ -38,7 +38,7 @@ def _decision(invocation=None, agent=None, skill=None, spent=Decimal("0")):
     gate = SkillPolicyGate()
     return gate.evaluate_rows(
         invocation=invocation
-        or SkillInvocation(agent_id="network_watchdog", skill_name="unifi.wan_status"),
+        or SkillInvocation(agent_id="sweep", skill_name="unifi.wan_status"),
         agent_row=agent if agent is not None else _agent(),
         skill_row=skill if skill is not None else _skill(),
         spent_today_usd=spent,
@@ -75,7 +75,7 @@ def test_denies_enabled_agent_until_status_is_active():
 
 def test_denies_skill_not_allowlisted_for_agent():
     invocation = SkillInvocation(
-        agent_id="network_watchdog",
+        agent_id="sweep",
         skill_name="unifi.daughters_screentime",
         idempotency_key="abc",
     )
@@ -152,7 +152,7 @@ def test_allows_body_access_with_body_scope():
 
 def test_denies_mutating_skill_without_idempotency_key():
     invocation = SkillInvocation(
-        agent_id="network_watchdog",
+        agent_id="sweep",
         skill_name="unifi.daughters_screentime",
     )
     agent = _agent(
@@ -175,7 +175,7 @@ def test_denies_mutating_skill_without_idempotency_key():
 
 def test_t4_skill_requires_approval_before_allowing():
     invocation = SkillInvocation(
-        agent_id="network_watchdog",
+        agent_id="sweep",
         skill_name="unifi.daughters_screentime",
         idempotency_key="abc",
     )
@@ -199,7 +199,7 @@ def test_t4_skill_requires_approval_before_allowing():
 
 def test_t4_skill_allows_after_approval_granted():
     invocation = SkillInvocation(
-        agent_id="network_watchdog",
+        agent_id="sweep",
         skill_name="unifi.daughters_screentime",
         idempotency_key="abc",
         approval_granted=True,
@@ -252,7 +252,7 @@ def test_denies_when_estimated_cost_exceeds_daily_agent_cap():
 
 def test_denies_negative_estimated_cost():
     invocation = SkillInvocation(
-        agent_id="network_watchdog",
+        agent_id="sweep",
         skill_name="unifi.wan_status",
         estimated_cost_usd=Decimal("-0.01"),
     )
@@ -284,7 +284,7 @@ async def test_evaluate_fetches_registry_rows_and_agent_spend():
     decision = await SkillPolicyGate().evaluate(
         conn,
         SkillInvocation(
-            agent_id="network_watchdog",
+            agent_id="sweep",
             skill_name="unifi.wan_status",
             estimated_cost_usd=Decimal("0.10"),
         ),

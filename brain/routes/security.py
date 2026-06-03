@@ -711,7 +711,7 @@ async def warden_status(request: Request):
         "warden",
         "porchlight",
         "keyturner",
-        "network_watchdog",
+        "sweep",
         "tripwire",
         "ledger",
     ]

@@ -94,8 +94,8 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["keyturner"].enabled is True
     assert agents["warden"].enabled is True
     assert agents["ken_voice"].enabled is False
-    assert agents["network_watchdog"].enabled is True
-    assert agents["network_watchdog"].display_name == "Sweep"
+    assert agents["sweep"].enabled is True
+    assert agents["sweep"].display_name == "Sweep"
     assert agents["tripwire"].enabled is True
     assert agents["tripwire"].display_name == "Tripwire"
     assert agents["ledger"].enabled is True
@@ -118,7 +118,7 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["warden"].metadata["managed_agents"] == [
         "porchlight",
         "keyturner",
-        "network_watchdog",
+        "sweep",
         "tripwire",
         "ledger",
     ]
@@ -131,16 +131,13 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
         agents["warden"].metadata["remediation_policy"]["T4_T5"]
         == "route_to_owner_with_approval"
     )
+    assert agents["sweep"].metadata["active_hardening"] == "service_tls_cert_renewal"
     assert (
-        agents["network_watchdog"].metadata["active_hardening"]
-        == "service_tls_cert_renewal"
-    )
-    assert (
-        agents["network_watchdog"].metadata["cert_renewal"]["launch_label"]
+        agents["sweep"].metadata["cert_renewal"]["launch_label"]
         == "com.jarvis.alpha.sweep-cert-renewal.*"
     )
-    assert "service_tls_certs" in agents["network_watchdog"].metadata["monitors"]
-    assert "unifi_tls_pin" in agents["network_watchdog"].metadata["monitors"]
+    assert "service_tls_certs" in agents["sweep"].metadata["monitors"]
+    assert "unifi_tls_pin" in agents["sweep"].metadata["monitors"]
     assert agents["tripwire"].metadata["warden_role"] == "honeypot_sensor"
     assert agents["tripwire"].metadata["mattermost_channel_key"] == "security_alerts"
     assert "honeypot_hits" in agents["tripwire"].metadata["monitors"]
@@ -155,9 +152,9 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
         "dependencies.scan": "porchlight",
         "cloudflare.policy_drift": "porchlight",
         "github.branch_protection_drift": "porchlight",
-        "unifi.quarantine_recommendation": "network_watchdog",
-        "unifi.firmware_drift": "network_watchdog",
-        "unifi.wan_failover_health": "network_watchdog",
+        "unifi.quarantine_recommendation": "sweep",
+        "unifi.firmware_drift": "sweep",
+        "unifi.wan_failover_health": "sweep",
         "keyturner.oauth_health": "keyturner",
         "keyturner.rotation_dry_run": "keyturner",
         "keyturner.secrets_forecast": "keyturner",
@@ -204,7 +201,7 @@ def test_agent_id_requires_snake_case():
     with pytest.raises(ValidationError):
         AgentSpec(
             agent_id="NetworkWatchdog",
-            display_name="Network Watchdog",
+            display_name="Sweep",
             purpose="bad id",
             risk_tier="T1",
         )
@@ -213,8 +210,8 @@ def test_agent_id_requires_snake_case():
 def test_agent_cost_cap_cannot_be_negative():
     with pytest.raises(ValidationError):
         AgentSpec(
-            agent_id="network_watchdog",
-            display_name="Network Watchdog",
+            agent_id="sweep",
+            display_name="Sweep",
             purpose="bad cap",
             risk_tier="T1",
             cost_daily_cap_usd=-0.01,
@@ -269,8 +266,8 @@ def test_skill_row_conversion_promotes_manifest_field():
 
 def test_agent_row_conversion_casts_arrays_and_cost_cap():
     row = {
-        "agent_id": "network_watchdog",
-        "display_name": "Network Watchdog",
+        "agent_id": "sweep",
+        "display_name": "Sweep",
         "purpose": "Monitor network",
         "risk_tier": "T1",
         "status": "planned",
@@ -288,17 +285,19 @@ def test_agent_row_conversion_casts_arrays_and_cost_cap():
 
     out = _agent_from_row(row)
 
-    assert out.agent_id == "network_watchdog"
+    assert out.agent_id == "sweep"
     assert out.allowed_skills == ["unifi.wan_status", "unifi.clients"]
     assert out.cost_daily_cap_usd == 0.0
 
 
 def test_agent_enable_disable_routes_are_t5_admin_control_plane():
-    enable_classes = classify_route("POST", "/v1/agents/network_watchdog/enable")
-    disable_classes = classify_route("POST", "/v1/agents/network_watchdog/disable")
+    enable_classes = classify_route("POST", "/v1/agents/sweep/enable")
+    disable_classes = classify_route("POST", "/v1/agents/sweep/disable")
+    legacy_enable_classes = classify_route("POST", "/v1/agents/network_watchdog/enable")
 
     assert determine_risk_tier(enable_classes) == "T5"
     assert determine_risk_tier(disable_classes) == "T5"
+    assert determine_risk_tier(legacy_enable_classes) == "T5"
 
 
 def test_keyturner_rotation_route_lets_skillrunner_own_approval():

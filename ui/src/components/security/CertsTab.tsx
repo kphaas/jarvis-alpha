@@ -33,7 +33,7 @@ export function SweepTab({
   wardenStatus, loadWarden, errWarden,
   runLoading, runError, onRun,
 }: SweepTabProps) {
-  const sweep = wardenStatus?.agents.find((agent) => agent.agent_id === 'network_watchdog') ?? null
+  const sweep = wardenStatus?.agents.find((agent) => agent.agent_id === 'sweep' || agent.agent_id === 'network_watchdog') ?? null
   const monitors = Array.isArray(sweep?.metadata.monitors)
     ? sweep?.metadata.monitors.filter((item): item is string => typeof item === 'string')
     : []

@@ -124,7 +124,7 @@ async def test_mattermost_network_text_is_summary_only():
     body = await _network_text(conn)
 
     assert "**Alpha Network**" in body
-    assert "Network Watchdog: `off`" in body
+    assert "Sweep: `off`" in body
     assert "client baseline `2`" in body
     assert "network.new_client" in body
     assert "aa:bb:cc:dd:ee:ff" not in body
@@ -135,8 +135,8 @@ class _FakeNetworkConn:
     async def fetchrow(self, query: str, *args):
         if "FROM public.alpha_agents" in query:
             return {
-                "agent_id": "network_watchdog",
-                "display_name": "Network Watchdog",
+                "agent_id": "sweep",
+                "display_name": "Sweep",
                 "status": "active",
                 "enabled": False,
                 "cadence": "30s",

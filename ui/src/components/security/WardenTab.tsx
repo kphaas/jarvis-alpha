@@ -160,7 +160,7 @@ export function WardenTab({
                     {agent.last_run_at ? relativeAccessedLabel(agent.last_run_at) : 'No run'}
                   </div>
                 </div>
-                {agent.agent_id === 'network_watchdog' && (
+                {(agent.agent_id === 'sweep' || agent.agent_id === 'network_watchdog') && (
                   <div className="mt-3 rounded-xl border border-sky-500/20 bg-sky-500/10 px-3 py-2 text-xs font-mono text-sky-300">
                     Monitors UniFi TLS pinning.
                   </div>

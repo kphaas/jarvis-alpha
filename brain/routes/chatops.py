@@ -103,7 +103,7 @@ def _help_text() -> str:
             "**Alpha read-only commands**",
             "`/alpha health` - Brain, Temporal, and Dream worker status",
             "`/alpha agents` - agent registry summary",
-            "`/alpha network` - read-only Network Watchdog summary",
+            "`/alpha network` - read-only Sweep summary",
             "`/alpha approvals` - pending approval queue",
             "`/alpha dreams [n]` - recent Dream sessions",
         ]
@@ -179,17 +179,17 @@ async def _network_text(conn) -> str:
         """
         SELECT agent_id, display_name, status, enabled, cadence, metadata
         FROM public.alpha_agents
-        WHERE agent_id = 'network_watchdog'
+        WHERE agent_id = 'sweep'
         """
     )
     if not agent:
-        return "**Alpha Network**\nNetwork Watchdog is not registered."
+        return "**Alpha Network**\nSweep is not registered."
 
     last_run = await conn.fetchrow(
         """
         SELECT status, trigger_type, started_at, completed_at, error_text, created_at
         FROM public.alpha_agent_runs
-        WHERE agent_id = 'network_watchdog'
+        WHERE agent_id = 'sweep'
         ORDER BY created_at DESC
         LIMIT 1
         """
@@ -198,7 +198,7 @@ async def _network_text(conn) -> str:
         """
         SELECT event_type, severity, title, notification_status, created_at
         FROM public.alpha_agent_events
-        WHERE agent_id = 'network_watchdog'
+        WHERE agent_id = 'sweep'
         ORDER BY created_at DESC
         LIMIT 3
         """
@@ -209,7 +209,7 @@ async def _network_text(conn) -> str:
     lines = [
         "**Alpha Network**",
         (
-            f"Network Watchdog: `{enabled}` · `{agent['status']}` · "
+            f"Sweep: `{enabled}` · `{agent['status']}` · "
             f"cadence `{agent['cadence'] or 'manual'}`"
         ),
         (

@@ -20,7 +20,7 @@ DEFAULT_WARDEN_INTERVAL_SECONDS = 10 * 60
 DEFAULT_MANAGED_AGENTS = (
     "porchlight",
     "keyturner",
-    "network_watchdog",
+    "sweep",
     "tripwire",
     "ledger",
 )
