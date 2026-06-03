@@ -8,7 +8,6 @@ import subprocess
 import uuid
 from datetime import date, datetime, timezone
 from typing import Any, Literal, Optional
-from urllib.parse import quote, urlencode
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,6 +16,7 @@ from pydantic import BaseModel
 from brain.core.db import get_db
 from brain.db.pool import get_pool
 from brain.middleware.jwt_auth import require_auth
+from brain.services.gateway_egress import GatewayEgressError, call_gateway_proxy_sync
 
 router = APIRouter(prefix="/v1/costs", tags=["costs"])
 
@@ -339,34 +339,6 @@ async def _get_forge_costs() -> dict:
 # --- ANTHROPIC ADMIN API ---
 
 
-def _anthropic_curl_get(url: str, api_key: str) -> dict[str, Any]:
-    proc = subprocess.run(
-        [
-            "curl",
-            "-sS",
-            "--max-time",
-            "60",
-            "-w",
-            "\n%{http_code}",
-            "-H",
-            f"x-api-key: {api_key}",
-            "-H",
-            "anthropic-version: 2023-06-01",
-            url,
-        ],
-        capture_output=True,
-        text=True,
-    )
-    raw = proc.stdout.strip()
-    if "\n" not in raw:
-        raise RuntimeError("empty anthropic response")
-    body, _, code_s = raw.rpartition("\n")
-    code = int(code_s)
-    if code != 200:
-        raise RuntimeError(f"anthropic HTTP {code}: {body[:500]}")
-    return json.loads(body)
-
-
 def _sum_cost_report_usd(payload: dict[str, Any]) -> float:
     total = 0.0
     for bucket in payload.get("data") or []:
@@ -437,32 +409,33 @@ def _get_anthropic_mtd_sync() -> dict[str, Any]:
     start, end = _month_bounds_utc()
     start_s = _rfc3339_z(start)
     end_s = _rfc3339_z(end)
-    api_key = os.environ.get("ANTHROPIC_ADMIN_KEY", "").strip()
-    if not api_key:
-        return {
-            "total_usd": 0.0,
-            "jarvis_core_usd": 0.0,
-            "jarvis_forge_usd": 0.0,
-            "calls_mtd": 0,
-            "by_key": {},
-            "error": "ANTHROPIC_ADMIN_KEY not set",
-        }
     try:
-        usage_q = urlencode(
+        usage_payload = call_gateway_proxy_sync(
+            "anthropic_admin",
             {
-                "starting_at": start_s,
-                "ending_at": end_s,
-                "bucket_width": "1d",
-            }
-        )
-        usage_url = f"https://api.anthropic.com/v1/organizations/usage_report/messages?{usage_q}"
-        cost_q = urlencode(
-            {"starting_at": start_s, "ending_at": end_s, "bucket_width": "1d"}
-        )
-        cost_url = f"https://api.anthropic.com/v1/organizations/cost_report?{cost_q}"
-
-        usage_payload = _anthropic_curl_get(usage_url, api_key)
-        cost_payload = _anthropic_curl_get(cost_url, api_key)
+                "path": "/v1/organizations/usage_report/messages",
+                "params": {
+                    "starting_at": start_s,
+                    "ending_at": end_s,
+                    "bucket_width": "1d",
+                },
+            },
+            timeout_s=65,
+        ).get("payload")
+        cost_payload = call_gateway_proxy_sync(
+            "anthropic_admin",
+            {
+                "path": "/v1/organizations/cost_report",
+                "params": {
+                    "starting_at": start_s,
+                    "ending_at": end_s,
+                    "bucket_width": "1d",
+                },
+            },
+            timeout_s=65,
+        ).get("payload")
+        if not isinstance(usage_payload, dict) or not isinstance(cost_payload, dict):
+            raise RuntimeError("Gateway returned invalid Anthropic admin payload")
 
         total_usd = _sum_cost_report_usd(cost_payload)
         by_key: dict[str, float] = {}
@@ -495,6 +468,31 @@ def _get_anthropic_mtd_sync() -> dict[str, Any]:
             "by_key": {},
             "error": str(e),
         }
+
+
+def _load_service_account_info(path: str) -> dict[str, Any] | None:
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _extract_gcp_billing_total(data: dict[str, Any]) -> float:
+    total = 0.0
+    for k in ("costsTotal", "totalCost", "total_cost", "amount"):
+        if k in data and data[k] is not None:
+            try:
+                return float(data[k])
+            except (TypeError, ValueError):
+                pass
+    for row in data.get("rows") or data.get("tableRows") or []:
+        if isinstance(row, dict):
+            for kk, vv in row.items():
+                if "cost" in kk.lower() and isinstance(vv, (int, float)):
+                    total += float(vv)
+    return total
 
 
 async def _get_anthropic_mtd() -> dict[str, Any]:
@@ -538,70 +536,32 @@ def _get_gemini_mtd_sync() -> dict[str, Any]:
     account_id = os.environ.get("GCP_BILLING_ACCOUNT_ID", "").strip()
     if not key_path or not account_id:
         return {"_skip": True}
-    try:
-        from google.auth.transport.requests import Request as GARequest
-        from google.oauth2 import service_account
-    except ImportError:
-        return {"_skip": True, "_import_error": True}
 
     try:
-        scopes = ["https://www.googleapis.com/auth/cloud-billing.readonly"]
-        creds = service_account.Credentials.from_service_account_file(
-            key_path, scopes=scopes
-        )
-        creds.refresh(GARequest())
-        token = creds.token
-        if not token:
+        service_account_info = _load_service_account_info(key_path)
+        if not service_account_info:
             return {"_skip": True}
-
-        acct = quote(account_id, safe="")
-        url = (
-            f"https://cloudbilling.googleapis.com/v1/billingAccounts/{acct}/reports"
-            f"?currency_code=USD"
+        response = call_gateway_proxy_sync(
+            "google_billing",
+            {
+                "service_account_info": service_account_info,
+                "account_id": account_id,
+                "currency_code": "USD",
+            },
+            timeout_s=60,
         )
-        proc = subprocess.run(
-            [
-                "curl",
-                "-sS",
-                "--max-time",
-                "45",
-                "-w",
-                "\n%{http_code}",
-                "-H",
-                f"Authorization: Bearer {token}",
-                url,
-            ],
-            capture_output=True,
-            text=True,
-        )
-        raw = proc.stdout.strip()
-        if "\n" not in raw:
+        data = response.get("payload")
+        if not isinstance(data, dict):
             return {"_skip": True}
-        body, _, code_s = raw.rpartition("\n")
-        code = int(code_s)
-        if code != 200:
-            return {"_skip": True, "_http": code}
-        data = json.loads(body)
-        total = 0.0
-        if isinstance(data, dict):
-            for k in ("costsTotal", "totalCost", "total_cost", "amount"):
-                if k in data and data[k] is not None:
-                    try:
-                        total = float(data[k])
-                        break
-                    except (TypeError, ValueError):
-                        pass
-            for row in data.get("rows") or data.get("tableRows") or []:
-                if isinstance(row, dict):
-                    for kk, vv in row.items():
-                        if "cost" in kk.lower() and isinstance(vv, (int, float)):
-                            total += float(vv)
+        total = _extract_gcp_billing_total(data)
         if total <= 0:
             return {"_skip": True}
         return {
             "total_usd": total,
             "source": "gcp_api",
         }
+    except GatewayEgressError as e:
+        return {"_skip": True, "_gateway_error": str(e)}
     except Exception:
         return {"_skip": True}
 

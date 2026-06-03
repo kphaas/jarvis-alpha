@@ -10,12 +10,9 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
 
-import httpx
-
 from brain.config.secrets import get_secret
+from brain.services.gateway_egress import GatewayEgressError, call_gateway_proxy
 
-GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1"
-GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token"
 DEFAULT_GMAIL_USER = "me"
 
 
@@ -172,30 +169,33 @@ class GmailClient:
         self.user_id = user_id or _secret("ALPHA_GMAIL_USER_ID", DEFAULT_GMAIL_USER)
 
     async def refresh_access_token_payload(self) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(
-                GMAIL_TOKEN_URL,
-                data={
+        try:
+            response = await call_gateway_proxy(
+                "google_oauth/refresh",
+                {
                     "client_id": self.client_id,
                     "client_secret": self.client_secret,
                     "refresh_token": self.refresh_token,
                     "grant_type": "refresh_token",
                 },
+                timeout_s=25,
             )
-        if response.status_code >= 400:
-            error_payload: dict[str, Any] = {}
-            try:
-                error_payload = response.json()
-            except Exception:
-                error_payload = {}
+        except GatewayEgressError as exc:
+            raise GmailClientError(f"Gmail OAuth refresh failed: {exc}") from exc
+        status_code = int(response.get("status_code") or 502)
+        payload = response.get("payload")
+        error_payload = payload if isinstance(payload, dict) else {}
+        if status_code >= 400:
             raise GmailClientError(
-                f"Gmail OAuth refresh failed: {response.status_code}",
-                status_code=response.status_code,
+                f"Gmail OAuth refresh failed: {status_code}",
+                status_code=status_code,
                 error_type=error_payload.get("error"),
                 error_subtype=error_payload.get("error_subtype"),
                 error_description=error_payload.get("error_description"),
             )
-        return response.json()
+        if not isinstance(payload, dict):
+            raise GmailClientError("Gmail OAuth refresh returned invalid payload")
+        return payload
 
     async def _access_token(self) -> str:
         payload = await self.refresh_access_token_payload()
@@ -206,24 +206,40 @@ class GmailClient:
 
     async def list_message_ids(self, query: str, max_results: int = 25) -> list[str]:
         token = await self._access_token()
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.get(
-                f"{GMAIL_API_BASE}/users/{self.user_id}/messages",
-                headers={"Authorization": f"Bearer {token}"},
-                params={"q": query, "maxResults": max_results},
-            )
-        if response.status_code >= 400:
-            raise GmailClientError(f"Gmail message list failed: {response.status_code}")
-        return [str(msg["id"]) for msg in response.json().get("messages", [])]
+        response = await call_gateway_proxy(
+            "gmail/list",
+            {
+                "access_token": token,
+                "user_id": self.user_id,
+                "query": query,
+                "max_results": max_results,
+            },
+            timeout_s=35,
+        )
+        status_code = int(response.get("status_code") or 502)
+        if status_code >= 400:
+            raise GmailClientError(f"Gmail message list failed: {status_code}")
+        payload = response.get("payload")
+        if not isinstance(payload, dict):
+            raise GmailClientError("Gmail message list returned invalid payload")
+        return [str(msg["id"]) for msg in payload.get("messages", [])]
 
     async def get_message(self, message_id: str) -> GmailMessage:
         token = await self._access_token()
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.get(
-                f"{GMAIL_API_BASE}/users/{self.user_id}/messages/{message_id}",
-                headers={"Authorization": f"Bearer {token}"},
-                params={"format": "full"},
-            )
-        if response.status_code >= 400:
-            raise GmailClientError(f"Gmail message get failed: {response.status_code}")
-        return parse_gmail_message(response.json())
+        response = await call_gateway_proxy(
+            "gmail/message",
+            {
+                "access_token": token,
+                "user_id": self.user_id,
+                "message_id": message_id,
+                "format": "full",
+            },
+            timeout_s=35,
+        )
+        status_code = int(response.get("status_code") or 502)
+        if status_code >= 400:
+            raise GmailClientError(f"Gmail message get failed: {status_code}")
+        payload = response.get("payload")
+        if not isinstance(payload, dict):
+            raise GmailClientError("Gmail message get returned invalid payload")
+        return parse_gmail_message(payload)
