@@ -7,9 +7,14 @@ mesh.py — Mesh topology and node health endpoints for jarvis-alpha.
 import asyncio
 import os
 import re
+import socket
+import ssl
 import subprocess
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter
 
@@ -92,6 +97,37 @@ def _curl_code_and_ms(url: str, max_time: int = 5) -> tuple[int | None, float | 
         return code, t_ms
     except (subprocess.TimeoutExpired, ValueError, OSError):
         return None, None
+
+
+def _presented_cert_expiry(health_endpoint: str | None) -> datetime | None:
+    if not health_endpoint:
+        return None
+    parsed = urlparse(health_endpoint)
+    if parsed.scheme != "https" or not parsed.hostname:
+        return None
+    port = parsed.port or 443
+    tmp_path: str | None = None
+    try:
+        pem = ssl.get_server_certificate((parsed.hostname, port), timeout=5)
+        tmp_path = _write_temp_cert(pem)
+        decoded = ssl._ssl._test_decode_cert(tmp_path)
+        not_after = decoded.get("notAfter")
+        if not_after:
+            return datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(
+                tzinfo=timezone.utc
+            )
+    except (OSError, ssl.SSLError, socket.timeout, ValueError):
+        return None
+    finally:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
+    return None
+
+
+def _write_temp_cert(pem: str) -> str:
+    with tempfile.NamedTemporaryFile("w", suffix=".crt", delete=False) as handle:
+        handle.write(pem)
+        return handle.name
 
 
 def _check_service_row(row: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -271,6 +307,11 @@ async def get_cert_status():
                     source = "disk"
             except Exception:
                 pass
+        elif presented_expiry := await asyncio.to_thread(
+            _presented_cert_expiry, row["health_endpoint"]
+        ):
+            expires_dt = presented_expiry
+            source = "tls"
 
         if expires_dt is None:
             continue
