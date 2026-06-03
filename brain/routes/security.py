@@ -755,7 +755,6 @@ async def warden_status(request: Request):
         )
 
     agents = []
-    attention = 0
     for row in rows:
         metadata = (
             json.loads(row["metadata"])
@@ -768,8 +767,6 @@ async def warden_status(request: Request):
             or row["status"] != "active"
             or event_severity in {"critical", "error", "warning", "needs_input"}
         )
-        if needs_attention:
-            attention += 1
         agents.append(
             {
                 "agent_id": row["agent_id"],
@@ -797,6 +794,7 @@ async def warden_status(request: Request):
 
     warden = next((agent for agent in agents if agent["agent_id"] == "warden"), None)
     crew = [agent for agent in agents if agent["agent_id"] != "warden"]
+    crew_attention = sum(1 for agent in crew if agent["needs_attention"])
     (
         jwt,
         rls,
@@ -835,7 +833,7 @@ async def warden_status(request: Request):
             "managed": len(crew),
             "enabled": sum(1 for agent in crew if agent["enabled"]),
             "active": sum(1 for agent in crew if agent["status"] == "active"),
-            "attention": attention,
+            "attention": crew_attention,
         },
         "active_hardening": "unifi_cert_pinning",
         "next_hardening": "unifi_cert_pinning",
