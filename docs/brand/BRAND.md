@@ -50,6 +50,7 @@ Every module = the **same ring + teal node**, with a **unique center glyph**:
 | Financial | upward trend | wealth / markets |
 | Medical | pulse | health / clinical |
 | Spark | fingerprint | persona / voice |
+| Herald | newspaper | manage + grow social presence |
 
 Tools get evocative one-word names (Forge, Smithy, Crucible, Spark). Life domains stay descriptive (Family, Financial, Medical).
 
