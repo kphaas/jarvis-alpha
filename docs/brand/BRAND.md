@@ -49,6 +49,8 @@ Every module = the **same ring + teal node**, with a **unique center glyph**:
 | Family | house | home / people |
 | Financial | upward trend | wealth / markets |
 | Medical | pulse | health / clinical |
+| Create | isometric cube | maker domain — design, build, 3D print |
+| Privacy | padlock | data & footprint control |
 | Spark | fingerprint | persona / voice |
 | Herald | newspaper | manage + grow social presence |
 | Warden | shield + chief band | overall security — manages the security sub-agents |
