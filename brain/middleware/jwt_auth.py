@@ -49,27 +49,30 @@ def _get_public_key(iss: str | None) -> str:
     return _KEY_REGISTRY[iss].read_text()
 
 
-SKIP_PATHS = {
-    "/health",
-    "/health/ready",
-    "/docs",
-    "/openapi.json",
-    "/redoc",
-    "/v1/auth/login-profiles",
-    "/v1/auth/pin",
-    "/v1/metrics/power",
-    "/v1/metrics/power/current",
-    "/v1/metrics/power/history",
-    "/v1/metrics/power/rollup",
-    "/v1/chatops/mattermost/command",
-    "/admin",
-    "/wp-login.php",
-    "/.env",
-    "/.git/config",
-    "/phpmyadmin",
-    "/phpmyadmin/",
-    "/api/v1/debug",
-}
+PUBLIC_HEALTH_PATHS = frozenset({"/health", "/health/ready"})
+PUBLIC_AUTH_PATHS = frozenset({"/v1/auth/login-profiles", "/v1/auth/pin"})
+
+# These endpoints intentionally skip JWT because the route verifies its own
+# shared secret or incoming platform token before doing any work.
+ROUTE_TOKEN_AUTH_PATHS = frozenset({"/v1/chatops/mattermost/command"})
+
+# Honeypot traps must be reachable without JWT so scanner traffic can be
+# recorded. They should never expose real data or operational controls.
+HONEYPOT_PATHS = frozenset(
+    {
+        "/admin",
+        "/wp-login.php",
+        "/.env",
+        "/.git/config",
+        "/phpmyadmin",
+        "/phpmyadmin/",
+        "/api/v1/debug",
+    }
+)
+
+SKIP_PATHS = set(
+    PUBLIC_HEALTH_PATHS | PUBLIC_AUTH_PATHS | ROUTE_TOKEN_AUTH_PATHS | HONEYPOT_PATHS
+)
 
 
 def require_auth(request: Request) -> str:
