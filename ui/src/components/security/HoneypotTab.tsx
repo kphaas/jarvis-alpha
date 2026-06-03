@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Shield } from 'lucide-react'
+import { Activity, Radio, Shield, Users } from 'lucide-react'
 import type { HoneypotData } from '../../types/security'
 import { SectionSkeleton, SectionUnavailable, relativeAccessedLabel, type SecurityThemeProps } from './utils'
 
@@ -19,6 +19,11 @@ interface HoneypotTabProps extends SecurityThemeProps {
 }
 
 export function HoneypotTab({ isDark, border, subtle, muted, honeypotData, loadHoneypot, errHoneypot }: HoneypotTabProps) {
+  const agentName = honeypotData?.display_name ?? 'Tripwire'
+  const hits24h = honeypotData?.hits_24h ?? 0
+  const uniqueClients24h = honeypotData?.unique_clients_24h ?? 0
+  const activeTrapCount = honeypotData?.traps_active ?? HONEYPOT_TRAP_CARDS.length
+
   return (
         <motion.div
           initial={{ opacity: 0, y: 6 }}
@@ -26,8 +31,47 @@ export function HoneypotTab({ isDark, border, subtle, muted, honeypotData, loadH
           className="space-y-8"
         >
           <section>
+            <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest mb-1">
+              {agentName} sensor
+            </p>
+            <p className={`text-xs font-mono ${muted} mb-4`}>
+              Honeypot traps stay public, record suspicious scanner traffic, and escalate meaningful hits to Warden.
+            </p>
+            {loadHoneypot && !honeypotData ? (
+              <SectionSkeleton border={border} subtle={subtle} />
+            ) : errHoneypot || !honeypotData ? (
+              <SectionUnavailable border={border} subtle={subtle} />
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+                <div className={`rounded-2xl border ${border} ${subtle} p-4`}>
+                  <Radio className="mb-2 h-4 w-4 opacity-50" />
+                  <p className="font-mono text-2xl font-bold tabular-nums">{activeTrapCount}</p>
+                  <p className={`mt-1 text-[10px] font-mono uppercase ${muted}`}>armed traps</p>
+                </div>
+                <div className={`rounded-2xl border ${border} ${subtle} p-4`}>
+                  <Activity className="mb-2 h-4 w-4 opacity-50" />
+                  <p className={`font-mono text-2xl font-bold tabular-nums ${hits24h === 0 ? 'text-emerald-400' : 'text-amber-300'}`}>
+                    {hits24h}
+                  </p>
+                  <p className={`mt-1 text-[10px] font-mono uppercase ${muted}`}>hits 24h</p>
+                </div>
+                <div className={`rounded-2xl border ${border} ${subtle} p-4`}>
+                  <Users className="mb-2 h-4 w-4 opacity-50" />
+                  <p className="font-mono text-2xl font-bold tabular-nums">{uniqueClients24h}</p>
+                  <p className={`mt-1 text-[10px] font-mono uppercase ${muted}`}>sources 24h</p>
+                </div>
+                <div className={`rounded-2xl border ${border} ${subtle} p-4`}>
+                  <Shield className="mb-2 h-4 w-4 opacity-50" />
+                  <p className="font-mono text-2xl font-bold tabular-nums">{honeypotData.total}</p>
+                  <p className={`mt-1 text-[10px] font-mono uppercase ${muted}`}>total hits</p>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section>
             <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest mb-4">
-              Active honeypot traps
+              Tripwire traps
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {HONEYPOT_TRAP_CARDS.map((t) => (
@@ -54,7 +98,7 @@ export function HoneypotTab({ isDark, border, subtle, muted, honeypotData, loadH
                 Recent hits
               </p>
               {!loadHoneypot && honeypotData && (
-                <span className="text-xs font-mono opacity-60">Total: {honeypotData.total}</span>
+                <span className="text-xs font-mono opacity-60">{hits24h} in 24h · {honeypotData.total} total</span>
               )}
             </div>
             {loadHoneypot && !honeypotData ? (

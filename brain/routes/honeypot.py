@@ -10,12 +10,46 @@ from jarvis_common.logging_config import get_logger
 
 from brain.agents.events import AgentEvent, emit_agent_event
 from brain.db.pool import get_pool
+from brain.db.rls import platform_admin_connection
+from brain.middleware.scopes import check_scopes
 
 logger = get_logger("alpha_brain")
 honeypot_router = APIRouter(tags=["honeypot"])
 TRIPWIRE_AGENT_ID = "tripwire"
 TRIPWIRE_EVENT_TYPE = "honeypot.hit"
 TRIPWIRE_NOTIFY_WINDOW = "15 minutes"
+TRIPWIRE_TRAPS = (
+    "/admin",
+    "/wp-login.php",
+    "/.env",
+    "/.git/config",
+    "/phpmyadmin",
+    "/api/v1/debug",
+)
+
+
+def _serialize_honeypot_event(row) -> dict:
+    captured_at = row["captured_at"]
+    return {
+        "id": row["id"],
+        "ts": captured_at.isoformat() if captured_at else None,
+        "path": row["trap_path"],
+        "trap_type": _trap_type(row["trap_path"]),
+        "client_ip": row["source_ip"],
+        "user_agent": row["user_agent"] or "",
+        "method": row["method"] or "GET",
+    }
+
+
+def _trap_type(path: str) -> str:
+    return {
+        "/admin": "admin_panel",
+        "/wp-login.php": "wordpress",
+        "/.env": "env_file",
+        "/.git/config": "git_config",
+        "/phpmyadmin": "phpmyadmin",
+        "/api/v1/debug": "debug_api",
+    }.get(path, "unknown")
 
 
 async def _persist_event(request: Request, trap_path: str):
@@ -23,38 +57,39 @@ async def _persist_event(request: Request, trap_path: str):
     source_ip = request.client.host if request.client else "unknown"
     user_agent = request.headers.get("user-agent", "") or ""
     should_notify = False
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.execute(
-                """
-                INSERT INTO alpha_honeypot_events
-                    (trap_path, source_ip, method, user_agent, headers)
-                VALUES ($1, $2, $3, $4, $5::jsonb)
-                """,
-                trap_path,
-                source_ip,
-                request.method,
-                user_agent,
-                json.dumps(dict(request.headers)),
+    async with platform_admin_connection(
+        source="http", audit_actor="tripwire_honeypot", pool=pool
+    ) as conn:
+        await conn.execute(
+            """
+            INSERT INTO public.alpha_honeypot_events
+                (trap_path, source_ip, method, user_agent, headers)
+            VALUES ($1, $2, $3, $4, $5::jsonb)
+            """,
+            trap_path,
+            source_ip,
+            request.method,
+            user_agent,
+            json.dumps(dict(request.headers)),
+        )
+        recent_match = await conn.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM public.alpha_agent_events
+                WHERE agent_id = $1
+                  AND event_type = $2
+                  AND payload->>'trap_path' = $3
+                  AND payload->>'source_ip' = $4
+                  AND created_at >= NOW() - INTERVAL '15 minutes'
             )
-            recent_match = await conn.fetchval(
-                """
-                SELECT EXISTS (
-                    SELECT 1
-                    FROM public.alpha_agent_events
-                    WHERE agent_id = $1
-                      AND event_type = $2
-                      AND payload->>'trap_path' = $3
-                      AND payload->>'source_ip' = $4
-                      AND created_at >= NOW() - INTERVAL '15 minutes'
-                )
-                """,
-                TRIPWIRE_AGENT_ID,
-                TRIPWIRE_EVENT_TYPE,
-                trap_path,
-                source_ip,
-            )
-            should_notify = not bool(recent_match)
+            """,
+            TRIPWIRE_AGENT_ID,
+            TRIPWIRE_EVENT_TYPE,
+            trap_path,
+            source_ip,
+        )
+        should_notify = not bool(recent_match)
     await _emit_tripwire_event(
         trap_path=trap_path,
         source_ip=source_ip,
@@ -233,10 +268,51 @@ async def trap_debug(request: Request):
 @honeypot_router.get("/v1/honeypot/events")
 async def get_honeypot_events(request: Request, limit: int = 50):
     """Return recent honeypot hits. Protected by JWT (normal auth middleware applies)."""
+    check_scopes(request, "security.read", "security_read")
     pool = get_pool()
-    async with pool.acquire() as conn:
+    async with platform_admin_connection(
+        source="http", audit_actor="tripwire_events", pool=pool
+    ) as conn:
         rows = await conn.fetch(
-            "SELECT * FROM alpha_honeypot_events ORDER BY captured_at DESC LIMIT $1",
+            """
+            SELECT id, trap_path, source_ip, method, user_agent, captured_at
+            FROM public.alpha_honeypot_events
+            ORDER BY captured_at DESC
+            LIMIT $1
+            """,
             min(limit, 200),
         )
-    return [dict(r) for r in rows]
+        total = int(
+            await conn.fetchval("SELECT COUNT(*) FROM public.alpha_honeypot_events")
+            or 0
+        )
+        hits_24h = int(
+            await conn.fetchval(
+                """
+                SELECT COUNT(*)
+                FROM public.alpha_honeypot_events
+                WHERE captured_at >= NOW() - INTERVAL '24 hours'
+                """
+            )
+            or 0
+        )
+        unique_clients_24h = int(
+            await conn.fetchval(
+                """
+                SELECT COUNT(DISTINCT source_ip)
+                FROM public.alpha_honeypot_events
+                WHERE captured_at >= NOW() - INTERVAL '24 hours'
+                """
+            )
+            or 0
+        )
+    return {
+        "agent_id": TRIPWIRE_AGENT_ID,
+        "display_name": "Tripwire",
+        "total": total,
+        "hits_24h": hits_24h,
+        "unique_clients_24h": unique_clients_24h,
+        "traps_active": len(TRIPWIRE_TRAPS),
+        "traps": list(TRIPWIRE_TRAPS),
+        "events": [_serialize_honeypot_event(row) for row in rows],
+    }
