@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -7,7 +8,8 @@ from fastapi import HTTPException
 
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
 from brain.middleware import jwt_auth
-from brain.routes.metrics import require_power_writer
+from brain.routes import metrics
+from brain.routes.metrics import PowerReading, require_power_writer
 
 
 def _request(*, actor_type: str | None, issuer: str | None):
@@ -66,3 +68,37 @@ def test_power_writer_rejects_non_node_service_actors(actor_type, issuer):
         require_power_writer(_request(actor_type=actor_type, issuer=issuer))
     assert exc.value.status_code == 403
     assert exc.value.detail == "power_writer_service_required"
+
+
+@pytest.mark.asyncio
+async def test_power_ingest_uses_platform_admin_rls_context(monkeypatch):
+    seen = {}
+
+    class FakeConn:
+        async def execute(self, query, *args):
+            seen["query"] = query
+            seen["args"] = args
+            return "INSERT 0 1"
+
+    @asynccontextmanager
+    async def fake_platform_admin_connection(*, source, audit_actor, pool=None):
+        seen["source"] = source
+        seen["audit_actor"] = audit_actor
+        yield FakeConn()
+
+    monkeypatch.setattr(
+        metrics,
+        "platform_admin_connection",
+        fake_platform_admin_connection,
+    )
+
+    response = await metrics.post_power(
+        PowerReading(node_name="Brain", watts=12.5, cpu_pct=4.2, source="test"),
+        issuer="brain",
+    )
+
+    assert response == {"status": "ok", "node": "Brain", "watts": 12.5}
+    assert seen["source"] == "http"
+    assert seen["audit_actor"] == "metrics:brain"
+    assert "INSERT INTO alpha_power_readings" in seen["query"]
+    assert seen["args"] == ("Brain", 12.5, 4.2, "test")
