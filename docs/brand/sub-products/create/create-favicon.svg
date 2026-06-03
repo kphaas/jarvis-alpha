@@ -1,0 +1,5 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F2B65A"/><stop offset="1" stop-color="#FF8A3D"/></linearGradient></defs><circle cx="50" cy="50" r="33" fill="none" stroke="#2C333F" stroke-width="6"/><circle cx="50" cy="50" r="33" fill="none" stroke="url(#ring)" stroke-width="6"/><circle cx="50" cy="17" r="5" fill="#62D8C4"/><g stroke="#F2EFE9" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M50 33 L63 40.5 L63 55.5 L50 63 L37 55.5 L37 40.5 Z"/>
+        <path d="M50 48 L50 33"/>
+        <path d="M50 48 L37 40.5"/>
+        <path d="M50 48 L63 40.5"/>
+        <circle cx="50" cy="33" r="2.4" fill="#FF8A3D" stroke="none"/></g></svg>
