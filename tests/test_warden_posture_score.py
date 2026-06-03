@@ -50,3 +50,46 @@ def test_warden_posture_score_is_weighted_and_industry_aligned():
     assert controls["monitoring.warden_crew"]["status"] == "warn"
     assert controls["monitoring.honeypot"]["owner_agent"] == "tripwire"
     assert result["top_gaps"][0]["status"] != "pass"
+
+
+def test_warden_posture_score_uses_porchlight_rls_when_inventory_unavailable():
+    result = build_warden_posture_score(
+        jwt={"total": 1, "passing": 1},
+        rls={"total_tables": 0},
+        child={"profiles": [{"name": "child"}], "overall": "full"},
+        perimeter={
+            "ports": [],
+            "tailscale": {"active": True, "node_count": 1},
+            "cors": {"locked": True},
+        },
+        certs=[{"days_remaining": 80}],
+        keyturner={"counts": {"managed": 1, "healthy": 1, "attention": 0}},
+        porchlight={
+            "report": {
+                "status": "fail",
+                "counts": {"checks": 1, "passing": 1},
+                "checks": [
+                    {
+                        "name": "database_rls",
+                        "status": "pass",
+                        "summary": "RLS and FORCE RLS are enabled on 62 public tables.",
+                        "metadata": {"total_tables": 62},
+                    }
+                ],
+            }
+        },
+        unifi_health={
+            "tls": {
+                "verification": "public_key_pin",
+                "public_key_pin_configured": True,
+            }
+        },
+        crew=[],
+        honeypot_hits_24h=0,
+    )
+
+    controls = {control["id"]: control for control in result["controls"]}
+    assert controls["data.rls_force"]["status"] == "pass"
+    assert controls["data.rls_force"]["earned"] == 14
+    assert controls["data.rls_force"]["summary"] == "62/62 public tables protected"
+    assert "Direct RLS inventory unavailable" in controls["data.rls_force"]["detail"]

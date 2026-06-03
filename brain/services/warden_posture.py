@@ -67,6 +67,67 @@ def cert_control_status(certs: list[dict] | None) -> tuple[str, float, str]:
     return "pass", 1.0, f"Shortest service certificate has {shortest} days remaining."
 
 
+def _porchlight_check(report: dict[str, Any], name: str) -> dict[str, Any] | None:
+    checks = report.get("checks")
+    if not isinstance(checks, list):
+        return None
+    for check in checks:
+        if isinstance(check, dict) and check.get("name") == name:
+            return check
+    return None
+
+
+def _rls_control_from_direct_inventory(rls: dict | None) -> dict[str, Any] | None:
+    rls_total = int((rls or {}).get("total_tables") or 0)
+    if rls_total <= 0:
+        return None
+    rls_protected = int(
+        (rls or {}).get("protected_tables") or (rls or {}).get("rls_enabled") or 0
+    )
+    return posture_control(
+        control_id="data.rls_force",
+        title="Database RLS + FORCE coverage",
+        category="Data protection",
+        owner_agent="porchlight",
+        status=fraction_status(rls_protected, rls_total),
+        weight=14,
+        earned=rls_protected / rls_total * 14,
+        summary=f"{rls_protected}/{rls_total} public tables protected",
+        framework_refs=("SOC2 CC6.6", "CIS v8 IG1 3"),
+    )
+
+
+def _rls_control_from_porchlight(porchlight: dict | None) -> dict[str, Any]:
+    report = (porchlight or {}).get("report") or {}
+    check = _porchlight_check(report, "database_rls") or {}
+    status = str(check.get("status") or "unavailable")
+    metadata = check.get("metadata") if isinstance(check.get("metadata"), dict) else {}
+    total = int(metadata.get("total_tables") or metadata.get("tables") or 0)
+    protected = int(metadata.get("protected_tables") or metadata.get("force_rls") or 0)
+    if status == "pass" and total > 0 and protected == 0:
+        protected = total
+    if total > 0:
+        summary = f"{protected}/{total} public tables protected"
+        earned = protected / total * 14
+    else:
+        summary = str(
+            check.get("summary") or check.get("detail") or "RLS inventory unavailable"
+        )
+        earned = 14.0 if status == "pass" else None
+    return posture_control(
+        control_id="data.rls_force",
+        title="Database RLS + FORCE coverage",
+        category="Data protection",
+        owner_agent="porchlight",
+        status=status if status in {"pass", "warn", "fail"} else "unavailable",
+        weight=14,
+        earned=earned,
+        summary=summary,
+        detail="Direct RLS inventory unavailable; using latest Porchlight database_rls check.",
+        framework_refs=("SOC2 CC6.6", "CIS v8 IG1 3"),
+    )
+
+
 def build_warden_posture_score(
     *,
     jwt: dict | None,
@@ -100,24 +161,9 @@ def build_warden_posture_score(
         )
     )
 
-    rls_total = int((rls or {}).get("total_tables") or 0)
-    rls_protected = int(
-        (rls or {}).get("protected_tables") or (rls or {}).get("rls_enabled") or 0
-    )
     controls.append(
-        posture_control(
-            control_id="data.rls_force",
-            title="Database RLS + FORCE coverage",
-            category="Data protection",
-            owner_agent="porchlight",
-            status=fraction_status(rls_protected, rls_total),
-            weight=14,
-            earned=(rls_protected / rls_total * 14) if rls_total else 0,
-            summary=f"{rls_protected}/{rls_total} public tables protected"
-            if rls_total
-            else "RLS inventory unavailable",
-            framework_refs=("SOC2 CC6.6", "CIS v8 IG1 3"),
-        )
+        _rls_control_from_direct_inventory(rls)
+        or _rls_control_from_porchlight(porchlight)
     )
 
     child_payload = child or {}

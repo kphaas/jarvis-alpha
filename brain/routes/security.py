@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from jarvis_common.secrets import get_secret
 from jarvis_common.logging_config import get_logger
 from brain.config.node_addresses import (
     BRAIN_URL,
@@ -109,9 +110,21 @@ WHERE n.nspname = 'public'
   AND c.relname NOT IN ('schema_migrations')
 ORDER BY c.relname;
 """
+    env = os.environ.copy()
+    try:
+        password = (
+            os.getenv("POSTGRES_PASSWORD") or get_secret("POSTGRES_PASSWORD")
+        ).strip()
+    except Exception as exc:  # pragma: no cover - defensive logging only
+        password = ""
+        logger.warning("POSTGRES_PASSWORD unavailable for rls-status: %s", exc)
+    if password:
+        env["PGPASSWORD"] = password
     r = subprocess.run(
         [
             _PSQL,
+            "-h",
+            "localhost",
             "-U",
             "jarvisbrain",
             "-d",
@@ -126,6 +139,7 @@ ORDER BY c.relname;
         capture_output=True,
         text=True,
         timeout=60,
+        env=env,
     )
     if r.returncode != 0:
         logger.warning("psql rls-status failed: %s", (r.stderr or "").strip())
