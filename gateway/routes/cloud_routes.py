@@ -278,8 +278,7 @@ async def google_billing(
 
     async with httpx.AsyncClient(timeout=45.0) as client:
         response = await client.get(
-            f"https://cloudbilling.googleapis.com/v1/billingAccounts/{account_id}/reports",
-            params={"currency_code": req.currency_code},
+            f"https://cloudbilling.googleapis.com/v1/billingAccounts/{account_id}",
             headers={"Authorization": f"Bearer {token}"},
         )
     if response.status_code != 200:
