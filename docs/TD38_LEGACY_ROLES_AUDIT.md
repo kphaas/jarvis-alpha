@@ -28,9 +28,9 @@ One dead cron job on Brain references `-U jarvis` but targets a database (`jarvi
 | File | Line | Match |
 |------|------|-------|
 | `db/baselines/baseline_2026-04-07_pre_step7_globals.sql` | 16 | `CREATE ROLE jarvis;` |
-| `db/baselines/baseline_2026-04-07_pre_step7_globals.sql` | 17 | `ALTER ROLE jarvis WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN REPLICATION BYPASSRLS PASSWORD 'SCRAM-SHA-256$...';` |
+| `db/baselines/baseline_2026-04-07_pre_step7_globals.sql` | 17 | `ALTER ROLE jarvis WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN REPLICATION BYPASSRLS;` |
 | `db/baselines/baseline_2026-04-07_pre_step7_globals.sql` | 20 | `CREATE ROLE jarvis_app;` |
-| `db/baselines/baseline_2026-04-07_pre_step7_globals.sql` | 21 | `ALTER ROLE jarvis_app WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'SCRAM-SHA-256$...';` |
+| `db/baselines/baseline_2026-04-07_pre_step7_globals.sql` | 21 | `ALTER ROLE jarvis_app WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS;` |
 
 These lines are a pg_dumpall-generated baseline snapshot (`pre_step7_globals.sql`), not DDL that the migration pipeline runs. They document what roles existed at snapshot time.
 
@@ -196,7 +196,7 @@ Stage 5 (new credential pipeline live)
 ```
 
 ### Is BYPASSRLS on `jarvis` exploitable today?
-**Low-but-non-zero risk.** The role has a valid SCRAM-SHA-256 password hash (visible in the baseline). If the password is weak or reused from jarvis-core, and an attacker gained localhost access (trust auth means any local process can connect), they could connect as `jarvis` and read/write all rows in `jarvis_alpha` bypassing RLS. pg_hba.conf uses trust auth for localhost, which means no password check is enforced for local connections — making the BYPASSRLS flag the only real barrier if local access is compromised. Defang it (`ALTER ROLE jarvis NOBYPASSRLS`) at earliest opportunity independent of Stage 5 timeline.
+**Low-but-non-zero risk.** The role previously had a valid SCRAM-SHA-256 password hash committed in the baseline; that baseline hash was scrubbed and the live legacy role passwords were rotated on 2026-06-03. If an attacker gained localhost access, pg_hba.conf policy still matters; keep `jarvis` defanged with `NOBYPASSRLS` and continue migrating any remaining backup dependency away from the legacy role.
 
 ---
 
