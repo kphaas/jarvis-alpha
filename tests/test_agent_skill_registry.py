@@ -93,7 +93,7 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["keyturner"].enabled is True
     assert agents["warden"].enabled is True
     assert agents["ken_voice"].enabled is False
-    assert agents["network_watchdog"].enabled is False
+    assert agents["network_watchdog"].enabled is True
     assert agents["network_watchdog"].display_name == "Sweep"
     assert agents["approval_canary"].enabled is False
     assert agents["approval_canary"].risk_tier == "T4"
