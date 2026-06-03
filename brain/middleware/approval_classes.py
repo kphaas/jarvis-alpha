@@ -63,7 +63,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/honeypot": ["write"],
     "GET /v1/honeypot": ["read"],
     # --- Metrics (system internal) — T1 read ---
-    "POST /v1/metrics/power": ["read"],
+    "POST /v1/metrics/power": ["write"],
     "GET /v1/metrics/power/current": ["read"],
     "GET /v1/metrics/power/history": ["read"],
     "GET /v1/metrics/power/rate": ["read"],

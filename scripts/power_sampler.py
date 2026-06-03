@@ -1,6 +1,7 @@
 import datetime
 import json
 import os
+from pathlib import Path
 import ssl
 import subprocess
 import time
@@ -13,6 +14,31 @@ BRAIN_URL = os.environ.get(
 NODE_NAME = os.environ.get("JARVIS_NODE_NAME", "unknown")
 
 _COMBINED_MARKER = "combined power (cpu + gpu + ane):"
+
+
+def _read_secret_file(name: str) -> str:
+    for path in (Path.home() / "jarvis" / ".secrets", Path.home() / ".secrets"):
+        if not path.exists():
+            continue
+        try:
+            for raw in path.read_text().splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                if key.strip() == name:
+                    return value.strip()
+        except OSError:
+            continue
+    return ""
+
+
+def _service_token() -> str:
+    for name in ("ALPHA_SERVICE_TOKEN", "ALPHA_BRAIN_SERVICE_TOKEN"):
+        value = os.environ.get(name, "").strip() or _read_secret_file(name)
+        if value:
+            return value
+    return ""
 
 
 def get_watts_psutil() -> tuple[float, float]:
@@ -81,10 +107,14 @@ def post_reading(watts: float, cpu_pct: float, source: str) -> None:
         "source": source,
     }
     data = json.dumps(body).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    token = _service_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     ctx = ssl.create_default_context()

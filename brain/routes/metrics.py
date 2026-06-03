@@ -2,13 +2,15 @@ from datetime import date, datetime, timezone
 from typing import Optional
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from brain.core.db import get_db
 from brain.middleware.jwt_auth import require_auth
 
 router = APIRouter(prefix="/v1/metrics", tags=["metrics"])
+
+POWER_WRITER_ISSUERS = frozenset({"brain", "gateway", "sandbox", "endpoint"})
 
 STATIC_WATTS: dict[str, float] = {
     "Brain": 10.0,
@@ -27,9 +29,18 @@ class PowerReading(BaseModel):
     source: str = "psutil"
 
 
+def require_power_writer(request: Request) -> str:
+    actor_type = getattr(request.state, "actor_type", None)
+    issuer = getattr(request.state, "iss", None)
+    if actor_type != "service" or issuer not in POWER_WRITER_ISSUERS:
+        raise HTTPException(status_code=403, detail="power_writer_service_required")
+    return issuer
+
+
 @router.post("/power")
 async def post_power(
     reading: PowerReading,
+    _: str = Depends(require_power_writer),
     conn: asyncpg.Connection = Depends(get_db),
 ):
     try:
@@ -124,7 +135,10 @@ async def get_power_history(
 
 
 @router.post("/power/rollup")
-async def post_power_rollup(conn: asyncpg.Connection = Depends(get_db)):
+async def post_power_rollup(
+    _: str = Depends(require_power_writer),
+    conn: asyncpg.Connection = Depends(get_db),
+):
     async with conn.transaction():
         await conn.execute(
             """

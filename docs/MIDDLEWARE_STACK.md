@@ -70,16 +70,27 @@ Every token MUST include:
 | `scopes` | `["forge.briefings.ingest", "briefings.read"]` | Capability list (see Scope Registry) |
 | `iat` / `exp` | Unix timestamps | Lifetime |
 
-### 4.3 Skip Paths (No JWT Required)
+### 4.3 Public Paths (No JWT Required)
 
-These paths bypass JWT validation:
+Brain keeps the unauthenticated HTTP surface intentionally small. Paths may
+bypass JWT only if they are liveness probes, auth bootstrap, token-authenticated
+webhooks, or honeypot traps. Browser docs and metrics endpoints require JWT.
 
 - `/health`
+- `/health/ready`
+- `/v1/auth/login-profiles`
 - `/v1/auth/pin`
-- `/docs`, `/openapi.json`, `/redoc`
-- `/v1/metrics/power`, `/v1/metrics/power/current`, `/v1/metrics/power/history`, `/v1/metrics/power/rollup`
+- `/v1/chatops/mattermost/command` (route verifies Mattermost command token)
 - Honeypot trap paths: `/admin`, `/wp-login.php`, `/.env`, `/.git/config`, `/phpmyadmin`, `/api/v1/debug`
 - OPTIONS method (all paths)
+
+Power telemetry writes are service-to-service only:
+
+- `POST /v1/metrics/power`
+- `POST /v1/metrics/power/rollup`
+
+Both require a validated node service JWT from `brain`, `gateway`, `sandbox`, or
+`endpoint`.
 
 ---
 
