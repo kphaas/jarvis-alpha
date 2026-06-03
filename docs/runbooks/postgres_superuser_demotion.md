@@ -22,16 +22,26 @@ until all gates below are true.
 
 ## Gates
 
-1. A separate break-glass superuser exists, can login locally on Brain, and its
-   credential is stored outside the app secrets path.
-2. `jarvis_alpha_writer` and `jarvis_alpha_app` are `NOSUPERUSER` and
+1. `pg_hba.conf` has no broad local or loopback `trust` rules such as
+   `local all all trust` or `host all all 127.0.0.1/32 trust`. A break-glass
+   role is not meaningful while local processes can impersonate database users
+   without credentials.
+2. App and operator database connection strings have been checked for password
+   readiness, and runtime roles have SCRAM password hashes where password auth
+   will be required.
+3. A separate break-glass superuser exists, can login locally on Brain using
+   the hardened auth path, and its credential is stored outside the app secrets
+   path.
+4. `jarvis_alpha_writer` and `jarvis_alpha_app` are `NOSUPERUSER` and
    `NOBYPASSRLS`.
-3. The migration runner has been checked for data-DML migrations on FORCE RLS
+5. The migration runner has been checked for data-DML migrations on FORCE RLS
    tables. Any required backfill must either set an explicit `platform_admin`
    RLS context or use a reviewed SECURITY DEFINER function.
-4. Porchlight `postgres_role_safety` is deployed and expected to fail before
-   demotion, then pass after demotion.
-5. A rollback path is written down and tested with the break-glass identity:
+6. Porchlight `postgres_hba_safety` and `postgres_role_safety` are deployed.
+   `postgres_hba_safety` must pass before a break-glass credential is trusted.
+   `postgres_role_safety` is expected to fail before demotion, then pass after
+   demotion.
+7. A rollback path is written down and tested with the break-glass identity:
 
 ```sql
 ALTER ROLE jarvisbrain SUPERUSER CREATEDB CREATEROLE;

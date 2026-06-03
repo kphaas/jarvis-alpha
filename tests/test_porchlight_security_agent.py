@@ -497,6 +497,66 @@ def test_postgres_role_safety_passes_with_breakglass_and_demoted_jarvisbrain():
     assert result.metadata["superusers"] == ["breakglass_admin"]
 
 
+def test_postgres_hba_safety_fails_on_broad_local_trust():
+    def fake_psql(query):
+        assert "FROM pg_hba_file_rules" in query
+        return porchlight.CommandResult(
+            0,
+            "\n".join(
+                [
+                    "90|local|all|all||trust|",
+                    "92|host|all|all|127.0.0.1|trust|",
+                    "94|host|replication|all|127.0.0.1|trust|",
+                ]
+            ),
+            "",
+        )
+
+    result = porchlight.check_postgres_hba_safety(psql=fake_psql)
+
+    assert result.status == "fail"
+    assert result.severity == "critical"
+    assert "broad local trust auth" in result.detail
+    assert result.metadata["trust_rule_count"] == 3
+    assert len(result.metadata["broad_trust_rules"]) == 2
+
+
+def test_postgres_hba_safety_fails_on_parser_error():
+    def fake_psql(query):
+        return porchlight.CommandResult(
+            0,
+            "90|local|all|all||scram-sha-256|invalid authentication method",
+            "",
+        )
+
+    result = porchlight.check_postgres_hba_safety(psql=fake_psql)
+
+    assert result.status == "fail"
+    assert result.severity == "critical"
+    assert "pg_hba parse errors" in result.detail
+
+
+def test_postgres_hba_safety_passes_without_broad_trust():
+    def fake_psql(query):
+        return porchlight.CommandResult(
+            0,
+            "\n".join(
+                [
+                    "90|local|all|all||scram-sha-256|",
+                    "92|host|all|all|127.0.0.1|scram-sha-256|",
+                    "94|host|all|all|::1|scram-sha-256|",
+                    "96|local|replication|postgres||peer|",
+                ]
+            ),
+            "",
+        )
+
+    result = porchlight.check_postgres_hba_safety(psql=fake_psql)
+
+    assert result.status == "pass"
+    assert result.metadata["trust_rule_count"] == 0
+
+
 def test_cloudflare_policy_drift_warns_without_api_credentials(monkeypatch):
     monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
     monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
