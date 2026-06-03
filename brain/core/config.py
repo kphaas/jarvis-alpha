@@ -1,8 +1,10 @@
 import os
 
+from brain.db.dsn import ensure_writer_password
+
 ALPHA_DB_DSN: str = os.environ["ALPHA_DB_DSN"]
-ALPHA_DB_DSN_WRITER: str = os.environ["ALPHA_DB_DSN_WRITER"]
-ALPHA_DB_DSN_BUDDY: str = os.environ["ALPHA_DB_DSN_BUDDY"]
+ALPHA_DB_DSN_WRITER: str = ensure_writer_password(os.environ["ALPHA_DB_DSN_WRITER"])
+ALPHA_DB_DSN_BUDDY: str = ensure_writer_password(os.environ["ALPHA_DB_DSN_BUDDY"])
 
 ALPHA_PORT = int(os.getenv("ALPHA_PORT", "8186"))
 ALPHA_NODE = os.getenv("ALPHA_NODE", "brain")

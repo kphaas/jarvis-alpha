@@ -8,6 +8,7 @@ import os
 from temporalio.client import Client
 from temporalio.worker import Worker
 
+from brain.db.dsn import ensure_writer_password
 from brain.db.pool import close_pool, init_pool
 from brain.dream.activities import (
     flush_cleanup_activity,
@@ -34,7 +35,9 @@ TEMPORAL_ACTIVITIES = [
 
 
 def _writer_dsn() -> str:
-    return os.environ.get("ALPHA_DB_DSN_WRITER") or get_secret("ALPHA_DB_DSN_WRITER")
+    return ensure_writer_password(
+        os.environ.get("ALPHA_DB_DSN_WRITER") or get_secret("ALPHA_DB_DSN_WRITER")
+    )
 
 
 async def run_worker() -> None:

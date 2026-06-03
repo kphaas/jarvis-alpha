@@ -18,6 +18,7 @@ import asyncpg
 
 from jarvis_common.logging_config import get_logger, new_trace_id
 from jarvis_common.secrets import get_secret
+from brain.db.dsn import ensure_writer_password
 from brain.tasks.dispatch import (
     call_code_agent,
     call_llm_agent,
@@ -38,7 +39,7 @@ log = get_logger("alpha_executor")
 
 
 def _load_dsn() -> str:
-    return get_secret(DB_DSN_KEY).strip().strip('"').strip("'")
+    return ensure_writer_password(get_secret(DB_DSN_KEY))
 
 
 async def _bind_executor_rls(conn: asyncpg.Connection) -> None:
