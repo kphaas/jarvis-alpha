@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   Shield, Key, Globe, Lock, AlertTriangle,
-  RotateCw, Bug, Plug,
+  RotateCw, Bug, Plug, ShieldCheck,
 } from "lucide-react";
 import { apiJson } from "../lib/apiFetch";
 import { useAppStore } from "../store";
@@ -11,14 +11,15 @@ import type {
   LogEntry, RotatableKey, RotationResult, SecretAuditEvent,
   SecretsAuditResponse, HoneypotData, McpRegistry, LogsQueryResponse,
   PorchlightResponse, PorchlightReport, AgentManualRunResponse, KeyturnerStatus,
+  WardenStatus,
 } from "../types/security";
 import {
   OverviewTab, IdentityTab, NetworkTab, CertsTab,
-  KeysTab, PorchlightTab, HoneypotTab, McpTab, EventsTab,
+  KeysTab, WardenTab, PorchlightTab, HoneypotTab, McpTab, EventsTab,
   computePostureScore, scoreColor, C_SCORE,
 } from "../components/security";
 
-const TABS = ["Overview", "Identity", "Network", "Certs", "Keys", "Porchlight", "Honeypot", "MCP", "Events"] as const;
+const TABS = ["Overview", "Identity", "Network", "Certs", "Warden", "Keys", "Porchlight", "Honeypot", "MCP", "Events"] as const;
 type TabId = (typeof TABS)[number];
 
 const TAB_ICONS: Record<string, typeof Shield> = {
@@ -26,6 +27,7 @@ const TAB_ICONS: Record<string, typeof Shield> = {
   Identity: Key,
   Network: Globe,
   Certs: Lock,
+  Warden: ShieldCheck,
   Keys: RotateCw,
   Porchlight: Shield,
   Honeypot: Bug,
@@ -75,6 +77,9 @@ export default function Security() {
   const [keyturnerStatus, setKeyturnerStatus] = useState<KeyturnerStatus | null>(null);
   const [loadKeyturner, setLoadKeyturner] = useState(true);
   const [errKeyturner, setErrKeyturner] = useState(false);
+  const [wardenStatus, setWardenStatus] = useState<WardenStatus | null>(null);
+  const [loadWarden, setLoadWarden] = useState(true);
+  const [errWarden, setErrWarden] = useState(false);
 
   const [rotatingKey, setRotatingKey] = useState<RotatableKey | null>(null);
   const [newKeyValue, setNewKeyValue] = useState("");
@@ -105,12 +110,12 @@ export default function Security() {
     if (showLoading) {
       setLoadJwt(true); setLoadRls(true); setLoadChild(true);
       setLoadPerimeter(true); setLoadCerts(true); setLoadLogs(true);
-      setLoadRotatableKeys(true); setLoadSecretsAudit(true); setLoadKeyturner(true);
+      setLoadRotatableKeys(true); setLoadSecretsAudit(true); setLoadKeyturner(true); setLoadWarden(true);
       setLoadHoneypot(true); setLoadMcp(true); setLoadPorchlight(true);
     }
 
     try {
-      const [j, r, c, p, cert, logs, rk, sa, kt, hp, mcp, porch] = await Promise.all([
+      const [j, r, c, p, cert, logs, rk, sa, kt, warden, hp, mcp, porch] = await Promise.all([
         apiJson<JwtCheck>("/v1/security/jwt-check").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<RlsStatus>("/v1/security/rls-status").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<ChildProfileStatus>("/v1/security/child-profiles").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
@@ -120,6 +125,7 @@ export default function Security() {
         apiJson<{ keys: RotatableKey[] }>("/v1/security/rotatable-keys").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const, data: { keys: [] as RotatableKey[] } })),
         apiJson<SecretsAuditResponse>("/v1/security/secrets-audit?limit=20").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<KeyturnerStatus>("/v1/security/keyturner-status").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
+        apiJson<WardenStatus>("/v1/security/warden-status").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<HoneypotData>("/v1/honeypot/events?limit=50").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<McpRegistry>("/v1/security/mcp/registry").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<PorchlightResponse>("/v1/security/porchlight").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
@@ -142,6 +148,7 @@ export default function Security() {
       if (sa.ok) { setSecretsAuditEvents(sa.data.events ?? []); setErrSecretsAudit(Boolean(sa.data.error)); }
       else { setSecretsAuditEvents([]); setErrSecretsAudit(true); }
       if (kt.ok) { setKeyturnerStatus(kt.data); setErrKeyturner(false); } else { setKeyturnerStatus(null); setErrKeyturner(true); }
+      if (warden.ok) { setWardenStatus(warden.data); setErrWarden(false); } else { setWardenStatus(null); setErrWarden(true); }
       if (hp.ok) { setHoneypotData(hp.data); setErrHoneypot(false); } else { setHoneypotData(null); setErrHoneypot(true); }
       if (mcp.ok) { setMcpRegistry(mcp.data); setErrMcp(false); } else { setMcpRegistry(null); setErrMcp(true); }
       if (porch.ok) { setPorchlightReport(porch.data.report); setErrPorchlight(false); } else { setPorchlightReport(null); setErrPorchlight(true); }
@@ -150,7 +157,7 @@ export default function Security() {
       if (mounted.current && showLoading) {
         setLoadJwt(false); setLoadRls(false); setLoadChild(false);
         setLoadPerimeter(false); setLoadCerts(false); setLoadLogs(false);
-        setLoadRotatableKeys(false); setLoadSecretsAudit(false); setLoadKeyturner(false);
+        setLoadRotatableKeys(false); setLoadSecretsAudit(false); setLoadKeyturner(false); setLoadWarden(false);
         setLoadHoneypot(false); setLoadMcp(false); setLoadPorchlight(false);
       }
     }
@@ -290,6 +297,15 @@ export default function Security() {
         <CertsTab
           {...theme_props}
           certs={certs} sortedCerts={sortedCerts} loadCerts={loadCerts} errCerts={errCerts}
+        />
+      )}
+
+      {activeTab === "Warden" && (
+        <WardenTab
+          {...theme_props}
+          wardenStatus={wardenStatus}
+          loadWarden={loadWarden}
+          errWarden={errWarden}
         />
       )}
 

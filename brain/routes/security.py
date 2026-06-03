@@ -667,6 +667,107 @@ async def keyturner_status(request: Request):
     }
 
 
+@security_router.get("/warden-status")
+async def warden_status(request: Request):
+    """Return Warden's security-agent crew without exposing secrets."""
+    from brain.db.pool import get_pool
+    from brain.db.rls import platform_admin_connection
+    from brain.middleware.scopes import check_scopes
+
+    check_scopes(request, "security.read", "security_read")
+    managed_ids = ["warden", "porchlight", "keyturner", "network_watchdog"]
+    pool = get_pool()
+    async with platform_admin_connection(
+        source="http", audit_actor="security_warden_status", pool=pool
+    ) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT a.agent_id, a.display_name, a.purpose, a.risk_tier, a.status,
+                   a.enabled, a.cadence, a.allowed_skills, a.allowed_scopes,
+                   a.metadata,
+                   lr.status AS last_run_status,
+                   lr.last_run_at AS last_run_at,
+                   le.severity AS last_event_severity,
+                   le.title AS last_event_title,
+                   le.created_at AS last_event_at
+            FROM public.alpha_agents a
+            LEFT JOIN LATERAL (
+                SELECT status, COALESCE(completed_at, started_at, created_at) AS last_run_at
+                FROM public.alpha_agent_runs
+                WHERE agent_id = a.agent_id
+                ORDER BY COALESCE(completed_at, started_at, created_at) DESC,
+                         created_at DESC
+                LIMIT 1
+            ) lr ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT severity, title, created_at
+                FROM public.alpha_agent_events
+                WHERE agent_id = a.agent_id
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) le ON TRUE
+            WHERE a.agent_id = ANY($1::text[])
+            ORDER BY array_position($1::text[], a.agent_id)
+            """,
+            managed_ids,
+        )
+
+    agents = []
+    attention = 0
+    for row in rows:
+        metadata = (
+            json.loads(row["metadata"])
+            if isinstance(row["metadata"], str)
+            else dict(row["metadata"] or {})
+        )
+        event_severity = row["last_event_severity"]
+        needs_attention = (
+            not bool(row["enabled"])
+            or row["status"] != "active"
+            or event_severity in {"critical", "error", "warning", "needs_input"}
+        )
+        if needs_attention:
+            attention += 1
+        agents.append(
+            {
+                "agent_id": row["agent_id"],
+                "display_name": row["display_name"],
+                "purpose": row["purpose"],
+                "risk_tier": row["risk_tier"],
+                "status": row["status"],
+                "enabled": row["enabled"],
+                "cadence": row["cadence"],
+                "allowed_skills": list(row["allowed_skills"] or []),
+                "allowed_scopes": list(row["allowed_scopes"] or []),
+                "metadata": metadata,
+                "last_run_status": row["last_run_status"],
+                "last_run_at": row["last_run_at"].isoformat()
+                if row["last_run_at"]
+                else None,
+                "last_event_severity": event_severity,
+                "last_event_title": row["last_event_title"],
+                "last_event_at": row["last_event_at"].isoformat()
+                if row["last_event_at"]
+                else None,
+                "needs_attention": needs_attention,
+            }
+        )
+
+    warden = next((agent for agent in agents if agent["agent_id"] == "warden"), None)
+    crew = [agent for agent in agents if agent["agent_id"] != "warden"]
+    return {
+        "supervisor": warden,
+        "agents": crew,
+        "counts": {
+            "managed": len(crew),
+            "enabled": sum(1 for agent in crew if agent["enabled"]),
+            "active": sum(1 for agent in crew if agent["status"] == "active"),
+            "attention": attention,
+        },
+        "next_hardening": "unifi_cert_pinning",
+    }
+
+
 @security_router.get("/secrets-audit")
 async def secrets_audit(limit: int = Query(default=50, ge=1, le=500)):
     """Return recent secret access events from Postgres."""

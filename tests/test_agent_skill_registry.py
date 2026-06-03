@@ -91,8 +91,10 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["watchdog"].enabled is True
     assert agents["porchlight"].enabled is True
     assert agents["keyturner"].enabled is True
+    assert agents["warden"].enabled is True
     assert agents["ken_voice"].enabled is False
     assert agents["network_watchdog"].enabled is False
+    assert agents["network_watchdog"].display_name == "Sweep"
     assert agents["approval_canary"].enabled is False
     assert agents["approval_canary"].risk_tier == "T4"
     assert "approval.canary_t4" in agents["approval_canary"].allowed_skills
@@ -103,6 +105,13 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["keyturner"].risk_tier == "T4"
     assert "secrets.rotate" in agents["keyturner"].allowed_skills
     assert agents["keyturner"].metadata["mattermost_channel_key"] == "security_alerts"
+    assert agents["warden"].metadata["managed_agents"] == [
+        "porchlight",
+        "keyturner",
+        "network_watchdog",
+    ]
+    assert agents["warden"].metadata["next_network_hardening"] == "unifi_cert_pinning"
+    assert agents["network_watchdog"].metadata["next_hardening"] == "unifi_cert_pinning"
     assert agents["approval_triage"].metadata["mattermost_channel_key"] == "needs_input"
     assert "weather.current" in agents["family_concierge"].allowed_skills
     assert "weather.read" in agents["family_concierge"].allowed_scopes
