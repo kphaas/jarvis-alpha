@@ -13,6 +13,7 @@ dependencies = [
     "PyJWT==2.12.1",
     "cryptography==46.0.7",
     "httpx==0.28.1",
+    "requests==2.32.3",
     "temporalio==1.26.0",
     "google-auth==2.38.0",
     "python-multipart==0.0.20",
@@ -31,4 +32,3 @@ dev = [
 
 [tool.uv]
 package = false
-
