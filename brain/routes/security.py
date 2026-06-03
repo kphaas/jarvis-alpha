@@ -19,6 +19,7 @@ from brain.config.node_addresses import (
     SANDBOX_URL,
 )
 from brain.routes.pin_auth import _profile_scopes
+from brain.services.warden_posture import build_warden_posture_score
 
 logger = get_logger("alpha_brain")
 security_router = APIRouter(prefix="/v1/security", tags=["security"])
@@ -187,6 +188,14 @@ def _load_rotation_config() -> dict:
     if not isinstance(data, dict):
         return {"secrets": {}}
     return data
+
+
+async def _safe_payload(label: str, coro):
+    try:
+        return await coro
+    except Exception as exc:  # pragma: no cover - defensive endpoint aggregation
+        logger.warning("warden posture source failed label=%s error=%s", label, exc)
+        return None
 
 
 async def _probe_port(
@@ -673,6 +682,8 @@ async def warden_status(request: Request):
     from brain.db.pool import get_pool
     from brain.db.rls import platform_admin_connection
     from brain.middleware.scopes import check_scopes
+    from brain.routes.mesh import get_cert_status
+    from brain.services import unifi_client
 
     check_scopes(request, "security.read", "security_read")
     managed_ids = ["warden", "porchlight", "keyturner", "network_watchdog"]
@@ -710,6 +721,16 @@ async def warden_status(request: Request):
             ORDER BY array_position($1::text[], a.agent_id)
             """,
             managed_ids,
+        )
+        honeypot_hits_24h = int(
+            await conn.fetchval(
+                """
+                SELECT COUNT(*)
+                FROM public.alpha_honeypot_events
+                WHERE captured_at >= NOW() - INTERVAL '24 hours'
+                """
+            )
+            or 0
         )
 
     agents = []
@@ -755,6 +776,37 @@ async def warden_status(request: Request):
 
     warden = next((agent for agent in agents if agent["agent_id"] == "warden"), None)
     crew = [agent for agent in agents if agent["agent_id"] != "warden"]
+    (
+        jwt,
+        rls,
+        child,
+        perim,
+        certs,
+        keyturner,
+        porchlight,
+        unifi_health,
+    ) = await asyncio.gather(
+        _safe_payload("jwt", jwt_check()),
+        _safe_payload("rls", rls_status()),
+        _safe_payload("child", child_profiles(request)),
+        _safe_payload("perimeter", perimeter()),
+        _safe_payload("certs", get_cert_status()),
+        _safe_payload("keyturner", keyturner_status(request)),
+        _safe_payload("porchlight", porchlight_report(request)),
+        _safe_payload("unifi", unifi_client.get_health_check()),
+    )
+    posture_score = build_warden_posture_score(
+        jwt=jwt,
+        rls=rls,
+        child=child,
+        perimeter=perim,
+        certs=certs,
+        keyturner=keyturner,
+        porchlight=porchlight,
+        unifi_health=unifi_health,
+        crew=crew,
+        honeypot_hits_24h=honeypot_hits_24h,
+    )
     return {
         "supervisor": warden,
         "agents": crew,
@@ -766,6 +818,7 @@ async def warden_status(request: Request):
         },
         "active_hardening": "unifi_cert_pinning",
         "next_hardening": "unifi_cert_pinning",
+        "posture_score": posture_score,
     }
 
 

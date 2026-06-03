@@ -15,6 +15,13 @@ function statusClass(needsAttention: boolean, enabled: boolean): string {
   return 'border-emerald-500/30 bg-emerald-500/15 text-emerald-400'
 }
 
+function controlStatusClass(status: string): string {
+  if (status === 'pass') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+  if (status === 'warn') return 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+  if (status === 'fail') return 'border-rose-500/30 bg-rose-500/10 text-rose-400'
+  return 'border-zinc-500/30 bg-zinc-500/10 text-zinc-400'
+}
+
 function roleLabel(value: unknown): string {
   if (typeof value !== 'string' || !value) return 'security'
   return value.replaceAll('_', ' ')
@@ -62,9 +69,61 @@ export function WardenTab({
               <Wrench className="w-3.5 h-3.5" />
               Active hardening: {(wardenStatus.active_hardening ?? wardenStatus.next_hardening).replaceAll('_', ' ')}
             </div>
+            {wardenStatus.posture_score && (
+              <div className={`mt-4 rounded-xl border ${border} p-3`}>
+                <p className="text-xs font-mono uppercase opacity-50">
+                  Warden posture score
+                </p>
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <p className="text-3xl font-bold font-mono">
+                      {wardenStatus.posture_score.score}
+                      <span className={`ml-1 text-xs font-normal ${muted}`}>/100</span>
+                    </p>
+                    <p className={`mt-1 text-xs ${muted}`}>
+                      {wardenStatus.posture_score.controls_passing}/{wardenStatus.posture_score.controls_total} controls passing
+                    </p>
+                  </div>
+                  <p className={`max-w-xl text-xs ${muted}`}>
+                    Industry-aligned to SOC 2 CC6/CC7, CIS v8, and NIST CSF. This is not a certification score.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </section>
+
+      {wardenStatus?.posture_score && (
+        <section>
+          <p className="mb-3 text-[10px] font-mono uppercase opacity-40 tracking-widest">
+            Weighted controls
+          </p>
+          <div className="grid grid-cols-1 gap-3">
+            {wardenStatus.posture_score.controls.map((control) => (
+              <div key={control.id} className={`rounded-2xl border ${border} ${subtle} p-4`}>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold">{control.title}</p>
+                    <p className={`mt-1 text-sm ${fg}`}>{control.summary}</p>
+                    <p className={`mt-2 text-xs font-mono ${muted}`}>
+                      {control.category} · owner {control.owner_agent.replaceAll('_', ' ')} · {control.earned}/{control.weight} pts
+                    </p>
+                  </div>
+                  <span className={`shrink-0 rounded border px-2 py-1 text-[10px] font-mono uppercase ${controlStatusClass(control.status)}`}>
+                    {control.status}
+                  </span>
+                </div>
+                {control.framework_refs.length > 0 && (
+                  <p className={`mt-3 text-[10px] font-mono ${muted}`}>
+                    {control.framework_refs.join(' · ')}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {wardenStatus && (
         <section>

@@ -213,11 +213,16 @@ export default function Security() {
 
   /* Computed values for overview */
   const honeypotTotalHits = honeypotData !== null && !errHoneypot ? honeypotData.total : null;
-  const { earned, displayScore, reserved } = computePostureScore(jwt, rls, child, perimeter, certs, honeypotTotalHits);
+  const fallbackScore = computePostureScore(jwt, rls, child, perimeter, certs, honeypotTotalHits);
+  const postureScore = wardenStatus?.posture_score;
+  const displayScore = postureScore?.score ?? fallbackScore.displayScore;
+  const reserved = postureScore?.reserved ?? fallbackScore.reserved;
   const strokeColor = scoreColor(displayScore, isDark);
-  const dashEarned = (earned / 100) * C_SCORE;
-  const checksPassing = (jwt?.passing ?? 0) + (perimeter?.ports.filter((p) => p.reachable === p.expected).length ?? 0);
-  const checksTotal = (jwt?.total ?? 0) + (perimeter?.ports.length ?? 0);
+  const dashEarned = (displayScore / 100) * C_SCORE;
+  const checksPassing = postureScore?.controls_passing
+    ?? (jwt?.passing ?? 0) + (perimeter?.ports.filter((p) => p.reachable === p.expected).length ?? 0);
+  const checksTotal = postureScore?.controls_total
+    ?? (jwt?.total ?? 0) + (perimeter?.ports.length ?? 0);
   const shortestCertDays = certs && certs.length ? Math.min(...certs.map((c) => c.days_remaining)) : null;
   const sortedCerts = certs ? [...certs].sort((a, b) => a.days_remaining - b.days_remaining) : [];
   const protectedTables = rls?.tables.filter((t) => t.protected ?? t.rls === "enabled") ?? [];
@@ -271,6 +276,7 @@ export default function Security() {
           dashEarned={dashEarned} strokeColor={strokeColor}
           checksPassing={checksPassing} checksTotal={checksTotal}
           shortestCertDays={shortestCertDays}
+          postureScore={postureScore}
           setActiveTab={setActiveTab as (tab: string) => void}
         />
       )}
