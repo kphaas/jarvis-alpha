@@ -757,8 +757,15 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
             "mattermost_channel_key": "security_alerts",
             "report_path": "logs/porchlight_security_report.json",
             "manual_run_enabled": True,
+            "schedule_interval_seconds": 86400,
             "warden_managed": True,
             "warden_role": "posture_sweep",
+            "external_boundary": {
+                "protected_hosts_source": "PORCHLIGHT_CLOUDFLARE_EXPECTED_HOSTS",
+                "policy_emails_source": "PORCHLIGHT_CLOUDFLARE_EXPECTED_POLICY_EMAILS",
+                "forbidden_apps": ["alpha", "brain", "jarvis-brain"],
+                "broad_rules_blocked": ["everyone", "email_domain", "bypass"],
+            },
         },
     ),
     AgentSpec(

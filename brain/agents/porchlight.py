@@ -14,8 +14,32 @@ import asyncpg
 from brain.agents.runtime import AgentRuntime, AgentRuntimeConfig
 
 PORCHLIGHT_AGENT_ID = "porchlight"
+DEFAULT_PORCHLIGHT_INTERVAL_SECONDS = 24 * 60 * 60
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PORCHLIGHT_SCRIPT = REPO_ROOT / "scripts" / "porchlight_security_agent.py"
+
+
+async def maybe_run_porchlight(pool: asyncpg.Pool) -> bool:
+    runtime = AgentRuntime(
+        AgentRuntimeConfig(
+            agent_id=PORCHLIGHT_AGENT_ID,
+            trigger_type="scheduled",
+            source="buddy",
+        ),
+        pool=pool,
+    )
+    state = await runtime.load_state()
+    if state is None:
+        return False
+    interval = int(
+        state.metadata.get(
+            "schedule_interval_seconds", DEFAULT_PORCHLIGHT_INTERVAL_SECONDS
+        )
+    )
+    if not await runtime.claim_due(interval_seconds=interval):
+        return False
+    await runtime.run_once(_run_porchlight_script)
+    return True
 
 
 async def run_porchlight_now(pool: asyncpg.Pool):
@@ -33,6 +57,7 @@ async def run_porchlight_now(pool: asyncpg.Pool):
 async def _run_porchlight_script(_run_id: UUID) -> dict:
     env = os.environ.copy()
     env.setdefault("SECRETS_FILE", str(Path.home() / "jarvis" / ".secrets"))
+    env.setdefault("PYTHONPATH", f"{REPO_ROOT}:{REPO_ROOT / 'common'}")
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
         str(PORCHLIGHT_SCRIPT),

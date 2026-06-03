@@ -869,6 +869,47 @@ def test_cloudflare_policy_drift_fails_for_unexpected_family_member(monkeypatch)
     assert "unexpected email" in result.detail
 
 
+def test_cloudflare_policy_drift_blocks_everyone_rule(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "token-abc")
+    monkeypatch.setenv("PORCHLIGHT_CLOUDFLARE_EXPECTED_HOSTS", "family.at-0.com")
+
+    def fake_command(args, timeout=30, input_text=None):
+        url = args[-1]
+        if url.endswith("/accounts/acct-123/access/apps"):
+            return porchlight.CommandResult(
+                0,
+                porchlight.json.dumps(
+                    {
+                        "success": True,
+                        "result": [
+                            {
+                                "id": "app-1",
+                                "name": "JARVIS Family",
+                                "domain": "family.at-0.com",
+                                "policies": [
+                                    {
+                                        "id": "pol-1",
+                                        "name": "Everyone",
+                                        "decision": "allow",
+                                        "include": [{"everyone": {}}],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                "",
+            )
+        raise AssertionError(url)
+
+    result = porchlight.check_cloudflare_access_policy_drift(command=fake_command)
+
+    assert result.status == "fail"
+    assert result.severity == "critical"
+    assert "everyone" in result.detail
+
+
 def test_cloudflare_policy_drift_fails_for_alpha_or_brain_public_app(monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
     monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "token-abc")

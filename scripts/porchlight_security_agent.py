@@ -2036,7 +2036,7 @@ def notify_mattermost(
     result = command(
         [
             "curl",
-            "-sk",
+            "-sS",
             "-m",
             "15",
             "-X",
