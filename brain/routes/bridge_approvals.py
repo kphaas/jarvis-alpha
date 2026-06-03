@@ -274,8 +274,15 @@ def _row_to_pending(row: Any) -> BridgePendingApproval:
         description=str(row["description"]),
         requested_at=row["requested_at"],
         expires_at=row["expires_at"],
-        overnight=bool(row["overnight"]),
+        overnight=bool(_row_get(row, "overnight", False)),
     )
+
+
+def _row_get(row: Any, key: str, default: Any = None) -> Any:
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return default
 
 
 def _validate_submit(body: BridgeApprovalSubmitRequest, claims: BridgeClaims) -> None:
