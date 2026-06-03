@@ -430,6 +430,73 @@ def test_route_db_access_review_passes_when_reviewed(tmp_path: Path):
     assert result.metadata["uses_rls_helper"] == ["rls.py"]
 
 
+def test_postgres_role_safety_fails_when_jarvisbrain_is_only_superuser():
+    def fake_psql(query):
+        assert "FROM pg_roles" in query
+        return porchlight.CommandResult(
+            0,
+            "\n".join(
+                [
+                    "jarvis_alpha_app|false|false|false|false|false",
+                    "jarvis_alpha_writer|false|false|false|false|false",
+                    "jarvisbrain|true|false|true|true|true",
+                ]
+            ),
+            "",
+        )
+
+    result = porchlight.check_postgres_role_safety(psql=fake_psql)
+
+    assert result.status == "fail"
+    assert result.severity == "critical"
+    assert "jarvisbrain is still SUPERUSER" in result.detail
+    assert "break-glass" in result.detail
+    assert result.metadata["superusers"] == ["jarvisbrain"]
+
+
+def test_postgres_role_safety_fails_when_runtime_role_bypasses_rls():
+    def fake_psql(query):
+        return porchlight.CommandResult(
+            0,
+            "\n".join(
+                [
+                    "breakglass_admin|true|false|true|true|true",
+                    "jarvis_alpha_app|false|false|false|false|false",
+                    "jarvis_alpha_writer|false|true|false|false|false",
+                    "jarvisbrain|false|false|true|true|true",
+                ]
+            ),
+            "",
+        )
+
+    result = porchlight.check_postgres_role_safety(psql=fake_psql)
+
+    assert result.status == "fail"
+    assert result.severity == "critical"
+    assert result.metadata["runtime_bypass_roles"] == ["jarvis_alpha_writer"]
+
+
+def test_postgres_role_safety_passes_with_breakglass_and_demoted_jarvisbrain():
+    def fake_psql(query):
+        return porchlight.CommandResult(
+            0,
+            "\n".join(
+                [
+                    "breakglass_admin|true|false|true|true|true",
+                    "jarvis_alpha_app|false|false|false|false|false",
+                    "jarvis_alpha_writer|false|false|false|false|false",
+                    "jarvisbrain|false|false|true|true|true",
+                ]
+            ),
+            "",
+        )
+
+    result = porchlight.check_postgres_role_safety(psql=fake_psql)
+
+    assert result.status == "pass"
+    assert result.metadata["superusers"] == ["breakglass_admin"]
+
+
 def test_cloudflare_policy_drift_warns_without_api_credentials(monkeypatch):
     monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
     monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
