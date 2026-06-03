@@ -827,7 +827,7 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
                 "network_watchdog": "network_sweep",
                 "tripwire": "honeypot_sensor",
             },
-            "active_network_hardening": "unifi_cert_pinning",
+            "active_network_hardening": "service_tls_cert_renewal",
             "supervision_interval_seconds": 600,
             "remediation_policy": {
                 "T1": "delegate_low_risk_checks",
@@ -914,8 +914,19 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
             "warden_managed": True,
             "warden_role": "network_sweep",
             "display_alias": "Sweep",
-            "active_hardening": "unifi_cert_pinning",
-            "monitors": ["unifi_tls_pin", "wan_health", "new_clients"],
+            "active_hardening": "service_tls_cert_renewal",
+            "completed_hardenings": ["unifi_cert_pinning"],
+            "cert_renewal": {
+                "script": "scripts/sweep_tls_cert_renewal.py",
+                "launch_label": "com.jarvis.alpha.sweep-cert-renewal",
+                "threshold_days": 30,
+            },
+            "monitors": [
+                "service_tls_certs",
+                "unifi_tls_pin",
+                "wan_health",
+                "new_clients",
+            ],
         },
     ),
     AgentSpec(

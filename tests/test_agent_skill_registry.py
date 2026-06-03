@@ -118,15 +118,24 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
         "network_watchdog",
         "tripwire",
     ]
-    assert agents["warden"].metadata["active_network_hardening"] == "unifi_cert_pinning"
+    assert (
+        agents["warden"].metadata["active_network_hardening"]
+        == "service_tls_cert_renewal"
+    )
     assert agents["warden"].metadata["supervision_interval_seconds"] == 600
     assert (
         agents["warden"].metadata["remediation_policy"]["T4_T5"]
         == "route_to_owner_with_approval"
     )
     assert (
-        agents["network_watchdog"].metadata["active_hardening"] == "unifi_cert_pinning"
+        agents["network_watchdog"].metadata["active_hardening"]
+        == "service_tls_cert_renewal"
     )
+    assert (
+        agents["network_watchdog"].metadata["cert_renewal"]["launch_label"]
+        == "com.jarvis.alpha.sweep-cert-renewal"
+    )
+    assert "service_tls_certs" in agents["network_watchdog"].metadata["monitors"]
     assert "unifi_tls_pin" in agents["network_watchdog"].metadata["monitors"]
     assert agents["tripwire"].metadata["warden_role"] == "honeypot_sensor"
     assert agents["tripwire"].metadata["mattermost_channel_key"] == "security_alerts"
