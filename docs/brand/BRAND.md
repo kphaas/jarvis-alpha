@@ -55,6 +55,7 @@ Every module = the **same ring + teal node**, with a **unique center glyph**:
 | Sweep | radar sweep + blip | network security — scans the perimeter / tailnet (replaces network_watchdog) |
 | Porchlight | lantern | scheduled security posture sweeps, notify-only |
 | Keyturner | key | owns approved key & password rotations |
+| Tapwire | tapped wire + honey catch | honeypot monitor — classifies hits, alerts, feeds Warden's posture |
 
 Tools get evocative one-word names (Forge, Smithy, Crucible, Spark). Life domains stay descriptive (Family, Financial, Medical).
 
