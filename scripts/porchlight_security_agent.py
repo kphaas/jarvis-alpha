@@ -453,6 +453,119 @@ ORDER BY rolname;
     )
 
 
+def _pg_hba_csv_items(value: str) -> set[str]:
+    cleaned = value.strip().strip("{}")
+    if not cleaned:
+        return set()
+    return {part.strip().strip('"') for part in cleaned.split(",") if part.strip()}
+
+
+def check_postgres_hba_safety(
+    psql: Callable[[str], CommandResult] = run_psql,
+) -> CheckResult:
+    query = """
+SELECT line_number::text,
+       type,
+       array_to_string(database, ','),
+       array_to_string(user_name, ','),
+       COALESCE(address, ''),
+       auth_method,
+       COALESCE(error, '')
+FROM pg_hba_file_rules
+ORDER BY line_number;
+""".strip()
+    result = psql(query)
+    if result.returncode != 0:
+        return CheckResult(
+            name="postgres_hba_safety",
+            status="fail",
+            severity="critical",
+            summary="Could not inspect Postgres client authentication rules.",
+            detail=(result.stderr or result.stdout).strip()[:500],
+        )
+
+    rows = parse_psql_rows(result.stdout)
+    if not rows:
+        return CheckResult(
+            name="postgres_hba_safety",
+            status="fail",
+            severity="critical",
+            summary="No pg_hba rules were returned for safety inspection.",
+        )
+
+    broad_trust_rules: list[str] = []
+    parser_errors: list[str] = []
+    malformed_rows = 0
+    trust_rule_count = 0
+
+    for row in rows:
+        if len(row) < 7:
+            malformed_rows += 1
+            continue
+        (
+            line_number,
+            rule_type,
+            databases_raw,
+            users_raw,
+            address,
+            auth_method,
+            error,
+        ) = row[:7]
+        if error:
+            parser_errors.append(f"line {line_number}: {error[:120]}")
+        if auth_method != "trust":
+            continue
+
+        trust_rule_count += 1
+        databases = _pg_hba_csv_items(databases_raw)
+        users = _pg_hba_csv_items(users_raw)
+        is_loopback = address in {"", "127.0.0.1", "127.0.0.1/32", "::1", "::1/128"}
+        is_broad = "all" in databases and "all" in users
+        if (
+            rule_type in {"local", "host", "hostssl", "hostnossl"}
+            and is_loopback
+            and is_broad
+        ):
+            if rule_type == "local":
+                broad_trust_rules.append(f"line {line_number}: local all/all trust")
+            else:
+                broad_trust_rules.append(
+                    f"line {line_number}: {rule_type} {address} all/all trust"
+                )
+
+    issues = []
+    if parser_errors:
+        issues.append("pg_hba parse errors: " + "; ".join(parser_errors[:3]))
+    if malformed_rows:
+        issues.append(f"{malformed_rows} pg_hba row(s) could not be parsed")
+    if broad_trust_rules:
+        issues.append("broad local trust auth: " + "; ".join(broad_trust_rules[:5]))
+
+    if issues:
+        return CheckResult(
+            name="postgres_hba_safety",
+            status="fail",
+            severity="critical",
+            summary="Postgres client authentication is not safe for break-glass demotion.",
+            detail="; ".join(issues),
+            metadata={
+                "total_rules": len(rows),
+                "trust_rule_count": trust_rule_count,
+                "broad_trust_rules": broad_trust_rules,
+                "parser_errors": parser_errors,
+                "malformed_rows": malformed_rows,
+            },
+        )
+
+    return CheckResult(
+        name="postgres_hba_safety",
+        status="pass",
+        severity="info",
+        summary="Postgres client authentication has no broad local trust rules.",
+        metadata={"total_rules": len(rows), "trust_rule_count": trust_rule_count},
+    )
+
+
 def check_secret_rotation(
     psql: Callable[[str], CommandResult] = run_psql,
     config_path: Path = SECRET_ROTATION_CONFIG,
@@ -1977,6 +2090,7 @@ def run_sweep(args: argparse.Namespace) -> dict[str, object]:
     checks = [
         check_database_rls(),
         check_postgres_role_safety(),
+        check_postgres_hba_safety(),
         check_secret_rotation(),
         check_secret_live_verification(node_map=node_map),
         check_security_launchagents(node_map=node_map),
