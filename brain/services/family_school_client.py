@@ -59,7 +59,7 @@ class FamilySchoolClient:
 
     async def active_rules(self) -> list[FamilySchoolEmailRule]:
         token = self._token(["family.school_email.read"])
-        async with httpx.AsyncClient(timeout=20, verify=False) as client:
+        async with httpx.AsyncClient(timeout=20) as client:
             response = await client.get(
                 f"{self.base_url}/v1/school-email/rules/export",
                 headers={"Authorization": f"Bearer {token}"},
@@ -85,7 +85,7 @@ class FamilySchoolClient:
 
     async def _post_import(self, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
         token = self._token(["family.school_email.import"])
-        async with httpx.AsyncClient(timeout=20, verify=False) as client:
+        async with httpx.AsyncClient(timeout=20) as client:
             response = await client.post(
                 f"{self.base_url}/v1/school-email/imports/{kind}",
                 headers={"Authorization": f"Bearer {token}"},

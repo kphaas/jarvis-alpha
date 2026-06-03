@@ -62,7 +62,7 @@ def _curl_http_code(
 ) -> int:
     cmd = [
         "curl",
-        "-sk",
+        "-sS",
         "--max-time",
         max_time,
         "-o",

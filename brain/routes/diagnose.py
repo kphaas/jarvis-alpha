@@ -120,7 +120,7 @@ async def _diagnose_claude(prompt: str) -> dict:
 
     cmd = [
         "curl",
-        "-sk",
+        "-sS",
         "--max-time",
         "30",
         gateway_url,

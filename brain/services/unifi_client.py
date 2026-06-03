@@ -31,7 +31,7 @@ def _gateway_get_sync(path: str) -> dict[str, Any]:
 
     try:
         proc = subprocess.run(
-            ["curl", "-sk", "-H", f"x-jarvis-token: {token}", url],
+            ["curl", "-sS", "-H", f"x-jarvis-token: {token}", url],
             capture_output=True,
             text=True,
             timeout=GATEWAY_UNIFI_TIMEOUT_SEC,

@@ -38,7 +38,7 @@ def _gateway_weather_current_sync(params: dict[str, Any]) -> dict[str, Any]:
         proc = subprocess.run(
             [
                 "curl",
-                "-sk",
+                "-sS",
                 "-m",
                 str(GATEWAY_WEATHER_TIMEOUT_SEC),
                 "-H",

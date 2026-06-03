@@ -42,7 +42,7 @@ def call_gateway_proxy_sync(
     url = f"{_gateway_base()}/v1/cloud/{path.lstrip('/')}"
     args = [
         "curl",
-        "-sk",
+        "-sS",
         "-m",
         str(timeout_s),
         "-X",

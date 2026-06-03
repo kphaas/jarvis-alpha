@@ -37,7 +37,7 @@ async def _ping_node(name: str, url: str) -> dict:
             lambda: subprocess.run(
                 [
                     "curl",
-                    "-sk",
+                    "-sS",
                     "--max-time",
                     "3",
                     "-o",
