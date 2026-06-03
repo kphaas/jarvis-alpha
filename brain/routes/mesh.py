@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from brain.db.pool import get_pool
+from brain.db.rls import platform_admin_connection
 
 router = APIRouter()
 
@@ -158,9 +159,17 @@ def _compute_mesh_status(nodes: list[dict[str, Any]]) -> str:
 async def get_mesh_status():
     checked_at = datetime.now(timezone.utc).isoformat()
     pool = get_pool()
-    rows = await pool.fetch(
-        "SELECT * FROM alpha_node_registry WHERE is_active = true ORDER BY name"
-    )
+    async with platform_admin_connection(
+        source="http", audit_actor="mesh_status", pool=pool
+    ) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT *
+            FROM public.alpha_node_registry
+            WHERE is_active = true
+            ORDER BY name
+            """
+        )
     rows = [dict(r) for r in rows]
 
     async def _check_one(row: dict[str, Any]) -> tuple[dict, str, dict]:
@@ -216,12 +225,14 @@ async def get_cert_status():
     cert_expires_at populated — no code changes required.
     """
     pool = get_pool()
-    async with pool.acquire() as conn:
+    async with platform_admin_connection(
+        source="http", audit_actor="mesh_certs", pool=pool
+    ) as conn:
         rows = await conn.fetch(
             """
             SELECT name, display_name, tailscale_ip, health_endpoint,
                    cert_issued_at, cert_expires_at
-            FROM alpha_node_registry
+            FROM public.alpha_node_registry
             WHERE node_type = 'service'
               AND is_active = true
               AND cert_expires_at IS NOT NULL
