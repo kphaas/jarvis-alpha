@@ -11,6 +11,7 @@ import asyncpg
 from brain.agents.events import AgentEvent, emit_agent_event
 from brain.agents.chatops_smoke import maybe_run_chatops_smoke
 from brain.agents.network_watchdog import maybe_run_network_watchdog
+from brain.agents.warden import maybe_run_warden_supervisor
 from brain.services.temporal_storage_monitor import (
     collect_temporal_storage_snapshot,
     temporal_storage_summary_body,
@@ -218,7 +219,11 @@ async def _run_cycle(pool: asyncpg.Pool) -> None:
 
 
 async def _maybe_run_managed_agents(pool: asyncpg.Pool) -> None:
-    for runner in (maybe_run_chatops_smoke, maybe_run_network_watchdog):
+    for runner in (
+        maybe_run_chatops_smoke,
+        maybe_run_network_watchdog,
+        maybe_run_warden_supervisor,
+    ):
         try:
             await runner(pool)
         except Exception as exc:

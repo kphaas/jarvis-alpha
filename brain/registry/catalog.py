@@ -821,6 +821,7 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
                 "tripwire": "honeypot_sensor",
             },
             "active_network_hardening": "unifi_cert_pinning",
+            "supervision_interval_seconds": 600,
             "remediation_policy": {
                 "T1": "delegate_low_risk_checks",
                 "T4_T5": "route_to_owner_with_approval",
