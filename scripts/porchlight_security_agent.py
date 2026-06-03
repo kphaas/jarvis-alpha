@@ -359,6 +359,100 @@ ORDER BY c.relname;
     )
 
 
+def check_postgres_role_safety(
+    psql: Callable[[str], CommandResult] = run_psql,
+) -> CheckResult:
+    query = """
+SELECT rolname,
+       rolsuper::text,
+       rolbypassrls::text,
+       rolcreatedb::text,
+       rolcreaterole::text,
+       rolcanlogin::text
+FROM pg_roles
+WHERE rolname IN ('jarvisbrain', 'jarvis_alpha_writer', 'jarvis_alpha_app')
+   OR rolsuper
+ORDER BY rolname;
+""".strip()
+    result = psql(query)
+    if result.returncode != 0:
+        return CheckResult(
+            name="postgres_role_safety",
+            status="fail",
+            severity="critical",
+            summary="Could not inspect Postgres role safety posture.",
+            detail=(result.stderr or result.stdout).strip()[:500],
+        )
+
+    rows = parse_psql_rows(result.stdout)
+    if not rows:
+        return CheckResult(
+            name="postgres_role_safety",
+            status="fail",
+            severity="critical",
+            summary="No Postgres role rows were returned for safety inspection.",
+        )
+
+    roles = {
+        row[0]: {
+            "rolsuper": row[1] == "true",
+            "rolbypassrls": row[2] == "true",
+            "rolcreatedb": row[3] == "true",
+            "rolcreaterole": row[4] == "true",
+            "rolcanlogin": row[5] == "true",
+        }
+        for row in rows
+        if len(row) >= 6
+    }
+    missing_required = sorted(
+        {"jarvisbrain", "jarvis_alpha_writer", "jarvis_alpha_app"} - set(roles)
+    )
+    superusers = sorted(
+        name for name, attrs in roles.items() if attrs.get("rolsuper") is True
+    )
+    runtime_bypass = sorted(
+        name
+        for name in ("jarvis_alpha_writer", "jarvis_alpha_app")
+        if roles.get(name, {}).get("rolsuper")
+        or roles.get(name, {}).get("rolbypassrls")
+    )
+
+    issues: list[str] = []
+    if missing_required:
+        issues.append("missing required role(s): " + ", ".join(missing_required))
+    if runtime_bypass:
+        issues.append("runtime role(s) can bypass RLS: " + ", ".join(runtime_bypass))
+    if roles.get("jarvisbrain", {}).get("rolsuper"):
+        issues.append("jarvisbrain is still SUPERUSER and can bypass FORCE RLS")
+    if superusers == ["jarvisbrain"]:
+        issues.append(
+            "jarvisbrain is the only superuser; demotion needs break-glass first"
+        )
+
+    if issues:
+        return CheckResult(
+            name="postgres_role_safety",
+            status="fail",
+            severity="critical",
+            summary="Postgres role safety needs remediation before strict production readiness.",
+            detail="; ".join(issues),
+            metadata={
+                "superusers": superusers,
+                "runtime_bypass_roles": runtime_bypass,
+                "missing_required_roles": missing_required,
+                "jarvisbrain": roles.get("jarvisbrain", {}),
+            },
+        )
+
+    return CheckResult(
+        name="postgres_role_safety",
+        status="pass",
+        severity="info",
+        summary="Postgres runtime roles are NOBYPASSRLS and jarvisbrain is not superuser.",
+        metadata={"superusers": superusers},
+    )
+
+
 def check_secret_rotation(
     psql: Callable[[str], CommandResult] = run_psql,
     config_path: Path = SECRET_ROTATION_CONFIG,
@@ -1882,6 +1976,7 @@ def run_sweep(args: argparse.Namespace) -> dict[str, object]:
     node_map = load_json(NODE_MAP_PATH)
     checks = [
         check_database_rls(),
+        check_postgres_role_safety(),
         check_secret_rotation(),
         check_secret_live_verification(node_map=node_map),
         check_security_launchagents(node_map=node_map),
