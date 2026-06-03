@@ -26,6 +26,11 @@ def test_jwt_skip_paths_are_explicit_public_surface():
     assert jwt_auth.SKIP_PATHS == set(expected)
 
 
+def test_bridge_prefix_uses_route_local_service_token_auth():
+    assert jwt_auth.ROUTE_TOKEN_AUTH_PREFIXES == {"/v1/bridge/"}
+    assert "/v1/bridge/approvals/submit" not in jwt_auth.SKIP_PATHS
+
+
 @pytest.mark.parametrize(
     "path",
     [

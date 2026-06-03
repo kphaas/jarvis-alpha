@@ -55,6 +55,7 @@ PUBLIC_AUTH_PATHS = frozenset({"/v1/auth/login-profiles", "/v1/auth/pin"})
 # These endpoints intentionally skip JWT because the route verifies its own
 # shared secret or incoming platform token before doing any work.
 ROUTE_TOKEN_AUTH_PATHS = frozenset({"/v1/chatops/mattermost/command"})
+ROUTE_TOKEN_AUTH_PREFIXES = frozenset({"/v1/bridge/"})
 
 # Honeypot traps must be reachable without JWT so scanner traffic can be
 # recorded. They should never expose real data or operational controls.
@@ -90,7 +91,9 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        if request.url.path in SKIP_PATHS:
+        if request.url.path in SKIP_PATHS or any(
+            request.url.path.startswith(prefix) for prefix in ROUTE_TOKEN_AUTH_PREFIXES
+        ):
             return await call_next(request)
 
         auth_header = request.headers.get("Authorization", "")
