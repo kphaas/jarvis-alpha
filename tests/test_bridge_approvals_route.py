@@ -88,11 +88,17 @@ def _row(**overrides):
 
 
 class FakeConn:
-    def __init__(self, *, existing=None, inserted=None):
+    def __init__(self, *, existing=None, inserted=None, rows=None):
         self.existing = existing
         self.inserted = inserted or _row()
+        self.rows = rows or []
+        self.fetch_calls = []
         self.fetchrow_calls = []
         self.fetchval_calls = []
+
+    async def fetch(self, query, *args):
+        self.fetch_calls.append((query, args))
+        return self.rows
 
     async def fetchrow(self, query, *args):
         self.fetchrow_calls.append((query, args))
@@ -235,3 +241,32 @@ async def test_get_bridge_approval_returns_intent_token_for_approved_row(
     )
     assert decoded["approval_id"] == str(approved["id"])
     assert decoded["intent_kind"] == "trade_proposal"
+
+
+@pytest.mark.asyncio
+async def test_list_bridge_pending_approvals_returns_financial_service_rows(
+    monkeypatch,
+):
+    pending = _row(status="pending")
+    conn = FakeConn(rows=[pending])
+
+    @asynccontextmanager
+    async def fake_rls_context_connection(ctx):
+        yield conn
+
+    monkeypatch.setattr(
+        bridge_approvals,
+        "rls_context_connection",
+        fake_rls_context_connection,
+    )
+
+    response = await bridge_approvals.list_bridge_pending_approvals(_claims())
+
+    assert response.count == 1
+    assert response.pending[0].approval_id == str(pending["id"])
+    assert response.pending[0].status == "pending"
+    assert response.pending[0].tier_assigned == "T2"
+    assert conn.fetch_calls
+    query, args = conn.fetch_calls[0]
+    assert "actor_sub = $1" in query
+    assert args == ("jarvis-fin-agent",)

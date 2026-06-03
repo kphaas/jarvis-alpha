@@ -16,7 +16,7 @@ import shlex
 import socket
 import subprocess
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -130,7 +130,7 @@ def load_node_map() -> dict[str, dict[str, str]]:
 
 def parse_openssl_time(raw: str) -> datetime:
     value = raw.strip().replace("notBefore=", "").replace("notAfter=", "")
-    return datetime.strptime(value, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=UTC)
+    return datetime.strptime(value, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
 
 
 def cert_dates(cert_path: Path) -> tuple[datetime, datetime]:
@@ -153,7 +153,7 @@ def cert_dates(cert_path: Path) -> tuple[datetime, datetime]:
 
 
 def days_remaining(expires_at: datetime, *, now: datetime | None = None) -> int:
-    now = now or datetime.now(UTC)
+    now = now or datetime.now(timezone.utc)
     return int((expires_at - now).total_seconds() // 86400)
 
 
