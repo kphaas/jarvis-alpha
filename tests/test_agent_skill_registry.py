@@ -104,6 +104,11 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert "notify.send" in agents["approval_triage"].allowed_skills
     assert agents["porchlight"].launch_label == "com.jarvis.alpha.porchlight"
     assert agents["porchlight"].metadata["mattermost_channel_key"] == "security_alerts"
+    assert agents["porchlight"].metadata["schedule_interval_seconds"] == 86400
+    assert (
+        agents["porchlight"].metadata["external_boundary"]["policy_emails_source"]
+        == "PORCHLIGHT_CLOUDFLARE_EXPECTED_POLICY_EMAILS"
+    )
     assert agents["keyturner"].risk_tier == "T4"
     assert "secrets.rotate" in agents["keyturner"].allowed_skills
     assert agents["keyturner"].metadata["mattermost_channel_key"] == "security_alerts"

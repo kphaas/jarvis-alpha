@@ -1,4 +1,5 @@
 from brain.agents.manual_run import manual_run_eligibility
+from brain.agents.porchlight import DEFAULT_PORCHLIGHT_INTERVAL_SECONDS
 from brain.agents.chatops_smoke import format_chatops_smoke_message
 from brain.agents.network_watchdog import client_keys, network_events_from_snapshot
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
@@ -222,3 +223,7 @@ def test_porchlight_manual_run_allowed_but_keyturner_is_approval_gated():
 
     assert porchlight.allowed is True
     assert keyturner.reason == "manual_runner_not_registered"
+
+
+def test_porchlight_default_schedule_is_daily():
+    assert DEFAULT_PORCHLIGHT_INTERVAL_SECONDS == 86400
