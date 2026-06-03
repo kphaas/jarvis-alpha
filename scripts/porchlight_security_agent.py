@@ -145,6 +145,7 @@ def run_command(
     args: list[str],
     timeout: int = 30,
     input_text: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> CommandResult:
     try:
         result = subprocess.run(
@@ -154,15 +155,29 @@ def run_command(
             text=True,
             timeout=timeout,
             check=False,
+            env=env,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return CommandResult(1, "", str(exc))
     return CommandResult(result.returncode, result.stdout or "", result.stderr or "")
 
 
+def _postgres_password() -> str | None:
+    password = os.getenv("POSTGRES_PASSWORD", "").strip()
+    if password:
+        return password
+    try:
+        return get_secret("POSTGRES_PASSWORD").strip()
+    except KeyError:
+        return None
+
+
 def run_psql(query: str, timeout: int = 45) -> CommandResult:
+    password = _postgres_password()
+    use_password_auth = PSQL_USER == "jarvisbrain" or password is not None
     psql_args = [
         PSQL_BIN,
+        *(["-h", "localhost"] if use_password_auth else []),
         "-U",
         PSQL_USER,
         "-d",
@@ -177,9 +192,16 @@ def run_psql(query: str, timeout: int = 45) -> CommandResult:
     node = os.getenv("JARVIS_NODE", "").strip().lower()
     hostname = socket.gethostname().lower()
     if node == "brain" or hostname.startswith("jarvis-brain"):
-        return run_command(psql_args, timeout=timeout, input_text=query)
+        env = os.environ.copy()
+        if password:
+            env["PGPASSWORD"] = password
+        return run_command(psql_args, timeout=timeout, input_text=query, env=env)
 
     remote_command = " ".join(shlex.quote(part) for part in psql_args)
+    remote_command = (
+        "cd ~/jarvis-alpha && set -a && source ~/jarvis/.secrets && set +a && "
+        f'PGPASSWORD="$POSTGRES_PASSWORD" {remote_command}'
+    )
     return run_command(
         [
             "ssh",
