@@ -21,27 +21,21 @@ _flush_lock = threading.Lock()
 _loop: asyncio.AbstractEventLoop | None = None
 _node: str = "brain"
 
-CREATE_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS secret_access_log (
-    id              BIGSERIAL PRIMARY KEY,
-    key_name        TEXT NOT NULL,
-    source          TEXT NOT NULL,
-    accessed_at     TIMESTAMPTZ NOT NULL,
-    node            TEXT NOT NULL,
-    flushed_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-)
+READINESS_SQL = """
+SELECT
+    to_regclass('public.secret_access_log') IS NOT NULL AS has_table,
+    to_regprocedure(
+        'public.record_secret_access(text,text,timestamp with time zone,text)'
+    ) IS NOT NULL AS has_writer,
+    has_function_privilege(
+        current_user,
+        'public.record_secret_access(text,text,timestamp with time zone,text)',
+        'EXECUTE'
+    ) AS can_execute
 """
 
-CREATE_INDEX_KEY_SQL = (
-    "CREATE INDEX IF NOT EXISTS idx_sal_key ON secret_access_log(key_name)"
-)
-CREATE_INDEX_ACCESSED_SQL = (
-    "CREATE INDEX IF NOT EXISTS idx_sal_accessed ON secret_access_log(accessed_at DESC)"
-)
-
 INSERT_SQL = """
-INSERT INTO secret_access_log (key_name, source, accessed_at, node)
-VALUES ($1, $2, $3::timestamptz, $4)
+SELECT public.record_secret_access($1, $2, $3::timestamptz, $4)
 """
 
 
@@ -84,15 +78,25 @@ async def _flush() -> None:
 
 
 async def ensure_table() -> None:
-    """Create the secret_access_log table if it doesn't exist."""
+    """Verify secret audit storage is ready.
+
+    Runtime runs as jarvis_alpha_writer, so schema creation and grant repair must
+    happen in migrations. This check is intentionally read-only.
+    """
     try:
         from brain.db.pool import get_pool
 
         pool = get_pool()
         async with pool.acquire() as conn:
-            await conn.execute(CREATE_TABLE_SQL)
-            await conn.execute(CREATE_INDEX_KEY_SQL)
-            await conn.execute(CREATE_INDEX_ACCESSED_SQL)
-        logger.info("secret_audit: table ready")
+            row = await conn.fetchrow(READINESS_SQL)
+        if row and row["has_table"] and row["has_writer"] and row["can_execute"]:
+            logger.info("secret_audit: writer ready")
+            return
+        logger.warning(
+            "secret_audit: writer not ready (table=%s function=%s execute=%s)",
+            bool(row and row["has_table"]),
+            bool(row and row["has_writer"]),
+            bool(row and row["can_execute"]),
+        )
     except Exception as e:
-        logger.warning("secret_audit: table creation failed — %s", e)
+        logger.warning("secret_audit: readiness check failed — %s", e)
