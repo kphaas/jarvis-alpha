@@ -17,12 +17,18 @@ import getpass
 import json
 import os
 import sys
+import time
+import uuid
+from pathlib import Path
 from typing import Any, Literal
 
 import httpx
+import jwt
 
 _DEFAULT_BASE_URL = "https://jarvis-brain.tail40ed36.ts.net:8186"
+_DEFAULT_PRIVATE_KEY = "~/jarvis/pki/jwt/jwt_private.pem"
 _FINANCIAL_ACTIONS = {"financial_trade", "paper_trade"}
+_TOKEN_TTL_SECONDS = 300
 
 
 def _base_url(raw: str | None) -> str:
@@ -76,6 +82,42 @@ def _select_pending(
 
 def _headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _private_key() -> str:
+    path = os.environ.get("ALPHA_JWT_PRIVATE_KEY", _DEFAULT_PRIVATE_KEY)
+    return Path(path).expanduser().read_text(encoding="utf-8")
+
+
+def _mint_admin_token(*, profile_id: str) -> str:
+    now = int(time.time())
+    claims = {
+        "sub": profile_id,
+        "iss": "user",
+        "role": "admin",
+        "profile_id": profile_id,
+        "workspace_id": "personal",
+        "display_name": profile_id,
+        "actor_type": "user",
+        "max_rating": "adult",
+        "scopes": ["*"],
+        "jti": str(uuid.uuid4()),
+        "iat": now,
+        "exp": now + _TOKEN_TTL_SECONDS,
+    }
+    return jwt.encode(claims, _private_key(), algorithm="RS256")
+
+
+def _mint_approval_token(*, profile_id: str) -> str:
+    now = int(time.time())
+    claims = {
+        "sub": profile_id,
+        "purpose": "approval",
+        "jti": str(uuid.uuid4()),
+        "iat": now,
+        "exp": now + _TOKEN_TTL_SECONDS,
+    }
+    return jwt.encode(claims, _private_key(), algorithm="RS256")
 
 
 async def _admin_token(
@@ -146,11 +188,16 @@ def _raise_for_response(response: httpx.Response) -> None:
 
 async def _run(args: argparse.Namespace) -> int:
     base_url = _base_url(args.base_url)
-    pin = _pin(args.pin)
     async with httpx.AsyncClient(
         base_url=base_url, timeout=httpx.Timeout(10.0)
     ) as client:
-        admin_token = await _admin_token(client, pin=pin, profile_id=args.profile_id)
+        if args.headless_local_token:
+            admin_token = _mint_admin_token(profile_id=args.profile_id)
+        else:
+            pin = _pin(args.pin)
+            admin_token = await _admin_token(
+                client, pin=pin, profile_id=args.profile_id
+            )
         pending = await _pending(client, admin_token=admin_token)
 
         if args.command == "pending":
@@ -171,7 +218,10 @@ async def _run(args: argparse.Namespace) -> int:
             approval_id=args.approval_id,
             latest_financial_paper=args.latest_financial_paper,
         )
-        approval_token = await _approval_token(client, pin=pin)
+        if args.headless_local_token:
+            approval_token = _mint_approval_token(profile_id=args.profile_id)
+        else:
+            approval_token = await _approval_token(client, pin=pin)
         decision: Literal["approved", "denied"] = (
             "approved" if args.command == "approve" else "denied"
         )
@@ -204,6 +254,11 @@ def _parser() -> argparse.ArgumentParser:
         "--pin", help="approval PIN; prefer ALPHA_PIN or interactive prompt"
     )
     parser.add_argument("--profile-id", default="ken")
+    parser.add_argument(
+        "--headless-local-token",
+        action="store_true",
+        help="mint short-lived local JWTs from ALPHA_JWT_PRIVATE_KEY instead of PIN auth",
+    )
 
     sub = parser.add_subparsers(dest="command", required=True)
 
