@@ -93,7 +93,7 @@ async def rotate_key_via_gateway(req: RotateRequest) -> RotateResponse:
 
     cmd = [
         "curl",
-        "-sk",
+        "-sS",
         "--max-time",
         "45",
         gateway_url,

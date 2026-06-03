@@ -101,7 +101,7 @@ def _flush_sync(brain_url: str, token: str, batch: list[tuple[int, str]]) -> lis
             result = subprocess.run(
                 [
                     "curl",
-                    "-sk",
+                    "-sS",
                     "--max-time",
                     "10",
                     "-X",

@@ -175,7 +175,7 @@ async def _test_key(key_name: str, api_key: str) -> tuple[bool, str]:
 
     cmd = [
         "curl",
-        "-sk",
+        "-sS",
         "--max-time",
         "15",
         "-o",

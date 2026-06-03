@@ -1,5 +1,5 @@
 """
-Alpha Gateway UniFi proxy — talks to UDM Pro (local TLS, curl -sk).
+Alpha Gateway UniFi proxy — talks to UDM Pro (local/self-signed TLS).
 """
 
 import asyncio

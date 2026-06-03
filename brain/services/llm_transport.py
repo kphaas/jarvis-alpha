@@ -72,7 +72,7 @@ def _post_sync(
             headers_list.extend(["-H", f"{k}: {v}"])
     args = [
         "curl",
-        "-sk",
+        "-sS",
         "-m",
         str(timeout_s),
         "-X",

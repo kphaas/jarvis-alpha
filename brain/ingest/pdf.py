@@ -21,7 +21,7 @@ def _vector_literal(embedding: list[float]) -> str:
 
 async def _embed_text(text: str) -> Optional[list[float]]:
     try:
-        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.post(
                 f"{OLLAMA_URL}/api/embeddings",
                 json={"model": "all-minilm", "prompt": text},

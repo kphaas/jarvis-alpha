@@ -27,7 +27,7 @@ class CouncilOrchestrator:
         }
 
         try:
-            async with httpx.AsyncClient(verify=False, timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 r = await client.post(
                     f"{OLLAMA_URL}/api/generate",
                     json={
@@ -49,7 +49,7 @@ class CouncilOrchestrator:
         refined_prompt = out["refined_prompt"]
 
         async def _claude():
-            async with httpx.AsyncClient(verify=False, timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(
                     f"{GATEWAY_URL}/v1/cloud/claude",
                     json={"prompt": refined_prompt, "mode": "council"},
@@ -58,7 +58,7 @@ class CouncilOrchestrator:
                 return (resp.json().get("result") or "").strip()
 
         async def _gemini():
-            async with httpx.AsyncClient(verify=False, timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(
                     f"{GATEWAY_URL}/v1/cloud/gemini",
                     json={"prompt": refined_prompt, "mode": "council"},
@@ -81,7 +81,7 @@ class CouncilOrchestrator:
         user_msg = f"Response A:\n{out['claude_response']}\n\nResponse B:\n{out['gemini_response']}"
 
         try:
-            async with httpx.AsyncClient(verify=False, timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 r = await client.post(
                     f"{OLLAMA_URL}/api/generate",
                     json={
@@ -103,7 +103,7 @@ class CouncilOrchestrator:
         synthesis = out["synthesis"]
 
         try:
-            async with httpx.AsyncClient(verify=False, timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(
                     f"{GATEWAY_URL}/v1/cloud/perplexity",
                     json={

@@ -70,7 +70,7 @@ def _curl_code_and_ms(url: str, max_time: int = 5) -> tuple[int | None, float | 
         result = subprocess.run(
             [
                 "curl",
-                "-sk",
+                "-sS",
                 "--max-time",
                 str(max_time),
                 "-o",

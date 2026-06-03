@@ -43,7 +43,6 @@ async def route(prompt: str, mode: str = "auto") -> dict:
             json.dumps(payload),
             "--max-time",
             "30",
-            "-k",
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
         if result.returncode != 0:

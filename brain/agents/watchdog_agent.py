@@ -64,7 +64,7 @@ async def _check_service(
             result = subprocess.run(
                 [
                     "curl",
-                    "-sk",
+                    "-sS",
                     "--max-time",
                     str(CHECK_TIMEOUT),
                     "-o",

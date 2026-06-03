@@ -92,7 +92,7 @@ def _post_gateway_notify_sync(
 ) -> tuple[int, str]:
     args = [
         "curl",
-        "-sk",
+        "-sS",
         "-m",
         str(timeout_sec),
         "-X",

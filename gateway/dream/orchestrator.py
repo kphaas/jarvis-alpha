@@ -78,7 +78,7 @@ async def _curl(method: str, path: str, body: dict | None = None) -> dict:
     url = f"{BRAIN_URL}{path}"
     cmd = [
         "curl",
-        "-sk",
+        "-sS",
         "-X",
         method,
         "-H",
