@@ -95,6 +95,8 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["ken_voice"].enabled is False
     assert agents["network_watchdog"].enabled is True
     assert agents["network_watchdog"].display_name == "Sweep"
+    assert agents["tripwire"].enabled is True
+    assert agents["tripwire"].display_name == "Tripwire"
     assert agents["approval_canary"].enabled is False
     assert agents["approval_canary"].risk_tier == "T4"
     assert "approval.canary_t4" in agents["approval_canary"].allowed_skills
@@ -109,6 +111,7 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
         "porchlight",
         "keyturner",
         "network_watchdog",
+        "tripwire",
     ]
     assert agents["warden"].metadata["active_network_hardening"] == "unifi_cert_pinning"
     assert (
@@ -119,6 +122,9 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
         agents["network_watchdog"].metadata["active_hardening"] == "unifi_cert_pinning"
     )
     assert "unifi_tls_pin" in agents["network_watchdog"].metadata["monitors"]
+    assert agents["tripwire"].metadata["warden_role"] == "honeypot_sensor"
+    assert agents["tripwire"].metadata["mattermost_channel_key"] == "security_alerts"
+    assert "honeypot_hits" in agents["tripwire"].metadata["monitors"]
     assert agents["approval_triage"].metadata["mattermost_channel_key"] == "needs_input"
     assert "weather.current" in agents["family_concierge"].allowed_skills
     assert "weather.read" in agents["family_concierge"].allowed_scopes

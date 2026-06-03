@@ -48,4 +48,5 @@ def test_warden_posture_score_is_weighted_and_industry_aligned():
     assert controls["tls.unifi_cert_pin"]["status"] == "pass"
     assert controls["secrets.key_rotation"]["status"] == "warn"
     assert controls["monitoring.warden_crew"]["status"] == "warn"
+    assert controls["monitoring.honeypot"]["owner_agent"] == "tripwire"
     assert result["top_gaps"][0]["status"] != "pass"

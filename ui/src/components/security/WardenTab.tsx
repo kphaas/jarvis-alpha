@@ -161,6 +161,11 @@ export function WardenTab({
                     Monitors UniFi TLS pinning.
                   </div>
                 )}
+                {agent.agent_id === 'tripwire' && (
+                  <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs font-mono text-amber-300">
+                    Owns honeypot trap monitoring and alert escalation.
+                  </div>
+                )}
               </div>
             ))}
           </div>
