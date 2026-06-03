@@ -260,12 +260,21 @@ async def jwt_check():
         },
     ]
     skip_routes = [
-        {"route": "GET /health", "path": "/health", "method": "GET"},
-        {"route": "POST /v1/auth/pin", "path": "/v1/auth/pin", "method": "POST"},
+        {
+            "route": "GET /health",
+            "path": "/health",
+            "method": "GET",
+            "expected": 200,
+            "body": None,
+        },
+        {
+            "route": "POST /v1/auth/pin",
+            "path": "/v1/auth/pin",
+            "method": "POST",
+            "expected": 401,
+            "body": json.dumps({"pin": "__security_probe_invalid_pin__"}),
+        },
     ]
-
-    pin = os.environ.get("ALPHA_PIN")
-    pin_body = json.dumps({"pin": pin}) if pin else None
 
     async def run_protected(spec: dict) -> dict:
         url = f"{base}{spec['path']}"
@@ -287,20 +296,18 @@ async def jwt_check():
 
     async def run_skip(spec: dict) -> dict:
         url = f"{base}{spec['path']}"
-        if spec["path"] == "/v1/auth/pin" and pin_body is not None:
-            code = await asyncio.to_thread(_curl_http_code, url, "POST", "5", pin_body)
-        else:
-            code = await asyncio.to_thread(
-                _curl_http_code,
-                url,
-                spec["method"],
-                "5",
-                None,
-            )
-        ok = code == 200
+        expected = int(spec["expected"])
+        code = await asyncio.to_thread(
+            _curl_http_code,
+            url,
+            spec["method"],
+            "5",
+            spec.get("body"),
+        )
+        ok = code == expected
         return {
             "route": spec["route"],
-            "expected": 200,
+            "expected": expected,
             "actual": code,
             "pass": ok,
             "type": "skip",

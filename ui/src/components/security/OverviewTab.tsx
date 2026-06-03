@@ -296,7 +296,7 @@ export function OverviewTab({
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.25 }}
-              onClick={() => setActiveTab("Honeypot")}
+              onClick={() => setActiveTab("Tripwire")}
               className={`rounded-2xl border ${border} ${subtle} p-5 text-left hover:opacity-95 transition-opacity`}
             >
               <Bug className="w-4 h-4 opacity-50 mb-3" />
@@ -314,7 +314,7 @@ export function OverviewTab({
                     {honeypotData.total}
                   </p>
                   <p className={`text-xs font-mono ${muted} mt-0.5`}>hits detected</p>
-                  <p className="text-[10px] font-mono uppercase opacity-40 mt-1">Honeypot</p>
+                  <p className="text-[10px] font-mono uppercase opacity-40 mt-1">Tripwire</p>
                 </>
               )}
             </motion.button>

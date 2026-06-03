@@ -19,7 +19,7 @@ import {
   computePostureScore, scoreColor, C_SCORE,
 } from "../components/security";
 
-const TABS = ["Overview", "Identity", "Network", "Certs", "Warden", "Keys", "Porchlight", "Honeypot", "MCP", "Events"] as const;
+const TABS = ["Overview", "Identity", "Network", "Certs", "Warden", "Keyturner", "Porchlight", "Tripwire", "MCP", "Events"] as const;
 type TabId = (typeof TABS)[number];
 
 const TAB_ICONS: Record<string, typeof Shield> = {
@@ -28,9 +28,9 @@ const TAB_ICONS: Record<string, typeof Shield> = {
   Network: Globe,
   Certs: Lock,
   Warden: ShieldCheck,
-  Keys: RotateCw,
+  Keyturner: RotateCw,
   Porchlight: Shield,
-  Honeypot: Bug,
+  Tripwire: Bug,
   MCP: Plug,
   Events: AlertTriangle,
 };
@@ -315,7 +315,7 @@ export default function Security() {
         />
       )}
 
-      {activeTab === "Keys" && (
+      {activeTab === "Keyturner" && (
         <KeysTab
           {...theme_props}
           rotatableKeys={rotatableKeys} secretsAuditEvents={secretsAuditEvents}
@@ -344,7 +344,7 @@ export default function Security() {
         />
       )}
 
-      {activeTab === "Honeypot" && (
+      {activeTab === "Tripwire" && (
         <HoneypotTab {...theme_props} honeypotData={honeypotData} loadHoneypot={loadHoneypot} errHoneypot={errHoneypot} />
       )}
 

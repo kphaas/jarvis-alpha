@@ -121,6 +121,7 @@ export interface SecretsAuditResponse {
 }
 
 export interface HoneypotEvent {
+  id?: number
   ts: string
   path: string
   trap_type: string
@@ -130,7 +131,11 @@ export interface HoneypotEvent {
 }
 
 export interface HoneypotData {
+  agent_id?: string
+  display_name?: string
   total: number
+  hits_24h?: number
+  unique_clients_24h?: number
   events: HoneypotEvent[]
   traps_active: number
   traps: string[]
