@@ -43,7 +43,7 @@ def test_unifi_payload_models_accept_gateway_shapes():
     assert health.tls == {"verification": "ca_cert+public_key_pin"}
 
 
-def test_network_watchdog_detects_wan_degraded_and_new_clients():
+def test_sweep_detects_wan_degraded_and_new_clients():
     snapshot = {
         "wan": {"wan_status": "unknown"},
         "clients": {
@@ -68,7 +68,7 @@ def test_network_watchdog_detects_wan_degraded_and_new_clients():
     assert events[0].severity == "warning"
 
 
-def test_network_watchdog_does_not_alert_new_clients_without_baseline():
+def test_sweep_does_not_alert_new_clients_without_baseline():
     events = network_events_from_snapshot(
         {
             "wan": {"wan_status": "up"},
@@ -81,7 +81,7 @@ def test_network_watchdog_does_not_alert_new_clients_without_baseline():
     assert events == []
 
 
-def test_network_watchdog_detects_unifi_tls_pin_drift():
+def test_sweep_detects_unifi_tls_pin_drift():
     events = network_events_from_snapshot(
         {
             "wan": {"wan_status": "up"},
@@ -101,7 +101,7 @@ def test_network_watchdog_detects_unifi_tls_pin_drift():
     assert events[0].severity == "warning"
 
 
-def test_network_watchdog_debounces_repeated_degraded_health_and_tls_pin():
+def test_sweep_debounces_repeated_degraded_health_and_tls_pin():
     snapshot = {
         "wan": {"wan_status": "unknown"},
         "clients": {"clients": []},
@@ -179,7 +179,7 @@ def test_manual_run_requires_explicit_low_risk_enabled_opt_in():
     )
     disabled = manual_run_eligibility(
         {
-            "agent_id": "network_watchdog",
+            "agent_id": "sweep",
             "status": "active",
             "enabled": False,
             "risk_tier": "T1",

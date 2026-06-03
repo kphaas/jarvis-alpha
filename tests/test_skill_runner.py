@@ -10,7 +10,7 @@ def _decision(outcome="allow", reason="policy_ok"):
     return SkillPolicyDecision(
         outcome=outcome,
         reason=reason,
-        agent_id="network_watchdog",
+        agent_id="sweep",
         skill_name="unifi.wan_status",
         approval_tier="T1",
         skill_scope="network.read",
@@ -72,7 +72,7 @@ async def test_runner_executes_registered_handler_after_allow():
         return {"ok": True, "device_count": call.payload["device_count"]}
 
     invocation = SkillInvocation(
-        agent_id="network_watchdog",
+        agent_id="sweep",
         skill_name="unifi.wan_status",
     )
     runner = SkillRunner(
@@ -98,7 +98,7 @@ async def test_runner_supports_sync_handlers():
         handlers={"unifi.wan_status": handler},
     ).run(
         object(),
-        SkillInvocation(agent_id="network_watchdog", skill_name="unifi.wan_status"),
+        SkillInvocation(agent_id="sweep", skill_name="unifi.wan_status"),
     )
 
     assert result.executed
@@ -118,7 +118,7 @@ async def test_runner_does_not_execute_when_policy_denies():
         handlers={"unifi.wan_status": handler},
     ).run(
         object(),
-        SkillInvocation(agent_id="network_watchdog", skill_name="unifi.wan_status"),
+        SkillInvocation(agent_id="sweep", skill_name="unifi.wan_status"),
     )
 
     assert result.denied
@@ -141,7 +141,7 @@ async def test_runner_does_not_execute_when_approval_required():
         handlers={"unifi.wan_status": handler},
     ).run(
         object(),
-        SkillInvocation(agent_id="network_watchdog", skill_name="unifi.wan_status"),
+        SkillInvocation(agent_id="sweep", skill_name="unifi.wan_status"),
     )
 
     assert result.requires_approval
@@ -166,7 +166,7 @@ async def test_runner_queues_approval_required_skill_when_bridge_configured():
         approval_bridge=bridge,
     ).run(
         object(),
-        SkillInvocation(agent_id="network_watchdog", skill_name="unifi.wan_status"),
+        SkillInvocation(agent_id="sweep", skill_name="unifi.wan_status"),
         payload={"action": "pause_child_device"},
     )
 
@@ -193,7 +193,7 @@ async def test_runner_consumes_approval_and_executes_retry():
         approval_bridge=bridge,
     ).run(
         object(),
-        SkillInvocation(agent_id="network_watchdog", skill_name="unifi.wan_status"),
+        SkillInvocation(agent_id="sweep", skill_name="unifi.wan_status"),
     )
 
     assert result.executed
@@ -216,7 +216,7 @@ async def test_runner_does_not_queue_approval_for_missing_adapter():
         approval_bridge=bridge,
     ).run(
         object(),
-        SkillInvocation(agent_id="network_watchdog", skill_name="unifi.wan_status"),
+        SkillInvocation(agent_id="sweep", skill_name="unifi.wan_status"),
     )
 
     assert result.denied
@@ -228,7 +228,7 @@ async def test_runner_does_not_queue_approval_for_missing_adapter():
 async def test_runner_denies_allowed_skill_without_registered_adapter():
     result = await SkillRunner(gate=FakeGate(_decision())).run(
         object(),
-        SkillInvocation(agent_id="network_watchdog", skill_name="unifi.wan_status"),
+        SkillInvocation(agent_id="sweep", skill_name="unifi.wan_status"),
     )
 
     assert result.denied
@@ -242,7 +242,7 @@ async def test_runner_register_adds_handler():
 
     result = await runner.run(
         object(),
-        SkillInvocation(agent_id="network_watchdog", skill_name="unifi.wan_status"),
+        SkillInvocation(agent_id="sweep", skill_name="unifi.wan_status"),
     )
 
     assert result.executed

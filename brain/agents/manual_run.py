@@ -13,6 +13,7 @@ from brain.agents.chatops_smoke import (
     run_chatops_smoke_now,
 )
 from brain.agents.network_watchdog import (
+    NETWORK_WATCHDOG_AGENT_ALIAS,
     NETWORK_WATCHDOG_AGENT_ID,
     run_network_watchdog_now,
 )
@@ -26,6 +27,9 @@ MANUAL_RUNNERS: dict[str, ManualRunner] = {
     NETWORK_WATCHDOG_AGENT_ID: run_network_watchdog_now,
     PORCHLIGHT_AGENT_ID: run_porchlight_now,
 }
+AGENT_ALIASES = {
+    NETWORK_WATCHDOG_AGENT_ALIAS: NETWORK_WATCHDOG_AGENT_ID,
+}
 
 LOW_RISK_MANUAL_TIERS = {"T1", "T2"}
 
@@ -37,17 +41,21 @@ class ManualRunEligibility:
 
 
 async def run_agent_now(agent_id: str, *, pool: asyncpg.Pool) -> AgentRunResult:
-    runner = MANUAL_RUNNERS.get(agent_id)
+    runner = MANUAL_RUNNERS.get(canonical_agent_id(agent_id))
     if runner is None:
         raise ValueError("manual_runner_not_registered")
     return await runner(pool)
+
+
+def canonical_agent_id(agent_id: str) -> str:
+    return AGENT_ALIASES.get(agent_id, agent_id)
 
 
 def manual_run_eligibility(agent_row: Mapping[str, Any] | None) -> ManualRunEligibility:
     if not agent_row:
         return ManualRunEligibility(False, "unknown_agent")
 
-    agent_id = str(agent_row["agent_id"])
+    agent_id = canonical_agent_id(str(agent_row["agent_id"]))
     if agent_id not in MANUAL_RUNNERS:
         return ManualRunEligibility(False, "manual_runner_not_registered")
     if agent_row["status"] != "active":

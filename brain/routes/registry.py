@@ -8,7 +8,11 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from brain.agents.manual_run import manual_run_eligibility, run_agent_now
+from brain.agents.manual_run import (
+    canonical_agent_id,
+    manual_run_eligibility,
+    run_agent_now,
+)
 from brain.db.pool import get_pool
 from brain.db.rls import rls_connection
 from brain.middleware.scopes import check_scopes
@@ -484,6 +488,7 @@ async def disable_agent(agent_id: str, request: Request) -> AgentOut:
 @router.post("/agents/{agent_id}/run", response_model=AgentManualRunOut)
 async def run_agent(agent_id: str, request: Request) -> AgentManualRunOut:
     check_scopes(request, "agents.write")
+    canonical_id = canonical_agent_id(agent_id)
     async with rls_connection(request) as conn:
         row = await conn.fetchrow(
             """
@@ -491,7 +496,7 @@ async def run_agent(agent_id: str, request: Request) -> AgentManualRunOut:
             FROM public.alpha_agents
             WHERE agent_id = $1
             """,
-            agent_id,
+            canonical_id,
         )
     eligibility = manual_run_eligibility(
         {
@@ -508,7 +513,7 @@ async def run_agent(agent_id: str, request: Request) -> AgentManualRunOut:
         status_code = 404 if eligibility.reason == "unknown_agent" else 409
         raise HTTPException(status_code=status_code, detail=eligibility.reason)
 
-    result = await run_agent_now(agent_id, pool=get_pool())
+    result = await run_agent_now(canonical_id, pool=get_pool())
     logger.info(
         "AGENT_MANUAL_RUN agent_id=%s executed=%s run_id=%s",
         agent_id,

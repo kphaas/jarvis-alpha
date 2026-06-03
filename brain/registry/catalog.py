@@ -758,8 +758,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             provider="unifi",
             test_ref="tests/test_agent_skill_registry.py",
             extra={
-                "owner_agent": "network_watchdog",
-                "display_alias": "Sweep",
+                "owner_agent": "sweep",
                 "saved_for_later": True,
             },
         ),
@@ -781,8 +780,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             provider="unifi",
             test_ref="tests/test_agent_skill_registry.py",
             extra={
-                "owner_agent": "network_watchdog",
-                "display_alias": "Sweep",
+                "owner_agent": "sweep",
                 "saved_for_later": True,
             },
         ),
@@ -804,8 +802,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             provider="unifi",
             test_ref="tests/test_agent_skill_registry.py",
             extra={
-                "owner_agent": "network_watchdog",
-                "display_alias": "Sweep",
+                "owner_agent": "sweep",
                 "saved_for_later": True,
             },
         ),
@@ -1130,14 +1127,14 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
             "managed_agents": [
                 "porchlight",
                 "keyturner",
-                "network_watchdog",
+                "sweep",
                 "tripwire",
                 "ledger",
             ],
             "agent_roles": {
                 "porchlight": "posture_sweep",
                 "keyturner": "credential_rotation",
-                "network_watchdog": "network_sweep",
+                "sweep": "network_sweep",
                 "tripwire": "honeypot_sensor",
                 "ledger": "evidence_reporter",
             },
@@ -1249,7 +1246,7 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
         },
     ),
     AgentSpec(
-        agent_id="network_watchdog",
+        agent_id="sweep",
         display_name="Sweep",
         purpose="Monitor UniFi WAN, switches, APs, new-device events, and network trust hardening.",
         risk_tier="T1",
@@ -1271,7 +1268,7 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
             "manual_run_enabled": True,
             "warden_managed": True,
             "warden_role": "network_sweep",
-            "display_alias": "Sweep",
+            "legacy_agent_id": "network_watchdog",
             "active_hardening": "service_tls_cert_renewal",
             "completed_hardenings": ["unifi_cert_pinning"],
             "cert_renewal": {

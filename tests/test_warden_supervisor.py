@@ -40,7 +40,7 @@ def test_supervision_flags_stale_sweep_and_attention_event():
     findings = supervision_findings(
         [
             _agent(
-                "network_watchdog",
+                "sweep",
                 "network_sweep",
                 last_run_at=now - timedelta(minutes=8),
             ),

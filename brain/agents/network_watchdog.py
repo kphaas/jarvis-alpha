@@ -1,4 +1,4 @@
-"""Read-only Network Watchdog agent."""
+"""Read-only Sweep network security agent."""
 
 from __future__ import annotations
 
@@ -15,7 +15,9 @@ from brain.skills.handlers import build_skill_runner
 from brain.skills.policy_gate import SkillInvocation
 from brain.skills.unifi import unifi_skill_handlers
 
-NETWORK_WATCHDOG_AGENT_ID = "network_watchdog"
+SWEEP_AGENT_ID = "sweep"
+NETWORK_WATCHDOG_AGENT_ID = SWEEP_AGENT_ID
+NETWORK_WATCHDOG_AGENT_ALIAS = "network_watchdog"
 DEFAULT_NETWORK_INTERVAL_SECONDS = 30
 
 
