@@ -66,6 +66,28 @@ class BridgeApprovalResponse(BaseModel):
     rejection_reason: str | None = None
 
 
+class BridgePendingApproval(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    approval_id: str
+    action_class: list[str]
+    status: BridgeStatus
+    tier_assigned: str
+    actor_sub: str
+    actor_type: str
+    description: str
+    requested_at: datetime | None = None
+    expires_at: datetime | None = None
+    overnight: bool
+
+
+class BridgePendingApprovalsResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    pending: list[BridgePendingApproval]
+    count: int
+
+
 def _require_financial_bridge_service(request: Request) -> BridgeClaims:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
@@ -107,6 +129,33 @@ async def bridge_health(
         "caller": claims.sub,
         "domain": claims.domain,
     }
+
+
+@router.get("/approvals/pending", response_model=BridgePendingApprovalsResponse)
+async def list_bridge_pending_approvals(
+    claims: BridgeClaims = Depends(_require_financial_bridge_service),
+) -> BridgePendingApprovalsResponse:
+    async with rls_context_connection(
+        RLSContext.platform_admin(
+            source="http",
+            audit_actor=f"bridge:{claims.sub}",
+            user_id=claims.sub,
+        )
+    ) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, action_class, risk_tier, actor_sub, actor_type,
+                   description, status, requested_at, expires_at, overnight
+              FROM public.alpha_approval_queue
+             WHERE status = 'pending'
+               AND expires_at > NOW()
+               AND actor_sub = $1
+             ORDER BY requested_at ASC
+            """,
+            claims.sub,
+        )
+    pending = [_row_to_pending(item) for item in rows]
+    return BridgePendingApprovalsResponse(pending=pending, count=len(pending))
 
 
 @router.post("/approvals/submit", response_model=BridgeApprovalResponse)
@@ -201,6 +250,32 @@ async def get_bridge_approval(
     if row["actor_sub"] != claims.sub:
         raise HTTPException(status_code=404, detail="approval_not_found")
     return _row_to_response(row)
+
+
+def _row_to_pending(row: Any) -> BridgePendingApproval:
+    status = str(row["status"])
+    mapped: BridgeStatus
+    if status == "approved":
+        mapped = "approved"
+    elif status == "denied":
+        mapped = "rejected"
+    elif status == "expired":
+        mapped = "expired"
+    else:
+        mapped = "pending"
+
+    return BridgePendingApproval(
+        approval_id=str(row["id"]),
+        action_class=list(row["action_class"] or []),
+        status=mapped,
+        tier_assigned=str(row["risk_tier"]),
+        actor_sub=str(row["actor_sub"]),
+        actor_type=str(row["actor_type"]),
+        description=str(row["description"]),
+        requested_at=row["requested_at"],
+        expires_at=row["expires_at"],
+        overnight=bool(row["overnight"]),
+    )
 
 
 def _validate_submit(body: BridgeApprovalSubmitRequest, claims: BridgeClaims) -> None:

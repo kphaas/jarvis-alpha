@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from scripts import sweep_tls_cert_renewal as sweep
 
@@ -6,7 +6,7 @@ from scripts import sweep_tls_cert_renewal as sweep
 def test_parse_openssl_time_reads_gmt_dates():
     parsed = sweep.parse_openssl_time("notAfter=Jun 28 17:14:29 2026 GMT")
 
-    assert parsed == datetime(2026, 6, 28, 17, 14, 29, tzinfo=UTC)
+    assert parsed == datetime(2026, 6, 28, 17, 14, 29, tzinfo=timezone.utc)
 
 
 def test_should_renew_at_or_below_threshold():
