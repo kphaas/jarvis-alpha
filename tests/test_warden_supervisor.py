@@ -2,7 +2,9 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from brain.agents.warden import (
+    DEFAULT_MANAGED_AGENTS,
     SupervisedAgent,
+    managed_agent_ids,
     supervision_event,
     supervision_findings,
     supervision_signature,
@@ -92,3 +94,8 @@ def test_supervision_event_uses_security_alerts_and_recovery_message():
     assert event.title == "Warden security crew recovered"
     assert event.severity == "info"
     assert event.channel_key == "security_alerts"
+
+
+def test_warden_default_managed_agents_include_ledger():
+    assert "ledger" in DEFAULT_MANAGED_AGENTS
+    assert managed_agent_ids({}) == DEFAULT_MANAGED_AGENTS

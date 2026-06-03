@@ -707,7 +707,14 @@ async def warden_status(request: Request):
     from brain.services import unifi_client
 
     check_scopes(request, "security.read", "security_read")
-    managed_ids = ["warden", "porchlight", "keyturner", "network_watchdog", "tripwire"]
+    managed_ids = [
+        "warden",
+        "porchlight",
+        "keyturner",
+        "network_watchdog",
+        "tripwire",
+        "ledger",
+    ]
     pool = get_pool()
     async with platform_admin_connection(
         source="http", audit_actor="security_warden_status", pool=pool

@@ -27,6 +27,10 @@ function roleLabel(value: unknown): string {
   return value.replaceAll('_', ' ')
 }
 
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
 export function WardenTab({
   border, subtle, fg, muted, wardenStatus, loadWarden, errWarden,
 }: WardenTabProps) {
@@ -164,6 +168,32 @@ export function WardenTab({
                 {agent.agent_id === 'tripwire' && (
                   <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs font-mono text-amber-300">
                     Owns honeypot trap monitoring and alert escalation.
+                  </div>
+                )}
+                {agent.agent_id === 'ledger' && (
+                  <div className="mt-3 rounded-xl border border-violet-500/20 bg-violet-500/10 px-3 py-2 text-xs font-mono text-violet-300">
+                    Packages security events, access changes, Cloudflare drift, and key rotations into tamper-evident reports.
+                  </div>
+                )}
+                {stringList(agent.metadata.capabilities).length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {stringList(agent.metadata.capabilities).map((capability) => (
+                      <span key={capability} className={`rounded border px-2 py-1 text-[10px] font-mono ${muted}`}>
+                        {capability.replaceAll('_', ' ')}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {stringList(agent.metadata.planned_skills).length > 0 && (
+                  <div className="mt-3">
+                    <p className={`mb-1 text-[10px] font-mono uppercase ${muted}`}>saved skills</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {stringList(agent.metadata.planned_skills).map((skill) => (
+                        <span key={skill} className="rounded border border-sky-500/20 bg-sky-500/10 px-2 py-1 text-[10px] font-mono text-sky-300">
+                          {skill}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
