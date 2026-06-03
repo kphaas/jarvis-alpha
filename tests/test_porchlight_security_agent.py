@@ -557,6 +557,55 @@ def test_postgres_hba_safety_passes_without_broad_trust():
     assert result.metadata["trust_rule_count"] == 0
 
 
+def test_run_psql_uses_password_auth_for_local_jarvisbrain(monkeypatch):
+    captured = {}
+
+    def fake_run_command(args, timeout=30, input_text=None, env=None):
+        captured["args"] = args
+        captured["input_text"] = input_text
+        captured["env"] = env
+        return porchlight.CommandResult(0, "ok", "")
+
+    monkeypatch.setenv("JARVIS_NODE", "brain")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "postgres-secret")
+    monkeypatch.setattr(porchlight, "PSQL_USER", "jarvisbrain")
+    monkeypatch.setattr(porchlight, "run_command", fake_run_command)
+
+    result = porchlight.run_psql("SELECT 1;")
+
+    assert result.returncode == 0
+    assert captured["input_text"] == "SELECT 1;"
+    assert captured["args"][1:3] == ["-h", "localhost"]
+    assert "postgres-secret" not in captured["args"]
+    assert captured["env"]["PGPASSWORD"] == "postgres-secret"
+
+
+def test_run_psql_remote_sources_brain_secret_without_embedding_password(monkeypatch):
+    captured = {}
+
+    def fake_run_command(args, timeout=30, input_text=None, env=None):
+        captured["args"] = args
+        captured["input_text"] = input_text
+        captured["env"] = env
+        return porchlight.CommandResult(0, "ok", "")
+
+    monkeypatch.delenv("JARVIS_NODE", raising=False)
+    monkeypatch.setattr(porchlight, "_postgres_password", lambda: None)
+    monkeypatch.setattr(porchlight.socket, "gethostname", lambda: "macbook-air")
+    monkeypatch.setattr(porchlight, "PSQL_USER", "jarvisbrain")
+    monkeypatch.setattr(porchlight, "run_command", fake_run_command)
+
+    result = porchlight.run_psql("SELECT 1;")
+
+    assert result.returncode == 0
+    remote_command = captured["args"][-1]
+    assert "source ~/jarvis/.secrets" in remote_command
+    assert 'PGPASSWORD="$POSTGRES_PASSWORD"' in remote_command
+    assert " -h localhost " in remote_command
+    assert "postgres-secret" not in remote_command
+    assert captured["env"] is None
+
+
 def test_cloudflare_policy_drift_warns_without_api_credentials(monkeypatch):
     monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
     monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)

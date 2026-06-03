@@ -30,6 +30,19 @@ DB="${DB:-jarvis_alpha}"
 MIGRATIONS_DIR="${HOME}/jarvis-alpha/brain/db/migrations"
 ADVISORY_LOCK_KEY=2026040701  # Arbitrary 64-bit int — must be stable across runs
 
+if [[ -f "${HOME}/jarvis/.secrets" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "${HOME}/jarvis/.secrets"
+  set +a
+fi
+
+PSQL_CONN_ARGS=(-d "$DB")
+if [[ -n "${POSTGRES_PASSWORD:-}" ]]; then
+  export PGPASSWORD="$POSTGRES_PASSWORD"
+  PSQL_CONN_ARGS=(-h localhost -U jarvisbrain -d "$DB")
+fi
+
 # TD-X40 backfill mode — opt-in path to record on-disk migrations as
 # already-applied without executing them. Use when bootstrapping a fresh
 # DB from a SQL dump where objects already exist.
@@ -72,13 +85,13 @@ error_box() {
 # Run a SQL command locally. Returns stdout. Aborts on non-zero.
 psql_exec() {
   local sql="$1"
-  "$PSQL_PATH" -d "$DB" -X -A -t -v ON_ERROR_STOP=1 -c "$sql"
+  "$PSQL_PATH" "${PSQL_CONN_ARGS[@]}" -X -A -t -v ON_ERROR_STOP=1 -c "$sql"
 }
 
 # Apply a SQL file locally. Returns nothing. Aborts on non-zero.
 psql_apply_file() {
   local file="$1"
-  "$PSQL_PATH" -d "$DB" -X -v ON_ERROR_STOP=1 -1 -f "$file"
+  "$PSQL_PATH" "${PSQL_CONN_ARGS[@]}" -X -v ON_ERROR_STOP=1 -1 -f "$file"
 }
 
 # ── Pre-flight ────────────────────────────────────────────
@@ -96,7 +109,7 @@ if [[ ! -d "$MIGRATIONS_DIR" ]]; then
 fi
 
 # Verify local psql connectivity
-if ! "$PSQL_PATH" -d "$DB" -X -A -t -c "SELECT 1;" >/dev/null 2>&1; then
+if ! "$PSQL_PATH" "${PSQL_CONN_ARGS[@]}" -X -A -t -c "SELECT 1;" >/dev/null 2>&1; then
   echo "❌ Cannot connect to local Postgres database: $DB"
   exit 1
 fi
