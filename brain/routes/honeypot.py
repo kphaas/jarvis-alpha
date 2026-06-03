@@ -8,25 +8,99 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from jarvis_common.logging_config import get_logger
 
+from brain.agents.events import AgentEvent, emit_agent_event
 from brain.db.pool import get_pool
 
 logger = get_logger("alpha_brain")
 honeypot_router = APIRouter(tags=["honeypot"])
+TRIPWIRE_AGENT_ID = "tripwire"
+TRIPWIRE_EVENT_TYPE = "honeypot.hit"
+TRIPWIRE_NOTIFY_WINDOW = "15 minutes"
 
 
 async def _persist_event(request: Request, trap_path: str):
     pool = get_pool()
+    source_ip = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "") or ""
+    should_notify = False
     async with pool.acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO alpha_honeypot_events (trap_path, source_ip, method, user_agent, headers)
-            VALUES ($1, $2, $3, $4, $5::jsonb)
-            """,
+        async with conn.transaction():
+            await conn.execute(
+                """
+                INSERT INTO alpha_honeypot_events
+                    (trap_path, source_ip, method, user_agent, headers)
+                VALUES ($1, $2, $3, $4, $5::jsonb)
+                """,
+                trap_path,
+                source_ip,
+                request.method,
+                user_agent,
+                json.dumps(dict(request.headers)),
+            )
+            recent_match = await conn.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM public.alpha_agent_events
+                    WHERE agent_id = $1
+                      AND event_type = $2
+                      AND payload->>'trap_path' = $3
+                      AND payload->>'source_ip' = $4
+                      AND created_at >= NOW() - INTERVAL '15 minutes'
+                )
+                """,
+                TRIPWIRE_AGENT_ID,
+                TRIPWIRE_EVENT_TYPE,
+                trap_path,
+                source_ip,
+            )
+            should_notify = not bool(recent_match)
+    await _emit_tripwire_event(
+        trap_path=trap_path,
+        source_ip=source_ip,
+        method=request.method,
+        user_agent=user_agent,
+        should_notify=should_notify,
+        pool=pool,
+    )
+
+
+async def _emit_tripwire_event(
+    *,
+    trap_path: str,
+    source_ip: str,
+    method: str,
+    user_agent: str,
+    should_notify: bool,
+    pool,
+) -> None:
+    try:
+        await emit_agent_event(
+            AgentEvent(
+                agent_id=TRIPWIRE_AGENT_ID,
+                event_type=TRIPWIRE_EVENT_TYPE,
+                title="Tripwire honeypot hit",
+                message=f"{method} {trap_path} from {source_ip}",
+                severity="warning",
+                channel_key="security_alerts",
+                notify=should_notify,
+                payload={
+                    "trap_path": trap_path,
+                    "source_ip": source_ip,
+                    "method": method,
+                    "user_agent": user_agent[:200],
+                    "notify_debounce_window": TRIPWIRE_NOTIFY_WINDOW,
+                },
+            ),
+            pool=pool,
+        )
+    except Exception as exc:
+        logger.error(
+            "TRIPWIRE_EVENT_FAILED path=%s ip=%s error=%s",
             trap_path,
-            request.client.host if request.client else "unknown",
-            request.method,
-            request.headers.get("user-agent", ""),
-            json.dumps(dict(request.headers)),
+            source_ip,
+            exc,
+            exc_info=True,
         )
 
 
