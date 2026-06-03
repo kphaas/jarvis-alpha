@@ -184,6 +184,18 @@ def network_events_from_snapshot(
             )
         )
 
+    tls = health.get("tls") or {}
+    if isinstance(tls, dict) and tls.get("public_key_pin_configured") is False:
+        events.append(
+            _event(
+                "network.unifi_tls_unpinned",
+                "UniFi TLS pin missing",
+                "Sweep detected UniFi TLS is verified without the expected public-key pin.",
+                "warning",
+                {"tls": tls},
+            )
+        )
+
     previous_keys = set(previous_metadata.get("last_client_keys") or [])
     current_keys = set(client_keys(clients))
     new_keys = sorted(current_keys - previous_keys)

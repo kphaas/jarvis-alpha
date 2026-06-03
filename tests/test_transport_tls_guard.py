@@ -1,9 +1,4 @@
-"""Guard runtime code against disabling TLS verification.
-
-Brain/Gateway runtime paths should verify HTTPS peers. The only current
-exception is Gateway's UniFi proxy because it talks to the local UDM Pro, which
-uses local/self-signed TLS until we install a pinned CA path for that appliance.
-"""
+"""Guard runtime code against disabling TLS verification."""
 
 from __future__ import annotations
 
@@ -12,10 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCAN_ROOTS = ("brain", "gateway", "common")
-ALLOWLIST = {
-    ("gateway/routes/unifi.py", "curl -sk"),
-    ("gateway/routes/unifi.py", '"-sk"'),
-}
+ALLOWLIST: set[tuple[str, str]] = set()
 
 PATTERNS = {
     "httpx verify=False": re.compile(r"verify\s*=\s*False"),

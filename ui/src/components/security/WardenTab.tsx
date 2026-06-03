@@ -60,7 +60,7 @@ export function WardenTab({
             </div>
             <div className={`mt-4 flex items-center gap-2 text-xs font-mono ${muted}`}>
               <Wrench className="w-3.5 h-3.5" />
-              Next hardening: {wardenStatus.next_hardening.replaceAll('_', ' ')}
+              Active hardening: {(wardenStatus.active_hardening ?? wardenStatus.next_hardening).replaceAll('_', ' ')}
             </div>
           </div>
         )}
@@ -99,7 +99,7 @@ export function WardenTab({
                 </div>
                 {agent.agent_id === 'network_watchdog' && (
                   <div className="mt-3 rounded-xl border border-sky-500/20 bg-sky-500/10 px-3 py-2 text-xs font-mono text-sky-300">
-                    Owns UniFi cert pinning next.
+                    Monitors UniFi TLS pinning.
                   </div>
                 )}
               </div>

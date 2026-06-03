@@ -29,6 +29,7 @@ def test_unifi_payload_models_accept_gateway_shapes():
             "reachable": True,
             "status": "ok",
             "wan_status": "up",
+            "tls": {"verification": "ca_cert+public_key_pin"},
             "ap_count": 2,
             "switch_count": 1,
             "gateway_count": 1,
@@ -38,6 +39,7 @@ def test_unifi_payload_models_accept_gateway_shapes():
     assert wan.wan_status == "up"
     assert clients.clients[0].stable_key == "aa:bb:cc:00:00:01"
     assert health.ap_count == 2
+    assert health.tls == {"verification": "ca_cert+public_key_pin"}
 
 
 def test_network_watchdog_detects_wan_degraded_and_new_clients():
@@ -76,6 +78,26 @@ def test_network_watchdog_does_not_alert_new_clients_without_baseline():
     )
 
     assert events == []
+
+
+def test_network_watchdog_detects_unifi_tls_pin_drift():
+    events = network_events_from_snapshot(
+        {
+            "wan": {"wan_status": "up"},
+            "clients": {"clients": []},
+            "health": {
+                "status": "ok",
+                "tls": {
+                    "verification": "ca_cert",
+                    "public_key_pin_configured": False,
+                },
+            },
+        },
+        {},
+    )
+
+    assert [event.event_type for event in events] == ["network.unifi_tls_unpinned"]
+    assert events[0].severity == "warning"
 
 
 def test_client_keys_prefers_stable_mac_and_dedupes():

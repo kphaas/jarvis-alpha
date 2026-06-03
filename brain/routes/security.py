@@ -764,6 +764,7 @@ async def warden_status(request: Request):
             "active": sum(1 for agent in crew if agent["status"] == "active"),
             "attention": attention,
         },
+        "active_hardening": "unifi_cert_pinning",
         "next_hardening": "unifi_cert_pinning",
     }
 
