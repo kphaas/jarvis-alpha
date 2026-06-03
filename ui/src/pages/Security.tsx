@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import {
-  Shield, Key, Globe, Lock, AlertTriangle,
+  Shield, Key, Globe, Radio, AlertTriangle,
   RotateCw, Bug, Plug, ShieldCheck,
 } from "lucide-react";
 import { apiJson } from "../lib/apiFetch";
@@ -14,19 +14,19 @@ import type {
   WardenStatus,
 } from "../types/security";
 import {
-  OverviewTab, IdentityTab, NetworkTab, CertsTab,
+  OverviewTab, IdentityTab, NetworkTab, SweepTab,
   KeysTab, WardenTab, PorchlightTab, HoneypotTab, McpTab, EventsTab,
   computePostureScore, scoreColor, C_SCORE,
 } from "../components/security";
 
-const TABS = ["Overview", "Identity", "Network", "Certs", "Warden", "Keyturner", "Porchlight", "Tripwire", "MCP", "Events"] as const;
+const TABS = ["Overview", "Identity", "Network", "Sweep", "Warden", "Keyturner", "Porchlight", "Tripwire", "MCP", "Events"] as const;
 type TabId = (typeof TABS)[number];
 
 const TAB_ICONS: Record<string, typeof Shield> = {
   Overview: Shield,
   Identity: Key,
   Network: Globe,
-  Certs: Lock,
+  Sweep: Radio,
   Warden: ShieldCheck,
   Keyturner: RotateCw,
   Porchlight: Shield,
@@ -99,6 +99,8 @@ export default function Security() {
   const [errPorchlight, setErrPorchlight] = useState(false);
   const [runPorchlightLoading, setRunPorchlightLoading] = useState(false);
   const [runPorchlightError, setRunPorchlightError] = useState<string | null>(null);
+  const [runSweepLoading, setRunSweepLoading] = useState(false);
+  const [runSweepError, setRunSweepError] = useState<string | null>(null);
 
   const mounted = useRef(true);
   const fetchRunning = useRef(false);
@@ -181,6 +183,22 @@ export default function Security() {
       setRunPorchlightError(e instanceof Error ? e.message : "Porchlight run failed");
     } finally {
       setRunPorchlightLoading(false);
+    }
+  }, [fetchAll]);
+
+  const handleRunSweep = useCallback(async () => {
+    setRunSweepLoading(true);
+    setRunSweepError(null);
+    try {
+      const result = await apiJson<AgentManualRunResponse>("/v1/agents/network_watchdog/run", { method: "POST" });
+      if (!result.executed) {
+        setRunSweepError(result.skipped_reason ?? result.error_text ?? "Sweep did not run");
+      }
+      await fetchAll(false);
+    } catch (e) {
+      setRunSweepError(e instanceof Error ? e.message : "Sweep run failed");
+    } finally {
+      setRunSweepLoading(false);
     }
   }, [fetchAll]);
 
@@ -299,10 +317,13 @@ export default function Security() {
         />
       )}
 
-      {activeTab === "Certs" && (
-        <CertsTab
+      {activeTab === "Sweep" && (
+        <SweepTab
           {...theme_props}
           certs={certs} sortedCerts={sortedCerts} loadCerts={loadCerts} errCerts={errCerts}
+          wardenStatus={wardenStatus} loadWarden={loadWarden} errWarden={errWarden}
+          runLoading={runSweepLoading} runError={runSweepError}
+          onRun={() => void handleRunSweep()}
         />
       )}
 

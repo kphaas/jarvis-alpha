@@ -1,7 +1,7 @@
 export { OverviewTab } from './OverviewTab'
 export { IdentityTab } from './IdentityTab'
 export { NetworkTab } from './NetworkTab'
-export { CertsTab } from './CertsTab'
+export { SweepTab, CertsTab } from './CertsTab'
 export { KeysTab } from './KeysTab'
 export { WardenTab } from './WardenTab'
 export { PorchlightTab } from './PorchlightTab'
