@@ -238,7 +238,7 @@ def build_warden_posture_score(
             control_id="tls.service_certs",
             title="Service certificate freshness",
             category="TLS and certificates",
-            owner_agent="porchlight",
+            owner_agent="sweep",
             status=cert_status,
             weight=8,
             earned=cert_fraction * 8,

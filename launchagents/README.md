@@ -16,6 +16,7 @@ Category prefixes in use:
 |---|---|---|
 | `service` | Core runtime services | `com.jarvis.alpha.service.brain` (target) |
 | `rotate` | Scheduled token/key rotation | `com.jarvis.alpha.rotate.brain_service` |
+| `sweep` | Sweep-owned security checks/remediation | `com.jarvis.alpha.sweep-cert-renewal` |
 | `power` | Telemetry — hardware power sampling | `com.jarvis.alpha.power.brain` |
 | `observability` | Log shipping / aggregation | `com.jarvis.alpha.fluentbit`, `com.jarvis.alpha.loki` (target rename: `observability.fluentbit` / `observability.loki`) |
 
@@ -40,6 +41,7 @@ These are deployed and working. Rename to categorical form is tracked as **TD-11
 | `com.jarvis.alpha.rotate.endpoint.plist` | Endpoint | Scheduled |
 | `com.jarvis.alpha.rotate.gateway.plist` | Gateway | Scheduled |
 | `com.jarvis.alpha.rotate.sandbox.plist` | Sandbox | Scheduled |
+| `com.jarvis.alpha.sweep-cert-renewal.plist` | Brain | Scheduled — Sweep TLS certificate renewal across service nodes |
 | `com.jarvis.alpha.power.brain.plist` | Brain | KeepAlive — via `scripts/install_power_sampler.sh` |
 | `com.jarvis.alpha.power.gateway.plist` | Gateway | KeepAlive — via `scripts/install_power_sampler.sh` |
 | `com.jarvis.alpha.power.endpoint.plist` | Endpoint | KeepAlive — via `scripts/install_power_sampler.sh` |

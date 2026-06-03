@@ -87,6 +87,7 @@ SECURITY_LAUNCHAGENTS: dict[str, set[str]] = {
         "com.jarvis.alpha.rotate.buddy",
         "com.jarvis.alpha.pg_backup",
         "com.jarvis.alpha.gmail-health",
+        "com.jarvis.alpha.sweep-cert-renewal",
     },
     "endpoint": {"com.jarvis.alpha.rotate.endpoint"},
     "gateway": {"com.jarvis.alpha.rotate.gateway"},
