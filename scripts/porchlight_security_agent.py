@@ -17,6 +17,7 @@ import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlencode, urlparse
@@ -67,6 +68,18 @@ ROUTES_DIR = REPO_ROOT / "brain" / "routes"
 SECRET_VERIFY_MAX_AGE_HOURS = 36
 JWT_VERIFY_MIN_HOURS = 24
 DEFAULT_CLOUDFLARE_EXPECTED_ACTORS = {"kennethphaas@gmail.com"}
+DEFAULT_CLOUDFLARE_FORBIDDEN_HOST_PATTERNS = (
+    "alpha.*",
+    "brain.*",
+    "jarvis-brain.*",
+    "*.jarvis-brain.*",
+)
+DEFAULT_CLOUDFLARE_FORBIDDEN_APP_TERMS = (
+    "alpha",
+    "brain",
+    "jarvis brain",
+    "jarvis-brain",
+)
 
 SECURITY_LAUNCHAGENTS: dict[str, set[str]] = {
     "brain": {
@@ -654,6 +667,8 @@ def _verify_family_smoke_auth(
     spec: dict[str, object],
     pin: str,
     *,
+    member_name: str = "smoke_test_parent",
+    expected_role: str = "parent",
     command: Callable[..., CommandResult] = run_command,
 ) -> tuple[str, str]:
     restarts = spec.get("restarts")
@@ -681,7 +696,7 @@ def _verify_family_smoke_auth(
             "-H",
             "Content-Type: application/json",
             "-d",
-            json.dumps({"name": "smoke_test_parent", "pin": pin}),
+            json.dumps({"name": member_name, "pin": pin}),
             auth_url,
         ],
         timeout=25,
@@ -692,9 +707,12 @@ def _verify_family_smoke_auth(
         payload = json.loads(result.stdout or "{}")
     except json.JSONDecodeError:
         return "failed", "Family smoke auth returned invalid JSON"
-    if payload.get("token") and payload.get("role") == "parent":
-        return "passed", "Family smoke auth passed for synthetic parent"
-    return "failed", "Family smoke auth did not return a synthetic parent token"
+    if payload.get("token") and payload.get("role") == expected_role:
+        return "passed", f"Family smoke auth passed for synthetic {expected_role}"
+    return (
+        "failed",
+        f"Family smoke auth did not return a synthetic {expected_role} token",
+    )
 
 
 def _verify_secret_live(
@@ -752,6 +770,23 @@ def _verify_secret_live(
                 "Family smoke PIN is not available to Porchlight; API health is reachable",
             )
         return _verify_family_smoke_auth(spec, pin, command=command)
+    if verify_type == "family_external_smoke":
+        status, detail = _verify_health_url(spec, command=command)
+        if status == "failed":
+            return status, detail
+        pin = _secret_value_for_probe(name, spec)
+        if not pin:
+            return (
+                "warning",
+                "Family external smoke PIN is not available to Porchlight; API health is reachable",
+            )
+        return _verify_family_smoke_auth(
+            spec,
+            pin,
+            member_name="smoke_test_external",
+            expected_role="external",
+            command=command,
+        )
     return "skipped", f"{verify_type} is side-effecting or not implemented"
 
 
@@ -1102,6 +1137,39 @@ def _cloudflare_expected_actors() -> set[str]:
     return set(DEFAULT_CLOUDFLARE_EXPECTED_ACTORS)
 
 
+def _csv_env_set(name: str) -> set[str]:
+    configured = os.getenv(name, "").strip()
+    if not configured:
+        return set()
+    return {item.strip().lower() for item in configured.split(",") if item.strip()}
+
+
+def _cloudflare_expected_policy_emails() -> set[str]:
+    return _csv_env_set("PORCHLIGHT_CLOUDFLARE_EXPECTED_POLICY_EMAILS")
+
+
+def _cloudflare_allowed_public_hosts() -> set[str]:
+    return _csv_env_set("PORCHLIGHT_CLOUDFLARE_ALLOWED_PUBLIC_HOSTS")
+
+
+def _cloudflare_forbidden_host_patterns() -> tuple[str, ...]:
+    configured = os.getenv("PORCHLIGHT_CLOUDFLARE_FORBIDDEN_HOST_PATTERNS", "").strip()
+    if configured:
+        return tuple(
+            item.strip().lower() for item in configured.split(",") if item.strip()
+        )
+    return DEFAULT_CLOUDFLARE_FORBIDDEN_HOST_PATTERNS
+
+
+def _cloudflare_forbidden_app_terms() -> tuple[str, ...]:
+    configured = os.getenv("PORCHLIGHT_CLOUDFLARE_FORBIDDEN_APP_TERMS", "").strip()
+    if configured:
+        return tuple(
+            item.strip().lower() for item in configured.split(",") if item.strip()
+        )
+    return DEFAULT_CLOUDFLARE_FORBIDDEN_APP_TERMS
+
+
 def _cloudflare_api_get(
     path: str,
     *,
@@ -1185,6 +1253,57 @@ def _policy_broad_rule_details(policy: dict) -> list[str]:
     return details
 
 
+def _policy_email_values(policy: dict) -> set[str]:
+    emails: set[str] = set()
+    for rule_key in ("include", "require"):
+        rules = policy.get(rule_key)
+        if not isinstance(rules, list):
+            continue
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            email_rule = rule.get("email")
+            if isinstance(email_rule, dict):
+                email = email_rule.get("email")
+                if isinstance(email, str) and email.strip():
+                    emails.add(email.strip().lower())
+            if isinstance(email_rule, str) and email_rule.strip():
+                emails.add(email_rule.strip().lower())
+            emails_rule = rule.get("emails")
+            if isinstance(emails_rule, list):
+                emails.update(
+                    item.strip().lower()
+                    for item in emails_rule
+                    if isinstance(item, str) and item.strip()
+                )
+    return emails
+
+
+def _forbidden_cloudflare_apps(apps: list[dict]) -> list[str]:
+    allowed_hosts = _cloudflare_allowed_public_hosts()
+    host_patterns = _cloudflare_forbidden_host_patterns()
+    app_terms = _cloudflare_forbidden_app_terms()
+    forbidden: list[str] = []
+    for app in apps:
+        if not isinstance(app, dict):
+            continue
+        name = str(app.get("name") or app.get("id") or "unknown")
+        name_lc = name.lower()
+        hostnames = _app_hostnames(app)
+        blocked_hosts = [
+            host
+            for host in sorted(hostnames)
+            if host not in allowed_hosts
+            and any(fnmatch(host, pattern) for pattern in host_patterns)
+        ]
+        term_hit = next((term for term in app_terms if term in name_lc), None)
+        if blocked_hosts:
+            forbidden.append(f"{name}: {', '.join(blocked_hosts)}")
+        elif term_hit and not (hostnames and hostnames <= allowed_hosts):
+            forbidden.append(f"{name}: app name contains {term_hit!r}")
+    return forbidden
+
+
 def check_cloudflare_access_policy_drift(
     command: Callable[..., CommandResult] = run_command,
 ) -> CheckResult:
@@ -1215,9 +1334,26 @@ def check_cloudflare_access_policy_drift(
         )
 
     apps = payload.get("result") if isinstance(payload.get("result"), list) else []
+    forbidden_apps = _forbidden_cloudflare_apps(apps)
+    if forbidden_apps:
+        return CheckResult(
+            name="cloudflare_access_policy_drift",
+            status="fail",
+            severity="critical",
+            summary="Forbidden Alpha/Brain-style Cloudflare Access app exposure detected.",
+            detail=", ".join(forbidden_apps[:8]),
+            metadata={
+                "expected_hosts": expected_hosts,
+                "forbidden_apps": forbidden_apps,
+                "allowed_public_hosts": sorted(_cloudflare_allowed_public_hosts()),
+            },
+        )
+
     matched = []
     risky_policies: list[str] = []
     no_policy_apps: list[str] = []
+    expected_policy_emails = _cloudflare_expected_policy_emails()
+    matched_policy_emails: set[str] = set()
     for app in apps:
         if not isinstance(app, dict):
             continue
@@ -1244,6 +1380,7 @@ def check_cloudflare_access_policy_drift(
         for policy in policies:
             if not isinstance(policy, dict):
                 continue
+            matched_policy_emails.update(_policy_email_values(policy))
             action = str(policy.get("decision") or policy.get("action") or "").lower()
             policy_name = str(policy.get("name") or policy.get("id") or "unknown")
             if action == "bypass":
@@ -1279,13 +1416,41 @@ def check_cloudflare_access_policy_drift(
                 "no_policy_apps": no_policy_apps,
             },
         )
+    if expected_policy_emails:
+        missing = sorted(expected_policy_emails - matched_policy_emails)
+        unexpected = sorted(matched_policy_emails - expected_policy_emails)
+        if missing or unexpected:
+            details = []
+            if missing:
+                details.append("missing expected email(s): " + ", ".join(missing[:8]))
+            if unexpected:
+                details.append("unexpected email(s): " + ", ".join(unexpected[:8]))
+            return CheckResult(
+                name="cloudflare_access_policy_drift",
+                status="fail",
+                severity="critical",
+                summary="Cloudflare Access policy membership drift needs review.",
+                detail="; ".join(details),
+                metadata={
+                    "expected_hosts": expected_hosts,
+                    "expected_policy_emails_count": len(expected_policy_emails),
+                    "matched_policy_emails_count": len(matched_policy_emails),
+                    "missing_policy_emails": missing,
+                    "unexpected_policy_emails": unexpected,
+                },
+            )
 
     return CheckResult(
         name="cloudflare_access_policy_drift",
         status="pass",
         severity="info",
         summary=f"Cloudflare Access policy shape is safe for {len(matched)} protected app(s).",
-        metadata={"expected_hosts": expected_hosts, "matched": matched},
+        metadata={
+            "expected_hosts": expected_hosts,
+            "matched": matched,
+            "expected_policy_emails_count": len(expected_policy_emails),
+            "matched_policy_emails_count": len(matched_policy_emails),
+        },
     )
 
 
