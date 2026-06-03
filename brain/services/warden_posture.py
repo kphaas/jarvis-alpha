@@ -307,9 +307,9 @@ def build_warden_posture_score(
     controls.append(
         posture_control(
             control_id="monitoring.honeypot",
-            title="Honeypot activity",
+            title="Tripwire honeypot activity",
             category="Monitoring and response",
-            owner_agent="porchlight",
+            owner_agent="tripwire",
             status=honeypot_status,
             weight=4,
             earned=honeypot_earned,
