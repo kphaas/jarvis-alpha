@@ -204,6 +204,131 @@ def _load_rotation_config() -> dict:
     return data
 
 
+def _keyturner_secret_class(name: str, spec: dict, verify_type: str) -> str:
+    secret_class = "db_password" if spec.get("requires_alter_role") else "secret"
+    if name.endswith("_API_KEY"):
+        secret_class = "api_key"
+    elif verify_type == "jwt_exp" or name.startswith("ALPHA_SERVICE_TOKEN"):
+        secret_class = "service_jwt"
+    elif name.endswith("_TOKEN"):
+        secret_class = "service_token"
+    if "GMAIL_REFRESH_TOKEN" in name:
+        secret_class = "oauth_refresh_token"
+    elif "GMAIL_CLIENT_SECRET" in name:
+        secret_class = "oauth_client_secret"
+    elif name.startswith("CLOUDFLARE_API"):
+        secret_class = "cloudflare_api_token"
+    elif name.startswith("CLOUDFLARE_TUNNEL"):
+        secret_class = "cloudflare_tunnel_token"
+    elif name.startswith("MATTERMOST_WEBHOOK"):
+        secret_class = "webhook_url"
+    elif name.startswith("MATTERMOST_"):
+        secret_class = "mattermost_token"
+    elif name.startswith("PUSHOVER_"):
+        secret_class = "pushover_token"
+    elif name in {"ALPHA_PIN", "JARVIS_FAMILY_SMOKE_PIN"}:
+        secret_class = "admin_pin"
+    return secret_class
+
+
+def _keyturner_dry_run_status(secret: dict) -> str:
+    if secret["status"] in {"failed", "untracked"}:
+        return "blocked"
+    rotation_path = str(secret.get("rotation_path") or "")
+    if secret.get("requires_approval"):
+        return "approval_required"
+    if secret.get("requires_console_rotation") or "_console" in rotation_path:
+        return "console_required"
+    if "manual" in rotation_path or "runbook" in rotation_path:
+        return "manual_runbook"
+    return "ready"
+
+
+def build_keyturner_summaries(secrets: list[dict]) -> dict[str, object]:
+    oauth_items = [
+        {
+            "secret_name": item["secret_name"],
+            "status": item["status"],
+            "verify_status": item.get("verify_status"),
+            "days_until_due": item.get("days_until_due"),
+        }
+        for item in secrets
+        if str(item.get("secret_class") or "").startswith("oauth_")
+    ]
+    oauth_attention = [
+        item
+        for item in oauth_items
+        if item["status"] in {"due_soon", "due", "failed", "untracked"}
+        or item.get("verify_status") == "failed"
+    ]
+
+    dry_run_items = []
+    for item in secrets:
+        dry_status = _keyturner_dry_run_status(item)
+        dry_run_items.append(
+            {
+                "secret_name": item["secret_name"],
+                "status": dry_status,
+                "rotation_path": item.get("rotation_path"),
+                "reason": (
+                    "Requires approval"
+                    if dry_status == "approval_required"
+                    else "Requires provider console"
+                    if dry_status == "console_required"
+                    else "Manual runbook"
+                    if dry_status == "manual_runbook"
+                    else "Secret health blocks dry-run"
+                    if dry_status == "blocked"
+                    else "Ready for scripted dry-run"
+                ),
+            }
+        )
+
+    due_items = [
+        {
+            "secret_name": item["secret_name"],
+            "status": item["status"],
+            "days_until_due": item.get("days_until_due"),
+            "next_due_at": item.get("next_due_at"),
+        }
+        for item in secrets
+        if item.get("days_until_due") is not None
+    ]
+    due_items.sort(key=lambda item: int(item["days_until_due"]))
+    return {
+        "oauth_health": {
+            "managed": len(oauth_items),
+            "healthy": len(oauth_items) - len(oauth_attention),
+            "attention": len(oauth_attention),
+            "items": oauth_items,
+        },
+        "rotation_dry_run": {
+            "runnable": sum(1 for item in dry_run_items if item["status"] == "ready"),
+            "approval_gated": sum(
+                1 for item in dry_run_items if item["status"] == "approval_required"
+            ),
+            "console_required": sum(
+                1 for item in dry_run_items if item["status"] == "console_required"
+            ),
+            "manual_runbook": sum(
+                1 for item in dry_run_items if item["status"] == "manual_runbook"
+            ),
+            "blocked": sum(1 for item in dry_run_items if item["status"] == "blocked"),
+            "items": dry_run_items,
+        },
+        "forecast": {
+            "due": sum(1 for item in due_items if int(item["days_until_due"]) <= 0),
+            "next_7_days": sum(
+                1 for item in due_items if 0 < int(item["days_until_due"]) <= 7
+            ),
+            "next_30_days": sum(
+                1 for item in due_items if 0 < int(item["days_until_due"]) <= 30
+            ),
+            "items": due_items[:12],
+        },
+    }
+
+
 async def _safe_payload(label: str, coro):
     try:
         return await coro
@@ -619,29 +744,7 @@ async def keyturner_status(request: Request):
             if isinstance(spec.get("verify"), dict)
             else ""
         )
-        secret_class = "db_password" if spec.get("requires_alter_role") else "secret"
-        if name.endswith("_API_KEY"):
-            secret_class = "api_key"
-        elif verify_type == "jwt_exp" or name.startswith("ALPHA_SERVICE_TOKEN"):
-            secret_class = "service_jwt"
-        elif name.endswith("_TOKEN"):
-            secret_class = "service_token"
-        if "GMAIL_REFRESH_TOKEN" in name:
-            secret_class = "oauth_refresh_token"
-        elif "GMAIL_CLIENT_SECRET" in name:
-            secret_class = "oauth_client_secret"
-        elif name.startswith("CLOUDFLARE_API"):
-            secret_class = "cloudflare_api_token"
-        elif name.startswith("CLOUDFLARE_TUNNEL"):
-            secret_class = "cloudflare_tunnel_token"
-        elif name.startswith("MATTERMOST_WEBHOOK"):
-            secret_class = "webhook_url"
-        elif name.startswith("MATTERMOST_"):
-            secret_class = "mattermost_token"
-        elif name.startswith("PUSHOVER_"):
-            secret_class = "pushover_token"
-        elif name in {"ALPHA_PIN", "JARVIS_FAMILY_SMOKE_PIN"}:
-            secret_class = "admin_pin"
+        secret_class = _keyturner_secret_class(name, spec, verify_type)
 
         if row is None:
             status = "untracked"
@@ -670,6 +773,10 @@ async def keyturner_status(request: Request):
                 "secret_class": secret_class,
                 "rotation_days": int(spec.get("rotation_days") or 0),
                 "requires_approval": bool(spec.get("requires_alter_role")),
+                "requires_console_rotation": bool(
+                    spec.get("requires_console_rotation")
+                ),
+                "rotation_path": spec.get("rotation_path"),
                 "status": status,
                 "last_rotated_at": last_rotated_at,
                 "next_due_at": next_due_at,
@@ -693,6 +800,7 @@ async def keyturner_status(request: Request):
         "display_name": "Keyturner",
         "mode": "approval_gated",
         "counts": counts,
+        **build_keyturner_summaries(secrets),
         "secrets": secrets,
     }
 

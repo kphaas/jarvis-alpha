@@ -65,6 +65,8 @@ DEFAULT_PORCHLIGHT_SSH_KEY = Path.home() / ".ssh" / "porchlight_monitor"
 NODE_MAP_PATH = SCRIPT_DIR / "node_ssh_map.json"
 SECRET_ROTATION_CONFIG = SCRIPT_DIR / "secrets_rotation.json"
 ROUTES_DIR = REPO_ROOT / "brain" / "routes"
+PYTHON_REQUIREMENTS = (REPO_ROOT / "requirements.txt",)
+UI_DIR = REPO_ROOT / "ui"
 SECRET_VERIFY_MAX_AGE_HOURS = 36
 JWT_VERIFY_MIN_HOURS = 24
 DEFAULT_CLOUDFLARE_EXPECTED_ACTORS = {"kennethphaas@gmail.com"}
@@ -80,6 +82,7 @@ DEFAULT_CLOUDFLARE_FORBIDDEN_APP_TERMS = (
     "jarvis brain",
     "jarvis-brain",
 )
+DEFAULT_GITHUB_BRANCH_PROTECTION_REPOS = ("kphaas/jarvis-alpha",)
 
 SECURITY_LAUNCHAGENTS: dict[str, set[str]] = {
     "brain": {
@@ -1799,6 +1802,373 @@ def check_cloudflare_audit_logs(
     )
 
 
+def _severity_counts() -> dict[str, int]:
+    return {"critical": 0, "high": 0, "medium": 0, "low": 0, "unknown": 0}
+
+
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _pip_audit_counts(payload: dict) -> dict[str, int]:
+    counts = _severity_counts()
+    for dependency in payload.get("dependencies") or []:
+        if not isinstance(dependency, dict):
+            continue
+        for vuln in dependency.get("vulns") or []:
+            if not isinstance(vuln, dict):
+                continue
+            aliases = [str(item).lower() for item in vuln.get("aliases") or []]
+            severity = str(vuln.get("severity") or "").lower()
+            if severity not in counts:
+                if any(item.startswith("ghsa-") for item in aliases):
+                    severity = "unknown"
+                else:
+                    severity = "unknown"
+            counts[severity] += 1
+    return counts
+
+
+def _npm_audit_counts(payload: dict) -> dict[str, int]:
+    counts = _severity_counts()
+    vulnerabilities = payload.get("vulnerabilities")
+    if isinstance(vulnerabilities, dict):
+        for item in vulnerabilities.values():
+            if not isinstance(item, dict):
+                continue
+            severity = str(item.get("severity") or "unknown").lower()
+            counts[severity if severity in counts else "unknown"] += 1
+        return counts
+
+    metadata = (
+        payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    )
+    vuln_meta = metadata.get("vulnerabilities")
+    if isinstance(vuln_meta, dict):
+        for severity in counts:
+            value = vuln_meta.get(severity)
+            if isinstance(value, int):
+                counts[severity] += value
+    return counts
+
+
+def _merge_counts(items: list[dict[str, int]]) -> dict[str, int]:
+    merged = _severity_counts()
+    for item in items:
+        for severity in merged:
+            merged[severity] += int(item.get(severity) or 0)
+    return merged
+
+
+def check_dependency_cve_scan(
+    command: Callable[..., CommandResult] = run_command,
+) -> CheckResult:
+    """Summarize Python/npm dependency vulnerability scanners without blocking if absent."""
+    scanner_results: list[dict[str, object]] = []
+    counts: list[dict[str, int]] = []
+    scanners_attempted = 0
+    scanners_available = 0
+
+    for requirements in PYTHON_REQUIREMENTS:
+        if not requirements.exists():
+            continue
+        scanners_attempted += 1
+        result = command(
+            [
+                sys.executable,
+                "-m",
+                "pip_audit",
+                "-r",
+                str(requirements),
+                "-f",
+                "json",
+            ],
+            timeout=120,
+        )
+        if not result.stdout.strip():
+            scanner_results.append(
+                {
+                    "scanner": "pip-audit",
+                    "target": _display_path(requirements),
+                    "available": False,
+                    "error": (result.stderr or "no output").strip()[:300],
+                }
+            )
+            continue
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            scanner_results.append(
+                {
+                    "scanner": "pip-audit",
+                    "target": _display_path(requirements),
+                    "available": False,
+                    "error": "invalid_json",
+                }
+            )
+            continue
+        scanners_available += 1
+        item_counts = _pip_audit_counts(payload)
+        counts.append(item_counts)
+        scanner_results.append(
+            {
+                "scanner": "pip-audit",
+                "target": _display_path(requirements),
+                "available": True,
+                "counts": item_counts,
+            }
+        )
+
+    if (UI_DIR / "package-lock.json").exists() or (
+        UI_DIR / "npm-shrinkwrap.json"
+    ).exists():
+        scanners_attempted += 1
+        result = command(
+            ["npm", "audit", "--json", "--omit=dev"],
+            timeout=120,
+            env={**os.environ, "npm_config_audit_level": "low"},
+        )
+        if not result.stdout.strip():
+            scanner_results.append(
+                {
+                    "scanner": "npm-audit",
+                    "target": "ui",
+                    "available": False,
+                    "error": (result.stderr or "no output").strip()[:300],
+                }
+            )
+        else:
+            try:
+                payload = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                scanner_results.append(
+                    {
+                        "scanner": "npm-audit",
+                        "target": "ui",
+                        "available": False,
+                        "error": "invalid_json",
+                    }
+                )
+            else:
+                scanners_available += 1
+                item_counts = _npm_audit_counts(payload)
+                counts.append(item_counts)
+                scanner_results.append(
+                    {
+                        "scanner": "npm-audit",
+                        "target": "ui",
+                        "available": True,
+                        "counts": item_counts,
+                    }
+                )
+
+    total = _merge_counts(counts)
+    metadata = {
+        "scanners_attempted": scanners_attempted,
+        "scanners_available": scanners_available,
+        "counts": total,
+        "scanners": scanner_results,
+    }
+    critical_high = total["critical"] + total["high"]
+    medium = total["medium"]
+    if critical_high:
+        return CheckResult(
+            name="dependency_cve_scan",
+            status="fail",
+            severity="high",
+            summary="Dependency vulnerability scanners found high or critical CVEs.",
+            detail=f"{total['critical']} critical, {total['high']} high, {medium} medium",
+            metadata=metadata,
+        )
+    if medium:
+        return CheckResult(
+            name="dependency_cve_scan",
+            status="warn",
+            severity="medium",
+            summary="Dependency vulnerability scanners found medium CVEs.",
+            detail=f"{medium} medium, {total['low']} low, {total['unknown']} unknown",
+            metadata=metadata,
+        )
+    if scanners_attempted and scanners_available == 0:
+        return CheckResult(
+            name="dependency_cve_scan",
+            status="warn",
+            severity="medium",
+            summary="Dependency vulnerability scan could not run on this node.",
+            detail="Install pip-audit and ensure npm is available for full Porchlight coverage.",
+            metadata=metadata,
+        )
+    return CheckResult(
+        name="dependency_cve_scan",
+        status="pass",
+        severity="info",
+        summary="Dependency vulnerability scanners reported no medium-or-higher CVEs.",
+        metadata=metadata,
+    )
+
+
+def _github_branch_protection_repos() -> list[str]:
+    configured = os.getenv("PORCHLIGHT_GITHUB_BRANCH_PROTECTION_REPOS", "").strip()
+    if configured:
+        repos = [item.strip() for item in configured.split(",")]
+        return sorted({repo for repo in repos if repo})
+    return list(DEFAULT_GITHUB_BRANCH_PROTECTION_REPOS)
+
+
+def _github_required_checks() -> set[str]:
+    configured = os.getenv("PORCHLIGHT_GITHUB_REQUIRED_CHECKS", "").strip()
+    if not configured:
+        return set()
+    return {item.strip() for item in configured.split(",") if item.strip()}
+
+
+def _github_api_get(
+    path: str,
+    *,
+    command: Callable[..., CommandResult] = run_command,
+) -> tuple[int, dict]:
+    token = _secret_or_env("GITHUB_TOKEN")
+    if not token:
+        return 0, {"message": "missing_token"}
+    result = command(
+        [
+            "curl",
+            "-sS",
+            "--max-time",
+            "20",
+            "-H",
+            "Accept: application/vnd.github+json",
+            "-H",
+            f"Authorization: Bearer {token}",
+            f"https://api.github.com{path}",
+        ],
+        timeout=25,
+    )
+    if result.returncode != 0:
+        return result.returncode, {
+            "message": (result.stderr or result.stdout).strip()[:500]
+        }
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return 1, {"message": "invalid_json"}
+    return 0, payload if isinstance(payload, dict) else {"message": "invalid_json"}
+
+
+def _status_check_contexts(protection: dict) -> set[str]:
+    checks = protection.get("required_status_checks")
+    if not isinstance(checks, dict):
+        return set()
+    contexts = set()
+    raw_contexts = checks.get("contexts")
+    if isinstance(raw_contexts, list):
+        contexts.update(str(item) for item in raw_contexts if item)
+    raw_checks = checks.get("checks")
+    if isinstance(raw_checks, list):
+        for item in raw_checks:
+            if isinstance(item, dict) and item.get("context"):
+                contexts.add(str(item["context"]))
+    return contexts
+
+
+def check_github_branch_protection_drift(
+    command: Callable[..., CommandResult] = run_command,
+) -> CheckResult:
+    repos = _github_branch_protection_repos()
+    branch = os.getenv("PORCHLIGHT_GITHUB_BRANCH", "main").strip() or "main"
+    required_checks = _github_required_checks()
+    if not _secret_or_env("GITHUB_TOKEN"):
+        return CheckResult(
+            name="github_branch_protection_drift",
+            status="warn",
+            severity="medium",
+            summary="GitHub API token is not configured for branch-protection monitoring.",
+            detail="Set GITHUB_TOKEN on Brain secrets.",
+            metadata={"repos": repos, "branch": branch},
+        )
+
+    findings: list[str] = []
+    warnings: list[str] = []
+    repo_results: list[dict[str, object]] = []
+    for repo in repos:
+        rc, payload = _github_api_get(
+            f"/repos/{repo}/branches/{branch}/protection",
+            command=command,
+        )
+        if rc != 0 or payload.get("message") in {
+            "Not Found",
+            "missing_token",
+            "invalid_json",
+        }:
+            findings.append(f"{repo}:{branch} protection unavailable")
+            repo_results.append(
+                {
+                    "repo": repo,
+                    "branch": branch,
+                    "status": "unavailable",
+                    "message": payload.get("message"),
+                }
+            )
+            continue
+        contexts = _status_check_contexts(payload)
+        missing_checks = sorted(required_checks - contexts)
+        has_reviews = isinstance(payload.get("required_pull_request_reviews"), dict)
+        has_status_checks = isinstance(payload.get("required_status_checks"), dict)
+        if not has_reviews:
+            findings.append(f"{repo}:{branch} missing PR-review requirement")
+        if required_checks and missing_checks:
+            findings.append(
+                f"{repo}:{branch} missing required checks: {', '.join(missing_checks)}"
+            )
+        elif not has_status_checks:
+            warnings.append(f"{repo}:{branch} has no required status checks")
+        repo_results.append(
+            {
+                "repo": repo,
+                "branch": branch,
+                "status": "checked",
+                "has_pr_reviews": has_reviews,
+                "has_status_checks": has_status_checks,
+                "required_checks": sorted(required_checks),
+                "contexts": sorted(contexts),
+            }
+        )
+
+    metadata = {
+        "repos": repo_results,
+        "branch": branch,
+        "required_checks": sorted(required_checks),
+    }
+    if findings:
+        return CheckResult(
+            name="github_branch_protection_drift",
+            status="fail",
+            severity="high",
+            summary="GitHub branch protection drift needs remediation.",
+            detail="; ".join(findings[:8]),
+            metadata=metadata,
+        )
+    if warnings:
+        return CheckResult(
+            name="github_branch_protection_drift",
+            status="warn",
+            severity="medium",
+            summary="GitHub branch protection is enabled but has weaker-than-target controls.",
+            detail="; ".join(warnings[:8]),
+            metadata=metadata,
+        )
+    return CheckResult(
+        name="github_branch_protection_drift",
+        status="pass",
+        severity="info",
+        summary=f"GitHub branch protection is present for {len(repos)} repo(s).",
+        metadata=metadata,
+    )
+
+
 def check_route_db_access(
     routes_dir: Path = ROUTES_DIR,
     reviewed: dict[str, str] = REVIEWED_ROUTE_DB_ACCESS,
@@ -2124,6 +2494,8 @@ def run_sweep(args: argparse.Namespace) -> dict[str, object]:
         check_cloudflare_access(args.cloudflare_access_url),
         check_cloudflare_access_policy_drift(),
         check_cloudflare_audit_logs(window_hours=args.cloudflare_audit_window_hours),
+        check_dependency_cve_scan(),
+        check_github_branch_protection_drift(),
         check_route_db_access(),
     ]
     return build_report(checks)

@@ -19,6 +19,9 @@ class WanStatus(BaseModel):
     gw_name: str | None = None
     gw_cpu_pct: float | None = None
     gw_mem_pct: float | None = None
+    failover_status: str | None = None
+    failover_ready: bool | None = None
+    secondary_wan_status: str | None = None
     error: str | None = None
 
 

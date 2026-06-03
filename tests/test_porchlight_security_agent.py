@@ -1032,6 +1032,97 @@ def test_cloudflare_audit_logs_warns_on_recent_access_change(monkeypatch):
     assert "ken@example.com" in result.detail
 
 
+def test_dependency_cve_scan_fails_on_high_npm_vuln(tmp_path, monkeypatch):
+    ui_dir = tmp_path / "ui"
+    ui_dir.mkdir()
+    (ui_dir / "package-lock.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(porchlight, "PYTHON_REQUIREMENTS", tuple())
+    monkeypatch.setattr(porchlight, "UI_DIR", ui_dir)
+
+    def fake_command(args, **kwargs):
+        assert args[:2] == ["npm", "audit"]
+        return porchlight.CommandResult(
+            1,
+            porchlight.json.dumps(
+                {
+                    "vulnerabilities": {
+                        "bad-package": {"severity": "high"},
+                        "low-package": {"severity": "low"},
+                    }
+                }
+            ),
+            "",
+        )
+
+    result = porchlight.check_dependency_cve_scan(command=fake_command)
+
+    assert result.status == "fail"
+    assert result.severity == "high"
+    assert result.metadata["counts"]["high"] == 1
+
+
+def test_dependency_cve_scan_warns_when_scanner_missing(tmp_path, monkeypatch):
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("fastapi\n", encoding="utf-8")
+    monkeypatch.setattr(porchlight, "PYTHON_REQUIREMENTS", (requirements,))
+    monkeypatch.setattr(porchlight, "UI_DIR", tmp_path / "ui")
+
+    result = porchlight.check_dependency_cve_scan(
+        command=lambda *args, **kwargs: porchlight.CommandResult(
+            1, "", "No module named pip_audit"
+        )
+    )
+
+    assert result.status == "warn"
+    assert "could not run" in result.summary
+
+
+def test_github_branch_protection_drift_passes(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "gh-token")
+    monkeypatch.setenv(
+        "PORCHLIGHT_GITHUB_BRANCH_PROTECTION_REPOS", "kphaas/jarvis-alpha"
+    )
+    monkeypatch.setenv("PORCHLIGHT_GITHUB_REQUIRED_CHECKS", "tests")
+
+    def fake_command(args, **kwargs):
+        assert args[-1].endswith("/repos/kphaas/jarvis-alpha/branches/main/protection")
+        return porchlight.CommandResult(
+            0,
+            porchlight.json.dumps(
+                {
+                    "required_pull_request_reviews": {
+                        "required_approving_review_count": 1
+                    },
+                    "required_status_checks": {"contexts": ["tests"]},
+                }
+            ),
+            "",
+        )
+
+    result = porchlight.check_github_branch_protection_drift(command=fake_command)
+
+    assert result.status == "pass"
+
+
+def test_github_branch_protection_drift_fails_without_pr_reviews(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "gh-token")
+    monkeypatch.setenv(
+        "PORCHLIGHT_GITHUB_BRANCH_PROTECTION_REPOS", "kphaas/jarvis-alpha"
+    )
+
+    def fake_command(args, **kwargs):
+        return porchlight.CommandResult(
+            0,
+            porchlight.json.dumps({"required_status_checks": {"contexts": ["tests"]}}),
+            "",
+        )
+
+    result = porchlight.check_github_branch_protection_drift(command=fake_command)
+
+    assert result.status == "fail"
+    assert "missing PR-review" in result.detail
+
+
 def test_notification_filter_suppresses_routine_rotation_warning():
     report = porchlight.build_report(
         [

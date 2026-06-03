@@ -111,6 +111,14 @@ def _netloc(host: str, port: int) -> str:
     return f"{host}:{port}"
 
 
+def _first_present(payload: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = payload.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
 def _cookie_jar() -> str:
     global _cookie_jar_path
     if _cookie_jar_path is None:
@@ -269,6 +277,18 @@ async def unifi_wan() -> dict[str, Any]:
             "gw_name": wan.get("gw_name"),
             "gw_cpu_pct": gw_stats.get("cpu"),
             "gw_mem_pct": gw_stats.get("mem"),
+            "failover_status": _first_present(
+                wan,
+                ("failover_status", "failover_state", "wan_failover_status"),
+            ),
+            "failover_ready": _first_present(
+                wan,
+                ("failover_ready", "has_failover", "wan_failover_ready"),
+            ),
+            "secondary_wan_status": _first_present(
+                wan,
+                ("wan2_status", "secondary_wan_status", "wan2_state"),
+            ),
         }
     except Exception as e:
         logger.exception("unifi_wan")
@@ -379,6 +399,15 @@ def _client_summary(client: dict[str, Any]) -> dict[str, Any]:
 
 def _device_summary(device: dict[str, Any]) -> dict[str, Any]:
     kind = _device_kind(device)
+    target_version = _first_present(
+        device,
+        (
+            "upgrade_to_firmware",
+            "upgrade_to_version",
+            "latest_version",
+            "version_latest",
+        ),
+    )
     return {
         "mac": device.get("mac"),
         "ip": device.get("ip"),
@@ -387,6 +416,14 @@ def _device_summary(device: dict[str, Any]) -> dict[str, Any]:
         "kind": kind,
         "online": device.get("state") == 1,
         "version": device.get("version"),
+        "upgradeable": bool(
+            device.get("upgradeable")
+            or device.get("upgradable")
+            or device.get("has_upgrade")
+            or device.get("upgrade_available")
+            or target_version
+        ),
+        "target_version": target_version,
         "uptime_sec": device.get("uptime"),
     }
 

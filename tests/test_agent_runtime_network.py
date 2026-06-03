@@ -1,7 +1,13 @@
 from brain.agents.manual_run import manual_run_eligibility
 from brain.agents.porchlight import DEFAULT_PORCHLIGHT_INTERVAL_SECONDS
 from brain.agents.chatops_smoke import format_chatops_smoke_message
-from brain.agents.network_watchdog import client_keys, network_events_from_snapshot
+from brain.agents.network_watchdog import (
+    client_keys,
+    firmware_drift,
+    network_events_from_snapshot,
+    quarantine_recommendation,
+    wan_failover_health,
+)
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
 from brain.ports.network import NetworkClients, NetworkHealth, WanStatus
 
@@ -137,6 +143,62 @@ def test_client_keys_prefers_stable_mac_and_dedupes():
             ]
         }
     ) == ["1.1.1.3", "aa"]
+
+
+def test_sweep_quarantine_recommendation_is_read_only():
+    recommendation = quarantine_recommendation(
+        {"clients": [{"mac": "aa"}, {"mac": "bb"}]},
+        {"last_client_keys": ["aa"]},
+    )
+
+    assert recommendation["status"] == "review"
+    assert recommendation["unknown_client_keys"] == ["bb"]
+    assert recommendation["mutates_network"] is False
+
+
+def test_sweep_detects_firmware_drift_and_emits_once():
+    drift = firmware_drift(
+        {
+            "devices": [
+                {
+                    "name": "Office AP",
+                    "kind": "ap",
+                    "version": "1.0",
+                    "upgradeable": True,
+                    "target_version": "1.1",
+                }
+            ]
+        }
+    )
+    events = network_events_from_snapshot(
+        {
+            "wan": {"wan_status": "up"},
+            "clients": {"clients": []},
+            "health": {"status": "ok"},
+            "firmware_drift": drift,
+        },
+        {},
+    )
+
+    assert drift["status"] == "warn"
+    assert [event.event_type for event in events] == ["network.firmware_drift"]
+
+
+def test_sweep_wan_failover_warns_when_secondary_absent():
+    result = wan_failover_health({"wan_status": "up"})
+    events = network_events_from_snapshot(
+        {
+            "wan": {"wan_status": "up"},
+            "clients": {"clients": []},
+            "health": {"status": "ok"},
+            "wan_failover_health": result,
+        },
+        {},
+    )
+
+    assert result["status"] == "warn"
+    assert [event.event_type for event in events] == ["network.wan_failover_health"]
+    assert events[0].severity == "warning"
 
 
 def test_chatops_smoke_message_is_compact():

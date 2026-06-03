@@ -38,6 +38,33 @@ export function KeysTab({
   setRotatingKey, setNewKeyValue, setFormatError, setRotationResult,
   closeRotationModal, handleRotate,
 }: KeysTabProps) {
+  const keyturnerSummaryCards = keyturnerStatus ? [
+    {
+      title: 'OAuth health',
+      value: `${keyturnerStatus.oauth_health.healthy}/${keyturnerStatus.oauth_health.managed}`,
+      detail: `${keyturnerStatus.oauth_health.attention} need attention`,
+      tone: keyturnerStatus.oauth_health.attention ? 'amber' : 'emerald',
+    },
+    {
+      title: 'Rotation dry-run',
+      value: `${keyturnerStatus.rotation_dry_run.runnable}`,
+      detail: `${keyturnerStatus.rotation_dry_run.console_required} console · ${keyturnerStatus.rotation_dry_run.approval_gated} approval`,
+      tone: keyturnerStatus.rotation_dry_run.blocked ? 'rose' : 'sky',
+    },
+    {
+      title: 'Secrets forecast',
+      value: `${keyturnerStatus.forecast.next_30_days}`,
+      detail: `${keyturnerStatus.forecast.due} due · ${keyturnerStatus.forecast.next_7_days} next 7d`,
+      tone: keyturnerStatus.forecast.due ? 'rose' : keyturnerStatus.forecast.next_7_days ? 'amber' : 'emerald',
+    },
+  ] : []
+  const summaryToneClass = (tone: string) => {
+    if (tone === 'rose') return 'border-rose-500/30 bg-rose-500/10 text-rose-300'
+    if (tone === 'amber') return 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+    if (tone === 'sky') return 'border-sky-500/30 bg-sky-500/10 text-sky-300'
+    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+  }
+
   return (
         <motion.div
           initial={{ opacity: 0, y: 6 }}
@@ -81,6 +108,20 @@ export function KeysTab({
                   </div>
                 </div>
                 <div className="mt-4 grid grid-cols-1 gap-2">
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                    {keyturnerSummaryCards.map((card) => (
+                      <div key={card.title} className={`rounded-xl border px-3 py-3 ${summaryToneClass(card.tone)}`}>
+                        <p className="text-[10px] font-mono font-bold uppercase opacity-70">{card.title}</p>
+                        <p className="mt-1 text-xl font-bold font-mono">{card.value}</p>
+                        <p className="mt-1 text-[10px] font-mono opacity-80">{card.detail}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {keyturnerStatus.rotation_dry_run.blocked > 0 && (
+                    <div className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                      {keyturnerStatus.rotation_dry_run.blocked} secret(s) are blocked from dry-run until their inventory or verification status is fixed.
+                    </div>
+                  )}
                   {keyturnerStatus.secrets.map((secret) => {
                     const statusClass = secret.status === "healthy"
                       ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-400"
