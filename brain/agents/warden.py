@@ -17,7 +17,13 @@ from brain.db.rls import platform_admin_connection
 
 WARDEN_AGENT_ID = "warden"
 DEFAULT_WARDEN_INTERVAL_SECONDS = 10 * 60
-DEFAULT_MANAGED_AGENTS = ("porchlight", "keyturner", "network_watchdog", "tripwire")
+DEFAULT_MANAGED_AGENTS = (
+    "porchlight",
+    "keyturner",
+    "network_watchdog",
+    "tripwire",
+    "ledger",
+)
 STALE_SCHEDULED_RUN_SECONDS = 5 * 60
 STALE_POSTURE_SWEEP_SECONDS = 30 * 60 * 60
 

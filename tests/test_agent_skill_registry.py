@@ -84,6 +84,7 @@ def test_skill_requires_manifest_v1():
 
 def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_agents():
     agents = {agent.agent_id: agent for agent in INITIAL_AGENTS}
+    skills = {skill.name: skill for skill in INITIAL_SKILLS}
 
     assert agents["buddy"].enabled is True
     assert agents["dream_mode"].enabled is True
@@ -97,6 +98,8 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["network_watchdog"].display_name == "Sweep"
     assert agents["tripwire"].enabled is True
     assert agents["tripwire"].display_name == "Tripwire"
+    assert agents["ledger"].enabled is True
+    assert agents["ledger"].display_name == "Ledger"
     assert agents["approval_canary"].enabled is False
     assert agents["approval_canary"].risk_tier == "T4"
     assert "approval.canary_t4" in agents["approval_canary"].allowed_skills
@@ -117,6 +120,7 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
         "keyturner",
         "network_watchdog",
         "tripwire",
+        "ledger",
     ]
     assert (
         agents["warden"].metadata["active_network_hardening"]
@@ -140,6 +144,33 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["tripwire"].metadata["warden_role"] == "honeypot_sensor"
     assert agents["tripwire"].metadata["mattermost_channel_key"] == "security_alerts"
     assert "honeypot_hits" in agents["tripwire"].metadata["monitors"]
+    assert agents["ledger"].metadata["warden_role"] == "evidence_reporter"
+    assert agents["ledger"].metadata["mattermost_channel_key"] == "security_alerts"
+    assert "evidence.package_report" in agents["ledger"].allowed_skills
+    assert "security_event_packaging" in agents["ledger"].metadata["capabilities"]
+    assert "evidence.package_report" in skills
+    assert skills["evidence.package_report"].status == "planned"
+    assert skills["evidence.package_report"].metadata["owner_agent"] == "ledger"
+    saved_skills = {
+        "dependencies.scan": "porchlight",
+        "cloudflare.policy_drift": "porchlight",
+        "github.branch_protection_drift": "porchlight",
+        "unifi.quarantine_recommendation": "network_watchdog",
+        "unifi.firmware_drift": "network_watchdog",
+        "unifi.wan_failover_health": "network_watchdog",
+        "keyturner.oauth_health": "keyturner",
+        "keyturner.rotation_dry_run": "keyturner",
+        "keyturner.secrets_forecast": "keyturner",
+        "tripwire.source_reputation": "tripwire",
+        "tripwire.probe_clustering": "tripwire",
+        "warden.weekly_brief": "warden",
+        "warden.auto_ticket": "warden",
+        "warden.owner_routing": "warden",
+    }
+    for skill_name, owner_agent in saved_skills.items():
+        assert skills[skill_name].status == "planned"
+        assert skills[skill_name].metadata["owner_agent"] == owner_agent
+        assert skills[skill_name].metadata["saved_for_later"] is True
     assert agents["approval_triage"].metadata["mattermost_channel_key"] == "needs_input"
     assert "weather.current" in agents["family_concierge"].allowed_skills
     assert "weather.read" in agents["family_concierge"].allowed_scopes
