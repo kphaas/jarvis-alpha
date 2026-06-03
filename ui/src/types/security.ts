@@ -202,11 +202,23 @@ export interface KeyturnerSecret {
   secret_class: string
   rotation_days: number
   requires_approval: boolean
+  requires_console_rotation?: boolean
+  rotation_path?: string | null
   status: "healthy" | "due_soon" | "due" | "failed" | "untracked" | string
   last_rotated_at: string | null
   next_due_at: string | null
   days_until_due: number | null
   verify_status: string | null
+}
+
+export interface KeyturnerSummaryItem {
+  secret_name: string
+  status: string
+  verify_status?: string | null
+  days_until_due?: number | null
+  next_due_at?: string | null
+  rotation_path?: string | null
+  reason?: string
 }
 
 export interface KeyturnerStatus {
@@ -218,6 +230,26 @@ export interface KeyturnerStatus {
     healthy: number
     attention: number
     approval_gated: number
+  }
+  oauth_health: {
+    managed: number
+    healthy: number
+    attention: number
+    items: KeyturnerSummaryItem[]
+  }
+  rotation_dry_run: {
+    runnable: number
+    approval_gated: number
+    console_required: number
+    manual_runbook: number
+    blocked: number
+    items: KeyturnerSummaryItem[]
+  }
+  forecast: {
+    due: number
+    next_7_days: number
+    next_30_days: number
+    items: KeyturnerSummaryItem[]
   }
   secrets: KeyturnerSecret[]
 }

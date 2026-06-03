@@ -133,7 +133,18 @@ export function SweepTab({
                           {monitor === 'unifi_tls_pin' && 'Verifies the UniFi controller with public-key pinning.'}
                           {monitor === 'wan_health' && 'Checks WAN status, latency, ISP state, and gateway health.'}
                           {monitor === 'new_clients' && 'Detects new UniFi clients so unknown devices are surfaced.'}
-                          {!['service_tls_certs', 'unifi_tls_pin', 'wan_health', 'new_clients'].includes(monitor) && 'Tracked by Sweep and reported to Warden.'}
+                          {monitor === 'unknown_device_quarantine' && 'Recommends review/quarantine for unknown devices without changing UniFi state.'}
+                          {monitor === 'unifi_firmware_drift' && 'Detects gateway, switch, and AP firmware updates from UniFi inventory.'}
+                          {monitor === 'wan_failover_health' && 'Checks whether UniFi reports a ready secondary WAN or failover path.'}
+                          {![
+                            'service_tls_certs',
+                            'unifi_tls_pin',
+                            'wan_health',
+                            'new_clients',
+                            'unknown_device_quarantine',
+                            'unifi_firmware_drift',
+                            'wan_failover_health',
+                          ].includes(monitor) && 'Tracked by Sweep and reported to Warden.'}
                         </p>
                       </div>
                     </div>

@@ -1281,6 +1281,14 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
                 "unifi_tls_pin",
                 "wan_health",
                 "new_clients",
+                "unknown_device_quarantine",
+                "unifi_firmware_drift",
+                "wan_failover_health",
+            ],
+            "active_network_checks": [
+                "unifi.quarantine_recommendation",
+                "unifi.firmware_drift",
+                "unifi.wan_failover_health",
             ],
             "planned_skills": [
                 "unifi.quarantine_recommendation",
