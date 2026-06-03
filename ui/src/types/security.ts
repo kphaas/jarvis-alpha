@@ -216,3 +216,34 @@ export interface KeyturnerStatus {
   }
   secrets: KeyturnerSecret[]
 }
+
+export interface WardenAgent {
+  agent_id: string
+  display_name: string
+  purpose: string
+  risk_tier: string
+  status: string
+  enabled: boolean
+  cadence: string | null
+  allowed_skills: string[]
+  allowed_scopes: string[]
+  metadata: Record<string, unknown>
+  last_run_status: string | null
+  last_run_at: string | null
+  last_event_severity: string | null
+  last_event_title: string | null
+  last_event_at: string | null
+  needs_attention: boolean
+}
+
+export interface WardenStatus {
+  supervisor: WardenAgent | null
+  agents: WardenAgent[]
+  counts: {
+    managed: number
+    enabled: number
+    active: number
+    attention: number
+  }
+  next_hardening: string
+}
