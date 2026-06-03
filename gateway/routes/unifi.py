@@ -7,6 +7,8 @@ import json
 import os
 import subprocess
 import tempfile
+from dataclasses import dataclass
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 from typing import Any
 
 from fastapi import APIRouter
@@ -21,6 +23,18 @@ router = APIRouter(tags=["unifi"])
 _session_lock = asyncio.Lock()
 _logged_in = False
 _cookie_jar_path: str | None = None
+_tls_config_cache: "UniFiTlsConfig | None" = None
+
+
+@dataclass(frozen=True)
+class UniFiTlsConfig:
+    request_base_url: str
+    curl_args: tuple[str, ...]
+    verification: str
+    server_name: str
+    connect_host: str
+    ca_cert_configured: bool
+    public_key_pin_configured: bool
 
 
 def _base_url() -> str:
@@ -31,6 +45,70 @@ def _base_url() -> str:
             "UNIFI_BASE_URL is not set in environment — check ~/jarvis/.secrets on Gateway"
         ) from exc
     return url.rstrip("/")
+
+
+def _optional_secret(key: str) -> str | None:
+    try:
+        value = get_secret(key).strip()
+    except KeyError:
+        return None
+    return value or None
+
+
+def _unifi_tls_config() -> UniFiTlsConfig:
+    global _tls_config_cache
+    if _tls_config_cache is not None:
+        return _tls_config_cache
+
+    parsed = urlsplit(_base_url())
+    if parsed.scheme != "https":
+        raise RuntimeError("UNIFI_BASE_URL must use https for UniFi Gateway access")
+    if not parsed.hostname:
+        raise RuntimeError("UNIFI_BASE_URL must include a hostname")
+
+    ca_path = _optional_secret("UNIFI_CA_CERT_PATH")
+    if not ca_path:
+        raise RuntimeError("UNIFI_CA_CERT_PATH is required for UniFi TLS pinning")
+
+    server_name = _optional_secret("UNIFI_TLS_SERVER_NAME") or parsed.hostname
+    connect_host = _optional_secret("UNIFI_CONNECT_HOST") or parsed.hostname
+    port = parsed.port or 443
+    request_netloc = _netloc(server_name, port)
+    request_base_url = urlunsplit(
+        SplitResult(parsed.scheme, request_netloc, parsed.path.rstrip("/"), "", "")
+    ).rstrip("/")
+
+    curl_args: list[str] = ["--cacert", ca_path]
+    public_key_pin = _optional_secret("UNIFI_PINNED_PUBKEY_SHA256")
+    if public_key_pin:
+        if not public_key_pin.startswith("sha256//"):
+            public_key_pin = f"sha256//{public_key_pin}"
+        curl_args.extend(["--pinnedpubkey", public_key_pin])
+    if connect_host != server_name:
+        curl_args.extend(
+            ["--connect-to", f"{server_name}:{port}:{connect_host}:{port}"]
+        )
+
+    verification = "ca_cert"
+    if public_key_pin:
+        verification = "ca_cert+public_key_pin"
+
+    _tls_config_cache = UniFiTlsConfig(
+        request_base_url=request_base_url,
+        curl_args=tuple(curl_args),
+        verification=verification,
+        server_name=server_name,
+        connect_host=connect_host,
+        ca_cert_configured=True,
+        public_key_pin_configured=bool(public_key_pin),
+    )
+    return _tls_config_cache
+
+
+def _netloc(host: str, port: int) -> str:
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]:{port}"
+    return f"{host}:{port}"
 
 
 def _cookie_jar() -> str:
@@ -45,8 +123,9 @@ def _cookie_jar() -> str:
 def _curl(
     args: list[str], *, timeout_sec: float = 15.0
 ) -> subprocess.CompletedProcess[str]:
+    tls = _unifi_tls_config()
     return subprocess.run(
-        ["curl", "-sk", *args],
+        ["curl", "-sS", *tls.curl_args, *args],
         capture_output=True,
         text=True,
         timeout=timeout_sec,
@@ -60,7 +139,7 @@ def _login_sync() -> None:
         password = get_secret("UNIFI_PASS")
     except KeyError as exc:
         raise RuntimeError("UniFi credentials are not configured on Gateway") from exc
-    base = _base_url()
+    base = _unifi_tls_config().request_base_url
     jar = _cookie_jar()
     body = json.dumps({"username": user, "password": password})
     proc = _curl(
@@ -100,7 +179,7 @@ async def ensure_unifi_session() -> None:
 
 
 def _ping_base_url_sync() -> bool:
-    base = _base_url()
+    base = _unifi_tls_config().request_base_url
     proc = _curl(
         [
             "-o",
@@ -129,7 +208,7 @@ def _error_payload(exc: BaseException) -> dict[str, Any]:
 
 
 def _fetch_json_sync(path: str) -> dict[str, Any]:
-    base = _base_url()
+    base = _unifi_tls_config().request_base_url
     jar = _cookie_jar()
     proc = _curl(["-b", jar, "-c", jar, f"{base}{path}"])
     if proc.returncode != 0:
@@ -150,7 +229,17 @@ async def _fetch_json(path: str) -> dict[str, Any]:
 async def unifi_status() -> dict[str, Any]:
     try:
         reachable = await asyncio.to_thread(_ping_base_url_sync)
-        return {"reachable": reachable, "auth_mode": "local"}
+        tls = _unifi_tls_config()
+        return {
+            "reachable": reachable,
+            "auth_mode": "local",
+            "tls": {
+                "verification": tls.verification,
+                "server_name": tls.server_name,
+                "ca_cert_configured": tls.ca_cert_configured,
+                "public_key_pin_configured": tls.public_key_pin_configured,
+            },
+        }
     except Exception as e:
         logger.exception("unifi_status")
         return _error_payload(e)
@@ -252,6 +341,7 @@ async def unifi_health_check() -> dict[str, Any]:
             "reachable": bool(status.get("reachable", False)),
             "status": health_status,
             "wan_status": wan.get("wan_status", "unknown"),
+            "tls": status.get("tls"),
             "client_count": clients.get("client_count"),
             "wired_count": clients.get("wired_count"),
             "wireless_count": clients.get("wireless_count"),

@@ -60,6 +60,7 @@ class NetworkHealth(BaseModel):
     offline_device_count: int = 0
     gw_cpu_pct: float | None = None
     gw_mem_pct: float | None = None
+    tls: dict[str, Any] | None = None
     errors: list[str] = Field(default_factory=list)
     devices: list[dict[str, Any]] = Field(default_factory=list)
     error: str | None = None

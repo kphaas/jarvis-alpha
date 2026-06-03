@@ -245,5 +245,6 @@ export interface WardenStatus {
     active: number
     attention: number
   }
+  active_hardening?: string
   next_hardening: string
 }

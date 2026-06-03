@@ -110,8 +110,15 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
         "keyturner",
         "network_watchdog",
     ]
-    assert agents["warden"].metadata["next_network_hardening"] == "unifi_cert_pinning"
-    assert agents["network_watchdog"].metadata["next_hardening"] == "unifi_cert_pinning"
+    assert agents["warden"].metadata["active_network_hardening"] == "unifi_cert_pinning"
+    assert (
+        agents["warden"].metadata["remediation_policy"]["T4_T5"]
+        == "route_to_owner_with_approval"
+    )
+    assert (
+        agents["network_watchdog"].metadata["active_hardening"] == "unifi_cert_pinning"
+    )
+    assert "unifi_tls_pin" in agents["network_watchdog"].metadata["monitors"]
     assert agents["approval_triage"].metadata["mattermost_channel_key"] == "needs_input"
     assert "weather.current" in agents["family_concierge"].allowed_skills
     assert "weather.read" in agents["family_concierge"].allowed_scopes
