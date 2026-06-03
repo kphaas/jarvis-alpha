@@ -918,7 +918,7 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
             "completed_hardenings": ["unifi_cert_pinning"],
             "cert_renewal": {
                 "script": "scripts/sweep_tls_cert_renewal.py",
-                "launch_label": "com.jarvis.alpha.sweep-cert-renewal",
+                "launch_label": "com.jarvis.alpha.sweep-cert-renewal.*",
                 "threshold_days": 30,
             },
             "monitors": [

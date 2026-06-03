@@ -123,7 +123,12 @@ needs_restart_brain() {
 
 needs_reload_school_email() {
   [ -z "$CHANGED_FILES" ] && return 1
-  echo "$CHANGED_FILES" | grep -qE '(^launchagents/com\.jarvis\.alpha\.(school-email|gmail-health|sweep-cert-renewal)\.template\.plist$|^scripts/start_alpha_(school_email|gmail_health)\.sh$|^scripts/install_launchagents\.py$)'
+  echo "$CHANGED_FILES" | grep -qE '(^launchagents/com\.jarvis\.alpha\.(school-email|gmail-health)\.template\.plist$|^scripts/start_alpha_(school_email|gmail_health)\.sh$|^scripts/install_launchagents\.py$)'
+}
+
+needs_reload_sweep_cert() {
+  [ -z "$CHANGED_FILES" ] && return 1
+  echo "$CHANGED_FILES" | grep -qE "(^launchagents/com\\.jarvis\\.alpha\\.sweep-cert-renewal\\.${NODE_SHORT}\\.template\\.plist$|^launchagents/com\\.jarvis\\.alpha\\.sweep-cert-renewal\\.template\\.plist$|^scripts/install_launchagents\\.py$)"
 }
 
 needs_restart_temporal_worker() {
@@ -387,7 +392,6 @@ fi
 
 SCHOOL_EMAIL_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.school-email.plist"
 GMAIL_HEALTH_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.gmail-health.plist"
-SWEEP_CERT_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.sweep-cert-renewal.plist"
 if [ "$NODE_SHORT" = "brain" ] && needs_reload_school_email; then
   echo ""
   echo "Refreshing Alpha School Email LaunchAgent..."
@@ -426,20 +430,45 @@ if [ "$NODE_SHORT" = "brain" ] && needs_reload_school_email; then
     echo "❌ Gmail health LaunchAgent plist missing after install"
     exit 1
   fi
+elif [ "$NODE_SHORT" = "brain" ]; then
+  emit skip restart node="$NODE_SHORT" service="alpha-school-email" reason="no_launchagent_changes"
+fi
+
+SWEEP_CERT_LABEL="com.jarvis.alpha.sweep-cert-renewal.${NODE_SHORT}"
+SWEEP_CERT_PLIST="${HOME}/Library/LaunchAgents/${SWEEP_CERT_LABEL}.plist"
+OLD_SWEEP_CERT_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.sweep-cert-renewal.plist"
+if needs_reload_sweep_cert; then
+  echo ""
+  echo "Refreshing Sweep cert renewal LaunchAgent..."
+  SWEEP_START=$(time_ms)
+  INSTALL_LOG=$(mktemp)
+  if ! python3 "${REPO_DIR}/scripts/install_launchagents.py" --node "$NODE_SHORT" >"$INSTALL_LOG" 2>&1; then
+    SWEEP_DUR=$(($(time_ms) - SWEEP_START))
+    INSTALL_ERR=$(tail -5 "$INSTALL_LOG" | tr '\n' ' ' | cut -c1-300)
+    rm -f "$INSTALL_LOG"
+    emit fail restart node="$NODE_SHORT" service="alpha-sweep-cert-renewal" dur_ms="$SWEEP_DUR" error="$INSTALL_ERR"
+    echo "❌ Sweep cert renewal LaunchAgent install failed"
+    exit 1
+  fi
+  rm -f "$INSTALL_LOG"
+  if [ -f "$OLD_SWEEP_CERT_PLIST" ]; then
+    launchctl unload "$OLD_SWEEP_CERT_PLIST" 2>/dev/null || true
+    rm -f "$OLD_SWEEP_CERT_PLIST"
+  fi
   if [ -f "$SWEEP_CERT_PLIST" ]; then
     launchctl unload "$SWEEP_CERT_PLIST" 2>/dev/null || true
     launchctl load "$SWEEP_CERT_PLIST"
-    SWEEP_CERT_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.sweep-cert-renewal" {print $1}' | head -1)
+    SWEEP_CERT_PID=$(launchctl list | awk -v label="$SWEEP_CERT_LABEL" '$3 == label {print $1}' | head -1)
     [ "$SWEEP_CERT_PID" = "-" ] && SWEEP_CERT_PID=0
     echo "✅ Sweep cert renewal LaunchAgent refreshed"
-    emit ok restart node="$NODE_SHORT" service="alpha-sweep-cert-renewal" pid="${SWEEP_CERT_PID:-0}" dur_ms=$(($(time_ms) - SCHOOL_START))
+    emit ok restart node="$NODE_SHORT" service="alpha-sweep-cert-renewal" pid="${SWEEP_CERT_PID:-0}" dur_ms=$(($(time_ms) - SWEEP_START))
   else
-    emit fail restart node="$NODE_SHORT" service="alpha-sweep-cert-renewal" dur_ms=$(($(time_ms) - SCHOOL_START)) error="plist missing after install"
+    emit fail restart node="$NODE_SHORT" service="alpha-sweep-cert-renewal" dur_ms=$(($(time_ms) - SWEEP_START)) error="plist missing after install"
     echo "❌ Sweep cert renewal LaunchAgent plist missing after install"
     exit 1
   fi
 elif [ "$NODE_SHORT" = "brain" ]; then
-  emit skip restart node="$NODE_SHORT" service="alpha-school-email" reason="no_launchagent_changes"
+  emit skip restart node="$NODE_SHORT" service="alpha-sweep-cert-renewal" reason="no_launchagent_changes"
 fi
 
 # ── Gateway branch (TD-88) ────────────────────────────────

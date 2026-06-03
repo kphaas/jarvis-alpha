@@ -4,24 +4,19 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.jarvis.alpha.sweep-cert-renewal</string>
-
+  <string>com.jarvis.alpha.sweep-cert-renewal.gateway</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
     <string>-lc</string>
-    <string>cd "{{HOME}}/jarvis-alpha" &amp;&amp; python3 scripts/sweep_tls_cert_renewal.py --node all --threshold-days 30</string>
+    <string>cd "{{HOME}}/jarvis-alpha" &amp;&amp; python3 scripts/sweep_tls_cert_renewal.py --local --node gateway --threshold-days 30 --skip-registry</string>
   </array>
-
   <key>StartInterval</key>
   <integer>43200</integer>
-
   <key>RunAtLoad</key>
   <true/>
-
   <key>StandardOutPath</key>
   <string>{{HOME}}/jarvis-alpha/logs/sweep_cert_renewal.log</string>
-
   <key>StandardErrorPath</key>
   <string>{{HOME}}/jarvis-alpha/logs/sweep_cert_renewal_error.log</string>
 </dict>

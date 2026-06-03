@@ -133,7 +133,7 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     )
     assert (
         agents["network_watchdog"].metadata["cert_renewal"]["launch_label"]
-        == "com.jarvis.alpha.sweep-cert-renewal"
+        == "com.jarvis.alpha.sweep-cert-renewal.*"
     )
     assert "service_tls_certs" in agents["network_watchdog"].metadata["monitors"]
     assert "unifi_tls_pin" in agents["network_watchdog"].metadata["monitors"]

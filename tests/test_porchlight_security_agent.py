@@ -309,7 +309,7 @@ def test_security_launchagents_warns_when_remote_probe_not_configured(monkeypatc
                     "124\t0\tcom.jarvis.alpha.rotate.buddy",
                     "125\t0\tcom.jarvis.alpha.pg_backup",
                     "126\t0\tcom.jarvis.alpha.gmail-health",
-                    "127\t0\tcom.jarvis.alpha.sweep-cert-renewal",
+                    "127\t0\tcom.jarvis.alpha.sweep-cert-renewal.brain",
                 ]
             ),
             "",

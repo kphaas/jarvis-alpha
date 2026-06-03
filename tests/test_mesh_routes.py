@@ -88,6 +88,7 @@ async def test_mesh_certs_uses_platform_admin_rls_context(monkeypatch):
     monkeypatch.setattr(
         mesh, "platform_admin_connection", fake_platform_admin_connection
     )
+    monkeypatch.setattr(mesh, "_presented_cert_expiry", lambda _url: None)
 
     response = await mesh.get_cert_status()
 
@@ -97,3 +98,35 @@ async def test_mesh_certs_uses_platform_admin_rls_context(monkeypatch):
     assert response[0]["node"] == "Gateway"
     assert response[0]["domain"] == "jarvis-brain.tail40ed36.ts.net"
     assert response[0]["days_remaining"] is not None
+
+
+@pytest.mark.asyncio
+async def test_mesh_certs_prefers_presented_tls_cert(monkeypatch):
+    class FakeConn:
+        async def fetch(self, query, *args):
+            return [
+                _registry_row(
+                    name="gateway",
+                    display_name="Gateway",
+                    cert_expires_at=datetime(2026, 6, 18, tzinfo=UTC),
+                )
+            ]
+
+    @asynccontextmanager
+    async def fake_platform_admin_connection(*, source, audit_actor, pool=None):
+        yield FakeConn()
+
+    monkeypatch.setattr(mesh, "get_pool", lambda: _FakePool())
+    monkeypatch.setattr(
+        mesh, "platform_admin_connection", fake_platform_admin_connection
+    )
+    monkeypatch.setattr(
+        mesh,
+        "_presented_cert_expiry",
+        lambda _url: datetime(2026, 7, 19, tzinfo=UTC),
+    )
+
+    response = await mesh.get_cert_status()
+
+    assert response[0]["expires"] == "2026-07-19"
+    assert response[0]["source"] == "tls"
