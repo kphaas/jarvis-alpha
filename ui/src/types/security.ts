@@ -236,6 +236,34 @@ export interface WardenAgent {
   needs_attention: boolean
 }
 
+export interface WardenPostureControl {
+  id: string
+  title: string
+  category: string
+  owner_agent: string
+  status: "pass" | "warn" | "fail" | "unavailable" | string
+  weight: number
+  earned: number
+  summary: string
+  detail: string
+  framework_refs: string[]
+}
+
+export interface WardenPostureScore {
+  model: string
+  basis: string
+  not_certification: boolean
+  industry_alignment: string[]
+  score: number
+  earned: number
+  total: number
+  reserved: number
+  controls_passing: number
+  controls_total: number
+  controls: WardenPostureControl[]
+  top_gaps: WardenPostureControl[]
+}
+
 export interface WardenStatus {
   supervisor: WardenAgent | null
   agents: WardenAgent[]
@@ -247,4 +275,5 @@ export interface WardenStatus {
   }
   active_hardening?: string
   next_hardening: string
+  posture_score?: WardenPostureScore
 }

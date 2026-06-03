@@ -1,6 +1,14 @@
 import { motion } from 'framer-motion'
-import { Key, Lock, CheckCircle, XCircle, Loader2, Server, Radio, Bug } from 'lucide-react'
-import type { JwtCheck, RlsStatus, Perimeter, HoneypotData, CertRow } from '../../types/security'
+import { Key, Lock, CheckCircle, XCircle, Loader2, Server, Radio, Bug, ShieldCheck } from 'lucide-react'
+import type {
+  JwtCheck,
+  RlsStatus,
+  Perimeter,
+  HoneypotData,
+  CertRow,
+  WardenPostureScore,
+  WardenPostureControl,
+} from '../../types/security'
 import { SectionSkeleton, R_SCORE, C_SCORE, certDayTextClass, type SecurityThemeProps } from './utils'
 
 interface OverviewTabProps extends SecurityThemeProps {
@@ -27,7 +35,19 @@ interface OverviewTabProps extends SecurityThemeProps {
   checksPassing: number
   checksTotal: number
   shortestCertDays: number | null
+  postureScore?: WardenPostureScore
   setActiveTab: (tab: string) => void
+}
+
+function statusClass(status: string): string {
+  if (status === 'pass') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+  if (status === 'warn') return 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+  if (status === 'fail') return 'border-rose-500/30 bg-rose-500/10 text-rose-400'
+  return 'border-zinc-500/30 bg-zinc-500/10 text-zinc-400'
+}
+
+function ownerLabel(control: WardenPostureControl): string {
+  return control.owner_agent.replaceAll('_', ' ')
 }
 
 export function OverviewTab({
@@ -36,8 +56,9 @@ export function OverviewTab({
   loadJwt, loadRls, loadPerimeter, loadCerts, loadChild, loadHoneypot,
   errJwt, errRls, errPerimeter, errCerts, errHoneypot,
   displayScore, reserved, dashEarned, strokeColor,
-  checksPassing, checksTotal, shortestCertDays, setActiveTab,
+  checksPassing, checksTotal, shortestCertDays, postureScore, setActiveTab,
 }: OverviewTabProps) {
+  const topGaps = postureScore?.top_gaps ?? []
   return (
         <motion.div
           initial={{ opacity: 0, y: 6 }}
@@ -97,11 +118,62 @@ export function OverviewTab({
                 ? `${checksPassing} of ${checksTotal} checks passing`
                 : "Collecting check data…"}
             </p>
-            <p className={`text-[10px] font-mono ${muted} text-center max-w-md`}>
-              <span className="opacity-70">{reserved} pts reserved</span> (secrets audit, key rotation, future checks) —{" "}
-              <span className="text-zinc-500">locked</span>
-            </p>
+            {postureScore ? (
+              <div className={`max-w-2xl text-center text-[10px] font-mono ${muted}`}>
+                <p>
+                  Warden model: {postureScore.model.replaceAll('_', ' ')} · {postureScore.basis.replaceAll('_', ' ')}
+                </p>
+                <p className="mt-1">
+                  Aligned to SOC 2 CC6/CC7, CIS v8, and NIST CSF. Not a certification score.
+                </p>
+              </div>
+            ) : (
+              <p className={`text-[10px] font-mono ${muted} text-center max-w-md`}>
+                <span className="opacity-70">{reserved} pts reserved</span> (secrets audit, key rotation, future checks) —{" "}
+                <span className="text-zinc-500">locked</span>
+              </p>
+            )}
           </section>
+
+          {postureScore && (
+            <section>
+              <div className="mb-3 flex items-center gap-2">
+                <ShieldCheck className="w-3.5 h-3.5 opacity-40" />
+                <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest">
+                  Warden control gaps
+                </p>
+              </div>
+              {topGaps.length === 0 ? (
+                <div className={`rounded-2xl border ${border} ${subtle} p-4`}>
+                  <p className="text-sm text-emerald-400">All weighted Warden controls are passing.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {topGaps.map((control) => (
+                    <button
+                      key={control.id}
+                      type="button"
+                      onClick={() => setActiveTab("Warden")}
+                      className={`rounded-2xl border ${border} ${subtle} p-4 text-left hover:opacity-95 transition-opacity`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold">{control.title}</p>
+                          <p className={`mt-1 text-xs ${muted}`}>{control.summary}</p>
+                        </div>
+                        <span className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${statusClass(control.status)}`}>
+                          {control.status}
+                        </span>
+                      </div>
+                      <p className={`mt-3 text-[10px] font-mono uppercase ${muted}`}>
+                        Owner: {ownerLabel(control)} · {control.earned}/{control.weight} pts
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <motion.button
