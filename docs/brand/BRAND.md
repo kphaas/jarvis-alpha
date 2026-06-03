@@ -51,6 +51,10 @@ Every module = the **same ring + teal node**, with a **unique center glyph**:
 | Medical | pulse | health / clinical |
 | Spark | fingerprint | persona / voice |
 | Herald | newspaper | manage + grow social presence |
+| Warden | shield + chief band | overall security — manages the security sub-agents |
+| Sweep | radar sweep + blip | network security — scans the perimeter / tailnet (replaces network_watchdog) |
+| Porchlight | lantern | scheduled security posture sweeps, notify-only |
+| Keyturner | key | owns approved key & password rotations |
 
 Tools get evocative one-word names (Forge, Smithy, Crucible, Spark). Life domains stay descriptive (Family, Financial, Medical).
 
