@@ -74,6 +74,20 @@ async def _run_porchlight_script(_run_id: UUID) -> dict:
     if proc.returncode != 0:
         raise RuntimeError(stderr_text or stdout_text or "porchlight_failed")
     try:
-        return json.loads(stdout_text)
+        return _parse_porchlight_json(stdout_text)
     except json.JSONDecodeError as exc:
         raise RuntimeError("porchlight_returned_invalid_json") from exc
+
+
+def _parse_porchlight_json(stdout_text: str) -> dict:
+    try:
+        parsed = json.loads(stdout_text)
+    except json.JSONDecodeError:
+        start = stdout_text.find("{")
+        end = stdout_text.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        parsed = json.loads(stdout_text[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise json.JSONDecodeError("porchlight_json_not_object", stdout_text, 0)
+    return parsed
