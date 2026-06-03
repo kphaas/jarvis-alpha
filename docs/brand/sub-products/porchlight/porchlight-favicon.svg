@@ -1,0 +1,6 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F2B65A"/><stop offset="1" stop-color="#FF8A3D"/></linearGradient></defs><circle cx="50" cy="50" r="33" fill="none" stroke="#2C333F" stroke-width="6"/><circle cx="50" cy="50" r="33" fill="none" stroke="url(#ring)" stroke-width="6"/><circle cx="50" cy="17" r="5" fill="#62D8C4"/><g stroke="#F2EFE9" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M50 31 L50 35"/>
+        <path d="M44 40 L50 35 L56 40 L57 57 L43 57 Z"/>
+        <path d="M47 45 L53 45"/>
+        <path d="M43 61 L41 66"/>
+        <path d="M50 61 L50 67"/>
+        <path d="M57 61 L59 66"/></g></svg>
