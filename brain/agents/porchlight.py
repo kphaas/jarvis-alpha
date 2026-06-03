@@ -83,11 +83,23 @@ def _parse_porchlight_json(stdout_text: str) -> dict:
     try:
         parsed = json.loads(stdout_text)
     except json.JSONDecodeError:
-        start = stdout_text.find("{")
-        end = stdout_text.rfind("}")
-        if start < 0 or end <= start:
-            raise
-        parsed = json.loads(stdout_text[start : end + 1])
-    if not isinstance(parsed, dict):
+        decoder = json.JSONDecoder()
+        for index, character in enumerate(stdout_text):
+            if character != "{":
+                continue
+            try:
+                candidate, _end = decoder.raw_decode(stdout_text[index:])
+            except json.JSONDecodeError:
+                continue
+            if _is_porchlight_report(candidate):
+                return candidate
+        raise
+    if not _is_porchlight_report(parsed):
         raise json.JSONDecodeError("porchlight_json_not_object", stdout_text, 0)
     return parsed
+
+
+def _is_porchlight_report(candidate: object) -> bool:
+    if not isinstance(candidate, dict):
+        return False
+    return {"agent", "checks", "counts", "status"}.issubset(candidate)
