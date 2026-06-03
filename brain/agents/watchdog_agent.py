@@ -22,6 +22,7 @@ import asyncpg
 
 from brain.agents.events import AgentEvent, emit_agent_event
 from brain.config.secrets import get_secret
+from brain.db.dsn import ensure_writer_password
 from jarvis_common.logging_config import get_logger, new_trace_id
 
 logger = get_logger("alpha_watchdog")
@@ -434,7 +435,7 @@ async def main() -> None:
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
 
-    dsn = get_secret("ALPHA_DB_DSN_WATCHDOG_AGENT")
+    dsn = ensure_writer_password(get_secret("ALPHA_DB_DSN_WATCHDOG_AGENT"))
     pool = await asyncpg.create_pool(dsn, min_size=1, max_size=3)
     try:
         await watchdog_loop(pool, shutdown)
