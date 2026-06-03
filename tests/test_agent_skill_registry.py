@@ -114,6 +114,7 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
         "tripwire",
     ]
     assert agents["warden"].metadata["active_network_hardening"] == "unifi_cert_pinning"
+    assert agents["warden"].metadata["supervision_interval_seconds"] == 600
     assert (
         agents["warden"].metadata["remediation_policy"]["T4_T5"]
         == "route_to_owner_with_approval"
