@@ -2269,7 +2269,9 @@ def check_financial_security_posture(
     if remote_status not in {"pass", "warn", "fail"}:
         remote_status = "fail"
     counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
-    controls = payload.get("controls") if isinstance(payload.get("controls"), list) else []
+    controls = (
+        payload.get("controls") if isinstance(payload.get("controls"), list) else []
+    )
     metadata.update(
         {
             "remote_status": remote_status,
