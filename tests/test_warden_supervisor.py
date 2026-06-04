@@ -4,11 +4,14 @@ from uuid import uuid4
 from brain.agents.warden import (
     DEFAULT_MANAGED_AGENTS,
     SupervisedAgent,
+    auto_ticket_candidates,
     managed_agent_ids,
+    owner_routes,
     supervision_event,
     supervision_findings,
     supervision_signature,
     supervision_snapshot,
+    weekly_security_brief,
 )
 
 
@@ -99,3 +102,59 @@ def test_supervision_event_uses_security_alerts_and_recovery_message():
 def test_warden_default_managed_agents_include_ledger():
     assert "ledger" in DEFAULT_MANAGED_AGENTS
     assert managed_agent_ids({}) == DEFAULT_MANAGED_AGENTS
+
+
+def test_warden_snapshot_includes_routes_brief_and_ticket_candidates():
+    now = datetime(2026, 6, 3, 16, 0, tzinfo=timezone.utc)
+    findings = [
+        {
+            "agent_id": "porchlight",
+            "display_name": "Porchlight",
+            "role": "posture_sweep",
+            "severity": "warning",
+            "code": "posture_sweep_stale",
+            "detail": "Porchlight last checked in too long ago.",
+        }
+    ]
+    snapshot = supervision_snapshot(
+        [_agent("porchlight", "posture_sweep")],
+        findings,
+        checked_at=now,
+    )
+
+    assert snapshot["owner_routes"][0]["owner_agent"] == "porchlight"
+    assert snapshot["owner_routes"][0]["recommended_action"] == (
+        "run_porchlight_and_verify_schedule"
+    )
+    assert snapshot["weekly_brief"]["owner_counts"] == {"porchlight": 1}
+    assert snapshot["ticket_candidates"][0]["ticket_key"] == (
+        "warden:porchlight:posture_sweep_stale"
+    )
+
+
+def test_warden_owner_routes_support_posture_controls():
+    routes = owner_routes(
+        [
+            {
+                "id": "tls.service_certs",
+                "title": "Service certificate freshness",
+                "owner_agent": "sweep",
+                "category": "TLS and certificates",
+                "status": "fail",
+                "summary": "Shortest certificate expires in 14 days.",
+            }
+        ]
+    )
+    tickets = auto_ticket_candidates(routes)
+    brief = weekly_security_brief(
+        status="warning",
+        managed_count=4,
+        healthy_count=3,
+        routes=routes,
+        checked_at=datetime(2026, 6, 3, 16, 0, tzinfo=timezone.utc),
+    )
+
+    assert routes[0]["owner_agent"] == "sweep"
+    assert routes[0]["severity"] == "error"
+    assert tickets[0]["severity"] == "critical"
+    assert brief["owner_counts"] == {"sweep": 1}

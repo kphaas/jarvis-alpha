@@ -98,6 +98,103 @@ export function WardenTab({
         )}
       </section>
 
+      {wardenStatus?.weekly_brief && (
+        <section>
+          <p className="mb-3 text-[10px] font-mono uppercase opacity-40 tracking-widest">
+            Weekly brief
+          </p>
+          <div className={`rounded-2xl border ${border} ${subtle} p-4`}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <p className="text-sm font-bold">Security summary</p>
+                <p className={`mt-1 text-sm ${fg}`}>{wardenStatus.weekly_brief.summary}</p>
+                <p className={`mt-2 text-xs font-mono ${muted}`}>
+                  {wardenStatus.weekly_brief.cadence} · {relativeAccessedLabel(wardenStatus.weekly_brief.generated_at)}
+                </p>
+              </div>
+              <span className={`shrink-0 rounded border px-2 py-1 text-[10px] font-mono uppercase ${controlStatusClass(wardenStatus.weekly_brief.status === 'warning' ? 'warn' : wardenStatus.weekly_brief.status)}`}>
+                {wardenStatus.weekly_brief.status}
+              </span>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {Object.entries(wardenStatus.weekly_brief.owner_counts).map(([owner, count]) => (
+                <span key={owner} className={`rounded border px-2 py-1 text-[10px] font-mono ${muted}`}>
+                  {owner.replaceAll('_', ' ')}: {count}
+                </span>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {wardenStatus?.owner_routes && wardenStatus.owner_routes.length > 0 && (
+        <section>
+          <p className="mb-3 text-[10px] font-mono uppercase opacity-40 tracking-widest">
+            Owner routing
+          </p>
+          <div className="grid grid-cols-1 gap-3">
+            {wardenStatus.owner_routes.slice(0, 6).map((route) => (
+              <div key={route.ticket_key} className={`rounded-2xl border ${border} ${subtle} p-4`}>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold">{route.title}</p>
+                    <p className={`mt-1 text-sm ${fg}`}>{route.detail || route.recommended_action.replaceAll('_', ' ')}</p>
+                    <p className={`mt-2 text-xs font-mono ${muted}`}>
+                      owner {route.owner_agent.replaceAll('_', ' ')} · {route.owner_role.replaceAll('_', ' ')}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-1.5">
+                    <span className={`rounded border px-2 py-1 text-[10px] font-mono uppercase ${controlStatusClass(route.severity === 'warning' ? 'warn' : route.severity === 'error' ? 'fail' : route.severity)}`}>
+                      {route.severity}
+                    </span>
+                    {route.approval_required && (
+                      <span className="rounded border border-violet-500/30 bg-violet-500/10 px-2 py-1 text-[10px] font-mono uppercase text-violet-300">
+                        approval
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {wardenStatus?.auto_ticket_candidates && wardenStatus.auto_ticket_candidates.length > 0 && (
+        <section>
+          <p className="mb-3 text-[10px] font-mono uppercase opacity-40 tracking-widest">
+            Ticket candidates
+          </p>
+          <div className={`rounded-2xl border ${border} ${subtle} overflow-hidden`}>
+            <table className="w-full text-xs">
+              <thead>
+                <tr>
+                  <th className="px-4 py-2 text-left font-mono uppercase opacity-40">Owner</th>
+                  <th className="px-2 py-2 text-left font-mono uppercase opacity-40">Issue</th>
+                  <th className="px-4 py-2 text-left font-mono uppercase opacity-40">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {wardenStatus.auto_ticket_candidates.slice(0, 6).map((ticket) => (
+                  <tr key={ticket.ticket_key}>
+                    <td className="px-4 py-2 font-mono">{ticket.owner_agent.replaceAll('_', ' ')}</td>
+                    <td className="px-2 py-2">
+                      <p className="font-bold">{ticket.title}</p>
+                      <p className={`mt-1 font-mono ${muted}`}>{ticket.recommended_action.replaceAll('_', ' ')}</p>
+                    </td>
+                    <td className="px-4 py-2">
+                      <span className={`rounded border px-2 py-1 text-[10px] font-mono uppercase ${controlStatusClass(ticket.severity === 'warning' ? 'warn' : 'fail')}`}>
+                        {ticket.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
       {wardenStatus?.posture_score && (
         <section>
           <p className="mb-3 text-[10px] font-mono uppercase opacity-40 tracking-widest">

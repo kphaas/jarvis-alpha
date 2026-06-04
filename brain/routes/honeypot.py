@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from ipaddress import ip_address
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -30,7 +31,7 @@ TRIPWIRE_TRAPS = (
 
 def _serialize_honeypot_event(row) -> dict:
     captured_at = row["captured_at"]
-    return {
+    event = {
         "id": row["id"],
         "ts": captured_at.isoformat() if captured_at else None,
         "path": row["trap_path"],
@@ -38,6 +39,141 @@ def _serialize_honeypot_event(row) -> dict:
         "client_ip": row["source_ip"],
         "user_agent": row["user_agent"] or "",
         "method": row["method"] or "GET",
+    }
+    event["source_reputation"] = source_reputation(
+        event["client_ip"],
+        event["user_agent"],
+    )
+    return event
+
+
+def source_reputation(
+    source_ip: str,
+    user_agent: str = "",
+    *,
+    hit_count: int = 1,
+    unique_paths: int = 1,
+) -> dict:
+    tags: list[str] = []
+    status = "single_probe"
+    severity = "low"
+    summary = "Single honeypot probe"
+
+    try:
+        parsed = ip_address(source_ip)
+    except ValueError:
+        tags.append("invalid_ip")
+        return {
+            "status": "unknown_source",
+            "severity": "medium",
+            "summary": "Source IP could not be parsed",
+            "tags": tags,
+        }
+
+    if (
+        parsed.is_private
+        or parsed.is_loopback
+        or parsed.is_link_local
+        or parsed.is_reserved
+    ):
+        tags.append("internal_or_reserved")
+        status = "internal_or_reserved"
+        severity = "medium"
+        summary = "Internal, private, or reserved source reached a honeypot trap"
+
+    ua = user_agent.lower()
+    scanner_terms = ("bot", "crawler", "scanner", "masscan", "zgrab", "nuclei")
+    if any(term in ua for term in scanner_terms):
+        tags.append("scanner_user_agent")
+        status = "scanner"
+        severity = "medium"
+        summary = "Scanner-like user agent hit a honeypot trap"
+
+    if unique_paths >= 2 or hit_count >= 3:
+        tags.append("repeat_probe")
+        status = "repeat_probe"
+        severity = "high" if hit_count >= 5 or unique_paths >= 3 else "medium"
+        summary = f"Repeat source hit {hit_count} trap(s) across {unique_paths} path(s)"
+
+    return {
+        "status": status,
+        "severity": severity,
+        "summary": summary,
+        "tags": tags,
+    }
+
+
+def cluster_honeypot_events(events: list[dict]) -> list[dict]:
+    clusters: dict[str, dict] = {}
+    for event in events:
+        source_ip = str(event.get("client_ip") or "unknown")
+        cluster = clusters.setdefault(
+            source_ip,
+            {
+                "source_ip": source_ip,
+                "hit_count": 0,
+                "paths": set(),
+                "methods": set(),
+                "last_seen": None,
+                "user_agent": "",
+            },
+        )
+        cluster["hit_count"] += 1
+        cluster["paths"].add(str(event.get("path") or "unknown"))
+        cluster["methods"].add(str(event.get("method") or "GET").upper())
+        if event.get("user_agent") and not cluster["user_agent"]:
+            cluster["user_agent"] = str(event.get("user_agent"))
+        ts = event.get("ts")
+        if ts and (cluster["last_seen"] is None or ts > cluster["last_seen"]):
+            cluster["last_seen"] = ts
+
+    out = []
+    for cluster in clusters.values():
+        unique_paths = len(cluster["paths"])
+        reputation = source_reputation(
+            cluster["source_ip"],
+            cluster["user_agent"],
+            hit_count=cluster["hit_count"],
+            unique_paths=unique_paths,
+        )
+        out.append(
+            {
+                "source_ip": cluster["source_ip"],
+                "hit_count": cluster["hit_count"],
+                "unique_paths": unique_paths,
+                "paths": sorted(cluster["paths"]),
+                "methods": sorted(cluster["methods"]),
+                "last_seen": cluster["last_seen"],
+                "source_reputation": reputation,
+            }
+        )
+    return sorted(
+        out,
+        key=lambda item: (
+            item["source_reputation"]["severity"] != "high",
+            -item["hit_count"],
+            item["source_ip"],
+        ),
+    )
+
+
+def source_reputation_summary(clusters: list[dict]) -> dict:
+    return {
+        "repeat_sources": sum(
+            1
+            for cluster in clusters
+            if cluster["source_reputation"]["status"] == "repeat_probe"
+        ),
+        "scanner_sources": sum(
+            1
+            for cluster in clusters
+            if "scanner_user_agent" in cluster["source_reputation"]["tags"]
+        ),
+        "internal_sources": sum(
+            1
+            for cluster in clusters
+            if "internal_or_reserved" in cluster["source_reputation"]["tags"]
+        ),
     }
 
 
@@ -124,6 +260,7 @@ async def _emit_tripwire_event(
                     "source_ip": source_ip,
                     "method": method,
                     "user_agent": user_agent[:200],
+                    "source_reputation": source_reputation(source_ip, user_agent),
                     "notify_debounce_window": TRIPWIRE_NOTIFY_WINDOW,
                 },
             ),
@@ -306,6 +443,16 @@ async def get_honeypot_events(request: Request, limit: int = 50):
             )
             or 0
         )
+    events = [_serialize_honeypot_event(row) for row in rows]
+    clusters = cluster_honeypot_events(events)
+    reputation_by_source = {
+        cluster["source_ip"]: cluster["source_reputation"] for cluster in clusters
+    }
+    for event in events:
+        event["source_reputation"] = reputation_by_source.get(
+            event["client_ip"],
+            event["source_reputation"],
+        )
     return {
         "agent_id": TRIPWIRE_AGENT_ID,
         "display_name": "Tripwire",
@@ -314,5 +461,7 @@ async def get_honeypot_events(request: Request, limit: int = 50):
         "unique_clients_24h": unique_clients_24h,
         "traps_active": len(TRIPWIRE_TRAPS),
         "traps": list(TRIPWIRE_TRAPS),
-        "events": [_serialize_honeypot_event(row) for row in rows],
+        "events": events,
+        "probe_clusters": clusters,
+        "source_reputation_summary": source_reputation_summary(clusters),
     }

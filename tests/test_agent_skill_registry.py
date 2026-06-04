@@ -127,6 +127,8 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
         == "service_tls_cert_renewal"
     )
     assert agents["warden"].metadata["supervision_interval_seconds"] == 600
+    assert "weekly_security_brief" in agents["warden"].metadata["capabilities"]
+    assert "owner_routing" in agents["warden"].metadata["capabilities"]
     assert (
         agents["warden"].metadata["remediation_policy"]["T4_T5"]
         == "route_to_owner_with_approval"
@@ -141,6 +143,8 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["tripwire"].metadata["warden_role"] == "honeypot_sensor"
     assert agents["tripwire"].metadata["mattermost_channel_key"] == "security_alerts"
     assert "honeypot_hits" in agents["tripwire"].metadata["monitors"]
+    assert "source_reputation_enrichment" in agents["tripwire"].metadata["capabilities"]
+    assert "repeated_probe_clustering" in agents["tripwire"].metadata["capabilities"]
     assert agents["ledger"].metadata["warden_role"] == "evidence_reporter"
     assert agents["ledger"].metadata["mattermost_channel_key"] == "security_alerts"
     assert "evidence.package_report" in agents["ledger"].allowed_skills

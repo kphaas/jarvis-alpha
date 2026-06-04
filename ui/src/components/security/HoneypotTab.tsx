@@ -18,11 +18,19 @@ interface HoneypotTabProps extends SecurityThemeProps {
   errHoneypot: boolean
 }
 
+function reputationClass(severity?: string): string {
+  if (severity === 'high' || severity === 'critical') return 'border-rose-500/30 bg-rose-500/10 text-rose-400'
+  if (severity === 'medium') return 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+  return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+}
+
 export function HoneypotTab({ isDark, border, subtle, muted, honeypotData, loadHoneypot, errHoneypot }: HoneypotTabProps) {
   const agentName = honeypotData?.display_name ?? 'Tripwire'
   const hits24h = honeypotData?.hits_24h ?? 0
   const uniqueClients24h = honeypotData?.unique_clients_24h ?? 0
   const activeTrapCount = honeypotData?.traps_active ?? HONEYPOT_TRAP_CARDS.length
+  const reputationSummary = honeypotData?.source_reputation_summary
+  const clusters = honeypotData?.probe_clusters ?? []
 
   return (
         <motion.div
@@ -68,6 +76,56 @@ export function HoneypotTab({ isDark, border, subtle, muted, honeypotData, loadH
               </div>
             )}
           </section>
+
+          {honeypotData && (
+            <section>
+              <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest mb-4">
+                Source reputation
+              </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className={`rounded-2xl border ${border} ${subtle} p-4`}>
+                  <p className="font-mono text-2xl font-bold tabular-nums text-amber-300">
+                    {reputationSummary?.scanner_sources ?? 0}
+                  </p>
+                  <p className={`mt-1 text-[10px] font-mono uppercase ${muted}`}>scanner sources</p>
+                </div>
+                <div className={`rounded-2xl border ${border} ${subtle} p-4`}>
+                  <p className="font-mono text-2xl font-bold tabular-nums text-rose-400">
+                    {reputationSummary?.repeat_sources ?? 0}
+                  </p>
+                  <p className={`mt-1 text-[10px] font-mono uppercase ${muted}`}>repeat sources</p>
+                </div>
+                <div className={`rounded-2xl border ${border} ${subtle} p-4`}>
+                  <p className="font-mono text-2xl font-bold tabular-nums text-sky-300">
+                    {reputationSummary?.internal_sources ?? 0}
+                  </p>
+                  <p className={`mt-1 text-[10px] font-mono uppercase ${muted}`}>internal/reserved</p>
+                </div>
+              </div>
+              {clusters.length > 0 && (
+                <div className="mt-4 grid grid-cols-1 gap-3">
+                  {clusters.slice(0, 5).map((cluster) => (
+                    <div key={cluster.source_ip} className={`rounded-2xl border ${border} ${subtle} p-4`}>
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold font-mono">{cluster.source_ip}</p>
+                          <p className={`mt-1 text-xs ${muted}`}>
+                            {cluster.hit_count} hit(s) across {cluster.unique_paths} path(s)
+                          </p>
+                          <p className={`mt-2 text-xs font-mono ${muted} break-all`}>
+                            {cluster.paths.join(' · ')}
+                          </p>
+                        </div>
+                        <span className={`shrink-0 rounded border px-2 py-1 text-[10px] font-mono uppercase ${reputationClass(cluster.source_reputation?.severity)}`}>
+                          {cluster.source_reputation?.status?.replaceAll('_', ' ') ?? 'unknown'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
 
           <section>
             <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest mb-4">
@@ -128,6 +186,9 @@ export function HoneypotTab({ isDark, border, subtle, muted, honeypotData, loadH
                         Client IP
                       </th>
                       <th className="text-left px-2 py-2 font-mono uppercase opacity-40">
+                        Reputation
+                      </th>
+                      <th className="text-left px-2 py-2 font-mono uppercase opacity-40">
                         User agent
                       </th>
                       <th className="text-left px-4 py-2 font-mono uppercase opacity-40">Trap</th>
@@ -162,6 +223,11 @@ export function HoneypotTab({ isDark, border, subtle, muted, honeypotData, loadH
                             </span>
                           </td>
                           <td className="px-2 py-2 font-mono opacity-80">{ev.client_ip}</td>
+                          <td className="px-2 py-2">
+                            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${reputationClass(ev.source_reputation?.severity)}`}>
+                              {ev.source_reputation?.status?.replaceAll('_', ' ') ?? 'unknown'}
+                            </span>
+                          </td>
                           <td className="px-2 py-2 font-mono opacity-70 max-w-[200px] break-all">
                             {ua}
                           </td>
