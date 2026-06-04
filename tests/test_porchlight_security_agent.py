@@ -1042,6 +1042,8 @@ def test_dependency_cve_scan_fails_on_high_npm_vuln(tmp_path, monkeypatch):
     def fake_command(args, **kwargs):
         assert args[0] == porchlight.NPM_BIN
         assert args[1] == "audit"
+        if Path(porchlight.NPM_BIN).is_absolute():
+            assert str(Path(porchlight.NPM_BIN).parent) in kwargs["env"]["PATH"]
         return porchlight.CommandResult(
             1,
             porchlight.json.dumps(
