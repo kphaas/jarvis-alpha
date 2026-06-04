@@ -398,7 +398,8 @@ SELECT rolname,
        rolbypassrls::text,
        rolcreatedb::text,
        rolcreaterole::text,
-       rolcanlogin::text
+       rolcanlogin::text,
+       oid::text
 FROM pg_roles
 WHERE rolname IN ('jarvisbrain', 'jarvis_alpha_writer', 'jarvis_alpha_app')
    OR rolsuper
@@ -430,6 +431,7 @@ ORDER BY rolname;
             "rolcreatedb": row[3] == "true",
             "rolcreaterole": row[4] == "true",
             "rolcanlogin": row[5] == "true",
+            "oid": row[6] if len(row) >= 7 else "",
         }
         for row in rows
         if len(row) >= 6
@@ -453,11 +455,12 @@ ORDER BY rolname;
     if runtime_bypass:
         issues.append("runtime role(s) can bypass RLS: " + ", ".join(runtime_bypass))
     if roles.get("jarvisbrain", {}).get("rolsuper"):
-        issues.append("jarvisbrain is still SUPERUSER and can bypass FORCE RLS")
-    if superusers == ["jarvisbrain"]:
-        issues.append(
-            "jarvisbrain is the only superuser; demotion needs break-glass first"
-        )
+        if superusers == ["jarvisbrain"]:
+            issues.append(
+                "jarvisbrain is the only superuser; demotion needs break-glass first"
+            )
+        elif roles.get("jarvisbrain", {}).get("oid") != "10":
+            issues.append("jarvisbrain is SUPERUSER and is not the bootstrap role")
 
     if issues:
         return CheckResult(
@@ -470,6 +473,25 @@ ORDER BY rolname;
                 "superusers": superusers,
                 "runtime_bypass_roles": runtime_bypass,
                 "missing_required_roles": missing_required,
+                "jarvisbrain": roles.get("jarvisbrain", {}),
+            },
+        )
+
+    if roles.get("jarvisbrain", {}).get("rolsuper"):
+        return CheckResult(
+            name="postgres_role_safety",
+            status="warn",
+            severity="medium",
+            summary="Postgres role safety is using an accepted bootstrap-role exception.",
+            detail=(
+                "jarvisbrain is PostgreSQL bootstrap role oid 10 and cannot be "
+                "demoted with supported SQL; runtime roles are NOBYPASSRLS and a "
+                "separate break-glass superuser exists."
+            ),
+            metadata={
+                "superusers": superusers,
+                "runtime_bypass_roles": runtime_bypass,
+                "accepted_exception": "postgres_bootstrap_role_superuser",
                 "jarvisbrain": roles.get("jarvisbrain", {}),
             },
         )

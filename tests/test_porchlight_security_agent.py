@@ -440,7 +440,7 @@ def test_postgres_role_safety_fails_when_jarvisbrain_is_only_superuser():
                 [
                     "jarvis_alpha_app|false|false|false|false|false",
                     "jarvis_alpha_writer|false|false|false|false|false",
-                    "jarvisbrain|true|false|true|true|true",
+                    "jarvisbrain|true|false|true|true|true|10",
                 ]
             ),
             "",
@@ -450,7 +450,6 @@ def test_postgres_role_safety_fails_when_jarvisbrain_is_only_superuser():
 
     assert result.status == "fail"
     assert result.severity == "critical"
-    assert "jarvisbrain is still SUPERUSER" in result.detail
     assert "break-glass" in result.detail
     assert result.metadata["superusers"] == ["jarvisbrain"]
 
@@ -461,10 +460,10 @@ def test_postgres_role_safety_fails_when_runtime_role_bypasses_rls():
             0,
             "\n".join(
                 [
-                    "breakglass_admin|true|false|true|true|true",
+                    "breakglass_admin|true|false|true|true|true|24576",
                     "jarvis_alpha_app|false|false|false|false|false",
                     "jarvis_alpha_writer|false|true|false|false|false",
-                    "jarvisbrain|false|false|true|true|true",
+                    "jarvisbrain|false|false|true|true|true|10",
                 ]
             ),
             "",
@@ -477,16 +476,62 @@ def test_postgres_role_safety_fails_when_runtime_role_bypasses_rls():
     assert result.metadata["runtime_bypass_roles"] == ["jarvis_alpha_writer"]
 
 
+def test_postgres_role_safety_warns_for_bootstrap_exception_with_breakglass():
+    def fake_psql(query):
+        return porchlight.CommandResult(
+            0,
+            "\n".join(
+                [
+                    "jarvis_alpha_app|false|false|false|false|false|16388",
+                    "jarvis_alpha_writer|false|false|false|false|false|16389",
+                    "jarvis_pg_breakglass|true|false|true|true|true|24576",
+                    "jarvisbrain|true|false|true|true|true|10",
+                ]
+            ),
+            "",
+        )
+
+    result = porchlight.check_postgres_role_safety(psql=fake_psql)
+
+    assert result.status == "warn"
+    assert result.severity == "medium"
+    assert result.metadata["accepted_exception"] == "postgres_bootstrap_role_superuser"
+    assert result.metadata["superusers"] == ["jarvis_pg_breakglass", "jarvisbrain"]
+    assert "bootstrap role oid 10" in result.detail
+
+
+def test_postgres_role_safety_fails_for_non_bootstrap_jarvisbrain_superuser():
+    def fake_psql(query):
+        return porchlight.CommandResult(
+            0,
+            "\n".join(
+                [
+                    "breakglass_admin|true|false|true|true|true|24576",
+                    "jarvis_alpha_app|false|false|false|false|false|16388",
+                    "jarvis_alpha_writer|false|false|false|false|false|16389",
+                    "jarvisbrain|true|false|true|true|true|16390",
+                ]
+            ),
+            "",
+        )
+
+    result = porchlight.check_postgres_role_safety(psql=fake_psql)
+
+    assert result.status == "fail"
+    assert result.severity == "critical"
+    assert "not the bootstrap role" in result.detail
+
+
 def test_postgres_role_safety_passes_with_breakglass_and_demoted_jarvisbrain():
     def fake_psql(query):
         return porchlight.CommandResult(
             0,
             "\n".join(
                 [
-                    "breakglass_admin|true|false|true|true|true",
-                    "jarvis_alpha_app|false|false|false|false|false",
-                    "jarvis_alpha_writer|false|false|false|false|false",
-                    "jarvisbrain|false|false|true|true|true",
+                    "breakglass_admin|true|false|true|true|true|24576",
+                    "jarvis_alpha_app|false|false|false|false|false|16388",
+                    "jarvis_alpha_writer|false|false|false|false|false|16389",
+                    "jarvisbrain|false|false|true|true|true|10",
                 ]
             ),
             "",
