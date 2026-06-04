@@ -16,14 +16,18 @@ Do not combine these steps. SECURITY DEFINER functions currently run as
 
 Do not run Phase 3A until all are true:
 
-- PR #239 is reviewed and merged.
+- PR #240 and PR #241 are reviewed, merged, and deployed.
 - Fresh Brain backup exists.
 - Brain has a non-`jarvisbrain` superuser recovery role.
 - Alpha readiness is green immediately before apply.
 - The rollback SQL is present on the operator machine.
 
-Do not run Phase 3B until all Phase 3A postchecks and SECURITY DEFINER
-canaries pass.
+Do not run Phase 3B ownership transfer until all Phase 3A postchecks and
+SECURITY DEFINER canaries pass.
+
+Do not attempt final `jarvisbrain` demotion through unsupported catalog edits.
+`jarvisbrain` is the bootstrap role in this cluster, and PostgreSQL rejects
+supported SQL removal of `SUPERUSER` from the bootstrap identity.
 
 ## Artifacts
 
@@ -31,6 +35,7 @@ canaries pass.
 - Phase 2 review SQL: `docs/reports/alpha_postgres_owner_split_phase2_20260604.sql`
 - Phase 3A apply SQL: `docs/reports/alpha_postgres_owner_split_phase3a_apply_20260604.sql`
 - Phase 3A rollback SQL: `docs/reports/alpha_postgres_owner_split_phase3a_rollback_20260604.sql`
+- Phase 3B canary report: `docs/reports/alpha_postgres_secdef_canary_20260604.md`
 
 ## Prechecks
 
@@ -127,8 +132,41 @@ Phase 3B must be a separate review step. It needs canaries for at least:
 - watchdog event function
 - secret access function
 
-Only after those canaries pass should the final demotion be considered:
+Run canaries from Air:
+
+```bash
+.venv/bin/python scripts/postgres_secdef_canary.py \
+  --ssh-target jarvisbrain@jarvis-brain.tail40ed36.ts.net \
+  --format markdown \
+  --output docs/reports/alpha_postgres_secdef_canary_20260604.md
+```
+
+The script runs each canary in an explicit transaction:
+
+1. `BEGIN`
+2. set local timeouts and `rls.role = platform_admin`
+3. temporarily `ALTER FUNCTION ... OWNER TO jarvis_alpha_owner`
+4. run one synthetic function call
+5. `ROLLBACK`
+
+Expected report:
+
+- 30 `pass`
+- 2 `skipped` for pgaudit C event triggers
+- 0 `fail`
+- 0 `missing`
+- 0 `uncovered`
+
+Only after those canaries pass should SECURITY DEFINER ownership transfer be
+planned for the 30 passing non-pgaudit functions.
+
+The original demotion candidate remains:
 
 ```sql
 ALTER ROLE jarvisbrain NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
 ```
+
+However, this command is expected to fail on this cluster because `jarvisbrain`
+is the bootstrap user. The supported path to fully eliminate that superuser
+identity is a later cluster rebuild or dump/restore into a cluster initialized
+with a separate bootstrap role.
