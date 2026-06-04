@@ -774,13 +774,18 @@ ORDER BY secret_name;
         }
         due_date = datetime.strptime(next_due, "%Y-%m-%d").date()
         days_left = (due_date - today).days
+        try:
+            rotation_days = int(days)
+        except ValueError:
+            rotation_days = 14
+        warning_window_days = min(14, max(1, (rotation_days + 3) // 4))
         if verify == "failed":
             issues.append(f"{name} last verification failed")
         if days_left < 0:
             issues.append(f"{name} overdue since {next_due}")
         elif days_left == 0:
             issues.append(f"{name} due today")
-        elif days_left <= 14:
+        elif days_left <= warning_window_days:
             warnings.append(f"{name} due in {days_left} days")
 
     for name, spec in configured.items():
