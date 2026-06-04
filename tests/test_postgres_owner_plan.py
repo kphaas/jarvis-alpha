@@ -71,6 +71,73 @@ def test_render_review_sql_comments_mutating_statements():
     assert "\nALTER ROLE jarvisbrain NOSUPERUSER" not in sql
 
 
+def test_phase3a_apply_holds_security_definer_and_demote_steps():
+    owner_plan = plan.OwnerPlan(
+        database="jarvis_alpha",
+        source="ssh:brain",
+        owner_role="jarvis_alpha_owner",
+        migrator_role="jarvis_alpha_migrator",
+        objects=[
+            plan.PlannedObject("database", "jarvis_alpha", "jarvisbrain", {}),
+            plan.PlannedObject(
+                "function",
+                "public.secdef()",
+                "jarvisbrain",
+                {"security_definer": True},
+            ),
+            plan.PlannedObject(
+                "function",
+                "public.normal()",
+                "jarvisbrain",
+                {"security_definer": False},
+            ),
+        ],
+    )
+
+    sql = plan.render_phase3a_apply_sql(owner_plan)
+
+    assert "BEGIN;" in sql
+    assert "COMMIT;" in sql
+    assert "CREATE ROLE jarvis_alpha_owner" in sql
+    assert "ALTER DATABASE jarvis_alpha OWNER TO jarvis_alpha_owner;" in sql
+    assert "ALTER FUNCTION public.normal() OWNER TO jarvis_alpha_owner;" in sql
+    assert "-- ALTER FUNCTION public.secdef() OWNER TO jarvis_alpha_owner;" in sql
+    assert "-- ALTER ROLE jarvisbrain NOSUPERUSER" in sql
+    assert "\nALTER ROLE jarvisbrain NOSUPERUSER" not in sql
+
+
+def test_phase3a_rollback_restores_non_security_definer_ownership():
+    owner_plan = plan.OwnerPlan(
+        database="jarvis_alpha",
+        source="ssh:brain",
+        owner_role="jarvis_alpha_owner",
+        migrator_role="jarvis_alpha_migrator",
+        objects=[
+            plan.PlannedObject("database", "jarvis_alpha", "jarvisbrain", {}),
+            plan.PlannedObject(
+                "function",
+                "public.secdef()",
+                "jarvisbrain",
+                {"security_definer": True},
+            ),
+            plan.PlannedObject(
+                "function",
+                "public.normal()",
+                "jarvisbrain",
+                {"security_definer": False},
+            ),
+        ],
+    )
+
+    sql = plan.render_phase3a_rollback_sql(owner_plan)
+
+    assert "ALTER ROLE jarvisbrain SUPERUSER" in sql
+    assert "ALTER DATABASE jarvis_alpha OWNER TO jarvisbrain;" in sql
+    assert "ALTER FUNCTION public.normal() OWNER TO jarvisbrain;" in sql
+    assert "ALTER FUNCTION public.secdef() OWNER TO jarvisbrain;" not in sql
+    assert "DROP ROLE IF EXISTS jarvis_alpha_migrator;" in sql
+
+
 def test_build_owner_plan_uses_catalog_queries(monkeypatch):
     outputs = {
         "FROM pg_database": "database|jarvis_alpha|jarvisbrain|allow_connections=true\n",
