@@ -161,6 +161,10 @@ def should_renew(days_left: int, threshold_days: int, *, force: bool) -> bool:
     return force or days_left <= threshold_days
 
 
+def cert_moved_forward(previous_expires_at: datetime, new_expires_at: datetime) -> bool:
+    return new_expires_at > previous_expires_at
+
+
 def current_node_guess() -> str | None:
     env_node = os.getenv("JARVIS_NODE", "").strip().lower()
     if env_node in NODE_SPECS:
@@ -233,16 +237,16 @@ def renew_local_node(
             error=f"certificate not found at {source_path}",
         )
 
-    issued_at, expires_at = cert_dates(source_path)
-    days_left = days_remaining(expires_at)
+    initial_issued_at, initial_expires_at = cert_dates(source_path)
+    days_left = days_remaining(initial_expires_at)
     if not should_renew(days_left, threshold_days, force=force):
         return NodeResult(
             node=spec.node,
             fqdn=spec.fqdn,
             status="ok",
             days_remaining=days_left,
-            cert_issued_at=issued_at.isoformat(),
-            cert_expires_at=expires_at.isoformat(),
+            cert_issued_at=initial_issued_at.isoformat(),
+            cert_expires_at=initial_expires_at.isoformat(),
             source_cert=str(source_path),
             health_ok=check_health(spec.health_url),
         )
@@ -253,8 +257,8 @@ def renew_local_node(
             fqdn=spec.fqdn,
             status="would_renew",
             days_remaining=days_left,
-            cert_issued_at=issued_at.isoformat(),
-            cert_expires_at=expires_at.isoformat(),
+            cert_issued_at=initial_issued_at.isoformat(),
+            cert_expires_at=initial_expires_at.isoformat(),
             source_cert=str(source_path),
             renewed=False,
         )
@@ -281,8 +285,8 @@ def renew_local_node(
             fqdn=spec.fqdn,
             status="error",
             days_remaining=days_left,
-            cert_issued_at=issued_at.isoformat(),
-            cert_expires_at=expires_at.isoformat(),
+            cert_issued_at=initial_issued_at.isoformat(),
+            cert_expires_at=initial_expires_at.isoformat(),
             source_cert=str(source_path),
             error=f"tailscale cert failed: {detail[:300]}",
         )
@@ -297,6 +301,24 @@ def renew_local_node(
     issued_at, expires_at = cert_dates(
         cert_path if cert_path.is_file() else fqdn_cert_path
     )
+    if not cert_moved_forward(
+        previous_expires_at=initial_expires_at,
+        new_expires_at=expires_at,
+    ):
+        health_ok = check_health(spec.health_url)
+        return NodeResult(
+            node=spec.node,
+            fqdn=spec.fqdn,
+            status="unchanged",
+            days_remaining=days_remaining(expires_at),
+            cert_issued_at=issued_at.isoformat(),
+            cert_expires_at=expires_at.isoformat(),
+            source_cert=str(cert_path if cert_path.is_file() else fqdn_cert_path),
+            renewed=False,
+            restarted=False,
+            health_ok=health_ok,
+            error="tailscale cert returned the existing certificate",
+        )
     restarted = False
     if not no_restart:
         restarted = bool(restart_local_service(spec))
