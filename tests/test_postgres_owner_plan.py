@@ -138,6 +138,67 @@ def test_phase3a_rollback_restores_non_security_definer_ownership():
     assert "DROP ROLE IF EXISTS jarvis_alpha_migrator;" in sql
 
 
+def test_phase3b_secdef_apply_only_moves_security_definer_functions():
+    owner_plan = plan.OwnerPlan(
+        database="jarvis_alpha",
+        source="ssh:brain",
+        owner_role="jarvis_alpha_owner",
+        migrator_role="jarvis_alpha_migrator",
+        objects=[
+            plan.PlannedObject("database", "jarvis_alpha", "jarvis_alpha_owner", {}),
+            plan.PlannedObject(
+                "function",
+                "public.secdef()",
+                "jarvisbrain",
+                {"security_definer": True},
+            ),
+            plan.PlannedObject(
+                "function",
+                "public.normal()",
+                "jarvis_alpha_owner",
+                {"security_definer": False},
+            ),
+        ],
+    )
+
+    sql = plan.render_phase3b_secdef_apply_sql(owner_plan)
+
+    assert "ALTER FUNCTION public.secdef() OWNER TO jarvis_alpha_owner;" in sql
+    assert "ALTER FUNCTION public.normal()" not in sql
+    assert "ALTER DATABASE" not in sql
+    assert "ALTER ROLE jarvisbrain NOSUPERUSER" not in sql
+    assert "This file does not demote jarvisbrain" in sql
+
+
+def test_phase3b_secdef_rollback_restores_security_definers_to_jarvisbrain():
+    owner_plan = plan.OwnerPlan(
+        database="jarvis_alpha",
+        source="ssh:brain",
+        owner_role="jarvis_alpha_owner",
+        migrator_role="jarvis_alpha_migrator",
+        objects=[
+            plan.PlannedObject(
+                "function",
+                "public.secdef()",
+                "jarvisbrain",
+                {"security_definer": True},
+            ),
+            plan.PlannedObject(
+                "function",
+                "public.normal()",
+                "jarvis_alpha_owner",
+                {"security_definer": False},
+            ),
+        ],
+    )
+
+    sql = plan.render_phase3b_secdef_rollback_sql(owner_plan)
+
+    assert "ALTER FUNCTION public.secdef() OWNER TO jarvisbrain;" in sql
+    assert "ALTER FUNCTION public.normal()" not in sql
+    assert "ALTER ROLE jarvisbrain" not in sql
+
+
 def test_build_owner_plan_uses_catalog_queries(monkeypatch):
     outputs = {
         "FROM pg_database": "database|jarvis_alpha|jarvisbrain|allow_connections=true\n",
