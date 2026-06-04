@@ -435,12 +435,12 @@ def ownership_statements(
             continue
         if not include_security_definer and is_security_definer:
             continue
+        if obj.kind == "extension":
+            continue
         if obj.kind == "database":
             statements.append(f"ALTER DATABASE {obj.identity} OWNER TO {owner};")
         elif obj.kind == "schema":
             statements.append(f"ALTER SCHEMA {obj.identity} OWNER TO {owner};")
-        elif obj.kind == "extension":
-            statements.append(f"ALTER EXTENSION {obj.identity} OWNER TO {owner};")
         elif obj.kind == "relation":
             statements.append(f"ALTER {obj.identity} OWNER TO {owner};")
         elif obj.kind == "function":
