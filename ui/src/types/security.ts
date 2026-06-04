@@ -128,6 +128,24 @@ export interface HoneypotEvent {
   client_ip: string
   user_agent: string
   method: string
+  source_reputation?: SourceReputation
+}
+
+export interface SourceReputation {
+  status: string
+  severity: string
+  summary: string
+  tags: string[]
+}
+
+export interface ProbeCluster {
+  source_ip: string
+  hit_count: number
+  unique_paths: number
+  paths: string[]
+  methods: string[]
+  last_seen: string | null
+  source_reputation: SourceReputation
 }
 
 export interface HoneypotData {
@@ -139,6 +157,12 @@ export interface HoneypotData {
   events: HoneypotEvent[]
   traps_active: number
   traps: string[]
+  probe_clusters?: ProbeCluster[]
+  source_reputation_summary?: {
+    repeat_sources: number
+    scanner_sources: number
+    internal_sources: number
+  }
 }
 
 export interface McpServer {
@@ -301,6 +325,37 @@ export interface WardenPostureScore {
   top_gaps: WardenPostureControl[]
 }
 
+export interface WardenOwnerRoute {
+  code: string
+  title: string
+  detail: string
+  severity: string
+  owner_agent: string
+  owner_role: string
+  recommended_action: string
+  approval_required: boolean
+  ticket_key: string
+}
+
+export interface WardenWeeklyBrief {
+  generated_at: string
+  cadence: string
+  status: string
+  summary: string
+  owner_counts: Record<string, number>
+  top_routes: WardenOwnerRoute[]
+}
+
+export interface WardenTicketCandidate {
+  ticket_key: string
+  title: string
+  owner_agent: string
+  severity: string
+  recommended_action: string
+  approval_required: boolean
+  status: string
+}
+
 export interface WardenStatus {
   supervisor: WardenAgent | null
   agents: WardenAgent[]
@@ -313,4 +368,7 @@ export interface WardenStatus {
   active_hardening?: string
   next_hardening: string
   posture_score?: WardenPostureScore
+  owner_routes?: WardenOwnerRoute[]
+  weekly_brief?: WardenWeeklyBrief
+  auto_ticket_candidates?: WardenTicketCandidate[]
 }

@@ -67,6 +67,12 @@ SECRET_ROTATION_CONFIG = SCRIPT_DIR / "secrets_rotation.json"
 ROUTES_DIR = REPO_ROOT / "brain" / "routes"
 PYTHON_REQUIREMENTS = (REPO_ROOT / "requirements.txt",)
 UI_DIR = REPO_ROOT / "ui"
+NPM_BIN = os.getenv(
+    "PORCHLIGHT_NPM_BIN",
+    str(Path("/opt/homebrew/bin/npm"))
+    if Path("/opt/homebrew/bin/npm").exists()
+    else "npm",
+)
 SECRET_VERIFY_MAX_AGE_HOURS = 36
 JWT_VERIFY_MIN_HOURS = 24
 DEFAULT_CLOUDFLARE_EXPECTED_ACTORS = {"kennethphaas@gmail.com"}
@@ -1927,7 +1933,7 @@ def check_dependency_cve_scan(
     ).exists():
         scanners_attempted += 1
         result = command(
-            ["npm", "audit", "--json", "--omit=dev"],
+            [NPM_BIN, "audit", "--json", "--omit=dev"],
             timeout=120,
             env={**os.environ, "npm_config_audit_level": "low"},
         )

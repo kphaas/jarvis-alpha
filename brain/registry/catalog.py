@@ -1144,6 +1144,11 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
                 "T1": "delegate_low_risk_checks",
                 "T4_T5": "route_to_owner_with_approval",
             },
+            "capabilities": [
+                "weekly_security_brief",
+                "owner_routing",
+                "auto_ticket_candidates",
+            ],
             "planned_skills": [
                 "warden.weekly_brief",
                 "warden.auto_ticket",
@@ -1204,6 +1209,10 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
             "warden_managed": True,
             "warden_role": "honeypot_sensor",
             "monitors": ["honeypot_hits", "trap_paths", "source_patterns"],
+            "capabilities": [
+                "source_reputation_enrichment",
+                "repeated_probe_clustering",
+            ],
             "remediation": "alert_only",
             "planned_skills": [
                 "tripwire.source_reputation",

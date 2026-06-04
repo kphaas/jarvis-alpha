@@ -283,6 +283,15 @@ def supervision_snapshot(
         for agent in agents
         if not any(finding["agent_id"] == agent.agent_id for finding in findings)
     ]
+    routes = owner_routes(findings)
+    tickets = auto_ticket_candidates(routes)
+    brief = weekly_security_brief(
+        status="pass" if not findings else severity,
+        managed_count=len(agents),
+        healthy_count=len(healthy_agents),
+        routes=routes,
+        checked_at=checked_at,
+    )
     return {
         "checked_at": checked_at.isoformat(),
         "status": "pass" if not findings else severity,
@@ -291,6 +300,9 @@ def supervision_snapshot(
         "finding_count": len(findings),
         "findings": findings,
         "healthy_agents": healthy_agents,
+        "owner_routes": routes,
+        "weekly_brief": brief,
+        "ticket_candidates": tickets,
     }
 
 
@@ -361,6 +373,106 @@ def finding(
         "severity": severity,
         "code": code,
         "detail": detail,
+    }
+
+
+def owner_route(item: dict[str, Any]) -> dict[str, Any]:
+    owner_agent = str(
+        item.get("owner_agent") or item.get("agent_id") or WARDEN_AGENT_ID
+    )
+    severity = str(item.get("severity") or item.get("status") or "warning")
+    if severity == "fail":
+        severity = "error"
+    elif severity == "warn":
+        severity = "warning"
+    elif severity in {"unavailable", "needs_input"}:
+        severity = "warning"
+    code = str(item.get("code") or item.get("id") or "security_gap")
+    title = str(item.get("title") or item.get("display_name") or code)
+    detail = str(item.get("detail") or item.get("summary") or "")
+    action = {
+        "agent_not_active": "restore_or_reenable_agent",
+        "scheduled_agent_never_ran": "run_agent_and_verify_schedule",
+        "scheduled_agent_stale": "check_launchagent_and_last_run",
+        "posture_sweep_never_seen": "run_porchlight_and_verify_report",
+        "posture_sweep_stale": "run_porchlight_and_verify_schedule",
+        "last_event_error": "triage_latest_agent_error",
+        "last_event_attention": "review_latest_agent_warning",
+    }.get(code, "review_control_gap")
+    approval_required = owner_agent in {"keyturner"} or severity == "error"
+    return {
+        "code": code,
+        "title": title,
+        "detail": detail,
+        "severity": severity,
+        "owner_agent": owner_agent,
+        "owner_role": str(item.get("role") or item.get("category") or "security"),
+        "recommended_action": action,
+        "approval_required": approval_required,
+        "ticket_key": f"warden:{owner_agent}:{code}",
+    }
+
+
+def owner_routes(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    routes = []
+    for item in items:
+        route = owner_route(item)
+        if route["severity"] != "pass":
+            routes.append(route)
+    return routes
+
+
+def auto_ticket_candidates(routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for route in routes:
+        severity = route["severity"]
+        if severity not in {"warning", "error", "critical", "fail"}:
+            continue
+        ticket_key = route["ticket_key"]
+        if ticket_key in seen:
+            continue
+        seen.add(ticket_key)
+        candidates.append(
+            {
+                "ticket_key": ticket_key,
+                "title": route["title"],
+                "owner_agent": route["owner_agent"],
+                "severity": "critical"
+                if severity in {"error", "critical", "fail"}
+                else "warning",
+                "recommended_action": route["recommended_action"],
+                "approval_required": route["approval_required"],
+                "status": "candidate",
+            }
+        )
+    return candidates
+
+
+def weekly_security_brief(
+    *,
+    status: str,
+    managed_count: int,
+    healthy_count: int,
+    routes: list[dict[str, Any]],
+    checked_at: datetime,
+) -> dict[str, Any]:
+    owner_counts: dict[str, int] = {}
+    for route in routes:
+        owner = route["owner_agent"]
+        owner_counts[owner] = owner_counts.get(owner, 0) + 1
+    top_routes = routes[:5]
+    summary = (
+        f"{healthy_count}/{managed_count} managed security agents healthy; "
+        f"{len(routes)} routed item(s)."
+    )
+    return {
+        "generated_at": checked_at.isoformat(),
+        "cadence": "weekly",
+        "status": status,
+        "summary": summary,
+        "owner_counts": owner_counts,
+        "top_routes": top_routes,
     }
 
 

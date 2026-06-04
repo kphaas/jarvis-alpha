@@ -44,6 +44,10 @@ async def test_tripwire_event_notifies_security_alerts(monkeypatch):
     assert event.notify is True
     assert event.payload["trap_path"] == "/.env"
     assert event.payload["source_ip"] == "203.0.113.10"
+    assert event.payload["source_reputation"]["status"] in {
+        "internal_or_reserved",
+        "scanner",
+    }
     assert len(event.payload["user_agent"]) == 200
 
 
@@ -121,17 +125,17 @@ async def test_honeypot_events_returns_tripwire_dashboard_shape(monkeypatch):
     assert response["hits_24h"] == 2
     assert response["unique_clients_24h"] == 1
     assert response["traps_active"] == len(honeypot.TRIPWIRE_TRAPS)
-    assert response["events"] == [
-        {
-            "id": 7,
-            "ts": "2026-06-03T16:45:00+00:00",
-            "path": "/.env",
-            "trap_type": "env_file",
-            "client_ip": "203.0.113.10",
-            "user_agent": "scanner",
-            "method": "GET",
-        }
-    ]
+    assert response["events"][0]["id"] == 7
+    assert response["events"][0]["ts"] == "2026-06-03T16:45:00+00:00"
+    assert response["events"][0]["path"] == "/.env"
+    assert response["events"][0]["trap_type"] == "env_file"
+    assert response["events"][0]["client_ip"] == "203.0.113.10"
+    assert response["events"][0]["source_reputation"]["status"] in {
+        "internal_or_reserved",
+        "scanner",
+    }
+    assert response["probe_clusters"][0]["source_ip"] == "203.0.113.10"
+    assert response["source_reputation_summary"]["scanner_sources"] == 1
 
 
 @pytest.mark.asyncio
@@ -185,3 +189,29 @@ async def test_persist_event_uses_platform_admin_rls_context(monkeypatch):
     assert emitted["trap_path"] == "/.env"
     assert emitted["source_ip"] == "203.0.113.10"
     assert emitted["should_notify"] is True
+
+
+def test_tripwire_clusters_repeat_probe_sources():
+    events = [
+        {
+            "ts": "2026-06-03T16:45:00+00:00",
+            "path": "/.env",
+            "client_ip": "198.51.100.7",
+            "method": "GET",
+            "user_agent": "nuclei",
+        },
+        {
+            "ts": "2026-06-03T16:46:00+00:00",
+            "path": "/admin",
+            "client_ip": "198.51.100.7",
+            "method": "POST",
+            "user_agent": "nuclei",
+        },
+    ]
+
+    clusters = honeypot.cluster_honeypot_events(events)
+
+    assert clusters[0]["source_ip"] == "198.51.100.7"
+    assert clusters[0]["hit_count"] == 2
+    assert clusters[0]["unique_paths"] == 2
+    assert clusters[0]["source_reputation"]["status"] == "repeat_probe"

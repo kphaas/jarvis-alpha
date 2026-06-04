@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -20,6 +21,11 @@ from brain.config.node_addresses import (
     SANDBOX_URL,
 )
 from brain.routes.pin_auth import _profile_scopes
+from brain.agents.warden import (
+    auto_ticket_candidates,
+    owner_routes,
+    weekly_security_brief,
+)
 from brain.services.warden_posture import build_warden_posture_score
 
 logger = get_logger("alpha_brain")
@@ -941,6 +947,22 @@ async def warden_status(request: Request):
         crew=crew,
         honeypot_hits_24h=honeypot_hits_24h,
     )
+    routed_controls = owner_routes(
+        [
+            control
+            for control in posture_score.get("controls", [])
+            if control.get("status") != "pass"
+        ]
+    )
+    ticket_candidates = auto_ticket_candidates(routed_controls)
+    checked_at = datetime.now(UTC)
+    weekly_brief = weekly_security_brief(
+        status="pass" if not routed_controls else "warning",
+        managed_count=len(crew),
+        healthy_count=len(crew) - crew_attention,
+        routes=routed_controls,
+        checked_at=checked_at,
+    )
     return {
         "supervisor": warden,
         "agents": crew,
@@ -953,6 +975,9 @@ async def warden_status(request: Request):
         "active_hardening": "unifi_cert_pinning",
         "next_hardening": "unifi_cert_pinning",
         "posture_score": posture_score,
+        "owner_routes": routed_controls,
+        "weekly_brief": weekly_brief,
+        "auto_ticket_candidates": ticket_candidates,
     }
 
 
