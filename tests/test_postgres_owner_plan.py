@@ -34,7 +34,6 @@ def test_ownership_statements_are_explicit_and_skip_roles():
     assert statements == [
         "ALTER DATABASE jarvis_alpha OWNER TO jarvis_alpha_owner;",
         "ALTER SCHEMA public OWNER TO jarvis_alpha_owner;",
-        "ALTER EXTENSION pgcrypto OWNER TO jarvis_alpha_owner;",
         "ALTER TABLE public.alpha_users OWNER TO jarvis_alpha_owner;",
         (
             "ALTER FUNCTION public.record_event(p_body text) "
@@ -100,6 +99,7 @@ def test_phase3a_apply_holds_security_definer_and_demote_steps():
     assert "COMMIT;" in sql
     assert "CREATE ROLE jarvis_alpha_owner" in sql
     assert "ALTER DATABASE jarvis_alpha OWNER TO jarvis_alpha_owner;" in sql
+    assert "ALTER EXTENSION" not in sql
     assert "ALTER FUNCTION public.normal() OWNER TO jarvis_alpha_owner;" in sql
     assert "-- ALTER FUNCTION public.secdef() OWNER TO jarvis_alpha_owner;" in sql
     assert "-- ALTER ROLE jarvisbrain NOSUPERUSER" in sql

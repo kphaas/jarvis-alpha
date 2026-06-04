@@ -48,10 +48,6 @@ GRANT jarvis_alpha_owner TO jarvis_alpha_migrator;
 
 -- Non-SECURITY-DEFINER ownership prep.
 ALTER DATABASE jarvis_alpha OWNER TO jarvis_alpha_owner;
-ALTER EXTENSION pgaudit OWNER TO jarvis_alpha_owner;
-ALTER EXTENSION pgcrypto OWNER TO jarvis_alpha_owner;
-ALTER EXTENSION plpgsql OWNER TO jarvis_alpha_owner;
-ALTER EXTENSION vector OWNER TO jarvis_alpha_owner;
 ALTER TABLE public.alpha_agent_events OWNER TO jarvis_alpha_owner;
 ALTER TABLE public.alpha_agent_runs OWNER TO jarvis_alpha_owner;
 ALTER TABLE public.alpha_agents OWNER TO jarvis_alpha_owner;

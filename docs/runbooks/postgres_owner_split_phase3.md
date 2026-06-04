@@ -88,10 +88,15 @@ python scripts/postgres_owner_inventory.py \
 
 Expected after Phase 3A:
 
-- `jarvis_alpha_owner` owns the database, relations, extensions, and
+- `jarvis_alpha_owner` owns the database, relations, and
   non-SECURITY-DEFINER functions.
 - SECURITY DEFINER functions are still held for Phase 3B review.
 - `jarvisbrain` is still `rolsuper=true`.
+
+Note: PostgreSQL 16 rejected `ALTER EXTENSION ... OWNER TO ...` during the
+first Phase 3A attempt, and the transaction rolled back cleanly before commit.
+Extension ownership is therefore reported in inventory but not changed by the
+generated apply SQL.
 
 Run Alpha tests and health checks before Phase 3B planning.
 

@@ -12,10 +12,6 @@ BEGIN;
 ALTER ROLE jarvisbrain SUPERUSER NOBYPASSRLS CREATEDB CREATEROLE;
 
 ALTER DATABASE jarvis_alpha OWNER TO jarvisbrain;
-ALTER EXTENSION pgaudit OWNER TO jarvisbrain;
-ALTER EXTENSION pgcrypto OWNER TO jarvisbrain;
-ALTER EXTENSION plpgsql OWNER TO jarvisbrain;
-ALTER EXTENSION vector OWNER TO jarvisbrain;
 ALTER TABLE public.alpha_agent_events OWNER TO jarvisbrain;
 ALTER TABLE public.alpha_agent_runs OWNER TO jarvisbrain;
 ALTER TABLE public.alpha_agents OWNER TO jarvisbrain;
