@@ -161,6 +161,10 @@ def should_renew(days_left: int, threshold_days: int, *, force: bool) -> bool:
     return force or days_left <= threshold_days
 
 
+def min_validity_duration(threshold_days: int) -> str:
+    return f"{max(1, threshold_days) * 24}h"
+
+
 def cert_moved_forward(previous_expires_at: datetime, new_expires_at: datetime) -> bool:
     return new_expires_at > previous_expires_at
 
@@ -270,6 +274,8 @@ def renew_local_node(
         [
             tailscale,
             "cert",
+            "--min-validity",
+            min_validity_duration(threshold_days),
             "--cert-file",
             str(fqdn_cert_path),
             "--key-file",
@@ -280,6 +286,21 @@ def renew_local_node(
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
+        if "alreadyReplaced" in detail:
+            health_ok = check_health(spec.health_url)
+            return NodeResult(
+                node=spec.node,
+                fqdn=spec.fqdn,
+                status="renewal_pending",
+                days_remaining=days_left,
+                cert_issued_at=initial_issued_at.isoformat(),
+                cert_expires_at=initial_expires_at.isoformat(),
+                source_cert=str(source_path),
+                renewed=False,
+                restarted=False,
+                health_ok=health_ok,
+                error="tailscale reports an ACME replacement order is already pending",
+            )
         return NodeResult(
             node=spec.node,
             fqdn=spec.fqdn,

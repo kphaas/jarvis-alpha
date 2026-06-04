@@ -15,6 +15,11 @@ def test_should_renew_at_or_below_threshold():
     assert sweep.should_renew(90, 30, force=True) is True
 
 
+def test_min_validity_duration_uses_threshold_hours():
+    assert sweep.min_validity_duration(30) == "720h"
+    assert sweep.min_validity_duration(0) == "24h"
+
+
 def test_cert_moved_forward_requires_later_expiry():
     previous = datetime(2026, 6, 28, 17, 14, 29, tzinfo=timezone.utc)
     same = datetime(2026, 6, 28, 17, 14, 29, tzinfo=timezone.utc)
