@@ -734,6 +734,7 @@ def check_secret_rotation(
 ) -> CheckResult:
     today = today or datetime.now(UTC).date()
     query = """
+SELECT set_config('rls.role', 'platform_admin', false);
 SELECT secret_name,
        COALESCE(last_rotated_at::date::text, ''),
        rotation_days::text,
