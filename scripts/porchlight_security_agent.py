@@ -1869,6 +1869,15 @@ def _merge_counts(items: list[dict[str, int]]) -> dict[str, int]:
     return merged
 
 
+def _npm_audit_env() -> dict[str, str]:
+    env = {**os.environ, "npm_config_audit_level": "low"}
+    npm_path = Path(NPM_BIN)
+    if npm_path.is_absolute():
+        path = env.get("PATH", "")
+        env["PATH"] = f"{npm_path.parent}:{path}" if path else str(npm_path.parent)
+    return env
+
+
 def check_dependency_cve_scan(
     command: Callable[..., CommandResult] = run_command,
 ) -> CheckResult:
@@ -1935,7 +1944,7 @@ def check_dependency_cve_scan(
         result = command(
             [NPM_BIN, "audit", "--json", "--omit=dev"],
             timeout=120,
-            env={**os.environ, "npm_config_audit_level": "low"},
+            env=_npm_audit_env(),
         )
         if not result.stdout.strip():
             scanner_results.append(
