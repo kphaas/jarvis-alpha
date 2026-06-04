@@ -192,12 +192,46 @@ def test_secret_rotation_sets_platform_admin_rls_before_read(tmp_path):
     )
 
     assert "set_config('rls.role', 'platform_admin', false)" in seen["query"]
-    assert result.status == "warn"
-    assert result.metadata["warnings"] == ["ALPHA_BRAIN_SERVICE_TOKEN due in 7 days"]
+    assert result.status == "pass"
+    assert "warnings" not in result.metadata
     assert (
         result.metadata["secrets"]["ALPHA_BRAIN_SERVICE_TOKEN"]["last_verify_status"]
         == "skipped"
     )
+
+
+def test_secret_rotation_warns_inside_cadence_relative_window(tmp_path):
+    config_path = tmp_path / "secrets_rotation.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "secrets": {
+                    "ALPHA_BRAIN_SERVICE_TOKEN": {
+                        "rotation_days": 7,
+                        "managed_by": "keyturner",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_psql(query):
+        return porchlight.CommandResult(
+            0,
+            "platform_admin\n"
+            "ALPHA_BRAIN_SERVICE_TOKEN|2026-06-04|7|2026-06-11|2|passed\n",
+            "",
+        )
+
+    result = porchlight.check_secret_rotation(
+        psql=fake_psql,
+        config_path=config_path,
+        today=porchlight.date(2026, 6, 9),
+    )
+
+    assert result.status == "warn"
+    assert result.metadata["warnings"] == ["ALPHA_BRAIN_SERVICE_TOKEN due in 2 days"]
 
 
 def test_family_external_smoke_live_verification_authenticates_synthetic_external(
