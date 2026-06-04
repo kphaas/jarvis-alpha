@@ -15,7 +15,9 @@ def test_verify_brain_uses_postgres_password_from_secrets(tmp_path, monkeypatch)
     def fake_run(args, **kwargs):
         seen["args"] = args
         seen["env"] = kwargs["env"]
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout="1", stderr="")
+        return subprocess.CompletedProcess(
+            args=args, returncode=0, stdout="1", stderr=""
+        )
 
     monkeypatch.setattr(rotator.subprocess, "run", fake_run)
 
@@ -42,7 +44,9 @@ def test_verify_brain_prefers_postgres_password_from_env(tmp_path, monkeypatch):
 
     def fake_run(args, **kwargs):
         seen["env"] = kwargs["env"]
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout="1", stderr="")
+        return subprocess.CompletedProcess(
+            args=args, returncode=0, stdout="1", stderr=""
+        )
 
     monkeypatch.setattr(rotator.subprocess, "run", fake_run)
 
@@ -60,7 +64,9 @@ def test_alert_failure_brain_uses_authenticated_psql(tmp_path, monkeypatch):
     def fake_run(args, **kwargs):
         seen["args"] = args
         seen["env"] = kwargs["env"]
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(
+            args=args, returncode=0, stdout="", stderr=""
+        )
 
     monkeypatch.setattr(rotator.subprocess, "run", fake_run)
 
