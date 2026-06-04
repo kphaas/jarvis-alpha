@@ -455,6 +455,77 @@ def test_postgres_role_safety_fails_when_jarvisbrain_is_only_superuser():
     assert result.metadata["superusers"] == ["jarvisbrain"]
 
 
+def test_postgres_role_safety_warns_when_bootstrap_superuser_is_contained():
+    def fake_psql(query):
+        if "FROM pg_roles" in query:
+            return porchlight.CommandResult(
+                0,
+                "\n".join(
+                    [
+                        "jarvis_alpha_app|false|false|false|false|false",
+                        "jarvis_alpha_owner|false|false|false|false|false",
+                        "jarvis_alpha_writer|false|false|false|false|false",
+                        "jarvis_pg_breakglass|true|false|true|true|true",
+                        "jarvisbrain|true|false|true|true|true",
+                    ]
+                ),
+                "",
+            )
+        if "FROM pg_proc" in query:
+            return porchlight.CommandResult(
+                0,
+                "\n".join(
+                    [
+                        "public.record_buddy_event(p_user_id text, p_event_type text, p_title text, p_body text, p_priority integer, p_source text, p_payload jsonb)|jarvis_alpha_owner|plpgsql",
+                        "public.pgaudit_sql_drop()|jarvisbrain|c",
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(query)
+
+    result = porchlight.check_postgres_role_safety(psql=fake_psql)
+
+    assert result.status == "warn"
+    assert result.severity == "medium"
+    assert result.metadata["bootstrap_risk"] == "accepted_contained"
+    assert result.metadata["security_definer"]["owner_counts"] == {
+        "jarvis_alpha_owner": 1,
+        "jarvisbrain": 1,
+    }
+
+
+def test_postgres_role_safety_fails_when_secdef_owner_split_drifts():
+    def fake_psql(query):
+        if "FROM pg_roles" in query:
+            return porchlight.CommandResult(
+                0,
+                "\n".join(
+                    [
+                        "jarvis_alpha_app|false|false|false|false|false",
+                        "jarvis_alpha_owner|false|false|false|false|false",
+                        "jarvis_alpha_writer|false|false|false|false|false",
+                        "jarvis_pg_breakglass|true|false|true|true|true",
+                        "jarvisbrain|true|false|true|true|true",
+                    ]
+                ),
+                "",
+            )
+        if "FROM pg_proc" in query:
+            return porchlight.CommandResult(
+                0,
+                "public.record_buddy_event(p_user_id text)|jarvisbrain|plpgsql",
+                "",
+            )
+        raise AssertionError(query)
+
+    result = porchlight.check_postgres_role_safety(psql=fake_psql)
+
+    assert result.status == "fail"
+    assert result.severity == "critical"
+    assert "unexpected SECURITY DEFINER owner" in result.detail
+
+
 def test_postgres_role_safety_fails_when_runtime_role_bypasses_rls():
     def fake_psql(query):
         return porchlight.CommandResult(

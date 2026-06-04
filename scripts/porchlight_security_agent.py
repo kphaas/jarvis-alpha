@@ -89,6 +89,10 @@ DEFAULT_CLOUDFLARE_FORBIDDEN_APP_TERMS = (
     "jarvis-brain",
 )
 DEFAULT_GITHUB_BRANCH_PROTECTION_REPOS = ("kphaas/jarvis-alpha",)
+ACCEPTED_BOOTSTRAP_SECDEF_FUNCTIONS = {
+    "public.pgaudit_ddl_command_end()",
+    "public.pgaudit_sql_drop()",
+}
 
 SECURITY_LAUNCHAGENTS: dict[str, set[str]] = {
     "brain": {
@@ -400,7 +404,13 @@ SELECT rolname,
        rolcreaterole::text,
        rolcanlogin::text
 FROM pg_roles
-WHERE rolname IN ('jarvisbrain', 'jarvis_alpha_writer', 'jarvis_alpha_app')
+WHERE rolname IN (
+    'jarvisbrain',
+    'jarvis_alpha_writer',
+    'jarvis_alpha_app',
+    'jarvis_alpha_owner',
+    'jarvis_pg_breakglass'
+)
    OR rolsuper
 ORDER BY rolname;
 """.strip()
@@ -437,6 +447,9 @@ ORDER BY rolname;
     missing_required = sorted(
         {"jarvisbrain", "jarvis_alpha_writer", "jarvis_alpha_app"} - set(roles)
     )
+    missing_containment = sorted(
+        {"jarvis_alpha_owner", "jarvis_pg_breakglass"} - set(roles)
+    )
     superusers = sorted(
         name for name, attrs in roles.items() if attrs.get("rolsuper") is True
     )
@@ -452,11 +465,31 @@ ORDER BY rolname;
         issues.append("missing required role(s): " + ", ".join(missing_required))
     if runtime_bypass:
         issues.append("runtime role(s) can bypass RLS: " + ", ".join(runtime_bypass))
-    if roles.get("jarvisbrain", {}).get("rolsuper"):
-        issues.append("jarvisbrain is still SUPERUSER and can bypass FORCE RLS")
-    if superusers == ["jarvisbrain"]:
-        issues.append(
-            "jarvisbrain is the only superuser; demotion needs break-glass first"
+    jarvisbrain_superuser = roles.get("jarvisbrain", {}).get("rolsuper") is True
+    secdef_metadata: dict[str, object] = {}
+    if jarvisbrain_superuser:
+        if roles.get("jarvisbrain", {}).get("rolbypassrls"):
+            issues.append("jarvisbrain still has BYPASSRLS")
+        if missing_containment:
+            issues.append(
+                "missing bootstrap containment role(s): "
+                + ", ".join(missing_containment)
+            )
+        if superusers == ["jarvisbrain"]:
+            issues.append(
+                "jarvisbrain is the only superuser; demotion needs break-glass first"
+            )
+        if not issues:
+            secdef_ok, secdef_detail, secdef_metadata = (
+                _check_security_definer_owner_containment(psql)
+            )
+            if not secdef_ok:
+                issues.append(secdef_detail)
+
+    if jarvisbrain_superuser and issues:
+        issues.insert(
+            0,
+            "jarvisbrain is still SUPERUSER and can bypass FORCE RLS until containment is complete",
         )
 
     if issues:
@@ -470,7 +503,31 @@ ORDER BY rolname;
                 "superusers": superusers,
                 "runtime_bypass_roles": runtime_bypass,
                 "missing_required_roles": missing_required,
+                "missing_containment_roles": missing_containment,
                 "jarvisbrain": roles.get("jarvisbrain", {}),
+                "security_definer": secdef_metadata,
+            },
+        )
+
+    if jarvisbrain_superuser:
+        return CheckResult(
+            name="postgres_role_safety",
+            status="warn",
+            severity="medium",
+            summary="Postgres bootstrap superuser risk is accepted and contained.",
+            detail=(
+                "jarvisbrain remains a bootstrap superuser, but runtime roles are "
+                "NOBYPASSRLS, break-glass exists, and SECURITY DEFINER functions "
+                "are owned by jarvis_alpha_owner except accepted pgaudit handlers."
+            ),
+            metadata={
+                "superusers": superusers,
+                "runtime_bypass_roles": runtime_bypass,
+                "missing_required_roles": missing_required,
+                "missing_containment_roles": missing_containment,
+                "jarvisbrain": roles.get("jarvisbrain", {}),
+                "security_definer": secdef_metadata,
+                "bootstrap_risk": "accepted_contained",
             },
         )
 
@@ -481,6 +538,80 @@ ORDER BY rolname;
         summary="Postgres runtime roles are NOBYPASSRLS and jarvisbrain is not superuser.",
         metadata={"superusers": superusers},
     )
+
+
+def _check_security_definer_owner_containment(
+    psql: Callable[[str], CommandResult],
+) -> tuple[bool, str, dict[str, object]]:
+    query = """
+SELECT format('%I.%I(%s)',
+              n.nspname,
+              p.proname,
+              pg_get_function_identity_arguments(p.oid)),
+       pg_get_userbyid(p.proowner),
+       l.lanname
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+JOIN pg_language l ON l.oid = p.prolang
+WHERE p.prosecdef
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%'
+ORDER BY n.nspname, p.proname, pg_get_function_identity_arguments(p.oid);
+""".strip()
+    result = psql(query)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()[:500]
+        return (
+            False,
+            "could not inspect SECURITY DEFINER ownership: " + detail,
+            {"error": detail},
+        )
+
+    rows = parse_psql_rows(result.stdout)
+    if not rows:
+        return False, "no SECURITY DEFINER rows returned", {"total": 0}
+
+    owner_counts: dict[str, int] = {}
+    accepted_bootstrap: list[str] = []
+    unexpected: list[str] = []
+    malformed = 0
+    for row in rows:
+        if len(row) < 3:
+            malformed += 1
+            continue
+        identity, owner, language = row[:3]
+        owner_counts[owner] = owner_counts.get(owner, 0) + 1
+        if owner == "jarvis_alpha_owner":
+            continue
+        if (
+            owner == "jarvisbrain"
+            and language == "c"
+            and identity in ACCEPTED_BOOTSTRAP_SECDEF_FUNCTIONS
+        ):
+            accepted_bootstrap.append(identity)
+            continue
+        unexpected.append(f"{identity} owned by {owner}")
+
+    metadata = {
+        "total": len(rows),
+        "owner_counts": owner_counts,
+        "accepted_bootstrap": accepted_bootstrap,
+        "unexpected": unexpected,
+        "malformed_rows": malformed,
+    }
+    if malformed:
+        return (
+            False,
+            f"{malformed} SECURITY DEFINER row(s) could not be parsed",
+            metadata,
+        )
+    if unexpected:
+        return (
+            False,
+            "unexpected SECURITY DEFINER owner(s): " + "; ".join(unexpected[:5]),
+            metadata,
+        )
+    return True, "", metadata
 
 
 def _pg_hba_csv_items(value: str) -> set[str]:
