@@ -73,6 +73,10 @@ NPM_BIN = os.getenv(
     if Path("/opt/homebrew/bin/npm").exists()
     else "npm",
 )
+FINANCIAL_SECURITY_POSTURE_URL = (
+    os.getenv("PORCHLIGHT_FINANCIAL_SECURITY_POSTURE_URL", "").strip()
+    or os.getenv("FINANCIAL_SECURITY_POSTURE_URL", "").strip()
+)
 SECRET_VERIFY_MAX_AGE_HOURS = 36
 JWT_VERIFY_MIN_HOURS = 24
 DEFAULT_CLOUDFLARE_EXPECTED_ACTORS = {"kennethphaas@gmail.com"}
@@ -2160,6 +2164,165 @@ def check_dependency_cve_scan(
     )
 
 
+def _financial_security_posture_token() -> str | None:
+    return _secret_or_env("JARVIS_FIN_SECURITY_POSTURE_TOKEN") or _secret_or_env(
+        "FINANCIAL_SECURITY_POSTURE_TOKEN"
+    )
+
+
+def _financial_security_posture_url() -> str:
+    return (
+        os.getenv("PORCHLIGHT_FINANCIAL_SECURITY_POSTURE_URL", "").strip()
+        or os.getenv("FINANCIAL_SECURITY_POSTURE_URL", "").strip()
+        or FINANCIAL_SECURITY_POSTURE_URL
+    )
+
+
+def check_financial_security_posture(
+    url: str | None = None,
+    command: Callable[..., CommandResult] = run_command,
+) -> CheckResult:
+    """Read Financial's self-owned posture summary without pulling secrets into Alpha."""
+    url = _financial_security_posture_url() if url is None else url
+    token = _financial_security_posture_token()
+    metadata: dict[str, object] = {"configured": bool(url and token)}
+    if not url or not token:
+        return CheckResult(
+            name="financial_security_posture",
+            status="warn",
+            severity="medium",
+            summary="Financial posture monitor is not configured.",
+            detail=(
+                "Set PORCHLIGHT_FINANCIAL_SECURITY_POSTURE_URL and "
+                "JARVIS_FIN_SECURITY_POSTURE_TOKEN on Brain."
+            ),
+            metadata=metadata,
+        )
+
+    result = command(
+        [
+            "curl",
+            "-sS",
+            "--max-time",
+            "15",
+            "-H",
+            f"Authorization: Bearer {token}",
+            "-w",
+            "\n%{http_code}",
+            url,
+        ],
+        timeout=20,
+    )
+    if result.returncode != 0:
+        return CheckResult(
+            name="financial_security_posture",
+            status="fail",
+            severity="high",
+            summary="Financial posture endpoint is unreachable.",
+            detail=(result.stderr or result.stdout).strip()[:500],
+            metadata=metadata,
+        )
+
+    body, _, status_text = result.stdout.rstrip("\n").rpartition("\n")
+    if not status_text.isdigit():
+        return CheckResult(
+            name="financial_security_posture",
+            status="fail",
+            severity="high",
+            summary="Financial posture endpoint returned an invalid HTTP response.",
+            detail="curl did not emit an HTTP status code",
+            metadata=metadata,
+        )
+    metadata["http_status"] = int(status_text)
+    if status_text != "200":
+        return CheckResult(
+            name="financial_security_posture",
+            status="fail",
+            severity="high",
+            summary="Financial posture endpoint rejected the monitor request.",
+            detail=f"HTTP {status_text}",
+            metadata=metadata,
+        )
+
+    try:
+        payload = json.loads(body or "{}")
+    except json.JSONDecodeError:
+        return CheckResult(
+            name="financial_security_posture",
+            status="fail",
+            severity="high",
+            summary="Financial posture endpoint returned non-JSON.",
+            detail="invalid_json",
+            metadata=metadata,
+        )
+    if not isinstance(payload, dict) or payload.get("service") != "jarvis-financial":
+        return CheckResult(
+            name="financial_security_posture",
+            status="fail",
+            severity="high",
+            summary="Financial posture endpoint returned an unexpected payload.",
+            detail="missing jarvis-financial service marker",
+            metadata=metadata,
+        )
+
+    remote_status = str(payload.get("status") or "fail")
+    if remote_status not in {"pass", "warn", "fail"}:
+        remote_status = "fail"
+    counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
+    controls = payload.get("controls") if isinstance(payload.get("controls"), list) else []
+    metadata.update(
+        {
+            "remote_status": remote_status,
+            "counts": counts,
+            "controls": [
+                {
+                    "id": str(control.get("id") or ""),
+                    "status": str(control.get("status") or ""),
+                    "severity": str(control.get("severity") or ""),
+                }
+                for control in controls
+                if isinstance(control, dict)
+            ],
+        }
+    )
+    if remote_status == "pass":
+        return CheckResult(
+            name="financial_security_posture",
+            status="pass",
+            severity="info",
+            summary="Financial self-owned posture checks are passing.",
+            detail=_financial_counts_detail(counts),
+            metadata=metadata,
+        )
+    if remote_status == "warn":
+        return CheckResult(
+            name="financial_security_posture",
+            status="warn",
+            severity="medium",
+            summary="Financial self-owned posture checks need review.",
+            detail=_financial_counts_detail(counts),
+            metadata=metadata,
+        )
+    return CheckResult(
+        name="financial_security_posture",
+        status="fail",
+        severity="high",
+        summary="Financial self-owned posture checks are failing.",
+        detail=_financial_counts_detail(counts),
+        metadata=metadata,
+    )
+
+
+def _financial_counts_detail(counts: object) -> str:
+    if not isinstance(counts, dict):
+        return ""
+    return (
+        f"{counts.get('pass', 0)} pass, "
+        f"{counts.get('warn', 0)} warn, "
+        f"{counts.get('fail', 0)} fail"
+    )
+
+
 def _github_branch_protection_repos() -> list[str]:
     configured = os.getenv("PORCHLIGHT_GITHUB_BRANCH_PROTECTION_REPOS", "").strip()
     if configured:
@@ -2645,6 +2808,7 @@ def run_sweep(args: argparse.Namespace) -> dict[str, object]:
         check_cloudflare_access_policy_drift(),
         check_cloudflare_audit_logs(window_hours=args.cloudflare_audit_window_hours),
         check_dependency_cve_scan(),
+        check_financial_security_posture(),
         check_github_branch_protection_drift(),
         check_route_db_access(),
     ]
