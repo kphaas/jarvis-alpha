@@ -85,6 +85,8 @@ BRAIN_HEALTH_URL = "https://jarvis-brain.tail40ed36.ts.net:8186/health"
 BUDDY_EVENTS_URL = "https://jarvis-brain.tail40ed36.ts.net:8186/v1/buddy/events"
 PSQL_BIN = "/opt/homebrew/Cellar/postgresql@16/16.13/bin/psql"
 PSQL_DB = "jarvis_alpha"
+PSQL_HOST = "localhost"
+PSQL_USER = "jarvisbrain"
 CURL_TIMEOUT_SEC = "10"
 
 
@@ -114,6 +116,40 @@ def read_secret_value(secrets_file: str, secret_key: str) -> str | None:
         if line.startswith(prefix):
             return line[len(prefix) :].strip()
     return None
+
+
+def postgres_password(secrets_file: str) -> str:
+    password = os.getenv("POSTGRES_PASSWORD", "").strip()
+    if password:
+        return password
+    password = (read_secret_value(secrets_file, "POSTGRES_PASSWORD") or "").strip()
+    if password:
+        return password
+    raise RuntimeError("POSTGRES_PASSWORD unavailable for local psql verification")
+
+
+def run_brain_psql(sql: str, secrets_file: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["PGPASSWORD"] = postgres_password(secrets_file)
+    return subprocess.run(
+        [
+            PSQL_BIN,
+            "-h",
+            PSQL_HOST,
+            "-d",
+            PSQL_DB,
+            "-U",
+            PSQL_USER,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-c",
+            sql,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
 
 
 def days_remaining(secrets_file: str, secret_key: str) -> float | None:
@@ -219,6 +255,7 @@ def alert_failure(
     node: str,
     error_msg: str,
     old_token: str | None,
+    secrets_file: str,
 ) -> None:
     """Best-effort alert; failures here are logged but do not change exit code."""
     payload_obj = {"node": node, "error": error_msg}
@@ -230,13 +267,10 @@ def alert_failure(
             f"VALUES ('alert', 'token_rotation', '{escaped}', NOW());"
         )
         try:
-            subprocess.run(
-                [PSQL_BIN, "-d", PSQL_DB, "-c", sql],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
+            result = run_brain_psql(sql, secrets_file)
+            if result.returncode != 0:
+                err = (result.stderr or result.stdout or "").strip()
+                raise RuntimeError(err or f"exit {result.returncode}")
         except Exception as exc:
             log_json(
                 "error",
@@ -290,14 +324,9 @@ def alert_failure(
         )
 
 
-def verify_brain() -> None:
+def verify_brain(secrets_file: str) -> None:
     sql = "SELECT 1 FROM alpha_buddy_events LIMIT 1"
-    r = subprocess.run(
-        [PSQL_BIN, "-d", PSQL_DB, "-c", sql],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    r = run_brain_psql(sql, secrets_file)
     if r.returncode != 0:
         err = (r.stderr or r.stdout or "").strip() or f"exit {r.returncode}"
         raise RuntimeError(f"psql verification failed: {err}")
@@ -433,7 +462,7 @@ def main() -> int:
         )
 
         if node == "brain":
-            verify_brain()
+            verify_brain(secrets_file)
             log_json("info", "verification result: ok (psql)", node)
         else:
             verify_gateway_sandbox(token)
@@ -446,7 +475,7 @@ def main() -> int:
         err = str(exc)
         log_json("error", f"rotation failed: {err}", node)
         if not args.dry_run:
-            alert_failure(node, err, old_token)
+            alert_failure(node, err, old_token, secrets_file)
         return 1
 
 
