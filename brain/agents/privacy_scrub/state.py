@@ -76,6 +76,9 @@ class StoredDraftAction:
     updated_at: datetime | None = None
 
 
+_CASE_DRAFT_STATUSES = {"draft", "submitted_for_approval", "archived"}
+
+
 async def insert_subject(
     conn: asyncpg.Connection,
     *,
@@ -332,6 +335,121 @@ async def list_draft_actions_for_case(
         FROM public.alpha_privacy_actions
         WHERE case_draft_id = $1
         ORDER BY created_at, target_id, id
+        """,
+        case_draft_id,
+    )
+    return [_row_to_stored_draft_action(row) for row in rows]
+
+
+async def enqueue_approval_request(
+    conn: asyncpg.Connection,
+    *,
+    action_classes: tuple[str, ...],
+    risk_tier: str,
+    actor_sub: str,
+    actor_type: str,
+    description: str,
+    parameters_hash: str,
+    nonce: str,
+) -> UUID:
+    if risk_tier not in {"T1", "T2", "T3", "T4", "T5"}:
+        raise ValueError("risk_tier must be a valid approval tier")
+    if not action_classes:
+        raise ValueError("action_classes is required")
+    if not actor_sub.strip():
+        raise ValueError("actor_sub is required")
+    if not description.strip():
+        raise ValueError("description is required")
+    if not parameters_hash.strip():
+        raise ValueError("parameters_hash is required")
+    if not nonce.strip():
+        raise ValueError("nonce is required")
+
+    queue_id = await conn.fetchval(
+        """
+        SELECT public.enqueue_approval_request(
+            $1::text[], $2, $3, $4, $5, $6, $7
+        )
+        """,
+        list(action_classes),
+        risk_tier,
+        actor_sub,
+        actor_type,
+        description,
+        parameters_hash,
+        nonce,
+    )
+    assert queue_id is not None
+    return queue_id
+
+
+async def update_case_draft_status(
+    conn: asyncpg.Connection,
+    *,
+    case_draft_id: UUID,
+    status: str,
+    expected_statuses: tuple[str, ...] = ("draft",),
+) -> StoredCaseDraft | None:
+    if status not in _CASE_DRAFT_STATUSES:
+        raise ValueError("invalid case draft status")
+    if not expected_statuses or any(
+        expected not in _CASE_DRAFT_STATUSES for expected in expected_statuses
+    ):
+        raise ValueError("invalid expected case draft status")
+
+    row = await conn.fetchrow(
+        """
+        UPDATE public.alpha_privacy_case_drafts
+        SET status = $2
+        WHERE id = $1
+          AND status = ANY($3::text[])
+        RETURNING id, subject_id, created_by_user_id, target_count, status,
+                  packet_payload_hash, payload_key_version, created_at, updated_at
+        """,
+        case_draft_id,
+        status,
+        list(expected_statuses),
+    )
+    return _row_to_stored_case_draft(row) if row else None
+
+
+async def mark_case_actions_awaiting_approval(
+    conn: asyncpg.Connection,
+    *,
+    case_draft_id: UUID,
+    approval_queue_id: UUID,
+) -> list[StoredDraftAction]:
+    rows = await conn.fetch(
+        """
+        UPDATE public.alpha_privacy_actions
+        SET status = 'awaiting_approval',
+            approval_queue_id = $2
+        WHERE case_draft_id = $1
+          AND status = 'pending'
+        RETURNING id, subject_id, target_id, case_draft_id, action_type,
+                  approval_tier, status, draft_payload_hash,
+                  payload_key_version, created_at, updated_at
+        """,
+        case_draft_id,
+        approval_queue_id,
+    )
+    return [_row_to_stored_draft_action(row) for row in rows]
+
+
+async def reject_pending_case_actions(
+    conn: asyncpg.Connection,
+    *,
+    case_draft_id: UUID,
+) -> list[StoredDraftAction]:
+    rows = await conn.fetch(
+        """
+        UPDATE public.alpha_privacy_actions
+        SET status = 'rejected'
+        WHERE case_draft_id = $1
+          AND status = 'pending'
+        RETURNING id, subject_id, target_id, case_draft_id, action_type,
+                  approval_tier, status, draft_payload_hash,
+                  payload_key_version, created_at, updated_at
         """,
         case_draft_id,
     )

@@ -6,11 +6,15 @@ import pytest
 
 from brain.agents.privacy_scrub.state import (
     count_targets,
+    enqueue_approval_request,
     get_target,
     insert_case_draft,
     insert_draft_action,
     list_targets,
+    mark_case_actions_awaiting_approval,
+    reject_pending_case_actions,
     refresh_targets_cache,
+    update_case_draft_status,
 )
 from brain.agents.privacy_scrub.targets import (
     Jurisdiction,
@@ -60,6 +64,9 @@ class FakeTargetCacheConnection:
 class FakeDraftWriteConnection:
     def __init__(self) -> None:
         self.fetchrows: list[tuple[str, tuple[object, ...]]] = []
+        self.fetches: list[tuple[str, tuple[object, ...]]] = []
+        self.fetchvals: list[tuple[str, tuple[object, ...]]] = []
+        self.queue_id = uuid4()
 
     async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
         self.fetchrows.append((query, args))
@@ -72,6 +79,18 @@ class FakeDraftWriteConnection:
                 "status": "draft",
                 "packet_payload_hash": args[4],
                 "payload_key_version": args[5],
+                "created_at": None,
+                "updated_at": None,
+            }
+        if "UPDATE public.alpha_privacy_case_drafts" in query:
+            return {
+                "id": args[0],
+                "subject_id": uuid4(),
+                "created_by_user_id": "ken",
+                "target_count": 1,
+                "status": args[1],
+                "packet_payload_hash": "sha256:" + "3" * 64,
+                "payload_key_version": "payload-v1",
                 "created_at": None,
                 "updated_at": None,
             }
@@ -90,6 +109,29 @@ class FakeDraftWriteConnection:
                 "updated_at": None,
             }
         raise AssertionError(f"unexpected fetchrow query: {query}")
+
+    async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+        self.fetches.append((query, args))
+        status = "awaiting_approval" if "awaiting_approval" in query else "rejected"
+        return [
+            {
+                "id": uuid4(),
+                "subject_id": uuid4(),
+                "target_id": "spokeo",
+                "case_draft_id": args[0],
+                "action_type": "draft",
+                "approval_tier": "T2",
+                "status": status,
+                "draft_payload_hash": "sha256:" + "4" * 64,
+                "payload_key_version": "payload-v1",
+                "created_at": None,
+                "updated_at": None,
+            }
+        ]
+
+    async def fetchval(self, query: str, *args: object):
+        self.fetchvals.append((query, args))
+        return self.queue_id
 
 
 def _target() -> Target:
@@ -233,3 +275,80 @@ async def test_insert_draft_action_is_limited_to_draft_action_type() -> None:
             draft_payload_hash="sha256:" + "3" * 64,
             payload_key_version="payload-v1",
         )
+
+
+@pytest.mark.asyncio
+async def test_enqueue_approval_request_uses_secdef_wrapper() -> None:
+    conn = FakeDraftWriteConnection()
+
+    queue_id = await enqueue_approval_request(
+        conn,  # type: ignore[arg-type]
+        action_classes=("privacy_draft_handoff", "security_write"),
+        risk_tier="T4",
+        actor_sub="ken",
+        actor_type="user",
+        description="Privacy case draft approval handoff",
+        parameters_hash="a" * 64,
+        nonce="nonce",
+    )
+
+    query, args = conn.fetchvals[0]
+    assert queue_id == conn.queue_id
+    assert "public.enqueue_approval_request" in query
+    assert args[0] == ["privacy_draft_handoff", "security_write"]
+    assert args[1] == "T4"
+    assert args[2] == "ken"
+
+
+@pytest.mark.asyncio
+async def test_update_case_draft_status_checks_expected_status() -> None:
+    conn = FakeDraftWriteConnection()
+    case_id = uuid4()
+
+    result = await update_case_draft_status(
+        conn,  # type: ignore[arg-type]
+        case_draft_id=case_id,
+        status="submitted_for_approval",
+        expected_statuses=("draft",),
+    )
+
+    query, args = conn.fetchrows[0]
+    assert result is not None
+    assert result.id == case_id
+    assert result.status == "submitted_for_approval"
+    assert "status = ANY($3::text[])" in query
+    assert args[2] == ["draft"]
+
+
+@pytest.mark.asyncio
+async def test_mark_case_actions_awaiting_approval_links_queue() -> None:
+    conn = FakeDraftWriteConnection()
+    case_id = uuid4()
+    queue_id = uuid4()
+
+    actions = await mark_case_actions_awaiting_approval(
+        conn,  # type: ignore[arg-type]
+        case_draft_id=case_id,
+        approval_queue_id=queue_id,
+    )
+
+    query, args = conn.fetches[0]
+    assert actions[0].status == "awaiting_approval"
+    assert "approval_queue_id = $2" in query
+    assert args == (case_id, queue_id)
+
+
+@pytest.mark.asyncio
+async def test_reject_pending_case_actions_marks_archive_rejections() -> None:
+    conn = FakeDraftWriteConnection()
+    case_id = uuid4()
+
+    actions = await reject_pending_case_actions(
+        conn,  # type: ignore[arg-type]
+        case_draft_id=case_id,
+    )
+
+    query, args = conn.fetches[0]
+    assert actions[0].status == "rejected"
+    assert "SET status = 'rejected'" in query
+    assert args == (case_id,)

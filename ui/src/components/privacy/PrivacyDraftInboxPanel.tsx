@@ -1,4 +1,4 @@
-import { Inbox, RefreshCw } from "lucide-react";
+import { Archive, CheckCircle2, Inbox, LoaderCircle, RefreshCw } from "lucide-react";
 import type { PrivacyDraftInboxState } from "../../hooks/usePrivacyDraftInbox";
 import { TARGET_METHOD_LABEL } from "../../types/privacy";
 import { KeyValue, StatusLine } from "./PrivacyFields";
@@ -42,6 +42,12 @@ export function PrivacyDraftInboxPanel({
   warnClass: string;
   errorClass: string;
 }) {
+  const canDispose = inbox.selectedDraft?.status === "draft" && !inbox.dispositionLoading;
+  const activeDisposition =
+    inbox.dispositionResult?.case_id === inbox.selectedDraft?.case_id
+      ? inbox.dispositionResult
+      : null;
+
   return (
     <section className={`rounded-xl border ${border} ${panel} p-5`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -144,6 +150,26 @@ export function PrivacyDraftInboxPanel({
               className={okClass}
               text={`${inbox.selectedDraft.action_count} draft actions ready`}
             />
+            {inbox.dispositionError && (
+              <StatusLine
+                icon="error"
+                className={errorClass}
+                text="Draft disposition failed"
+              />
+            )}
+            {activeDisposition && (
+              <StatusLine
+                icon="ok"
+                className={
+                  activeDisposition.status === "archived" ? warnClass : okClass
+                }
+                text={
+                  activeDisposition.queue_id
+                    ? "Approval handoff queued"
+                    : "Draft archived"
+                }
+              />
+            )}
             <div className={`grid gap-3 rounded-lg border p-3 ${border}`}>
               <KeyValue
                 label="Case ID"
@@ -151,10 +177,58 @@ export function PrivacyDraftInboxPanel({
                 mutedClass={muted}
               />
               <KeyValue
+                label="Status"
+                value={inbox.selectedDraft.status}
+                mutedClass={muted}
+              />
+              <KeyValue
                 label="Payload key"
                 value={inbox.selectedDraft.payload_key_version}
                 mutedClass={muted}
               />
+              {activeDisposition?.queue_id && (
+                <KeyValue
+                  label="Queue ID"
+                  value={activeDisposition.queue_id}
+                  mutedClass={muted}
+                />
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={inbox.submitSelectedDraftForApproval}
+                disabled={!canDispose}
+                className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm transition ${border} ${
+                  canDispose
+                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                    : "opacity-45"
+                }`}
+              >
+                {inbox.pendingDispositionPath === "submit-approval" ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4" />
+                )}
+                Submit for approval
+              </button>
+              <button
+                type="button"
+                onClick={inbox.archiveSelectedDraft}
+                disabled={!canDispose}
+                className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm transition ${border} ${
+                  canDispose
+                    ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                    : "opacity-45"
+                }`}
+              >
+                {inbox.pendingDispositionPath === "archive" ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Archive className="h-4 w-4" />
+                )}
+                Archive
+              </button>
             </div>
             <div className="space-y-3">
               {inbox.selectedDraft.review_packets.map((packet) => (

@@ -10,7 +10,9 @@ from brain.agents.privacy_scrub import drafts
 from brain.agents.privacy_scrub.crypto import PrivacyCrypto, PrivacyCryptoConfig
 from brain.agents.privacy_scrub.drafts import (
     CaseDraftInboxItem,
+    CaseDraftDisposition,
     PrivacyCaseDraftRepository,
+    PrivacyDraftDispositionError,
     PrivacyDraftError,
     RetrievedCaseDraft,
     TargetReviewPacket,
@@ -353,6 +355,296 @@ async def test_case_draft_repository_returns_stored_review_packet(
         review_packets=(packet,),
     )
     assert "ken@example.com" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_case_draft_repository_submits_draft_for_approval(
+    monkeypatch,
+) -> None:
+    case_id = uuid4()
+    subject_id = uuid4()
+    queue_id = uuid4()
+    action_ids = [uuid4(), uuid4()]
+    calls = SimpleNamespace(queue=None, status=None, action_case=None, events=[])
+
+    pending_actions = (
+        StoredDraftAction(
+            id=action_ids[0],
+            subject_id=subject_id,
+            target_id="spokeo",
+            case_draft_id=case_id,
+            action_type="draft",
+            approval_tier="T2",
+            status="pending",
+            draft_payload_hash="sha256:" + "2" * 64,
+            payload_key_version="payload-v1",
+        ),
+        StoredDraftAction(
+            id=action_ids[1],
+            subject_id=subject_id,
+            target_id="ga_fulton_superior",
+            case_draft_id=case_id,
+            action_type="draft",
+            approval_tier="T4",
+            status="pending",
+            draft_payload_hash="sha256:" + "3" * 64,
+            payload_key_version="payload-v1",
+        ),
+    )
+
+    async def fake_get_case_draft(self, case_id_arg):
+        assert case_id_arg == case_id
+        return RetrievedCaseDraft(
+            case_draft=StoredCaseDraft(
+                id=case_id,
+                subject_id=subject_id,
+                created_by_user_id="ken",
+                target_count=2,
+                status="draft",
+                packet_payload_hash="sha256:" + "1" * 64,
+                payload_key_version="payload-v1",
+            ),
+            actions=pending_actions,
+            review_packets=(),
+        )
+
+    async def fake_enqueue_approval_request(conn, **kwargs):
+        calls.queue = kwargs
+        return queue_id
+
+    async def fake_update_case_draft_status(conn, **kwargs):
+        calls.status = kwargs
+        return StoredCaseDraft(
+            id=case_id,
+            subject_id=subject_id,
+            created_by_user_id="ken",
+            target_count=2,
+            status=kwargs["status"],
+            packet_payload_hash="sha256:" + "1" * 64,
+            payload_key_version="payload-v1",
+        )
+
+    async def fake_mark_case_actions_awaiting_approval(conn, **kwargs):
+        calls.action_case = kwargs
+        return [
+            StoredDraftAction(
+                id=action.id,
+                subject_id=action.subject_id,
+                target_id=action.target_id,
+                case_draft_id=action.case_draft_id,
+                action_type=action.action_type,
+                approval_tier=action.approval_tier,
+                status="awaiting_approval",
+                draft_payload_hash=action.draft_payload_hash,
+                payload_key_version=action.payload_key_version,
+            )
+            for action in pending_actions
+        ]
+
+    async def fake_append_action_event(conn, **kwargs):
+        calls.events.append(kwargs)
+        return uuid4()
+
+    monkeypatch.setattr(
+        PrivacyCaseDraftRepository, "get_case_draft", fake_get_case_draft
+    )
+    monkeypatch.setattr(
+        drafts, "enqueue_approval_request", fake_enqueue_approval_request
+    )
+    monkeypatch.setattr(
+        drafts, "update_case_draft_status", fake_update_case_draft_status
+    )
+    monkeypatch.setattr(
+        drafts,
+        "mark_case_actions_awaiting_approval",
+        fake_mark_case_actions_awaiting_approval,
+    )
+    monkeypatch.setattr(drafts, "append_action_event", fake_append_action_event)
+
+    conn = FakeDraftConnection()
+    result = await PrivacyCaseDraftRepository(
+        conn,  # type: ignore[arg-type]
+        _crypto(),
+    ).submit_case_draft_for_approval(
+        case_id=case_id,
+        user_id="ken",
+        actor_type="user",
+    )
+
+    assert result == CaseDraftDisposition(
+        case_draft=StoredCaseDraft(
+            id=case_id,
+            subject_id=subject_id,
+            created_by_user_id="ken",
+            target_count=2,
+            status="submitted_for_approval",
+            packet_payload_hash="sha256:" + "1" * 64,
+            payload_key_version="payload-v1",
+        ),
+        actions=tuple(
+            StoredDraftAction(
+                id=action.id,
+                subject_id=action.subject_id,
+                target_id=action.target_id,
+                case_draft_id=action.case_draft_id,
+                action_type=action.action_type,
+                approval_tier=action.approval_tier,
+                status="awaiting_approval",
+                draft_payload_hash=action.draft_payload_hash,
+                payload_key_version=action.payload_key_version,
+            )
+            for action in pending_actions
+        ),
+        disposition="submitted_for_approval",
+        approval_queue_id=queue_id,
+    )
+    assert calls.queue["risk_tier"] == "T4"
+    assert calls.queue["action_classes"] == (
+        "privacy_draft_handoff",
+        "security_write",
+    )
+    assert calls.queue["actor_sub"] == "ken"
+    assert calls.status["status"] == "submitted_for_approval"
+    assert calls.status["expected_statuses"] == ("draft",)
+    assert calls.action_case["approval_queue_id"] == queue_id
+    assert [event["event_type"] for event in calls.events] == [
+        "approval_requested",
+        "approval_requested",
+    ]
+    assert all(
+        event["event_payload_hash"].startswith("sha256:") for event in calls.events
+    )
+    assert conn.transaction_entries == 1
+    assert conn.transaction_exits == 1
+
+
+@pytest.mark.asyncio
+async def test_case_draft_repository_archives_draft(monkeypatch) -> None:
+    case_id = uuid4()
+    subject_id = uuid4()
+    action_id = uuid4()
+    calls = SimpleNamespace(status=None, action_case=None, events=[])
+
+    async def fake_get_case_draft(self, case_id_arg):
+        assert case_id_arg == case_id
+        return RetrievedCaseDraft(
+            case_draft=StoredCaseDraft(
+                id=case_id,
+                subject_id=subject_id,
+                created_by_user_id="ken",
+                target_count=1,
+                status="draft",
+                packet_payload_hash="sha256:" + "1" * 64,
+                payload_key_version="payload-v1",
+            ),
+            actions=(
+                StoredDraftAction(
+                    id=action_id,
+                    subject_id=subject_id,
+                    target_id="spokeo",
+                    case_draft_id=case_id,
+                    action_type="draft",
+                    approval_tier="T2",
+                    status="pending",
+                    draft_payload_hash="sha256:" + "2" * 64,
+                    payload_key_version="payload-v1",
+                ),
+            ),
+            review_packets=(),
+        )
+
+    async def fake_update_case_draft_status(conn, **kwargs):
+        calls.status = kwargs
+        return StoredCaseDraft(
+            id=case_id,
+            subject_id=subject_id,
+            created_by_user_id="ken",
+            target_count=1,
+            status=kwargs["status"],
+            packet_payload_hash="sha256:" + "1" * 64,
+            payload_key_version="payload-v1",
+        )
+
+    async def fake_reject_pending_case_actions(conn, **kwargs):
+        calls.action_case = kwargs
+        return [
+            StoredDraftAction(
+                id=action_id,
+                subject_id=subject_id,
+                target_id="spokeo",
+                case_draft_id=case_id,
+                action_type="draft",
+                approval_tier="T2",
+                status="rejected",
+                draft_payload_hash="sha256:" + "2" * 64,
+                payload_key_version="payload-v1",
+            )
+        ]
+
+    async def fake_append_action_event(conn, **kwargs):
+        calls.events.append(kwargs)
+        return uuid4()
+
+    monkeypatch.setattr(
+        PrivacyCaseDraftRepository, "get_case_draft", fake_get_case_draft
+    )
+    monkeypatch.setattr(
+        drafts, "update_case_draft_status", fake_update_case_draft_status
+    )
+    monkeypatch.setattr(
+        drafts,
+        "reject_pending_case_actions",
+        fake_reject_pending_case_actions,
+    )
+    monkeypatch.setattr(drafts, "append_action_event", fake_append_action_event)
+
+    result = await PrivacyCaseDraftRepository(
+        FakeDraftConnection(),  # type: ignore[arg-type]
+        _crypto(),
+    ).archive_case_draft(case_id=case_id, user_id="ken")
+
+    assert result.case_draft.status == "archived"
+    assert result.disposition == "archived"
+    assert result.approval_queue_id is None
+    assert result.actions[0].status == "rejected"
+    assert calls.status["expected_statuses"] == ("draft",)
+    assert calls.action_case["case_draft_id"] == case_id
+    assert calls.events[0]["event_type"] == "rejected"
+    assert calls.events[0]["event_payload_hash"].startswith("sha256:")
+
+
+@pytest.mark.asyncio
+async def test_case_draft_repository_rejects_non_draft_disposition(
+    monkeypatch,
+) -> None:
+    case_id = uuid4()
+    subject_id = uuid4()
+
+    async def fake_get_case_draft(self, case_id_arg):
+        assert case_id_arg == case_id
+        return RetrievedCaseDraft(
+            case_draft=StoredCaseDraft(
+                id=case_id,
+                subject_id=subject_id,
+                created_by_user_id="ken",
+                target_count=1,
+                status="submitted_for_approval",
+                packet_payload_hash="sha256:" + "1" * 64,
+                payload_key_version="payload-v1",
+            ),
+            actions=(),
+            review_packets=(),
+        )
+
+    monkeypatch.setattr(
+        PrivacyCaseDraftRepository, "get_case_draft", fake_get_case_draft
+    )
+
+    with pytest.raises(PrivacyDraftDispositionError, match="must be draft"):
+        await PrivacyCaseDraftRepository(
+            FakeDraftConnection(),  # type: ignore[arg-type]
+            _crypto(),
+        ).archive_case_draft(case_id=case_id, user_id="ken")
 
 
 @pytest.mark.asyncio
