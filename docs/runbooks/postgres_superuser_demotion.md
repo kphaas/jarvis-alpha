@@ -20,9 +20,12 @@ ALTER ROLE jarvisbrain NOSUPERUSER;
 
 until all gates below are true.
 
-## Parked Status — 2026-06-03
+## Finalized Status — 2026-06-04
 
-This work is intentionally parked.
+This work is no longer treated as a simple demotion task. Live SQL demotion of
+`jarvisbrain` is blocked because the role is the PostgreSQL bootstrap role
+(`pg_authid.oid = 10`). PostgreSQL requires the bootstrap role to keep
+`SUPERUSER`; do not attempt unsupported catalog edits to bypass that guard.
 
 Completed safely:
 
@@ -36,8 +39,16 @@ Completed safely:
 - Break-glass role `jarvis_pg_breakglass` exists, can login locally, is
   `SUPERUSER CREATEDB CREATEROLE`, and its credential is stored outside app
   secrets at `/Users/jarvisbrain/jarvis-ops/postgres_breakglass.env`.
+- Porchlight reports this as an accepted bootstrap-role exception when the
+  compensating controls are present:
+  - `jarvisbrain` is oid `10`, `SUPERUSER`, and `NOBYPASSRLS`.
+  - a separate break-glass superuser exists.
+  - `jarvis_alpha_writer` and `jarvis_alpha_app` are `NOSUPERUSER` and
+    `NOBYPASSRLS`.
+  - `postgres_hba_safety` separately confirms there are no broad local/loopback
+    trust rules.
 
-Blocked:
+Blocked for direct SQL demotion:
 
 - `jarvisbrain` is the cluster bootstrap role (`pg_authid.oid = 10`).
 - PostgreSQL rejects supported SQL demotion of that role with:
@@ -49,7 +60,7 @@ DETAIL: The bootstrap user must have the SUPERUSER attribute.
 
 Do not bypass this with direct `pg_authid` catalog edits.
 
-Current accepted interim state:
+Current accepted state:
 
 ```text
 jarvisbrain             SUPERUSER, authenticated local access only
@@ -60,7 +71,7 @@ jarvis_alpha_app        NOSUPERUSER NOBYPASSRLS app role
 
 Next architectural options:
 
-1. Keep this interim state and treat the closed `trust` auth plus break-glass
+1. Keep this state and treat the closed `trust` auth plus break-glass
    role as the practical hardening boundary for the current single-node cluster.
 2. Plan a larger owner-role migration: create a non-super owner/migrator role,
    move database/object ownership off `jarvisbrain`, update migration tooling,
@@ -97,7 +108,7 @@ Next architectural options:
 ALTER ROLE jarvisbrain SUPERUSER CREATEDB CREATEROLE;
 ```
 
-## Target End State
+## Original Target End State
 
 ```text
 jarvisbrain          NOSUPERUSER NOBYPASSRLS CREATEDB CREATEROLE
@@ -105,6 +116,9 @@ jarvis_alpha_writer  NOSUPERUSER NOBYPASSRLS
 jarvis_alpha_app     NOSUPERUSER NOBYPASSRLS
 break-glass role     SUPERUSER, local/operator use only
 ```
+
+This remains the ideal shape for a future rebuilt or owner-migrated cluster. It
+is not reachable with supported SQL while `jarvisbrain` is bootstrap oid `10`.
 
 ## Verification
 

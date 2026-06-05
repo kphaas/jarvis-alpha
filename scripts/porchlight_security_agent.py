@@ -406,7 +406,8 @@ SELECT rolname,
        rolbypassrls::text,
        rolcreatedb::text,
        rolcreaterole::text,
-       rolcanlogin::text
+       rolcanlogin::text,
+       oid::text
 FROM pg_roles
 WHERE rolname IN (
     'jarvisbrain',
@@ -444,6 +445,7 @@ ORDER BY rolname;
             "rolcreatedb": row[3] == "true",
             "rolcreaterole": row[4] == "true",
             "rolcanlogin": row[5] == "true",
+            "oid": row[6] if len(row) >= 7 else "",
         }
         for row in rows
         if len(row) >= 6
@@ -474,6 +476,8 @@ ORDER BY rolname;
     if jarvisbrain_superuser:
         if roles.get("jarvisbrain", {}).get("rolbypassrls"):
             issues.append("jarvisbrain still has BYPASSRLS")
+        if roles.get("jarvisbrain", {}).get("oid") != "10":
+            issues.append("jarvisbrain is SUPERUSER and is not the bootstrap role")
         if missing_containment:
             issues.append(
                 "missing bootstrap containment role(s): "
@@ -510,6 +514,7 @@ ORDER BY rolname;
                 "missing_containment_roles": missing_containment,
                 "jarvisbrain": roles.get("jarvisbrain", {}),
                 "security_definer": secdef_metadata,
+                "accepted_exception": None,
             },
         )
 
@@ -532,6 +537,7 @@ ORDER BY rolname;
                 "jarvisbrain": roles.get("jarvisbrain", {}),
                 "security_definer": secdef_metadata,
                 "bootstrap_risk": "accepted_contained",
+                "accepted_exception": "postgres_bootstrap_role_superuser",
             },
         )
 
