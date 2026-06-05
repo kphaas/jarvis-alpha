@@ -343,6 +343,31 @@ async def _safe_payload(label: str, coro):
         return None
 
 
+def _warden_hardening_state(
+    warden: dict | None,
+    crew: list[dict],
+) -> dict[str, str]:
+    warden_metadata = warden.get("metadata") if isinstance(warden, dict) else {}
+    if not isinstance(warden_metadata, dict):
+        warden_metadata = {}
+    sweep = next((agent for agent in crew if agent.get("agent_id") == "sweep"), None)
+    sweep_metadata = sweep.get("metadata") if isinstance(sweep, dict) else {}
+    if not isinstance(sweep_metadata, dict):
+        sweep_metadata = {}
+
+    active = (
+        warden_metadata.get("active_network_hardening")
+        or sweep_metadata.get("active_hardening")
+        or "service_tls_cert_renewal"
+    )
+    next_item = (
+        warden_metadata.get("next_network_hardening")
+        or sweep_metadata.get("active_hardening")
+        or active
+    )
+    return {"active_hardening": str(active), "next_hardening": str(next_item)}
+
+
 async def _probe_port(
     url: str,
     node: str,
@@ -963,6 +988,7 @@ async def warden_status(request: Request):
         routes=routed_controls,
         checked_at=checked_at,
     )
+    hardening_state = _warden_hardening_state(warden, crew)
     return {
         "supervisor": warden,
         "agents": crew,
@@ -972,8 +998,7 @@ async def warden_status(request: Request):
             "active": sum(1 for agent in crew if agent["status"] == "active"),
             "attention": crew_attention,
         },
-        "active_hardening": "unifi_cert_pinning",
-        "next_hardening": "unifi_cert_pinning",
+        **hardening_state,
         "posture_score": posture_score,
         "owner_routes": routed_controls,
         "weekly_brief": weekly_brief,
