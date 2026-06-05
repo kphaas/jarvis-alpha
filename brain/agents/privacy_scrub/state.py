@@ -76,6 +76,30 @@ class StoredDraftAction:
     updated_at: datetime | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class StoredApprovedPrivacyAction:
+    id: UUID
+    subject_id: UUID
+    target_id: str
+    case_draft_id: UUID
+    action_type: str
+    approval_tier: str
+    status: str
+    approval_queue_id: UUID | None
+    draft_payload_hash: str | None
+    payload_key_version: str | None
+    target_name: str
+    target_category: str
+    target_jurisdiction: str
+    target_opt_out_method: str
+    target_avg_response_days: int | None
+    case_status: str
+    case_created_at: datetime | None
+    approved_at: datetime | None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 _CASE_DRAFT_STATUSES = {"draft", "submitted_for_approval", "archived"}
 
 
@@ -339,6 +363,51 @@ async def list_draft_actions_for_case(
         case_draft_id,
     )
     return [_row_to_stored_draft_action(row) for row in rows]
+
+
+async def list_approved_privacy_actions(
+    conn: asyncpg.Connection,
+    *,
+    limit: int = 25,
+) -> list[StoredApprovedPrivacyAction]:
+    if limit < 1 or limit > 100:
+        raise ValueError("limit must be between 1 and 100")
+
+    rows = await conn.fetch(
+        """
+        SELECT
+            a.id, a.subject_id, a.target_id, a.case_draft_id, a.action_type,
+            a.approval_tier, a.status, a.approval_queue_id,
+            a.draft_payload_hash, a.payload_key_version,
+            a.created_at, a.updated_at,
+            t.name AS target_name,
+            t.category AS target_category,
+            t.jurisdiction AS target_jurisdiction,
+            t.opt_out_method AS target_opt_out_method,
+            t.avg_response_days AS target_avg_response_days,
+            c.status AS case_status,
+            c.created_at AS case_created_at,
+            COALESCE(approved_event.created_at, a.updated_at) AS approved_at
+        FROM public.alpha_privacy_actions AS a
+        JOIN public.alpha_privacy_case_drafts AS c
+          ON c.id = a.case_draft_id
+        JOIN public.alpha_privacy_targets_cache AS t
+          ON t.id = a.target_id
+        LEFT JOIN LATERAL (
+            SELECT e.created_at
+            FROM public.alpha_privacy_action_events AS e
+            WHERE e.action_id = a.id
+              AND e.event_type = 'approved'
+            ORDER BY e.created_at DESC, e.id DESC
+            LIMIT 1
+        ) AS approved_event ON TRUE
+        WHERE a.status = 'approved'
+        ORDER BY approved_at DESC NULLS LAST, a.created_at DESC, a.id DESC
+        LIMIT $1
+        """,
+        limit,
+    )
+    return [_row_to_stored_approved_privacy_action(row) for row in rows]
 
 
 async def enqueue_approval_request(
@@ -688,6 +757,33 @@ def _row_to_stored_draft_action(row: asyncpg.Record) -> StoredDraftAction:
         status=row["status"],
         draft_payload_hash=row["draft_payload_hash"],
         payload_key_version=row["payload_key_version"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_stored_approved_privacy_action(
+    row: asyncpg.Record,
+) -> StoredApprovedPrivacyAction:
+    return StoredApprovedPrivacyAction(
+        id=row["id"],
+        subject_id=row["subject_id"],
+        target_id=row["target_id"],
+        case_draft_id=row["case_draft_id"],
+        action_type=row["action_type"],
+        approval_tier=row["approval_tier"],
+        status=row["status"],
+        approval_queue_id=row["approval_queue_id"],
+        draft_payload_hash=row["draft_payload_hash"],
+        payload_key_version=row["payload_key_version"],
+        target_name=row["target_name"],
+        target_category=row["target_category"],
+        target_jurisdiction=row["target_jurisdiction"],
+        target_opt_out_method=row["target_opt_out_method"],
+        target_avg_response_days=row["target_avg_response_days"],
+        case_status=row["case_status"],
+        case_created_at=row["case_created_at"],
+        approved_at=row["approved_at"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
