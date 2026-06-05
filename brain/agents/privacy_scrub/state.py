@@ -436,6 +436,33 @@ async def mark_case_actions_awaiting_approval(
     return [_row_to_stored_draft_action(row) for row in rows]
 
 
+async def mark_approval_queue_actions_decided(
+    conn: asyncpg.Connection,
+    *,
+    approval_queue_id: UUID,
+    status: str,
+) -> list[StoredDraftAction]:
+    if status not in {"approved", "rejected"}:
+        raise ValueError(
+            "privacy approval decision status must be approved or rejected"
+        )
+
+    rows = await conn.fetch(
+        """
+        UPDATE public.alpha_privacy_actions
+        SET status = $2
+        WHERE approval_queue_id = $1
+          AND status = 'awaiting_approval'
+        RETURNING id, subject_id, target_id, case_draft_id, action_type,
+                  approval_tier, status, draft_payload_hash,
+                  payload_key_version, created_at, updated_at
+        """,
+        approval_queue_id,
+        status,
+    )
+    return [_row_to_stored_draft_action(row) for row in rows]
+
+
 async def reject_pending_case_actions(
     conn: asyncpg.Connection,
     *,

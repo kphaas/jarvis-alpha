@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { Fingerprint } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { PrivacyCaseDraftPanel } from "../components/privacy/PrivacyCaseDraftPanel";
 import { PrivacyDraftInboxPanel } from "../components/privacy/PrivacyDraftInboxPanel";
 import { PrivacyTargetRegistry } from "../components/privacy/PrivacyTargetRegistry";
@@ -29,11 +30,13 @@ function tone(isDark: boolean, variant: "ok" | "warn" | "error") {
 
 export default function Privacy() {
   const { theme } = useAppStore();
+  const [searchParams] = useSearchParams();
+  const approvalQueueId = searchParams.get("approval");
   const intake = usePrivacyIntake();
   const targets = usePrivacyTargets();
   const subjectId = intake.createdSubject?.subject_id ?? null;
   const draftState = usePrivacyCaseDraft(subjectId, targets.selectedIds);
-  const draftInbox = usePrivacyDraftInbox();
+  const draftInbox = usePrivacyDraftInbox(searchParams.get("case"));
   const isDark = theme === "dark";
   const border = isDark ? "border-white/10" : "border-[#141414]/10";
   const panel = isDark ? "bg-white/5" : "bg-[#141414]/5";
@@ -116,6 +119,7 @@ export default function Privacy() {
           />
           <PrivacyDraftInboxPanel
             inbox={draftInbox}
+            approvalQueueId={approvalQueueId}
             border={border}
             panel={panel}
             muted={muted}

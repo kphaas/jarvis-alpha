@@ -11,6 +11,7 @@ from brain.agents.privacy_scrub.state import (
     insert_case_draft,
     insert_draft_action,
     list_targets,
+    mark_approval_queue_actions_decided,
     mark_case_actions_awaiting_approval,
     reject_pending_case_actions,
     refresh_targets_cache,
@@ -112,13 +113,18 @@ class FakeDraftWriteConnection:
 
     async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
         self.fetches.append((query, args))
-        status = "awaiting_approval" if "awaiting_approval" in query else "rejected"
+        if "SET status = $2" in query:
+            status = str(args[1])
+            case_draft_id = uuid4()
+        else:
+            status = "awaiting_approval" if "awaiting_approval" in query else "rejected"
+            case_draft_id = args[0]
         return [
             {
                 "id": uuid4(),
                 "subject_id": uuid4(),
                 "target_id": "spokeo",
-                "case_draft_id": args[0],
+                "case_draft_id": case_draft_id,
                 "action_type": "draft",
                 "approval_tier": "T2",
                 "status": status,
@@ -336,6 +342,24 @@ async def test_mark_case_actions_awaiting_approval_links_queue() -> None:
     assert actions[0].status == "awaiting_approval"
     assert "approval_queue_id = $2" in query
     assert args == (case_id, queue_id)
+
+
+@pytest.mark.asyncio
+async def test_mark_approval_queue_actions_decided_sets_final_status() -> None:
+    conn = FakeDraftWriteConnection()
+    queue_id = uuid4()
+
+    actions = await mark_approval_queue_actions_decided(
+        conn,  # type: ignore[arg-type]
+        approval_queue_id=queue_id,
+        status="approved",
+    )
+
+    query, args = conn.fetches[0]
+    assert actions[0].status == "approved"
+    assert "WHERE approval_queue_id = $1" in query
+    assert "AND status = 'awaiting_approval'" in query
+    assert args == (queue_id, "approved")
 
 
 @pytest.mark.asyncio
