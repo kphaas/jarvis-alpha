@@ -18,6 +18,7 @@ def test_guard_includes_obsidian_skills_declared_for_dream_mode():
     assert "weather.current" in handlers
     assert "approval.canary_t4" in handlers
     assert "secrets.rotate" in handlers
+    assert "imessage.read" in handlers
 
 
 def test_guard_reports_missing_active_handler():
