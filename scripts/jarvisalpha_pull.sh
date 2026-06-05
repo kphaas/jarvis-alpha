@@ -99,9 +99,16 @@ else
 fi
 
 NEW_HEAD=$(git -C "$REPO_DIR" rev-parse --short HEAD)
+NEW_HEAD_FULL=$(git -C "$REPO_DIR" rev-parse HEAD)
 
 if [ -f "${REPO_DIR}/scripts/lib/node_addresses.sh" ]; then
   source "${REPO_DIR}/scripts/lib/node_addresses.sh"
+fi
+if [ -f "${REPO_DIR}/scripts/lib/restart_markers.sh" ]; then
+  source "${REPO_DIR}/scripts/lib/restart_markers.sh"
+else
+  echo "ERROR: restart marker helper missing"
+  exit 1
 fi
 
 # Capture changed files list AND count (TD-107: used for restart classification)
@@ -116,44 +123,58 @@ fi
 # ── TD-107: Per-node restart classifier ──
 # Conservative default: RESTART (fail-safe). Only skip when sure nothing runtime-relevant.
 # Rules match existing commit-script classifier + node-specific paths.
+DEPLOY_STATE_DIR="${JARVIS_ALPHA_DEPLOY_STATE_DIR:-${HOME}/.jarvis-alpha-deploy}"
+
+changed_files_for_service() {
+  local service="$1"
+  local marker_head
+  marker_head=$(restart_marker_read "$DEPLOY_STATE_DIR" "$service")
+  restart_marker_changed_files "$REPO_DIR" "$marker_head" "$NEW_HEAD_FULL" "$CHANGED_FILES"
+}
+
+service_has_changes_matching() {
+  local service="$1"
+  local pattern="$2"
+  local service_changed_files
+  service_changed_files=$(changed_files_for_service "$service")
+  [ -n "$service_changed_files" ] && echo "$service_changed_files" | grep -qE "$pattern"
+}
+
+mark_service_checked() {
+  local service="$1"
+  restart_marker_write "$DEPLOY_STATE_DIR" "$service" "$NEW_HEAD_FULL"
+}
+
 needs_restart_brain() {
-  [ -z "$CHANGED_FILES" ] && return 1
-  echo "$CHANGED_FILES" | grep -qE '(^brain/|^common/|^db/|^scripts/apply_migrations\.sh|\.py$|^scripts/start_alpha_brain\.sh$|^launchagents/com\.jarvis\.alpha\.(brain|buddy)\.plist$)'
+  service_has_changes_matching "alpha-brain" '(^brain/|^common/|^db/|^scripts/apply_migrations\.sh|\.py$|^scripts/start_alpha_brain\.sh$|^launchagents/com\.jarvis\.alpha\.(brain|buddy)\.plist$)'
 }
 
 needs_reload_school_email() {
-  [ -z "$CHANGED_FILES" ] && return 1
-  echo "$CHANGED_FILES" | grep -qE '(^launchagents/com\.jarvis\.alpha\.(school-email|gmail-health)\.template\.plist$|^scripts/start_alpha_(school_email|gmail_health)\.sh$|^scripts/install_launchagents\.py$)'
+  service_has_changes_matching "alpha-school-email" '(^launchagents/com\.jarvis\.alpha\.(school-email|gmail-health)\.template\.plist$|^scripts/start_alpha_(school_email|gmail_health)\.sh$|^scripts/install_launchagents\.py$)'
 }
 
 needs_reload_sweep_cert() {
-  [ -z "$CHANGED_FILES" ] && return 1
-  echo "$CHANGED_FILES" | grep -qE "(^launchagents/com\\.jarvis\\.alpha\\.sweep-cert-renewal\\.${NODE_SHORT}\\.template\\.plist$|^launchagents/com\\.jarvis\\.alpha\\.sweep-cert-renewal\\.template\\.plist$|^scripts/install_launchagents\\.py$)"
+  service_has_changes_matching "alpha-sweep-cert-renewal" "(^launchagents/com\\.jarvis\\.alpha\\.sweep-cert-renewal\\.${NODE_SHORT}\\.template\\.plist$|^launchagents/com\\.jarvis\\.alpha\\.sweep-cert-renewal\\.template\\.plist$|^scripts/install_launchagents\\.py$)"
 }
 
 needs_restart_temporal_worker() {
-  [ -z "$CHANGED_FILES" ] && return 1
-  echo "$CHANGED_FILES" | grep -qE '(^brain/dream/|^brain/services/(planner|reviewer)\.py$|^scripts/start_temporal_worker\.sh$|^launchagents/com\.jarvis\.alpha\.temporal\.worker(\.template)?\.plist$)'
+  service_has_changes_matching "alpha-temporal-worker" '(^brain/dream/|^brain/services/(planner|reviewer)\.py$|^scripts/start_temporal_worker\.sh$|^launchagents/com\.jarvis\.alpha\.temporal\.worker(\.template)?\.plist$)'
 }
 
 needs_restart_gateway() {
-  [ -z "$CHANGED_FILES" ] && return 1
-  echo "$CHANGED_FILES" | grep -qE '(^gateway/|^common/|\.py$|^scripts/start_alpha_gateway\.sh$|^launchagents/com\.jarvis\.alpha\.gateway\.plist$)'
+  service_has_changes_matching "alpha-gateway" '(^gateway/|^common/|\.py$|^scripts/start_alpha_gateway\.sh$|^launchagents/com\.jarvis\.alpha\.gateway\.plist$)'
 }
 
 needs_restart_endpoint() {
-  [ -z "$CHANGED_FILES" ] && return 1
-  echo "$CHANGED_FILES" | grep -qE '(^endpoint/|^ui/dist/|^scripts/deploy_nginx_endpoint\.sh$)'
+  service_has_changes_matching "alpha-endpoint" '(^endpoint/|^ui/dist/|^scripts/deploy_nginx_endpoint\.sh$)'
 }
 
 needs_restart_watchdog() {
-  [ -z "$CHANGED_FILES" ] && return 1
-  echo "$CHANGED_FILES" | grep -qE '(^brain/agents/watchdog_agent\.py$|^scripts/start_alpha_watchdog\.sh$|^launchagents/com\.jarvis\.alpha\.watchdog\.plist$)'
+  service_has_changes_matching "alpha-watchdog" '(^brain/agents/watchdog_agent\.py$|^scripts/start_alpha_watchdog\.sh$|^launchagents/com\.jarvis\.alpha\.watchdog\.plist$)'
 }
 
 needs_restart_observability() {
-  [ -z "$CHANGED_FILES" ] && return 1
-  echo "$CHANGED_FILES" | grep -qE '(^config/observability/brain/|^launchagents/com\.jarvis\.alpha\.(fluentbit|loki)\.plist$)'
+  service_has_changes_matching "alpha-observability" '(^config/observability/brain/|^launchagents/com\.jarvis\.alpha\.(fluentbit|loki)\.plist$)'
 }
 
 sync_brain_observability_configs() {
@@ -267,6 +288,8 @@ if [ "$NODE_SHORT" = "brain" ] && ! needs_restart_brain; then
   emit skip restart node="$NODE_SHORT" service="alpha-brain" reason="no_runtime_changes"
   emit skip restart node="$NODE_SHORT" service="alpha-buddy" reason="no_runtime_changes"
   emit skip tests node="$NODE_SHORT" reason="no_runtime_changes"
+  mark_service_checked "alpha-brain"
+  mark_service_checked "alpha-buddy"
 elif [ -f "$BRAIN_PLIST" ]; then
   echo ""
   echo "Restarting Alpha Brain LaunchAgent..."
@@ -342,6 +365,8 @@ elif [ -f "$BRAIN_PLIST" ]; then
       exit 1
     fi
   fi
+  mark_service_checked "alpha-brain"
+  mark_service_checked "alpha-buddy"
   echo "─────────────────────────────────────────────────────────"
 fi
 
@@ -350,8 +375,10 @@ if [ "$NODE_SHORT" = "brain" ] && needs_restart_watchdog; then
   echo ""
   echo "Restarting Watchdog Agent..."
   restart_launchagent "alpha-watchdog" "com.jarvis.alpha.watchdog" "$WATCHDOG_PLIST"
+  mark_service_checked "alpha-watchdog"
 elif [ "$NODE_SHORT" = "brain" ]; then
   emit skip restart node="$NODE_SHORT" service="alpha-watchdog" reason="no_watchdog_changes"
+  mark_service_checked "alpha-watchdog"
 fi
 
 if [ "$NODE_SHORT" = "brain" ] && needs_restart_observability; then
@@ -362,9 +389,11 @@ if [ "$NODE_SHORT" = "brain" ] && needs_restart_observability; then
   echo "Restarting Alpha observability LaunchAgents..."
   restart_launchagent "alpha-fluentbit" "com.jarvis.alpha.fluentbit" "${HOME}/Library/LaunchAgents/com.jarvis.alpha.fluentbit.plist"
   restart_launchagent "alpha-loki" "com.jarvis.alpha.loki" "${HOME}/Library/LaunchAgents/com.jarvis.alpha.loki.plist"
+  mark_service_checked "alpha-observability"
 elif [ "$NODE_SHORT" = "brain" ]; then
   emit skip restart node="$NODE_SHORT" service="alpha-fluentbit" reason="no_observability_changes"
   emit skip restart node="$NODE_SHORT" service="alpha-loki" reason="no_observability_changes"
+  mark_service_checked "alpha-observability"
 fi
 
 TEMPORAL_WORKER_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.temporal.worker.plist"
@@ -386,8 +415,10 @@ if [ "$NODE_SHORT" = "brain" ] && needs_restart_temporal_worker; then
   [ "$TEMPORAL_PID" = "-" ] && TEMPORAL_PID=0
   echo "✅ Temporal worker restarted"
   emit ok restart node="$NODE_SHORT" service="alpha-temporal-worker" pid="${TEMPORAL_PID:-0}" dur_ms=$(($(time_ms) - TEMPORAL_START))
+  mark_service_checked "alpha-temporal-worker"
 elif [ "$NODE_SHORT" = "brain" ]; then
   emit skip restart node="$NODE_SHORT" service="alpha-temporal-worker" reason="no_worker_changes"
+  mark_service_checked "alpha-temporal-worker"
 fi
 
 SCHOOL_EMAIL_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.school-email.plist"
@@ -430,8 +461,10 @@ if [ "$NODE_SHORT" = "brain" ] && needs_reload_school_email; then
     echo "❌ Gmail health LaunchAgent plist missing after install"
     exit 1
   fi
+  mark_service_checked "alpha-school-email"
 elif [ "$NODE_SHORT" = "brain" ]; then
   emit skip restart node="$NODE_SHORT" service="alpha-school-email" reason="no_launchagent_changes"
+  mark_service_checked "alpha-school-email"
 fi
 
 SWEEP_CERT_LABEL="com.jarvis.alpha.sweep-cert-renewal.${NODE_SHORT}"
@@ -467,8 +500,10 @@ if needs_reload_sweep_cert; then
     echo "❌ Sweep cert renewal LaunchAgent plist missing after install"
     exit 1
   fi
+  mark_service_checked "alpha-sweep-cert-renewal"
 elif [ "$NODE_SHORT" = "brain" ]; then
   emit skip restart node="$NODE_SHORT" service="alpha-sweep-cert-renewal" reason="no_launchagent_changes"
+  mark_service_checked "alpha-sweep-cert-renewal"
 fi
 
 # ── Gateway branch (TD-88) ────────────────────────────────
@@ -477,6 +512,7 @@ if [ "$NODE_SHORT" = "gateway" ]; then
   if ! needs_restart_gateway; then
     echo "ℹ️  Skipping Gateway restart — no runtime-relevant files changed (TD-107)"
     emit skip restart node="$NODE_SHORT" service="alpha-gateway" reason="no_runtime_changes"
+    mark_service_checked "alpha-gateway"
   elif [ -f "$GATEWAY_PLIST" ]; then
     echo ""
     echo "Restarting Alpha Gateway LaunchAgent..."
@@ -509,6 +545,7 @@ if [ "$NODE_SHORT" = "gateway" ]; then
       emit fail health node="$NODE_SHORT" url="$HEALTH_URL" http_code="$HEALTH_CODE" dur_ms="$HEALTH_DUR" error="health body missing status"
       exit 1
     fi
+    mark_service_checked "alpha-gateway"
   else
     echo "ℹ️  No Gateway LaunchAgent plist at $GATEWAY_PLIST — skipping restart"
   fi
