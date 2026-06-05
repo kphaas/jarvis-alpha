@@ -11,9 +11,12 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from jarvis_common.secrets import get_secret
 from jarvis_common.logging_config import get_logger
+from brain.agents.events import AgentEvent, emit_agent_event
+from brain.db.pool import get_pool
 from brain.config.node_addresses import (
     BRAIN_URL,
     GATEWAY_URL,
@@ -60,6 +63,53 @@ _LEGACY_CHILD_POLICIES = (
     "child_message_isolation",
     "child_thread_isolation",
 )
+
+
+class SentinelReportFinding(BaseModel):
+    id: str = Field(min_length=1, max_length=96)
+    severity: str = Field(pattern=r"^(critical|high|medium|low|info)$")
+    title: str = Field(min_length=1, max_length=250)
+    file_path: str | None = Field(default=None, max_length=500)
+    start_line: int | None = Field(default=None, ge=1)
+
+
+class SentinelReportIn(BaseModel):
+    repo_slug: str = Field(min_length=1, max_length=160)
+    commit_sha: str = Field(min_length=1, max_length=80)
+    branch: str | None = Field(default=None, max_length=160)
+    scan_id: str = Field(min_length=1, max_length=128)
+    scanner: str = Field(default="aider-security-review", min_length=1, max_length=96)
+    findings_total: int = Field(ge=0)
+    severity_counts: dict[str, int] = Field(default_factory=dict)
+    finding_ids: list[str] = Field(default_factory=list, max_length=100)
+    top_findings: list[SentinelReportFinding] = Field(default_factory=list, max_length=10)
+
+
+class SentinelReportResponse(BaseModel):
+    accepted: bool
+    event_id: str
+    notification_status: str
+
+
+def _sentinel_event_severity(counts: dict[str, int]) -> str:
+    if int(counts.get("critical", 0)) > 0:
+        return "critical"
+    if int(counts.get("high", 0)) > 0:
+        return "error"
+    if int(counts.get("medium", 0)) > 0:
+        return "warning"
+    return "info"
+
+
+def _sentinel_event_message(report: SentinelReportIn) -> str:
+    counts = report.severity_counts
+    return (
+        f"Sentinel scanned `{report.repo_slug}` at `{report.commit_sha[:12]}` and found "
+        f"{report.findings_total} finding(s): "
+        f"{int(counts.get('critical', 0))} critical, "
+        f"{int(counts.get('high', 0))} high, "
+        f"{int(counts.get('medium', 0))} medium."
+    )
 
 
 def _curl_http_code(
@@ -1004,6 +1054,43 @@ async def warden_status(request: Request):
         "weekly_brief": weekly_brief,
         "auto_ticket_candidates": ticket_candidates,
     }
+
+
+@security_router.post("/sentinel-report", response_model=SentinelReportResponse, status_code=202)
+async def sentinel_report(request: Request, report: SentinelReportIn) -> SentinelReportResponse:
+    """Accept a Forge Sentinel scan summary and surface it as a Warden event."""
+    from brain.middleware.scopes import check_scopes
+
+    check_scopes(request, "security.write", "security_write")
+    result = await emit_agent_event(
+        AgentEvent(
+            agent_id="warden",
+            event_type="warden.sentinel_report",
+            title=f"Sentinel scan: {report.repo_slug}",
+            message=_sentinel_event_message(report),
+            severity=_sentinel_event_severity(report.severity_counts),
+            channel_key="security_alerts",
+            payload={
+                "source": "forge_sentinel",
+                "repo_slug": report.repo_slug,
+                "commit_sha": report.commit_sha,
+                "branch": report.branch,
+                "scan_id": report.scan_id,
+                "scanner": report.scanner,
+                "findings_total": report.findings_total,
+                "severity_counts": report.severity_counts,
+                "finding_ids": report.finding_ids[:100],
+                "top_findings": [item.model_dump() for item in report.top_findings[:10]],
+            },
+            correlation_id=f"sentinel:{report.repo_slug}:{report.commit_sha}:{report.scan_id}",
+        ),
+        pool=get_pool(),
+    )
+    return SentinelReportResponse(
+        accepted=True,
+        event_id=result.event_id,
+        notification_status=result.notification_status,
+    )
 
 
 @security_router.get("/secrets-audit")
