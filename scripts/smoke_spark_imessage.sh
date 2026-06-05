@@ -9,6 +9,12 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BASE_URL="${ALPHA_BASE_URL:-https://jarvis-brain.tail40ed36.ts.net:8186}"
 TIMEOUT_SEC="${SPARK_SMOKE_TIMEOUT_SEC:-10}"
 TOKEN="${SPARK_SMOKE_TOKEN:-${ALPHA_SERVICE_TOKEN:-}}"
+if [ -x "${REPO_ROOT}/.venv/bin/python" ]; then
+  DEFAULT_PYTHON="${REPO_ROOT}/.venv/bin/python"
+else
+  DEFAULT_PYTHON="python3"
+fi
+PYTHON_BIN="${SPARK_SMOKE_PYTHON:-${DEFAULT_PYTHON}}"
 
 if [ -z "${TOKEN}" ] && [ -f "${HOME}/jarvis/.secrets" ]; then
   set +u
@@ -21,7 +27,7 @@ fi
 if [ -z "${TOKEN}" ]; then
   SMOKE_ISS="${SPARK_SMOKE_ISS:-brain}"
   TOKEN="$(
-    python3 "${REPO_ROOT}/scripts/gen_service_token.py" \
+    "${PYTHON_BIN}" "${REPO_ROOT}/scripts/gen_service_token.py" \
       --iss "${SMOKE_ISS}" \
       --actor-type service \
       --scopes "imessage.read" \
@@ -55,7 +61,7 @@ curl_json() {
     exit 1
   fi
 
-  python3 - "${label}" "${output_path}" "${http_code}" <<'PY'
+  "${PYTHON_BIN}" - "${label}" "${output_path}" "${http_code}" <<'PY'
 import json
 import sys
 from pathlib import Path
