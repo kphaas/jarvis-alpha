@@ -1,8 +1,10 @@
 import { motion } from 'framer-motion'
 import { Fingerprint } from 'lucide-react'
+import { PrivacyTargetRegistry } from '../components/privacy/PrivacyTargetRegistry'
 import { PrivacyResultPanel } from '../components/privacy/PrivacyResultPanel'
 import { SubjectIntakeForm } from '../components/privacy/SubjectIntakeForm'
 import { usePrivacyIntake } from '../hooks/usePrivacyIntake'
+import { usePrivacyTargets } from '../hooks/usePrivacyTargets'
 import { useAppStore } from '../store'
 
 function tone(isDark: boolean, variant: 'ok' | 'warn' | 'error') {
@@ -24,6 +26,7 @@ function tone(isDark: boolean, variant: 'ok' | 'warn' | 'error') {
 export default function Privacy() {
   const { theme } = useAppStore()
   const intake = usePrivacyIntake()
+  const targets = usePrivacyTargets()
   const isDark = theme === 'dark'
   const border = isDark ? 'border-white/10' : 'border-[#141414]/10'
   const panel = isDark ? 'bg-white/5' : 'bg-[#141414]/5'
@@ -41,7 +44,7 @@ export default function Privacy() {
           <div>
             <h1 className={`font-serif italic text-3xl ${strong}`}>Privacy Intake</h1>
             <p className={`mt-1 text-[10px] font-mono uppercase tracking-widest ${muted}`}>
-              P2-C - operator intake
+              P2-D - target selection
             </p>
           </div>
         </div>
@@ -62,17 +65,30 @@ export default function Privacy() {
           muted={muted}
           errorClass={tone(isDark, 'error')}
         />
-        <PrivacyResultPanel
-          intake={intake}
-          border={border}
-          panel={panel}
-          input={input}
-          muted={muted}
-          isDark={isDark}
-          okClass={tone(isDark, 'ok')}
-          warnClass={tone(isDark, 'warn')}
-          errorClass={tone(isDark, 'error')}
-        />
+        <div className="space-y-6">
+          <PrivacyResultPanel
+            intake={intake}
+            border={border}
+            panel={panel}
+            input={input}
+            muted={muted}
+            isDark={isDark}
+            okClass={tone(isDark, 'ok')}
+            warnClass={tone(isDark, 'warn')}
+            errorClass={tone(isDark, 'error')}
+          />
+          <PrivacyTargetRegistry
+            targets={targets}
+            subjectId={intake.createdSubject?.subject_id ?? null}
+            border={border}
+            panel={panel}
+            muted={muted}
+            isDark={isDark}
+            okClass={tone(isDark, 'ok')}
+            warnClass={tone(isDark, 'warn')}
+            errorClass={tone(isDark, 'error')}
+          />
+        </div>
       </div>
     </motion.div>
   )

@@ -24,6 +24,38 @@ export type IdentityTupleCreateResponse = {
   inserted: boolean
 }
 
+export type PrivacyTargetCategory = 'data_broker' | 'social' | 'public_record' | 'breach_db'
+
+export type PrivacyTargetMethod = 'email' | 'web_form' | 'api' | 'manual_only' | 'court_motion'
+
+export type PrivacyTarget = {
+  id: string
+  name: string
+  category: PrivacyTargetCategory
+  jurisdiction: string
+  opt_out_method: PrivacyTargetMethod
+  opt_out_url: string | null
+  contact_email: string | null
+  supports_minors: boolean
+  requires_sensitive_payload: boolean
+  requires_identity_document: boolean
+  avg_response_days: number | null
+  last_verified: string | null
+  notes: string | null
+  yaml_source: string
+  loaded_at: string | null
+}
+
+export type PrivacyTargetsResponse = {
+  count: number
+  targets: PrivacyTarget[]
+}
+
+export type PrivacyTargetsRefreshResponse = {
+  count: number
+  source_label: string
+}
+
 export type ProfileFields = {
   legal_name: string
   date_of_birth: string
@@ -49,6 +81,21 @@ export const TUPLE_TYPES: Array<{ value: TupleType; label: string }> = [
   { value: 'name', label: 'Name fragment' },
   { value: 'dob', label: 'Date of birth' },
 ]
+
+export const TARGET_CATEGORIES: Array<{ value: PrivacyTargetCategory; label: string }> = [
+  { value: 'data_broker', label: 'Brokers' },
+  { value: 'public_record', label: 'Records' },
+  { value: 'social', label: 'Social' },
+  { value: 'breach_db', label: 'Breach' },
+]
+
+export const TARGET_METHOD_LABEL: Record<PrivacyTargetMethod, string> = {
+  email: 'Email',
+  web_form: 'Web form',
+  api: 'API',
+  manual_only: 'Manual',
+  court_motion: 'Court',
+}
 
 export const EMPTY_PROFILE: ProfileFields = {
   legal_name: '',

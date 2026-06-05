@@ -5,6 +5,7 @@ import pytest
 from brain.agents.privacy_scrub.state import (
     count_targets,
     get_target,
+    list_targets,
     refresh_targets_cache,
 )
 from brain.agents.privacy_scrub.targets import (
@@ -23,6 +24,7 @@ class FakeTargetCacheConnection:
         self.transaction_entries = 0
         self.transaction_exits = 0
         self.fetchrow_result: dict[str, object] | None = None
+        self.fetch_result: list[dict[str, object]] = []
         self.fetchval_result: int = 0
 
     def transaction(self) -> "FakeTargetCacheConnection":
@@ -41,6 +43,10 @@ class FakeTargetCacheConnection:
     async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
         self.fetchrows.append((query, args))
         return self.fetchrow_result
+
+    async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+        self.fetchrows.append((query, args))
+        return self.fetch_result
 
     async def fetchval(self, query: str, *args: object) -> int:
         self.fetchvals.append((query, args))
@@ -106,3 +112,22 @@ async def test_get_target_sets_platform_admin_rls_context() -> None:
     query, args = conn.fetchrows[0]
     assert "FROM public.alpha_privacy_targets_cache" in query
     assert args == ("target_1",)
+
+
+@pytest.mark.asyncio
+async def test_list_targets_sets_platform_admin_rls_context() -> None:
+    conn = FakeTargetCacheConnection()
+    conn.fetch_result = [{"id": "target_1", "name": "Target"}]
+
+    targets = await list_targets(conn)  # type: ignore[arg-type]
+
+    assert targets == [{"id": "target_1", "name": "Target"}]
+    assert conn.transaction_entries == 1
+    assert conn.transaction_exits == 1
+    assert conn.executes == [
+        ("SELECT set_config('rls.role', 'platform_admin', true)", ())
+    ]
+    query, args = conn.fetchrows[0]
+    assert "FROM public.alpha_privacy_targets_cache" in query
+    assert "ORDER BY category, jurisdiction, name, id" in query
+    assert args == ()

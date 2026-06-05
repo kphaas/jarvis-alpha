@@ -13,6 +13,12 @@ from brain.agents.privacy_scrub.identity import IdentityTuple, TupleType
 from brain.agents.privacy_scrub.repository import CreatedSubject
 from brain.agents.privacy_scrub.state import StoredSubject
 from brain.agents.privacy_scrub.subjects import Role, SubjectStatus
+from brain.agents.privacy_scrub.targets import (
+    Jurisdiction,
+    OptOutMethod,
+    Target,
+    TargetCategory,
+)
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
 from brain.routes import privacy
 
@@ -61,6 +67,16 @@ def test_privacy_intake_routes_are_classified_t2_security_writes() -> None:
         classes = classify_route("POST", path)
         assert classes == ["write", "security_write"]
         assert determine_risk_tier(classes) == "T2"
+
+
+def test_privacy_target_routes_are_classified() -> None:
+    read_classes = classify_route("GET", "/v1/privacy/targets")
+    assert read_classes == ["read", "security_read"]
+    assert determine_risk_tier(read_classes) == "T2"
+
+    refresh_classes = classify_route("POST", "/v1/privacy/targets/refresh")
+    assert refresh_classes == ["write", "security_write"]
+    assert determine_risk_tier(refresh_classes) == "T2"
 
 
 @pytest.mark.asyncio
@@ -114,6 +130,102 @@ async def test_add_privacy_identity_tuple_rejects_service_actor_before_config_lo
 
     assert exc.value.status_code == 403
     assert exc.value.detail == "privacy_intake_forbidden"
+
+
+@pytest.mark.asyncio
+async def test_list_privacy_targets_rejects_child_before_db_touch(monkeypatch) -> None:
+    def rls_connection(request):
+        raise AssertionError("child actor must fail before DB access")
+
+    monkeypatch.setattr(privacy, "rls_connection", rls_connection)
+
+    with pytest.raises(HTTPException) as exc:
+        await privacy.list_privacy_targets(_request(role="child"), "child-user")
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "privacy_intake_forbidden"
+
+
+@pytest.mark.asyncio
+async def test_list_privacy_targets_reads_cached_local_registry(monkeypatch) -> None:
+    calls = SimpleNamespace(conn=None)
+
+    async def fake_list_targets(conn):
+        calls.conn = conn
+        return [
+            {
+                "id": "spokeo",
+                "name": "Spokeo",
+                "category": "data_broker",
+                "jurisdiction": "US_FEDERAL",
+                "opt_out_method": "web_form",
+                "opt_out_url": "https://example.test/optout",
+                "contact_email": None,
+                "supports_minors": False,
+                "requires_sensitive_payload": False,
+                "requires_identity_document": False,
+                "avg_response_days": 5,
+                "last_verified": None,
+                "notes": "local registry metadata",
+                "yaml_source": "brokers.yaml",
+                "loaded_at": None,
+            }
+        ]
+
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "list_targets", fake_list_targets)
+
+    response = await privacy.list_privacy_targets(_request(), "ken")
+
+    assert response.count == 1
+    assert response.targets[0].id == "spokeo"
+    assert response.targets[0].opt_out_method == "web_form"
+    assert calls.conn is not None
+
+
+@pytest.mark.asyncio
+async def test_refresh_privacy_targets_uses_bundled_yaml_only(monkeypatch) -> None:
+    target = Target(
+        id="local_target",
+        name="Local Target",
+        category=TargetCategory.DATA_BROKER,
+        jurisdiction=Jurisdiction.US_FEDERAL,
+        opt_out_method=OptOutMethod.WEB_FORM,
+    )
+    calls = SimpleNamespace(targets=None, source_label=None)
+
+    async def fake_refresh_targets_cache(conn, targets, source_label):
+        calls.targets = targets
+        calls.source_label = source_label
+        return len(targets)
+
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "load_all_targets", lambda: [target])
+    monkeypatch.setattr(privacy, "refresh_targets_cache", fake_refresh_targets_cache)
+
+    response = await privacy.refresh_privacy_targets(_request(), "ken")
+
+    assert response.count == 1
+    assert response.source_label == "bundled_yaml"
+    assert calls.targets == [target]
+    assert calls.source_label == "bundled_yaml"
+
+
+@pytest.mark.asyncio
+async def test_refresh_privacy_targets_fails_closed_on_bad_registry(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        privacy,
+        "load_all_targets",
+        lambda: (_ for _ in ()).throw(ValueError("bad yaml")),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await privacy.refresh_privacy_targets(_request(), "ken")
+
+    assert exc.value.status_code == 500
+    assert exc.value.detail == "privacy_targets_registry_invalid"
 
 
 @pytest.mark.asyncio

@@ -276,6 +276,23 @@ async def get_target(
     return dict(row) if row else None
 
 
+async def list_targets(conn: asyncpg.Connection) -> list[dict[str, object]]:
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
+        rows = await conn.fetch(
+            """
+            SELECT id, name, category, jurisdiction, opt_out_method,
+                   opt_out_url, contact_email, supports_minors,
+                   requires_sensitive_payload, requires_identity_document,
+                   avg_response_days, last_verified, notes, yaml_source,
+                   loaded_at
+            FROM public.alpha_privacy_targets_cache
+            ORDER BY category, jurisdiction, name, id
+            """
+        )
+    return [dict(row) for row in rows]
+
+
 def _row_to_stored_subject(row: asyncpg.Record) -> StoredSubject:
     return StoredSubject(
         id=row["id"],
