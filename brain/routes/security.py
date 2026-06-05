@@ -82,7 +82,9 @@ class SentinelReportIn(BaseModel):
     findings_total: int = Field(ge=0)
     severity_counts: dict[str, int] = Field(default_factory=dict)
     finding_ids: list[str] = Field(default_factory=list, max_length=100)
-    top_findings: list[SentinelReportFinding] = Field(default_factory=list, max_length=10)
+    top_findings: list[SentinelReportFinding] = Field(
+        default_factory=list, max_length=10
+    )
 
 
 class SentinelReportResponse(BaseModel):
@@ -1056,8 +1058,12 @@ async def warden_status(request: Request):
     }
 
 
-@security_router.post("/sentinel-report", response_model=SentinelReportResponse, status_code=202)
-async def sentinel_report(request: Request, report: SentinelReportIn) -> SentinelReportResponse:
+@security_router.post(
+    "/sentinel-report", response_model=SentinelReportResponse, status_code=202
+)
+async def sentinel_report(
+    request: Request, report: SentinelReportIn
+) -> SentinelReportResponse:
     """Accept a Forge Sentinel scan summary and surface it as a Warden event."""
     from brain.middleware.scopes import check_scopes
 
@@ -1080,7 +1086,9 @@ async def sentinel_report(request: Request, report: SentinelReportIn) -> Sentine
                 "findings_total": report.findings_total,
                 "severity_counts": report.severity_counts,
                 "finding_ids": report.finding_ids[:100],
-                "top_findings": [item.model_dump() for item in report.top_findings[:10]],
+                "top_findings": [
+                    item.model_dump() for item in report.top_findings[:10]
+                ],
             },
             correlation_id=f"sentinel:{report.repo_slug}:{report.commit_sha}:{report.scan_id}",
         ),
