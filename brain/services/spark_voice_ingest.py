@@ -235,7 +235,7 @@ async def build_spark_voice_profile_proposal(
         next_steps=(
             "review_sanitized_proposal",
             "approve_or_edit_voice_profile_changes_in_ui",
-            "implement_relationship_thread_body_reader_before_imessage_ingest",
+            "configure_approved_imessage_chat_guid_for_live_draft_context",
         ),
     )
 
@@ -317,8 +317,8 @@ async def _summarize_source_record(
             record,
             status="deferred",
             notes=(
-                "bluebubbles_body_reader_not_implemented",
-                "metadata_only_policy_active",
+                "bluebubbles_body_reader_available_for_draft_runtime_context",
+                "live_imessage_body_access_not_requested",
             ),
         )
     return _empty_summary(
