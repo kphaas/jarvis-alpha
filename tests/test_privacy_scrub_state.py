@@ -10,6 +10,7 @@ from brain.agents.privacy_scrub.state import (
     get_target,
     insert_case_draft,
     insert_draft_action,
+    list_approved_privacy_actions,
     list_targets,
     mark_approval_queue_actions_decided,
     mark_case_actions_awaiting_approval,
@@ -113,6 +114,31 @@ class FakeDraftWriteConnection:
 
     async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
         self.fetches.append((query, args))
+        if "WHERE a.status = 'approved'" in query:
+            return [
+                {
+                    "id": uuid4(),
+                    "subject_id": uuid4(),
+                    "target_id": "spokeo",
+                    "case_draft_id": uuid4(),
+                    "action_type": "draft",
+                    "approval_tier": "T2",
+                    "status": "approved",
+                    "approval_queue_id": uuid4(),
+                    "draft_payload_hash": "sha256:" + "4" * 64,
+                    "payload_key_version": "payload-v1",
+                    "target_name": "Spokeo",
+                    "target_category": "data_broker",
+                    "target_jurisdiction": "US_FEDERAL",
+                    "target_opt_out_method": "web_form",
+                    "target_avg_response_days": 5,
+                    "case_status": "submitted_for_approval",
+                    "case_created_at": None,
+                    "approved_at": None,
+                    "created_at": None,
+                    "updated_at": None,
+                }
+            ]
         if "SET status = $2" in query:
             status = str(args[1])
             case_draft_id = uuid4()
@@ -360,6 +386,23 @@ async def test_mark_approval_queue_actions_decided_sets_final_status() -> None:
     assert "WHERE approval_queue_id = $1" in query
     assert "AND status = 'awaiting_approval'" in query
     assert args == (queue_id, "approved")
+
+
+@pytest.mark.asyncio
+async def test_list_approved_privacy_actions_filters_ready_rows() -> None:
+    conn = FakeDraftWriteConnection()
+
+    actions = await list_approved_privacy_actions(conn, limit=12)  # type: ignore[arg-type]
+
+    query, args = conn.fetches[0]
+    assert actions[0].status == "approved"
+    assert actions[0].target_name == "Spokeo"
+    assert actions[0].case_status == "submitted_for_approval"
+    assert "FROM public.alpha_privacy_actions AS a" in query
+    assert "JOIN public.alpha_privacy_targets_cache AS t" in query
+    assert "WHERE a.status = 'approved'" in query
+    assert "draft_payload_ciphertext" not in query
+    assert args == (12,)
 
 
 @pytest.mark.asyncio

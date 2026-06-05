@@ -22,6 +22,7 @@ from brain.agents.privacy_scrub.drafts import (
 from brain.agents.privacy_scrub.identity import IdentityTuple, TupleType
 from brain.agents.privacy_scrub.repository import CreatedSubject
 from brain.agents.privacy_scrub.state import (
+    StoredApprovedPrivacyAction,
     StoredCaseDraft,
     StoredDraftAction,
     StoredSubject,
@@ -89,6 +90,7 @@ def test_privacy_intake_routes_are_classified_t2_security_writes() -> None:
 def test_privacy_target_routes_are_classified() -> None:
     for path in (
         "/v1/privacy/case-drafts",
+        "/v1/privacy/actions/approved",
         f"/v1/privacy/case-drafts/{uuid4()}",
     ):
         classes = classify_route("GET", path)
@@ -641,6 +643,64 @@ async def test_list_privacy_case_drafts_returns_inbox_metadata(monkeypatch) -> N
     assert response.drafts[0].action_count == 2
     assert response.drafts[0].highest_approval_tier == "T4"
     assert calls.limit == 10
+
+
+@pytest.mark.asyncio
+async def test_list_privacy_approved_actions_returns_ready_metadata(
+    monkeypatch,
+) -> None:
+    subject_id = uuid4()
+    case_id = uuid4()
+    action_id = uuid4()
+    calls = SimpleNamespace(limit=None, conn=None)
+
+    async def fake_list_approved_privacy_actions(conn, *, limit=25):
+        calls.conn = conn
+        calls.limit = limit
+        return (
+            StoredApprovedPrivacyAction(
+                id=action_id,
+                subject_id=subject_id,
+                target_id="spokeo",
+                case_draft_id=case_id,
+                action_type="draft",
+                approval_tier="T2",
+                status="approved",
+                approval_queue_id=uuid4(),
+                draft_payload_hash="sha256:" + "1" * 64,
+                payload_key_version="payload-v1",
+                target_name="Spokeo",
+                target_category="data_broker",
+                target_jurisdiction="US_FEDERAL",
+                target_opt_out_method="web_form",
+                target_avg_response_days=5,
+                case_status="submitted_for_approval",
+                case_created_at=None,
+                approved_at=None,
+            ),
+        )
+
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(
+        privacy,
+        "list_approved_privacy_actions",
+        fake_list_approved_privacy_actions,
+    )
+
+    response = await privacy.list_privacy_approved_actions(
+        _request(),
+        10,
+        "ken",
+    )
+
+    assert response.count == 1
+    assert response.actions[0].action_id == action_id
+    assert response.actions[0].case_id == case_id
+    assert response.actions[0].target_name == "Spokeo"
+    assert response.actions[0].status == "approved"
+    assert calls.limit == 10
+    assert calls.conn is not None
+    assert "ken@example.com" not in str(response.model_dump())
 
 
 @pytest.mark.asyncio

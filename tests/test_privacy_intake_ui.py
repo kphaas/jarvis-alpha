@@ -9,6 +9,7 @@ APPROVALS_PAGE = REPO_ROOT / "ui" / "src" / "pages" / "Approvals.tsx"
 PRIVACY_UI_SOURCES = (
     PRIVACY_PAGE,
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyIntake.ts",
+    REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyApprovedActions.ts",
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyCaseDraft.ts",
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyDraftInbox.ts",
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyTargets.ts",
@@ -60,7 +61,7 @@ def test_privacy_draft_inbox_is_mounted_on_privacy_page() -> None:
 
     assert 'usePrivacyDraftInbox(searchParams.get("case"))' in page_source
     assert "<PrivacyDraftInboxPanel" in page_source
-    assert "P2-G - disposition handoff" in page_source
+    assert "P3-C - approved action queue" in page_source
     assert "P2-F - draft review inbox" not in page_source
     assert "/v1/privacy/case-drafts" in source
     assert "submit-approval" in source
@@ -70,6 +71,17 @@ def test_privacy_draft_inbox_is_mounted_on_privacy_page() -> None:
     assert "Draft Inbox" in source
     assert "No targets in this filter" in source
     assert "shown /" in source
+
+
+def test_privacy_approved_actions_panel_is_mounted_on_privacy_page() -> None:
+    page_source = PRIVACY_PAGE.read_text(encoding="utf-8")
+    source = "\n".join(path.read_text(encoding="utf-8") for path in PRIVACY_UI_SOURCES)
+
+    assert "usePrivacyApprovedActions()" in page_source
+    assert "<PrivacyApprovedActionsPanel" in page_source
+    assert "/v1/privacy/actions/approved" in source
+    assert "Approved Actions" in source
+    assert "Ready for manual operator handling" in source
 
 
 def test_privacy_approval_handoff_ui_links_to_review_packet() -> None:

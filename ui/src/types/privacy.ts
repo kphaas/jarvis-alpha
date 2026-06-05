@@ -135,6 +135,29 @@ export type CaseDraftDispositionResponse = {
   queue_id: string | null;
 };
 
+export type ApprovedPrivacyAction = {
+  action_id: string;
+  case_id: string;
+  subject_id: string;
+  target_id: string;
+  target_name: string;
+  category: PrivacyTargetCategory;
+  jurisdiction: string;
+  opt_out_method: PrivacyTargetMethod;
+  approval_tier: string;
+  status: string;
+  case_status: string;
+  approved_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  avg_response_days: number | null;
+};
+
+export type ApprovedPrivacyActionsResponse = {
+  count: number;
+  actions: ApprovedPrivacyAction[];
+};
+
 export type ProfileFields = {
   legal_name: string;
   date_of_birth: string;
