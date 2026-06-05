@@ -24,6 +24,7 @@ const Governance = lazy(() => import('./pages/Governance'))
 const Briefing = lazy(() => import('./pages/Briefing'))
 const BriefingDetail = lazy(() => import('./pages/BriefingDetail'))
 const Privacy = lazy(() => import('./pages/Privacy'))
+const Spark = lazy(() => import('./pages/Spark'))
 
 const qc = new QueryClient({
   defaultOptions: { queries: { staleTime: 15 * 60 * 1000, retry: 1 } },
@@ -50,6 +51,7 @@ export default function App() {
                   <Route path="/errors" element={<Errors theme={theme} />} />
                   <Route path="/agents" element={<Agents />} />
                   <Route path="/skills" element={<Skills />} />
+                  <Route path="/spark" element={<Spark />} />
                   <Route path="/ops" element={<Placeholder label="Ops" phase="Next session" />} />
                   <Route path="/approvals" element={<Approvals />} />
                   <Route path="/security" element={<Security />} />

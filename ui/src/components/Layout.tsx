@@ -7,7 +7,7 @@ import {
   ShieldAlert, ShieldCheck, DollarSign,
   FileText, Settings, Moon, Sun,
   User, ChevronRight, Lock, Unlock, RefreshCw,
-  FolderOpen, Wrench, Fingerprint,
+  FolderOpen, Wrench, Fingerprint, Sparkles,
 } from 'lucide-react'
 import type { Theme } from '../types'
 import { useAppStore } from '../store'
@@ -25,6 +25,7 @@ const NAV = [
     { to: '/mesh',      label: 'Mesh',         icon: Network       },
     { to: '/agents',    label: 'Agents',       icon: Bot           },
     { to: '/skills',    label: 'Skills',       icon: Wrench        },
+    { to: '/spark',     label: 'Spark',        icon: Sparkles      },
     { to: '/ops',       label: 'Ops',          icon: Terminal      },
   ]},
   { group: 'SECURE', items: [

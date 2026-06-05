@@ -124,6 +124,7 @@ async def create_imessage_draft_proposal(
     vault_root: str | Path | None = None,
     bluebubbles_client: SparkIMessageBodyClient | None = None,
     approved_chat_guid: str | None = None,
+    draft_text_override: str | None = None,
 ) -> SparkDraftProposal:
     """Create a human-reviewable draft from approved iMessage runtime context."""
 
@@ -137,7 +138,10 @@ async def create_imessage_draft_proposal(
         bluebubbles_client=bluebubbles_client,
         approved_chat_guid=approved_chat_guid,
     )
-    draft_text = _draft_from_goal(reply_goal=reply_goal, guidance=guidance)
+    draft_text = _draft_text_override(draft_text_override) or _draft_from_goal(
+        reply_goal=reply_goal,
+        guidance=guidance,
+    )
     return SparkDraftProposal(
         principal_id=principal_id,
         draft_text=draft_text,
@@ -246,6 +250,12 @@ def _draft_from_goal(
     if "less formal" in text_style:
         return "Got it. I'll take a look and come back with a clear answer."
     return "Thank you. I will review this and follow up with a clear answer."
+
+
+def _draft_text_override(value: str | None) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def _approved_chat_guid(record: SparkApprovedSourceRecord) -> str:

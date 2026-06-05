@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock, Fingerprint } from 'lucide-react'
+import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock, Fingerprint, Sparkles } from 'lucide-react'
 import { apiJson } from '../lib/apiFetch'
 import { useAppStore } from '../store'
 
@@ -9,6 +9,12 @@ interface PrivacyApprovalContext {
   case_id: string
   action_count: number
   action_statuses: string[]
+}
+
+interface SparkApprovalContext {
+  kind: string
+  can_send: boolean
+  requires_human_approval: boolean
 }
 
 interface QueueItem {
@@ -23,6 +29,7 @@ interface QueueItem {
   expires_at: string
   overnight: boolean
   privacy: PrivacyApprovalContext | null
+  spark: SparkApprovalContext | null
 }
 
 interface PendingResponse {
@@ -50,6 +57,7 @@ const ACTION_LABELS: Record<string, string> = {
   deploy: 'Deploys to a live node',
   child_facing: 'Affects content for Ryleigh or Sloane',
   privacy_draft_handoff: 'Queues a reviewed privacy packet for approval',
+  spark_draft_handoff: 'Queues a reviewed Spark draft for approval',
   security_write: 'Changes protected security or privacy state',
   unclassified: 'No classification — blocked by default',
 }
@@ -70,6 +78,7 @@ function actionBadge(ac: string) {
     deploy: 'text-blue-400 bg-blue-500/15 border-blue-500/30',
     child_facing: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30',
     privacy_draft_handoff: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30',
+    spark_draft_handoff: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30',
     security_write: 'text-amber-400 bg-amber-500/15 border-amber-500/30',
     unclassified: 'text-zinc-400 bg-zinc-500/15 border-zinc-500/30',
   }
@@ -313,6 +322,14 @@ export default function Approvals() {
                 </span>
               </div>
             )}
+            {item.spark && (
+              <div className="flex items-start gap-2 opacity-80">
+                <Sparkles className="w-3 h-3 mt-0.5 shrink-0 text-emerald-400" />
+                <span>
+                  <strong>spark draft:</strong> {item.spark.kind.replace('_', ' ')} · no send
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -332,6 +349,15 @@ export default function Approvals() {
                 >
                   <Fingerprint className="w-3.5 h-3.5" />
                   Review packet
+                </Link>
+              )}
+              {item.spark && (
+                <Link
+                  to={`/spark?approval=${item.id}`}
+                  className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg border text-xs font-bold transition-colors ${border} hover:opacity-80`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Review Spark
                 </Link>
               )}
               <button

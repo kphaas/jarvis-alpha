@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
@@ -50,6 +51,12 @@ def test_spark_imessage_draft_route_is_classified_t2_write() -> None:
     assert classes == ["write", "security_write"]
     assert determine_risk_tier(classes) == "T2"
 
+    approval_classes = classify_route(
+        "POST", "/v1/spark/drafts/imessage/approval-request"
+    )
+    assert approval_classes == ["write", "security_write"]
+    assert determine_risk_tier(approval_classes) == "T2"
+
 
 @pytest.mark.asyncio
 async def test_spark_imessage_draft_requires_both_scopes() -> None:
@@ -60,6 +67,21 @@ async def test_spark_imessage_draft_requires_both_scopes() -> None:
     for scopes in (["spark.draft"], ["imessage.read"]):
         with pytest.raises(HTTPException) as exc_info:
             await spark_drafts.spark_imessage_draft(_request(scopes), payload, "user")
+
+        assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_draft_approval_requires_both_scopes() -> None:
+    payload = spark_drafts.SparkIMessageDraftApprovalRequest(
+        reply_goal="Tell her I am on it",
+    )
+
+    for scopes in (["spark.draft"], ["imessage.read"]):
+        with pytest.raises(HTTPException) as exc_info:
+            await spark_drafts.spark_imessage_draft_approval_request(
+                _request(scopes), payload, "user"
+            )
 
         assert exc_info.value.status_code == 403
 
@@ -172,6 +194,67 @@ async def test_spark_imessage_draft_failure_log_omits_exception_text(
     assert "private-name" not in logs
 
 
+@pytest.mark.asyncio
+async def test_spark_imessage_draft_approval_queues_safe_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+
+    async def fake_create(**kwargs):
+        assert kwargs == {
+            "principal_id": "ken",
+            "approval_id": None,
+            "reply_goal": "Tell her I am on it",
+            "max_context_messages": 10,
+            "draft_text_override": "Edited draft",
+        }
+        proposal = _proposal()
+        return SparkDraftProposal(
+            principal_id=proposal.principal_id,
+            draft_text="Edited draft",
+            context=proposal.context,
+            warnings=proposal.warnings,
+        )
+
+    async def fake_enqueue(conn, **kwargs):
+        assert conn is fake_conn
+        assert kwargs["actor_sub"] == "spark-service"
+        assert kwargs["actor_type"] == "service"
+        assert isinstance(kwargs["nonce"], str)
+        assert kwargs["proposal"].draft_text == "Edited draft"
+        return UUID("11111111-1111-4111-8111-111111111111")
+
+    fake_conn = object()
+    monkeypatch.setattr(spark_drafts, "create_imessage_draft_proposal", fake_create)
+    monkeypatch.setattr(spark_drafts, "enqueue_spark_draft_approval", fake_enqueue)
+    monkeypatch.setattr(
+        spark_drafts,
+        "rls_connection",
+        lambda request: _AsyncContext(fake_conn),
+    )
+
+    response = await spark_drafts.spark_imessage_draft_approval_request(
+        _request(),
+        spark_drafts.SparkIMessageDraftApprovalRequest(
+            reply_goal="Tell her I am on it",
+            max_context_messages=10,
+            draft_text_override="Edited draft",
+        ),
+        "user",
+    )
+
+    payload = response.model_dump()
+    assert payload["draft_text"] == "Edited draft"
+    assert payload["queue_id"] == "11111111-1111-4111-8111-111111111111"
+    assert payload["approval_status"] == "pending"
+    logs = json.dumps(fake_logger.infos).lower()
+    assert "spark_imessage_draft_approval_queued" in logs
+    assert "edited draft" not in logs
+    assert "private inbound body" not in logs
+    assert "approved-chat-guid" not in logs
+
+
 def _proposal() -> SparkDraftProposal:
     return SparkDraftProposal(
         principal_id="ken",
@@ -196,3 +279,14 @@ def _proposal() -> SparkDraftProposal:
         ),
         warnings=("draft_only_no_send",),
     )
+
+
+class _AsyncContext:
+    def __init__(self, value: object) -> None:
+        self.value = value
+
+    async def __aenter__(self):
+        return self.value
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False

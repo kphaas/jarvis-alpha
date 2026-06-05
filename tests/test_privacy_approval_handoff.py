@@ -119,6 +119,48 @@ async def test_pending_approvals_include_privacy_case_context(monkeypatch) -> No
         "action_count": 2,
         "action_statuses": ["awaiting_approval"],
     }
+    assert response["pending"][0]["spark"] is None
+
+
+@pytest.mark.asyncio
+async def test_pending_approvals_include_spark_draft_context(monkeypatch) -> None:
+    queue_id = uuid4()
+
+    class FakeConn:
+        async def fetch(self, query, *args):
+            return [
+                {
+                    "id": queue_id,
+                    "action_class": ["spark_draft_handoff", "security_write"],
+                    "risk_tier": "T2",
+                    "actor_sub": "spark-service",
+                    "actor_type": "service",
+                    "description": "Spark iMessage draft approval",
+                    "status": "pending",
+                    "requested_at": datetime.now(UTC),
+                    "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+                    "overnight": False,
+                    "privacy_case_id": None,
+                    "privacy_action_count": None,
+                    "privacy_action_statuses": None,
+                }
+            ]
+
+    @asynccontextmanager
+    async def fake_rls_connection(request):
+        yield FakeConn()
+
+    monkeypatch.setattr(approvals, "rls_connection", fake_rls_connection)
+
+    response = await approvals.list_pending(_request())
+
+    assert response["count"] == 1
+    assert response["pending"][0]["privacy"] is None
+    assert response["pending"][0]["spark"] == {
+        "kind": "imessage_draft",
+        "can_send": False,
+        "requires_human_approval": True,
+    }
 
 
 @pytest.mark.asyncio

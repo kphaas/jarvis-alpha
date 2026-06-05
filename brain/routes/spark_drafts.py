@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from brain.db.rls import rls_connection
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
 from brain.services.bluebubbles_client import (
@@ -19,6 +22,7 @@ from brain.services.spark_imessage_drafts import (
     SparkDraftProposal,
     create_imessage_draft_proposal,
 )
+from brain.services.spark_draft_approvals import enqueue_spark_draft_approval
 from brain.services.spark_voice_ingest import SparkVoiceIngestError
 from jarvis_common.logging_config import get_logger
 
@@ -37,6 +41,10 @@ class SparkIMessageDraftRequest(BaseModel):
     max_context_messages: int = Field(default=20, ge=1, le=50)
 
 
+class SparkIMessageDraftApprovalRequest(SparkIMessageDraftRequest):
+    draft_text_override: str | None = Field(default=None, max_length=4000)
+
+
 class SparkIMessageDraftOut(BaseModel):
     draft_version: str
     principal_id: str
@@ -52,6 +60,11 @@ class SparkIMessageDraftOut(BaseModel):
     source_reference_hash: str
     chat_guid_hash: str
     warnings: list[str]
+
+
+class SparkIMessageDraftApprovalOut(SparkIMessageDraftOut):
+    queue_id: str
+    approval_status: str
 
 
 def _check_draft_scopes(request: Request) -> None:
@@ -120,6 +133,35 @@ def _log_success(request: Request, proposal: SparkDraftProposal) -> None:
     )
 
 
+def _log_approval_success(
+    request: Request,
+    proposal: SparkDraftProposal,
+    *,
+    queue_id: str,
+) -> None:
+    event = "spark_imessage_draft_approval_queued"
+    payload = proposal.to_payload()
+    logger.info(
+        event,
+        extra={
+            "event": event,
+            "component": "spark_drafts",
+            "action": "imessage_draft_approval",
+            "body_access": True,
+            "can_send": False,
+            "requires_human_approval": True,
+            "queue_id": queue_id,
+            "context_messages_read": payload["context_messages_read"],
+            "principal_sent_messages": payload["principal_sent_messages"],
+            "runtime_context_messages": payload["runtime_context_messages"],
+            "approval_ref_hash": payload["approval_ref_hash"],
+            "source_reference_hash": payload["source_reference_hash"],
+            "chat_guid_hash": payload["chat_guid_hash"],
+            **_safe_actor_fields(request),
+        },
+    )
+
+
 def _log_failure(
     request: Request,
     *,
@@ -173,3 +215,40 @@ async def spark_imessage_draft(
         raise route_error from exc
     _log_success(request, proposal)
     return SparkIMessageDraftOut(**proposal.to_payload())
+
+
+@router.post("/imessage/approval-request", response_model=SparkIMessageDraftApprovalOut)
+async def spark_imessage_draft_approval_request(
+    request: Request,
+    payload: SparkIMessageDraftApprovalRequest,
+    _: str = Depends(require_auth),
+) -> SparkIMessageDraftApprovalOut:
+    _check_draft_scopes(request)
+    try:
+        proposal = await create_imessage_draft_proposal(
+            principal_id=payload.principal_id,
+            approval_id=payload.approval_id,
+            reply_goal=payload.reply_goal,
+            max_context_messages=payload.max_context_messages,
+            draft_text_override=payload.draft_text_override,
+        )
+        actor_sub = str(getattr(request.state, "user_id", "unknown"))
+        actor_type = str(getattr(request.state, "actor_type", "unknown"))
+        async with rls_connection(request) as conn:
+            queue_id = await enqueue_spark_draft_approval(
+                conn,
+                proposal=proposal,
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+                nonce=uuid4().hex,
+            )
+    except Exception as exc:
+        route_error = _route_error(exc)
+        _log_failure(request, exc=exc, status_code=route_error.status_code)
+        raise route_error from exc
+    _log_approval_success(request, proposal, queue_id=str(queue_id))
+    return SparkIMessageDraftApprovalOut(
+        **proposal.to_payload(),
+        queue_id=str(queue_id),
+        approval_status="pending",
+    )

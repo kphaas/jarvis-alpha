@@ -125,6 +125,24 @@ async def test_imessage_draft_requires_runtime_chat_guid_before_body_read(
     assert fake_client.calls == []
 
 
+@pytest.mark.asyncio
+async def test_imessage_draft_uses_edited_draft_override(tmp_path: Path) -> None:
+    vault_root = _write_vault(tmp_path)
+    fake_client = FakeBodyClient()
+
+    proposal = await drafts.create_imessage_draft_proposal(
+        vault_root=vault_root,
+        principal_id="ken",
+        reply_goal="Tell her I am on it",
+        draft_text_override="Edited text from review UI",
+        bluebubbles_client=fake_client,
+        approved_chat_guid="approved-chat-guid",
+    )
+
+    assert proposal.draft_text == "Edited text from review UI"
+    assert fake_client.calls == [("approved-chat-guid", 20)]
+
+
 def _write_vault(
     tmp_path: Path,
     *,
