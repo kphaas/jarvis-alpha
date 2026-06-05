@@ -1291,6 +1291,40 @@ def test_financial_security_posture_warns_when_unconfigured(monkeypatch):
     assert result.metadata["configured"] is False
 
 
+def test_financial_security_posture_url_prefers_env(monkeypatch):
+    monkeypatch.setenv(
+        "PORCHLIGHT_FINANCIAL_SECURITY_POSTURE_URL",
+        "https://financial-env.example.test/monitor/security-posture",
+    )
+    monkeypatch.setattr(
+        porchlight,
+        "get_secret",
+        lambda _name: "https://financial-secret.example.test/monitor/security-posture",
+    )
+
+    assert (
+        porchlight._financial_security_posture_url()
+        == "https://financial-env.example.test/monitor/security-posture"
+    )
+
+
+def test_financial_security_posture_url_loads_from_secret(monkeypatch):
+    monkeypatch.delenv("PORCHLIGHT_FINANCIAL_SECURITY_POSTURE_URL", raising=False)
+    monkeypatch.delenv("FINANCIAL_SECURITY_POSTURE_URL", raising=False)
+
+    def fake_get_secret(name):
+        if name == "PORCHLIGHT_FINANCIAL_SECURITY_POSTURE_URL":
+            return "https://financial-secret.example.test/monitor/security-posture"
+        raise RuntimeError(name)
+
+    monkeypatch.setattr(porchlight, "get_secret", fake_get_secret)
+
+    assert (
+        porchlight._financial_security_posture_url()
+        == "https://financial-secret.example.test/monitor/security-posture"
+    )
+
+
 def test_financial_security_posture_passes_sanitized_response(monkeypatch):
     monkeypatch.setenv("JARVIS_FIN_SECURITY_POSTURE_TOKEN", "3" * 64)
 
