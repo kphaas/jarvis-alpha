@@ -469,7 +469,9 @@ def _case_draft_detail_out(result: RetrievedCaseDraft) -> CaseDraftDetailOut:
     item = CaseDraftInboxItem(
         case_draft=result.case_draft,
         action_count=len(result.actions),
-        approval_tiers=tuple(sorted({action.approval_tier for action in result.actions})),
+        approval_tiers=tuple(
+            sorted({action.approval_tier for action in result.actions})
+        ),
     )
     summary = _case_draft_summary_out(item)
     return CaseDraftDetailOut(
