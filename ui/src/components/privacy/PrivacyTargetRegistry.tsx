@@ -38,8 +38,8 @@ export function PrivacyTargetRegistry({
     [category, targets.targets],
   );
   const statusText = subjectId
-    ? `${targets.selectedCount} selected`
-    : `${targets.targets.length} targets`;
+    ? `${targets.selectedCount} selected - ${filteredTargets.length} shown / ${targets.targets.length} targets`
+    : `${filteredTargets.length} shown / ${targets.targets.length} targets`;
 
   return (
     <section className={`rounded-xl border ${border} ${panel} p-5`}>
@@ -133,6 +133,15 @@ export function PrivacyTargetRegistry({
             className={`h-28 animate-pulse rounded-lg ${isDark ? "bg-white/5" : "bg-[#141414]/5"}`}
           />
         )}
+        {!targets.isLoading &&
+          targets.targets.length > 0 &&
+          filteredTargets.length === 0 && (
+            <StatusLine
+              icon="error"
+              className={warnClass}
+              text="No targets in this filter"
+            />
+          )}
         {!targets.isLoading &&
           filteredTargets.map((target) => (
             <PrivacyTargetCard
