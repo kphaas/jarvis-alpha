@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
 from brain.routes import spark_imessage
 from brain.services.bluebubbles_client import (
+    BlueBubblesClientError,
     BlueBubblesCounts,
     BlueBubblesHealth,
     BlueBubblesRecentChatMetadata,
@@ -18,10 +21,27 @@ def _request(scopes: list[str] | None = None):
         state=SimpleNamespace(
             actor_type="service",
             role=None,
+            user_id="spark-service",
             scopes=scopes or ["imessage.read"],
             iss="spark",
         )
     )
+
+
+class _FakeLogger:
+    def __init__(self) -> None:
+        self.infos: list[tuple[str, dict[str, object]]] = []
+        self.warnings: list[tuple[str, dict[str, object]]] = []
+        self.errors: list[tuple[str, dict[str, object]]] = []
+
+    def info(self, message: str, *, extra: dict[str, object]) -> None:
+        self.infos.append((message, extra))
+
+    def warning(self, message: str, *, extra: dict[str, object]) -> None:
+        self.warnings.append((message, extra))
+
+    def error(self, message: str, *, extra: dict[str, object]) -> None:
+        self.errors.append((message, extra))
 
 
 def test_spark_imessage_routes_are_classified_t2_security_reads() -> None:
@@ -84,6 +104,50 @@ async def test_spark_imessage_route_returns_counts_only(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_spark_imessage_counts_logs_safe_debug_fields(monkeypatch) -> None:
+    class FakeClient:
+        async def counts(self):
+            return BlueBubblesCounts(
+                total_chats=1218,
+                imessage_chats=484,
+                sms_chats=706,
+                rcs_chats=28,
+                sent_messages=3496,
+            )
+
+    fake_logger = _FakeLogger()
+    monkeypatch.setattr(spark_imessage, "_client", lambda: FakeClient())
+    monkeypatch.setattr(spark_imessage, "logger", fake_logger)
+
+    await spark_imessage.spark_imessage_counts(_request(), "user")
+
+    assert fake_logger.infos == [
+        (
+            "spark_imessage_counts_checked",
+            {
+                "event": "spark_imessage_counts_checked",
+                "component": "spark_imessage",
+                "action": "counts",
+                "body_access": False,
+                "actor_sub": "spark-service",
+                "actor_type": "service",
+                "actor_iss": "spark",
+                "scopes_used": ["imessage.read"],
+                "risk_tier": "T2",
+                "total_chats": 1218,
+                "imessage_chats": 484,
+                "sms_chats": 706,
+                "rcs_chats": 28,
+                "sent_messages": 3496,
+            },
+        )
+    ]
+    assert "password" not in json.dumps(fake_logger.infos)
+    assert "message_body" not in json.dumps(fake_logger.infos)
+    assert "contact_name" not in json.dumps(fake_logger.infos)
+
+
+@pytest.mark.asyncio
 async def test_spark_imessage_route_returns_recent_metadata_only(monkeypatch) -> None:
     class FakeClient:
         async def recent_chat_metadata(self, *, limit: int, offset: int):
@@ -111,3 +175,44 @@ async def test_spark_imessage_route_returns_recent_metadata_only(monkeypatch) ->
     assert response.total == 1218
     assert response.data_count == 5
     assert response.body_access is False
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_failure_log_omits_exception_text(monkeypatch) -> None:
+    class FakeClient:
+        async def counts(self):
+            raise BlueBubblesClientError(
+                "password=secret body=private-text contact=private-name",
+                status_code=500,
+            )
+
+    fake_logger = _FakeLogger()
+    monkeypatch.setattr(spark_imessage, "_client", lambda: FakeClient())
+    monkeypatch.setattr(spark_imessage, "logger", fake_logger)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await spark_imessage.spark_imessage_counts(_request(), "user")
+
+    assert exc_info.value.status_code == 502
+    assert fake_logger.warnings == [
+        (
+            "spark_imessage_counts_failed",
+            {
+                "event": "spark_imessage_counts_failed",
+                "component": "spark_imessage",
+                "action": "counts",
+                "body_access": False,
+                "error_class": "BlueBubblesClientError",
+                "status_code": 502,
+                "actor_sub": "spark-service",
+                "actor_type": "service",
+                "actor_iss": "spark",
+                "scopes_used": ["imessage.read"],
+                "risk_tier": "T2",
+            },
+        )
+    ]
+    logs = json.dumps(fake_logger.warnings)
+    assert "password=secret" not in logs
+    assert "private-text" not in logs
+    assert "private-name" not in logs
