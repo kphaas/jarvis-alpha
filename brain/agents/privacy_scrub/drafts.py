@@ -36,6 +36,7 @@ from brain.agents.privacy_scrub.state import (
     list_draft_actions_for_case,
     list_identity_tuples,
     mark_case_actions_awaiting_approval,
+    mark_approval_queue_actions_decided,
     reject_pending_case_actions,
     update_case_draft_status,
 )
@@ -412,6 +413,36 @@ class PrivacyCaseDraftRepository:
     async def _active_tuple_types(self, subject_id: UUID) -> tuple[str, ...]:
         tuples = await list_identity_tuples(self._conn, subject_id, active_only=True)
         return tuple(sorted({item.tuple_type.value for item in tuples}))
+
+
+async def record_privacy_approval_decision(
+    conn: asyncpg.Connection,
+    *,
+    approval_queue_id: UUID,
+    decision: str,
+    actor: str,
+) -> tuple[StoredDraftAction, ...]:
+    if decision not in {"approved", "denied"}:
+        raise PrivacyDraftDispositionError("privacy approval decision invalid")
+    if not actor.strip():
+        raise PrivacyDraftDispositionError("privacy approval actor is required")
+
+    status = "approved" if decision == "approved" else "rejected"
+    actions = tuple(
+        await mark_approval_queue_actions_decided(
+            conn,
+            approval_queue_id=approval_queue_id,
+            status=status,
+        )
+    )
+    for action in actions:
+        await append_action_event(
+            conn,
+            action_id=action.id,
+            event_type=status,
+            actor=actor,
+        )
+    return actions
 
 
 def _inbox_item(row: StoredCaseDraftListItem) -> CaseDraftInboxItem:

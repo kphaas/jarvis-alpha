@@ -10,9 +10,11 @@ import type {
 const DRAFT_LIST_KEY = ["privacy", "case-drafts"] as const;
 type DispositionPath = "submit-approval" | "archive";
 
-export function usePrivacyDraftInbox() {
+export function usePrivacyDraftInbox(initialCaseId: string | null = null) {
   const queryClient = useQueryClient();
-  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(
+    initialCaseId,
+  );
   const [pendingDispositionPath, setPendingDispositionPath] =
     useState<DispositionPath | null>(null);
   const listQuery = useQuery({

@@ -1,8 +1,15 @@
 import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock, Fingerprint } from 'lucide-react'
 import { apiJson } from '../lib/apiFetch'
 import { useAppStore } from '../store'
+
+interface PrivacyApprovalContext {
+  case_id: string
+  action_count: number
+  action_statuses: string[]
+}
 
 interface QueueItem {
   id: string
@@ -15,6 +22,7 @@ interface QueueItem {
   requested_at: string
   expires_at: string
   overnight: boolean
+  privacy: PrivacyApprovalContext | null
 }
 
 interface PendingResponse {
@@ -41,6 +49,8 @@ const ACTION_LABELS: Record<string, string> = {
   admin: 'Changes system config or permissions',
   deploy: 'Deploys to a live node',
   child_facing: 'Affects content for Ryleigh or Sloane',
+  privacy_draft_handoff: 'Queues a reviewed privacy packet for approval',
+  security_write: 'Changes protected security or privacy state',
   unclassified: 'No classification — blocked by default',
 }
 
@@ -59,6 +69,8 @@ function actionBadge(ac: string) {
     admin: 'text-purple-400 bg-purple-500/15 border-purple-500/30',
     deploy: 'text-blue-400 bg-blue-500/15 border-blue-500/30',
     child_facing: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30',
+    privacy_draft_handoff: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30',
+    security_write: 'text-amber-400 bg-amber-500/15 border-amber-500/30',
     unclassified: 'text-zinc-400 bg-zinc-500/15 border-zinc-500/30',
   }
   const cls = colors[ac] ?? colors.unclassified
@@ -293,6 +305,14 @@ export default function Approvals() {
                 </div>
               ) : null
             })}
+            {item.privacy && (
+              <div className="flex items-start gap-2 opacity-80">
+                <Fingerprint className="w-3 h-3 mt-0.5 shrink-0 text-emerald-400" />
+                <span>
+                  <strong>privacy packet:</strong> {item.privacy.action_count} local actions · {item.privacy.action_statuses.join(', ')}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -305,6 +325,15 @@ export default function Approvals() {
               <span className="font-mono opacity-60">by {item.actor_sub}</span>
             </div>
             <div className="flex items-center gap-2">
+              {item.privacy && (
+                <Link
+                  to={`/privacy?case=${item.privacy.case_id}&approval=${item.id}`}
+                  className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg border text-xs font-bold transition-colors ${border} hover:opacity-80`}
+                >
+                  <Fingerprint className="w-3.5 h-3.5" />
+                  Review packet
+                </Link>
+              )}
               <button
                 disabled={acting === item.id}
                 onClick={() => handleDecide(item.id, 'approved')}

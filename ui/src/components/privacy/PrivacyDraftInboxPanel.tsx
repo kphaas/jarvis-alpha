@@ -25,6 +25,7 @@ function formatDate(value: string | null) {
 
 export function PrivacyDraftInboxPanel({
   inbox,
+  approvalQueueId,
   border,
   panel,
   muted,
@@ -34,6 +35,7 @@ export function PrivacyDraftInboxPanel({
   errorClass,
 }: {
   inbox: PrivacyDraftInboxState;
+  approvalQueueId: string | null;
   border: string;
   panel: string;
   muted: string;
@@ -190,6 +192,13 @@ export function PrivacyDraftInboxPanel({
                 <KeyValue
                   label="Queue ID"
                   value={activeDisposition.queue_id}
+                  mutedClass={muted}
+                />
+              )}
+              {approvalQueueId && !activeDisposition?.queue_id && (
+                <KeyValue
+                  label="Approval queue"
+                  value={approvalQueueId}
                   mutedClass={muted}
                 />
               )}
