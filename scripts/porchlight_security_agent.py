@@ -2624,6 +2624,8 @@ SELECT public.record_buddy_event(
 def agent_event_severity(report: dict[str, object]) -> str:
     if report["status"] == "pass":
         return "info"
+    if report["status"] == "warn" and not has_notifiable_security_condition(report):
+        return "info"
     if report["status"] == "warn":
         return "warning"
     if report["severity"] == "critical":
@@ -2650,20 +2652,33 @@ ROUTINE_WARNING_CHECKS = {
 }
 
 
+def is_routine_warning_check(check: dict[str, object]) -> bool:
+    name = str(check.get("name") or "")
+    if name in ROUTINE_WARNING_CHECKS:
+        return True
+    metadata = check.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    return (
+        name == "postgres_role_safety"
+        and metadata.get("accepted_exception") == "postgres_bootstrap_role_superuser"
+        and metadata.get("bootstrap_risk") == "accepted_contained"
+    )
+
+
 def has_notifiable_security_condition(report: dict[str, object]) -> bool:
     for raw_check in report.get("checks", []):
         if not isinstance(raw_check, dict):
             continue
         status = raw_check.get("status")
         severity = str(raw_check.get("severity") or "info")
-        name = str(raw_check.get("name") or "")
         if status == "fail":
             return True
         if status != "warn":
             continue
         if SEVERITY_RANK.get(severity, 0) >= SEVERITY_RANK["high"]:
             return True
-        if name not in ROUTINE_WARNING_CHECKS:
+        if not is_routine_warning_check(raw_check):
             return True
     return False
 
@@ -2891,6 +2906,17 @@ def main() -> int:
             print(
                 "Porchlight: Buddy event post failed: "
                 + (event_result.stderr or event_result.stdout).strip(),
+                file=sys.stderr,
+            )
+    elif not args.no_buddy_event and report["status"] in {"pass", "warn"}:
+        status_result = record_agent_event(
+            report,
+            notification_status="not_requested",
+        )
+        if status_result.returncode != 0:
+            print(
+                "Porchlight: Alpha agent status event failed: "
+                + (status_result.stderr or status_result.stdout).strip(),
                 file=sys.stderr,
             )
 

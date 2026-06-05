@@ -1455,6 +1455,26 @@ def test_notification_filter_suppresses_routine_rotation_warning():
     assert porchlight.has_notifiable_security_condition(report) is False
 
 
+def test_notification_filter_suppresses_accepted_bootstrap_role_warning():
+    report = porchlight.build_report(
+        [
+            porchlight.CheckResult(
+                name="postgres_role_safety",
+                status="warn",
+                severity="medium",
+                summary="Postgres bootstrap superuser risk is accepted and contained.",
+                metadata={
+                    "accepted_exception": "postgres_bootstrap_role_superuser",
+                    "bootstrap_risk": "accepted_contained",
+                },
+            )
+        ]
+    )
+
+    assert porchlight.has_notifiable_security_condition(report) is False
+    assert porchlight.agent_event_severity(report) == "info"
+
+
 def test_notification_filter_keeps_unexpected_warning():
     report = porchlight.build_report(
         [
@@ -1468,3 +1488,51 @@ def test_notification_filter_keeps_unexpected_warning():
     )
 
     assert porchlight.has_notifiable_security_condition(report) is True
+
+
+def test_main_records_non_notifying_status_event_for_non_notifiable_warning(
+    monkeypatch, tmp_path
+):
+    report = porchlight.build_report(
+        [
+            porchlight.CheckResult(
+                name="postgres_role_safety",
+                status="warn",
+                severity="medium",
+                summary="Postgres bootstrap superuser risk is accepted and contained.",
+                metadata={
+                    "accepted_exception": "postgres_bootstrap_role_superuser",
+                    "bootstrap_risk": "accepted_contained",
+                },
+            )
+        ]
+    )
+    recorded: list[str] = []
+
+    monkeypatch.setattr(porchlight, "REPORT_PATH", tmp_path / "report.json")
+    monkeypatch.setattr(
+        porchlight,
+        "parse_args",
+        lambda: porchlight.argparse.Namespace(
+            json=False,
+            always_report=False,
+            report_warnings=False,
+            no_buddy_event=False,
+            strict=False,
+            max_token_log_age_hours=36,
+            cloudflare_access_url="",
+            cloudflare_audit_window_hours=24,
+        ),
+    )
+    monkeypatch.setattr(porchlight, "run_sweep", lambda _args: report)
+    monkeypatch.setattr(
+        porchlight,
+        "record_agent_event",
+        lambda _report, *, notification_status, psql=porchlight.run_psql: (
+            recorded.append(notification_status)
+            or porchlight.CommandResult(0, "event-id", "")
+        ),
+    )
+
+    assert porchlight.main() == 0
+    assert recorded == ["not_requested"]
