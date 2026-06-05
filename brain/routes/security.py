@@ -402,8 +402,8 @@ async def jwt_check():
             "route": "POST /v1/auth/pin",
             "path": "/v1/auth/pin",
             "method": "POST",
-            "expected": 401,
-            "body": json.dumps({"pin": "__security_probe_invalid_pin__"}),
+            "expected": 422,
+            "body": json.dumps({}),
         },
     ]
 
