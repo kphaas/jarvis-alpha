@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from brain.skills.canary import canary_skill_handlers
+from brain.skills.imessage import imessage_skill_handlers
 from brain.skills.notify import notify_skill_handlers
 from brain.skills.obsidian import obsidian_skill_handlers
 from brain.skills.approval_bridge import SkillApprovalBridge
@@ -25,6 +26,7 @@ def all_skill_handlers() -> dict[str, Any]:
         weather_skill_handlers(),
         obsidian_skill_handlers(),
         secrets_skill_handlers(),
+        imessage_skill_handlers(),
     ):
         duplicate_names = set(handlers).intersection(provider_handlers)
         if duplicate_names:
