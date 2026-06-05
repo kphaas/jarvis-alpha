@@ -128,6 +128,47 @@ def _rls_control_from_porchlight(porchlight: dict | None) -> dict[str, Any]:
     )
 
 
+def _backup_recovery_control_from_porchlight(porchlight: dict | None) -> dict[str, Any]:
+    report = (porchlight or {}).get("report") or {}
+    check = _porchlight_check(report, "backup_recovery") or {}
+    status = str(check.get("status") or "unavailable")
+    metadata = check.get("metadata") if isinstance(check.get("metadata"), dict) else {}
+    age_hours = metadata.get("age_hours")
+    notification = metadata.get("notification")
+    notify_event = (
+        notification.get("event")
+        if isinstance(notification, dict)
+        else metadata.get("notification_event")
+    )
+    if status == "pass" and isinstance(age_hours, (float, int)):
+        summary = f"Latest restore drill passed {float(age_hours):.1f}h ago"
+    else:
+        summary = str(
+            check.get("summary")
+            or check.get("detail")
+            or "Restore-drill proof unavailable"
+        )
+    detail_parts = []
+    if metadata.get("run_id"):
+        detail_parts.append(f"run {metadata['run_id']}")
+    if metadata.get("source_dump"):
+        detail_parts.append(f"source {metadata['source_dump']}")
+    if notify_event:
+        detail_parts.append(f"notification {notify_event}")
+    detail = "; ".join(detail_parts) or str(check.get("detail") or "")
+    return posture_control(
+        control_id="recovery.restore_drill",
+        title="Backup restore drill freshness",
+        category="Recovery readiness",
+        owner_agent="porchlight",
+        status=status if status in {"pass", "warn", "fail"} else "unavailable",
+        weight=8,
+        summary=summary,
+        detail=detail,
+        framework_refs=("SOC2 CC7.4", "CIS v8 IG1 11", "NIST CSF RC.RP"),
+    )
+
+
 def build_warden_posture_score(
     *,
     jwt: dict | None,
@@ -317,6 +358,8 @@ def build_warden_posture_score(
             framework_refs=("SOC2 CC7.2", "NIST CSF DE.CM"),
         )
     )
+
+    controls.append(_backup_recovery_control_from_porchlight(porchlight))
 
     crew_healthy = sum(
         1

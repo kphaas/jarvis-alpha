@@ -79,6 +79,9 @@ FINANCIAL_SECURITY_POSTURE_URL = (
 )
 SECRET_VERIFY_MAX_AGE_HOURS = 36
 JWT_VERIFY_MIN_HOURS = 24
+RESTORE_DRILL_MAX_AGE_HOURS = int(
+    os.getenv("PORCHLIGHT_RESTORE_DRILL_MAX_AGE_HOURS", "192")
+)
 DEFAULT_CLOUDFLARE_EXPECTED_ACTORS = {"kennethphaas@gmail.com"}
 DEFAULT_CLOUDFLARE_FORBIDDEN_HOST_PATTERNS = (
     "alpha.*",
@@ -1424,6 +1427,216 @@ def check_token_rotation_logs(
         severity="info",
         summary=f"All service-token rotators have a fresh success within {max_age_hours} hours.",
         metadata={"recent": recent, "max_age_hours": max_age_hours},
+    )
+
+
+RESTORE_DRILL_STATUS_COMMAND = r"""python3 - <<'PY'
+import glob
+import json
+import os
+from datetime import datetime, timezone
+
+paths = sorted(
+    glob.glob(os.path.expanduser("~/jarvis/logs/restore_drill_*.json")),
+    key=os.path.getmtime,
+    reverse=True,
+)
+if not paths:
+    print(json.dumps({"status": "unavailable", "reason": "no_restore_drill_report"}))
+    raise SystemExit(0)
+
+path = paths[0]
+with open(path, encoding="utf-8") as handle:
+    report = json.load(handle)
+
+run_id = str(report.get("run_id") or "")
+notify = {"event": "unknown", "http_code": "", "reason": ""}
+log_path = os.path.expanduser("~/jarvis/logs/restore_drill.log")
+if run_id and os.path.exists(log_path):
+    with open(log_path, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if f'"run_id":"{run_id}"' not in line or '"event":"mm_notify_' not in line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            notify = {
+                "event": str(event.get("event") or "unknown"),
+                "http_code": str(event.get("http_code") or ""),
+                "reason": str(event.get("reason") or ""),
+            }
+
+mtime = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
+payload = {
+    "path": path,
+    "report_mtime": mtime.isoformat(),
+    "run_id": run_id,
+    "status": str(report.get("status") or "unknown"),
+    "source_dump": str(report.get("source_dump") or ""),
+    "restore_rc": report.get("restore_rc"),
+    "restore_err_count": report.get("restore_err_count"),
+    "pgaudit_err_count": report.get("pgaudit_err_count"),
+    "table_count": report.get("table_count"),
+    "ref_table_count": report.get("ref_table_count"),
+    "fail_reasons": str(report.get("fail_reasons") or ""),
+    "notification": notify,
+}
+print(json.dumps(payload, sort_keys=True))
+PY"""
+
+
+def _hours_since(iso_ts: str, now: datetime) -> float | None:
+    if not iso_ts:
+        return None
+    try:
+        observed = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=UTC)
+    return max(0.0, (now - observed.astimezone(UTC)).total_seconds() / 3600)
+
+
+def check_backup_recovery(
+    node_map: dict[str, dict[str, str]] | None = None,
+    ssh: Callable[[str, str], CommandResult] = run_ssh,
+    now: datetime | None = None,
+    max_age_hours: int = RESTORE_DRILL_MAX_AGE_HOURS,
+) -> CheckResult:
+    node_map = node_map or load_json(NODE_MAP_PATH)
+    sandbox = node_map.get("sandbox")
+    target = sandbox.get("ssh_target") if isinstance(sandbox, dict) else None
+    if not target:
+        return CheckResult(
+            name="backup_recovery",
+            status="fail",
+            severity="high",
+            summary="Restore-drill monitor cannot find the Sandbox SSH target.",
+            detail="scripts/node_ssh_map.json must include sandbox.ssh_target.",
+            metadata={"max_age_hours": max_age_hours},
+        )
+
+    local_node = current_node_name()
+    if not remote_ssh_probe_enabled() and local_node != "sandbox":
+        return CheckResult(
+            name="backup_recovery",
+            status="warn",
+            severity="medium",
+            summary="Restore-drill monitor cannot remotely inspect Sandbox.",
+            detail="Configure PORCHLIGHT_SSH_KEY or PORCHLIGHT_REMOTE_SSH_ENABLED.",
+            metadata={
+                "target_node": "sandbox",
+                "max_age_hours": max_age_hours,
+                "skipped_remote": {"sandbox": "remote SSH probe not configured"},
+            },
+        )
+
+    result = (
+        run_command(["/bin/sh", "-lc", RESTORE_DRILL_STATUS_COMMAND], timeout=20)
+        if local_node == "sandbox"
+        else ssh(target, RESTORE_DRILL_STATUS_COMMAND)
+    )
+    if result.returncode != 0:
+        return CheckResult(
+            name="backup_recovery",
+            status="fail",
+            severity="high",
+            summary="Restore-drill monitor could not inspect Sandbox recovery reports.",
+            detail=(result.stderr or result.stdout).strip()[:500],
+            metadata={"target_node": "sandbox", "max_age_hours": max_age_hours},
+        )
+
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return CheckResult(
+            name="backup_recovery",
+            status="fail",
+            severity="high",
+            summary="Restore-drill monitor returned invalid JSON.",
+            detail=(result.stdout or result.stderr).strip()[:500],
+            metadata={"target_node": "sandbox", "max_age_hours": max_age_hours},
+        )
+    if not isinstance(payload, dict) or payload.get("status") == "unavailable":
+        return CheckResult(
+            name="backup_recovery",
+            status="fail",
+            severity="high",
+            summary="No restore-drill report is available on Sandbox.",
+            detail=str(payload.get("reason") or "restore drill report missing"),
+            metadata={"target_node": "sandbox", "max_age_hours": max_age_hours},
+        )
+
+    checked_at = now or datetime.now(UTC)
+    age_hours = _hours_since(str(payload.get("report_mtime") or ""), checked_at)
+    notification = payload.get("notification")
+    notify_event = (
+        str(notification.get("event") or "")
+        if isinstance(notification, dict)
+        else "unknown"
+    )
+    metadata = {
+        "target_node": "sandbox",
+        "max_age_hours": max_age_hours,
+        "age_hours": round(age_hours, 2) if age_hours is not None else None,
+        **payload,
+    }
+    report_status = str(payload.get("status") or "unknown")
+    source_dump = str(payload.get("source_dump") or "unknown dump")
+    run_id = str(payload.get("run_id") or "unknown run")
+
+    if report_status != "pass":
+        return CheckResult(
+            name="backup_recovery",
+            status="fail",
+            severity="critical",
+            summary="Latest restore drill did not pass.",
+            detail=str(
+                payload.get("fail_reasons") or f"run {run_id} status {report_status}"
+            ),
+            metadata=metadata,
+        )
+    if age_hours is None:
+        return CheckResult(
+            name="backup_recovery",
+            status="warn",
+            severity="medium",
+            summary="Latest restore drill passed, but its age could not be determined.",
+            detail=f"Run {run_id} restored {source_dump}.",
+            metadata=metadata,
+        )
+    if age_hours > max_age_hours:
+        return CheckResult(
+            name="backup_recovery",
+            status="fail",
+            severity="high",
+            summary="Latest restore drill is stale.",
+            detail=(
+                f"Run {run_id} is {age_hours:.1f}h old; target is <= {max_age_hours}h."
+            ),
+            metadata=metadata,
+        )
+    if notify_event != "mm_notify_sent":
+        return CheckResult(
+            name="backup_recovery",
+            status="warn",
+            severity="medium",
+            summary="Latest restore drill passed, but notification proof is missing.",
+            detail=(
+                f"Run {run_id} restored {source_dump}; "
+                f"notification event: {notify_event or 'unknown'}."
+            ),
+            metadata=metadata,
+        )
+
+    return CheckResult(
+        name="backup_recovery",
+        status="pass",
+        severity="info",
+        summary=f"Latest restore drill passed {age_hours:.1f}h ago.",
+        detail=f"Run {run_id} restored {source_dump}; Mattermost notification sent.",
+        metadata=metadata,
     )
 
 
@@ -2826,6 +3039,7 @@ def run_sweep(args: argparse.Namespace) -> dict[str, object]:
             node_map=node_map,
             max_age_hours=args.max_token_log_age_hours,
         ),
+        check_backup_recovery(node_map=node_map),
         check_cloudflare_access(args.cloudflare_access_url),
         check_cloudflare_access_policy_drift(),
         check_cloudflare_audit_logs(window_hours=args.cloudflare_audit_window_hours),
