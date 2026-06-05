@@ -1467,7 +1467,7 @@ def test_backup_recovery_passes_with_recent_restore_and_notification(monkeypatch
 
     def fake_ssh(target, command):
         assert target == "jarvissand@example"
-        assert "restore_drill_*.json" in command
+        assert command == "porchlight restore-drill-status"
         return porchlight.CommandResult(
             0,
             porchlight.json.dumps(

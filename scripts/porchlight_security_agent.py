@@ -1430,60 +1430,7 @@ def check_token_rotation_logs(
     )
 
 
-RESTORE_DRILL_STATUS_COMMAND = r"""python3 - <<'PY'
-import glob
-import json
-import os
-from datetime import datetime, timezone
-
-paths = sorted(
-    glob.glob(os.path.expanduser("~/jarvis/logs/restore_drill_*.json")),
-    key=os.path.getmtime,
-    reverse=True,
-)
-if not paths:
-    print(json.dumps({"status": "unavailable", "reason": "no_restore_drill_report"}))
-    raise SystemExit(0)
-
-path = paths[0]
-with open(path, encoding="utf-8") as handle:
-    report = json.load(handle)
-
-run_id = str(report.get("run_id") or "")
-notify = {"event": "unknown", "http_code": "", "reason": ""}
-log_path = os.path.expanduser("~/jarvis/logs/restore_drill.log")
-if run_id and os.path.exists(log_path):
-    with open(log_path, encoding="utf-8", errors="replace") as handle:
-        for line in handle:
-            if f'"run_id":"{run_id}"' not in line or '"event":"mm_notify_' not in line:
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            notify = {
-                "event": str(event.get("event") or "unknown"),
-                "http_code": str(event.get("http_code") or ""),
-                "reason": str(event.get("reason") or ""),
-            }
-
-mtime = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
-payload = {
-    "path": path,
-    "report_mtime": mtime.isoformat(),
-    "run_id": run_id,
-    "status": str(report.get("status") or "unknown"),
-    "source_dump": str(report.get("source_dump") or ""),
-    "restore_rc": report.get("restore_rc"),
-    "restore_err_count": report.get("restore_err_count"),
-    "pgaudit_err_count": report.get("pgaudit_err_count"),
-    "table_count": report.get("table_count"),
-    "ref_table_count": report.get("ref_table_count"),
-    "fail_reasons": str(report.get("fail_reasons") or ""),
-    "notification": notify,
-}
-print(json.dumps(payload, sort_keys=True))
-PY"""
+RESTORE_DRILL_STATUS_COMMAND = "porchlight restore-drill-status"
 
 
 def _hours_since(iso_ts: str, now: datetime) -> float | None:
@@ -1533,7 +1480,11 @@ def check_backup_recovery(
         )
 
     result = (
-        run_command(["/bin/sh", "-lc", RESTORE_DRILL_STATUS_COMMAND], timeout=20)
+        run_command(
+            [str(SCRIPT_DIR / "porchlight_ssh_probe.sh")],
+            timeout=20,
+            env={**os.environ, "SSH_ORIGINAL_COMMAND": RESTORE_DRILL_STATUS_COMMAND},
+        )
         if local_node == "sandbox"
         else ssh(target, RESTORE_DRILL_STATUS_COMMAND)
     )
