@@ -8,7 +8,6 @@ from jose import jwt, JWTError
 from pydantic import BaseModel
 
 from brain.agents.privacy_scrub.drafts import record_privacy_approval_decision
-from brain.db.pool import get_pool
 from brain.db.rls import rls_connection
 from brain.middleware.scopes import check_scopes
 from jarvis_common.logging_config import get_logger
@@ -38,10 +37,11 @@ class DecideRequest(BaseModel):
 
 
 @router.post("/unlock")
-async def unlock_approvals(req: UnlockRequest):
+async def unlock_approvals(req: UnlockRequest, request: Request):
     """Validate PIN and issue a 5-minute approval token."""
-    pool = get_pool()
-    async with pool.acquire() as conn:
+    check_scopes(request, "admin")
+
+    async with rls_connection(request) as conn:
         profile = await conn.fetchrow(
             "SELECT * FROM alpha_profiles WHERE id = 'ken' AND active = true"
         )
