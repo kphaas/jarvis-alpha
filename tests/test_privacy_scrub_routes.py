@@ -11,8 +11,10 @@ from fastapi import HTTPException
 from brain.agents.privacy_scrub.config import PrivacyScrubConfigError
 from brain.agents.privacy_scrub.drafts import (
     CaseDraftInboxItem,
+    CaseDraftDisposition,
     CreatedCaseDraft,
     PrivacyDraftCaseNotFound,
+    PrivacyDraftDispositionError,
     PrivacyDraftTargetNotFound,
     RetrievedCaseDraft,
     TargetReviewPacket,
@@ -76,6 +78,8 @@ def test_privacy_intake_routes_are_classified_t2_security_writes() -> None:
         "/v1/privacy/subjects",
         f"/v1/privacy/subjects/{uuid4()}/identity-tuples",
         f"/v1/privacy/subjects/{uuid4()}/case-drafts",
+        f"/v1/privacy/case-drafts/{uuid4()}/submit-approval",
+        f"/v1/privacy/case-drafts/{uuid4()}/archive",
     ):
         classes = classify_route("POST", path)
         assert classes == ["write", "security_write"]
@@ -712,6 +716,163 @@ async def test_get_privacy_case_draft_returns_review_packet(monkeypatch) -> None
     assert response.actions[0].action_id == action_id
     assert response.review_packets[0].target_name == "Spokeo"
     assert "ken@example.com" not in str(response.model_dump())
+
+
+@pytest.mark.asyncio
+async def test_submit_privacy_case_draft_for_approval_returns_queue(
+    monkeypatch,
+) -> None:
+    subject_id = uuid4()
+    case_id = uuid4()
+    queue_id = uuid4()
+    action_id = uuid4()
+    calls = SimpleNamespace(case_id=None, user_id=None, actor_type=None)
+
+    class FakeRepo:
+        def __init__(self, conn, crypto) -> None:
+            pass
+
+        async def submit_case_draft_for_approval(
+            self,
+            *,
+            case_id,
+            user_id,
+            actor_type,
+            operator_note=None,
+        ):
+            calls.case_id = case_id
+            calls.user_id = user_id
+            calls.actor_type = actor_type
+            return CaseDraftDisposition(
+                case_draft=StoredCaseDraft(
+                    id=case_id,
+                    subject_id=subject_id,
+                    created_by_user_id=user_id,
+                    target_count=1,
+                    status="submitted_for_approval",
+                    packet_payload_hash="sha256:" + "1" * 64,
+                    payload_key_version="payload-v1",
+                ),
+                actions=(
+                    StoredDraftAction(
+                        id=action_id,
+                        subject_id=subject_id,
+                        target_id="spokeo",
+                        case_draft_id=case_id,
+                        action_type="draft",
+                        approval_tier="T4",
+                        status="awaiting_approval",
+                        draft_payload_hash="sha256:" + "2" * 64,
+                        payload_key_version="payload-v1",
+                    ),
+                ),
+                disposition="submitted_for_approval",
+                approval_queue_id=queue_id,
+            )
+
+    monkeypatch.setattr(privacy, "load_privacy_crypto", lambda: object())
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "PrivacyCaseDraftRepository", FakeRepo)
+
+    response = await privacy.submit_privacy_case_draft_for_approval(
+        _request(),
+        case_id,
+        privacy.CaseDraftDispositionIn(),
+        "ken",
+    )
+
+    assert response.case_id == case_id
+    assert response.status == "submitted_for_approval"
+    assert response.disposition == "submitted_for_approval"
+    assert response.queue_id == queue_id
+    assert response.highest_approval_tier == "T4"
+    assert calls.case_id == case_id
+    assert calls.user_id == "ken"
+    assert calls.actor_type == "user"
+
+
+@pytest.mark.asyncio
+async def test_archive_privacy_case_draft_returns_archived_status(
+    monkeypatch,
+) -> None:
+    subject_id = uuid4()
+    case_id = uuid4()
+    action_id = uuid4()
+
+    class FakeRepo:
+        def __init__(self, conn, crypto) -> None:
+            pass
+
+        async def archive_case_draft(self, *, case_id, user_id, operator_note=None):
+            return CaseDraftDisposition(
+                case_draft=StoredCaseDraft(
+                    id=case_id,
+                    subject_id=subject_id,
+                    created_by_user_id=user_id,
+                    target_count=1,
+                    status="archived",
+                    packet_payload_hash="sha256:" + "1" * 64,
+                    payload_key_version="payload-v1",
+                ),
+                actions=(
+                    StoredDraftAction(
+                        id=action_id,
+                        subject_id=subject_id,
+                        target_id="spokeo",
+                        case_draft_id=case_id,
+                        action_type="draft",
+                        approval_tier="T2",
+                        status="rejected",
+                        draft_payload_hash="sha256:" + "2" * 64,
+                        payload_key_version="payload-v1",
+                    ),
+                ),
+                disposition="archived",
+            )
+
+    monkeypatch.setattr(privacy, "load_privacy_crypto", lambda: object())
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "PrivacyCaseDraftRepository", FakeRepo)
+
+    response = await privacy.archive_privacy_case_draft(
+        _request(),
+        case_id,
+        privacy.CaseDraftDispositionIn(),
+        "ken",
+    )
+
+    assert response.case_id == case_id
+    assert response.status == "archived"
+    assert response.disposition == "archived"
+    assert response.queue_id is None
+    assert response.highest_approval_tier == "T2"
+
+
+@pytest.mark.asyncio
+async def test_privacy_case_draft_disposition_maps_invalid_transition(
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def __init__(self, conn, crypto) -> None:
+            pass
+
+        async def submit_case_draft_for_approval(self, **kwargs):
+            raise PrivacyDraftDispositionError("not draft")
+
+    monkeypatch.setattr(privacy, "load_privacy_crypto", lambda: object())
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "PrivacyCaseDraftRepository", FakeRepo)
+
+    with pytest.raises(HTTPException) as exc:
+        await privacy.submit_privacy_case_draft_for_approval(
+            _request(),
+            uuid4(),
+            privacy.CaseDraftDispositionIn(),
+            "ken",
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "privacy_case_draft_disposition_invalid"
 
 
 @pytest.mark.asyncio

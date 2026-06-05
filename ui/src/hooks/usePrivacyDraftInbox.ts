@@ -1,16 +1,20 @@
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { privacyGetJson } from "../lib/privacyIntake";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { privacyGetJson, privacyJson } from "../lib/privacyIntake";
 import type {
   CaseDraftDetailResponse,
+  CaseDraftDispositionResponse,
   CaseDraftListResponse,
 } from "../types/privacy";
 
 const DRAFT_LIST_KEY = ["privacy", "case-drafts"] as const;
+type DispositionPath = "submit-approval" | "archive";
 
 export function usePrivacyDraftInbox() {
   const queryClient = useQueryClient();
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const [pendingDispositionPath, setPendingDispositionPath] =
+    useState<DispositionPath | null>(null);
   const listQuery = useQuery({
     queryKey: DRAFT_LIST_KEY,
     queryFn: () =>
@@ -26,6 +30,32 @@ export function usePrivacyDraftInbox() {
     enabled: Boolean(selectedCaseId),
     staleTime: 60 * 1000,
   });
+  const dispositionMutation = useMutation({
+    mutationFn: ({
+      caseId,
+      path,
+    }: {
+      caseId: string;
+      path: DispositionPath;
+    }) =>
+      privacyJson<CaseDraftDispositionResponse>(
+        `/v1/privacy/case-drafts/${caseId}/${path}`,
+        {},
+      ),
+    onMutate: (variables) => {
+      setPendingDispositionPath(variables.path);
+    },
+    onSuccess: (result) => {
+      setSelectedCaseId(result.case_id);
+      void queryClient.invalidateQueries({ queryKey: DRAFT_LIST_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: ["privacy", "case-drafts", result.case_id],
+      });
+    },
+    onSettled: () => {
+      setPendingDispositionPath(null);
+    },
+  });
 
   function refreshDrafts() {
     void queryClient.invalidateQueries({ queryKey: DRAFT_LIST_KEY });
@@ -34,6 +64,22 @@ export function usePrivacyDraftInbox() {
         queryKey: ["privacy", "case-drafts", selectedCaseId],
       });
     }
+  }
+
+  function submitSelectedDraftForApproval() {
+    if (!selectedCaseId) return;
+    dispositionMutation.mutate({
+      caseId: selectedCaseId,
+      path: "submit-approval",
+    });
+  }
+
+  function archiveSelectedDraft() {
+    if (!selectedCaseId) return;
+    dispositionMutation.mutate({
+      caseId: selectedCaseId,
+      path: "archive",
+    });
   }
 
   return {
@@ -47,6 +93,12 @@ export function usePrivacyDraftInbox() {
     selectedDraft: detailQuery.data ?? null,
     detailLoading: detailQuery.isLoading,
     detailError: detailQuery.error,
+    submitSelectedDraftForApproval,
+    archiveSelectedDraft,
+    dispositionLoading: dispositionMutation.isPending,
+    pendingDispositionPath,
+    dispositionError: dispositionMutation.error,
+    dispositionResult: dispositionMutation.data ?? null,
   };
 }
 

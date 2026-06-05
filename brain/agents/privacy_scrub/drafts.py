@@ -6,9 +6,11 @@ opt-outs, file court motions, or invoke browser/network automation.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import asyncpg
 
@@ -24,6 +26,7 @@ from brain.agents.privacy_scrub.state import (
     StoredDraftAction,
     StoredSubject,
     append_action_event,
+    enqueue_approval_request,
     get_case_draft_payload,
     get_subject,
     get_target,
@@ -32,6 +35,9 @@ from brain.agents.privacy_scrub.state import (
     list_case_drafts,
     list_draft_actions_for_case,
     list_identity_tuples,
+    mark_case_actions_awaiting_approval,
+    reject_pending_case_actions,
+    update_case_draft_status,
 )
 from brain.agents.privacy_scrub.subjects import Subject
 from brain.agents.privacy_scrub.targets import (
@@ -59,6 +65,10 @@ class PrivacyDraftTargetNotFound(PrivacyDraftError):
 
 class PrivacyDraftCaseNotFound(PrivacyDraftError):
     """The requested case draft is not visible to the current RLS actor."""
+
+
+class PrivacyDraftDispositionError(PrivacyDraftError):
+    """The requested case draft cannot transition to the requested disposition."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +126,19 @@ class RetrievedCaseDraft:
     case_draft: StoredCaseDraft
     actions: tuple[StoredDraftAction, ...]
     review_packets: tuple[TargetReviewPacket, ...]
+
+    @property
+    def highest_approval_tier(self) -> str | None:
+        tiers = sorted({action.approval_tier for action in self.actions})
+        return tiers[-1] if tiers else None
+
+
+@dataclass(frozen=True, slots=True)
+class CaseDraftDisposition:
+    case_draft: StoredCaseDraft
+    actions: tuple[StoredDraftAction, ...]
+    disposition: str
+    approval_queue_id: UUID | None = None
 
     @property
     def highest_approval_tier(self) -> str | None:
@@ -250,6 +273,140 @@ class PrivacyCaseDraftRepository:
             case_draft=stored_payload.case_draft,
             actions=actions,
             review_packets=_review_packets_from_payload(packet_payload),
+        )
+
+    async def submit_case_draft_for_approval(
+        self,
+        *,
+        case_id: UUID,
+        user_id: str,
+        actor_type: str,
+        operator_note: str | None = None,
+    ) -> CaseDraftDisposition:
+        draft = await self.get_case_draft(case_id)
+        if draft.case_draft.status != "draft":
+            raise PrivacyDraftDispositionError(
+                "privacy case draft must be draft before approval handoff"
+            )
+        if not draft.actions:
+            raise PrivacyDraftDispositionError("privacy case draft has no actions")
+
+        highest_tier = draft.highest_approval_tier or "T2"
+        parameters_hash = _approval_parameters_hash(draft)
+        event_payload = self._crypto.encrypt_json_payload(
+            {
+                "case_id": str(case_id),
+                "disposition": "submitted_for_approval",
+                "highest_approval_tier": highest_tier,
+                "operator_note": _clean_operator_note(operator_note),
+            }
+        )
+
+        async with self._conn.transaction():
+            queue_id = await enqueue_approval_request(
+                self._conn,
+                action_classes=("privacy_draft_handoff", "security_write"),
+                risk_tier=highest_tier,
+                actor_sub=user_id,
+                actor_type=actor_type,
+                description=_approval_description(draft, highest_tier),
+                parameters_hash=parameters_hash,
+                nonce=uuid4().hex,
+            )
+            updated_case = await update_case_draft_status(
+                self._conn,
+                case_draft_id=case_id,
+                status="submitted_for_approval",
+                expected_statuses=("draft",),
+            )
+            if updated_case is None:
+                raise PrivacyDraftDispositionError(
+                    "privacy case draft approval handoff raced with another update"
+                )
+            actions = tuple(
+                await mark_case_actions_awaiting_approval(
+                    self._conn,
+                    case_draft_id=case_id,
+                    approval_queue_id=queue_id,
+                )
+            )
+            if len(actions) != len(draft.actions):
+                raise PrivacyDraftDispositionError(
+                    "privacy case draft actions are not all pending"
+                )
+            for action in actions:
+                await append_action_event(
+                    self._conn,
+                    action_id=action.id,
+                    event_type="approval_requested",
+                    actor=user_id,
+                    event_payload_ciphertext=event_payload.ciphertext,
+                    event_payload_hash=event_payload.payload_hash,
+                )
+
+        return CaseDraftDisposition(
+            case_draft=updated_case,
+            actions=actions,
+            disposition="submitted_for_approval",
+            approval_queue_id=queue_id,
+        )
+
+    async def archive_case_draft(
+        self,
+        *,
+        case_id: UUID,
+        user_id: str,
+        operator_note: str | None = None,
+    ) -> CaseDraftDisposition:
+        draft = await self.get_case_draft(case_id)
+        if draft.case_draft.status != "draft":
+            raise PrivacyDraftDispositionError(
+                "privacy case draft must be draft before archive"
+            )
+
+        event_payload = self._crypto.encrypt_json_payload(
+            {
+                "case_id": str(case_id),
+                "disposition": "archived",
+                "operator_note": _clean_operator_note(operator_note),
+            }
+        )
+
+        async with self._conn.transaction():
+            updated_case = await update_case_draft_status(
+                self._conn,
+                case_draft_id=case_id,
+                status="archived",
+                expected_statuses=("draft",),
+            )
+            if updated_case is None:
+                raise PrivacyDraftDispositionError(
+                    "privacy case draft archive raced with another update"
+                )
+            actions = tuple(
+                await reject_pending_case_actions(
+                    self._conn,
+                    case_draft_id=case_id,
+                )
+            )
+            if len(actions) != len(draft.actions):
+                raise PrivacyDraftDispositionError(
+                    "privacy case draft actions are not all pending"
+                )
+            for action in actions:
+                await append_action_event(
+                    self._conn,
+                    action_id=action.id,
+                    event_type="rejected",
+                    actor=user_id,
+                    event_payload_ciphertext=event_payload.ciphertext,
+                    event_payload_hash=event_payload.payload_hash,
+                )
+
+        return CaseDraftDisposition(
+            case_draft=updated_case,
+            actions=actions,
+            disposition="archived",
         )
 
     async def _active_tuple_types(self, subject_id: UUID) -> tuple[str, ...]:
@@ -411,6 +568,32 @@ def _case_payload(
         "available_identity_tuple_types": list(tuple_types),
         "review_packets": [packet.to_payload() for packet in review_packets],
     }
+
+
+def _approval_parameters_hash(draft: RetrievedCaseDraft) -> str:
+    payload = {
+        "case_id": str(draft.case_draft.id),
+        "packet_payload_hash": draft.case_draft.packet_payload_hash,
+        "action_ids": [str(action.id) for action in draft.actions],
+        "target_ids": [action.target_id for action in draft.actions],
+        "approval_tiers": [action.approval_tier for action in draft.actions],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _approval_description(draft: RetrievedCaseDraft, highest_tier: str) -> str:
+    return (
+        f"Privacy case draft {str(draft.case_draft.id)[:8]} approval handoff "
+        f"({len(draft.actions)} actions, highest {highest_tier})"
+    )
+
+
+def _clean_operator_note(operator_note: str | None) -> str | None:
+    if operator_note is None:
+        return None
+    cleaned = operator_note.strip()
+    return cleaned or None
 
 
 _APPROVAL_TIERS = {"T1", "T2", "T3", "T4", "T5"}

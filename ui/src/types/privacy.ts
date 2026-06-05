@@ -126,6 +126,15 @@ export type CaseDraftDetailResponse = CaseDraftSummary & {
   actions: DraftAction[];
 };
 
+export type CaseDraftDispositionResponse = {
+  case_id: string;
+  status: string;
+  disposition: string;
+  action_count: number;
+  highest_approval_tier: string | null;
+  queue_id: string | null;
+};
+
 export type ProfileFields = {
   legal_name: string;
   date_of_birth: string;

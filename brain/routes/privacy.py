@@ -19,9 +19,11 @@ from brain.agents.privacy_scrub.config import (
 from brain.agents.privacy_scrub.crypto import PrivacyCrypto
 from brain.agents.privacy_scrub.drafts import (
     CaseDraftInboxItem,
+    CaseDraftDisposition,
     CreatedCaseDraft,
     PrivacyCaseDraftRepository,
     PrivacyDraftCaseNotFound,
+    PrivacyDraftDispositionError,
     PrivacyDraftError,
     PrivacyDraftSubjectNotFound,
     PrivacyDraftTargetNotFound,
@@ -177,6 +179,21 @@ class CaseDraftListOut(BaseModel):
 class CaseDraftDetailOut(CaseDraftSummaryOut):
     review_packets: list[TargetReviewPacketOut]
     actions: list[DraftActionOut]
+
+
+class CaseDraftDispositionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operator_note: str | None = Field(default=None, max_length=500)
+
+
+class CaseDraftDispositionOut(BaseModel):
+    case_id: UUID
+    status: str
+    disposition: str
+    action_count: int
+    highest_approval_tier: str | None
+    queue_id: UUID | None = None
 
 
 @router.post("/subjects", response_model=SubjectCreateOut)
@@ -359,6 +376,89 @@ async def get_privacy_case_draft(
     return _case_draft_detail_out(result)
 
 
+@router.post(
+    "/case-drafts/{case_id}/submit-approval",
+    response_model=CaseDraftDispositionOut,
+)
+async def submit_privacy_case_draft_for_approval(
+    request: Request,
+    case_id: UUID,
+    body: CaseDraftDispositionIn,
+    user_id: str = Depends(require_auth),
+) -> CaseDraftDispositionOut:
+    _assert_adult_or_admin_actor(request)
+    crypto = _load_crypto_or_503()
+    actor_type = getattr(request.state, "actor_type", "user")
+
+    try:
+        async with rls_connection(request) as conn:
+            result = await PrivacyCaseDraftRepository(
+                conn,
+                crypto,
+            ).submit_case_draft_for_approval(
+                case_id=case_id,
+                user_id=user_id,
+                actor_type=actor_type,
+                operator_note=body.operator_note,
+            )
+    except PrivacyDraftCaseNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_case_draft_not_found",
+        ) from exc
+    except PrivacyDraftDispositionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="privacy_case_draft_disposition_invalid",
+        ) from exc
+    except PrivacyDraftError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="privacy_case_draft_unavailable",
+        ) from exc
+
+    return _case_draft_disposition_out(result)
+
+
+@router.post(
+    "/case-drafts/{case_id}/archive",
+    response_model=CaseDraftDispositionOut,
+)
+async def archive_privacy_case_draft(
+    request: Request,
+    case_id: UUID,
+    body: CaseDraftDispositionIn,
+    user_id: str = Depends(require_auth),
+) -> CaseDraftDispositionOut:
+    _assert_adult_or_admin_actor(request)
+    crypto = _load_crypto_or_503()
+
+    try:
+        async with rls_connection(request) as conn:
+            result = await PrivacyCaseDraftRepository(conn, crypto).archive_case_draft(
+                case_id=case_id,
+                user_id=user_id,
+                operator_note=body.operator_note,
+            )
+    except PrivacyDraftCaseNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_case_draft_not_found",
+        ) from exc
+    except PrivacyDraftDispositionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="privacy_case_draft_disposition_invalid",
+        ) from exc
+    except PrivacyDraftError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="privacy_case_draft_unavailable",
+        ) from exc
+
+    return _case_draft_disposition_out(result)
+
+
 @router.get("/targets", response_model=PrivacyTargetsOut)
 async def list_privacy_targets(
     request: Request,
@@ -486,6 +586,19 @@ def _case_draft_detail_out(result: RetrievedCaseDraft) -> CaseDraftDetailOut:
             )
             for action in result.actions
         ],
+    )
+
+
+def _case_draft_disposition_out(
+    result: CaseDraftDisposition,
+) -> CaseDraftDispositionOut:
+    return CaseDraftDispositionOut(
+        case_id=result.case_draft.id,
+        status=result.case_draft.status,
+        disposition=result.disposition,
+        action_count=len(result.actions),
+        highest_approval_tier=result.highest_approval_tier,
+        queue_id=result.approval_queue_id,
     )
 
 
