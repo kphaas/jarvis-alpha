@@ -1,8 +1,10 @@
 import { motion } from "framer-motion";
 import { Fingerprint } from "lucide-react";
+import { PrivacyCaseDraftPanel } from "../components/privacy/PrivacyCaseDraftPanel";
 import { PrivacyTargetRegistry } from "../components/privacy/PrivacyTargetRegistry";
 import { PrivacyResultPanel } from "../components/privacy/PrivacyResultPanel";
 import { SubjectIntakeForm } from "../components/privacy/SubjectIntakeForm";
+import { usePrivacyCaseDraft } from "../hooks/usePrivacyCaseDraft";
 import { usePrivacyIntake } from "../hooks/usePrivacyIntake";
 import { usePrivacyTargets } from "../hooks/usePrivacyTargets";
 import { useAppStore } from "../store";
@@ -27,6 +29,8 @@ export default function Privacy() {
   const { theme } = useAppStore();
   const intake = usePrivacyIntake();
   const targets = usePrivacyTargets();
+  const subjectId = intake.createdSubject?.subject_id ?? null;
+  const draftState = usePrivacyCaseDraft(subjectId, targets.selectedIds);
   const isDark = theme === "dark";
   const border = isDark ? "border-white/10" : "border-[#141414]/10";
   const panel = isDark ? "bg-white/5" : "bg-[#141414]/5";
@@ -56,7 +60,7 @@ export default function Privacy() {
             <p
               className={`mt-1 text-[10px] font-mono uppercase tracking-widest ${muted}`}
             >
-              P2-D - target selection
+              P2-E - review packet drafts
             </p>
           </div>
         </div>
@@ -91,9 +95,22 @@ export default function Privacy() {
             warnClass={tone(isDark, "warn")}
             errorClass={tone(isDark, "error")}
           />
+          <PrivacyCaseDraftPanel
+            draftState={draftState}
+            subjectId={subjectId}
+            selectedCount={targets.selectedCount}
+            onDraftCreated={targets.clearSelection}
+            border={border}
+            panel={panel}
+            muted={muted}
+            isDark={isDark}
+            okClass={tone(isDark, "ok")}
+            warnClass={tone(isDark, "warn")}
+            errorClass={tone(isDark, "error")}
+          />
           <PrivacyTargetRegistry
             targets={targets}
-            subjectId={intake.createdSubject?.subject_id ?? null}
+            subjectId={subjectId}
             border={border}
             panel={panel}
             muted={muted}
