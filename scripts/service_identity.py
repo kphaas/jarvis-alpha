@@ -46,4 +46,4 @@ DEFAULT_SCOPES = {
     "endpoint": ["health.read", "school_email.read"],
 }
 
-TOKEN_LIFETIME_DAYS = 1
+TOKEN_LIFETIME_DAYS = 7

@@ -45,7 +45,12 @@ def find_private_key(iss: str) -> Path:
     sys.exit(1)
 
 
-def generate_token(iss: str, actor_type: str, scopes: list[str], days: int = 7) -> str:
+def generate_token(
+    iss: str,
+    actor_type: str,
+    scopes: list[str],
+    days: int = TOKEN_LIFETIME_DAYS,
+) -> str:
     """Generate and sign a service JWT."""
     if VALID_ISS_ACTOR_PAIRS.get(iss) != actor_type:
         print(

@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from brain.services.key_rotation import KEY_FORMAT_RULES
+from scripts.service_identity import TOKEN_LIFETIME_DAYS
 
 
 def test_keyturner_inventory_covers_rotatable_provider_keys():
@@ -44,6 +45,25 @@ def test_keyturner_inventory_covers_security_operational_keys():
     missing = expected - set(secrets)
     assert missing == set()
     assert all(secrets[name]["managed_by"] == "keyturner" for name in expected)
+
+
+def test_service_token_lifetime_matches_keyturner_rotation_policy():
+    config = json.loads(
+        Path("scripts/secrets_rotation.json").read_text(encoding="utf-8")
+    )
+    secrets = config["secrets"]
+    service_tokens = {
+        "ALPHA_BUDDY_TOKEN",
+        "ALPHA_BRAIN_SERVICE_TOKEN",
+        "ALPHA_SERVICE_TOKEN_GATEWAY",
+        "ALPHA_SERVICE_TOKEN_ENDPOINT",
+        "ALPHA_SERVICE_TOKEN_SANDBOX",
+    }
+
+    assert TOKEN_LIFETIME_DAYS == 7
+    assert {name: secrets[name]["rotation_days"] for name in service_tokens} == {
+        name: TOKEN_LIFETIME_DAYS for name in service_tokens
+    }
 
 
 def test_keyturner_reconcile_migration_covers_current_config():

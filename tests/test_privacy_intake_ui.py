@@ -5,6 +5,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PRIVACY_PAGE = REPO_ROOT / "ui" / "src" / "pages" / "Privacy.tsx"
+APPROVALS_PAGE = REPO_ROOT / "ui" / "src" / "pages" / "Approvals.tsx"
 PRIVACY_UI_SOURCES = (
     PRIVACY_PAGE,
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyIntake.ts",
@@ -57,8 +58,10 @@ def test_privacy_draft_inbox_is_mounted_on_privacy_page() -> None:
     page_source = PRIVACY_PAGE.read_text(encoding="utf-8")
     source = "\n".join(path.read_text(encoding="utf-8") for path in PRIVACY_UI_SOURCES)
 
-    assert "usePrivacyDraftInbox()" in page_source
+    assert 'usePrivacyDraftInbox(searchParams.get("case"))' in page_source
     assert "<PrivacyDraftInboxPanel" in page_source
+    assert "P2-G - disposition handoff" in page_source
+    assert "P2-F - draft review inbox" not in page_source
     assert "/v1/privacy/case-drafts" in source
     assert "submit-approval" in source
     assert "archive" in source
@@ -67,6 +70,30 @@ def test_privacy_draft_inbox_is_mounted_on_privacy_page() -> None:
     assert "Draft Inbox" in source
     assert "No targets in this filter" in source
     assert "shown /" in source
+
+
+def test_privacy_approval_handoff_ui_links_to_review_packet() -> None:
+    approvals_source = APPROVALS_PAGE.read_text(encoding="utf-8")
+    privacy_source = PRIVACY_PAGE.read_text(encoding="utf-8")
+    hook_source = (
+        REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyDraftInbox.ts"
+    ).read_text(encoding="utf-8")
+    panel_source = (
+        REPO_ROOT
+        / "ui"
+        / "src"
+        / "components"
+        / "privacy"
+        / "PrivacyDraftInboxPanel.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "privacy_draft_handoff" in approvals_source
+    assert "/privacy?case=" in approvals_source
+    assert "Review packet" in approvals_source
+    assert "useSearchParams" in privacy_source
+    assert 'usePrivacyDraftInbox(searchParams.get("case"))' in privacy_source
+    assert "initialCaseId" in hook_source
+    assert "Approval queue" in panel_source
 
 
 def test_privacy_intake_ui_keeps_phase_boundary_local_only() -> None:

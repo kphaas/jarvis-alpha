@@ -10,8 +10,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import getpass
+import hashlib
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -88,6 +91,21 @@ PSQL_DB = "jarvis_alpha"
 PSQL_HOST = "localhost"
 PSQL_USER = "jarvisbrain"
 CURL_TIMEOUT_SEC = "10"
+BRAIN_SSH_FOR_DB = "jarvisbrain@jarvis-brain.tail40ed36.ts.net"
+SERVICE_ROTATION_NAMES = {
+    "brain": "ALPHA_BUDDY_TOKEN",
+    "brain_service": "ALPHA_BRAIN_SERVICE_TOKEN",
+    "gateway": "ALPHA_SERVICE_TOKEN_GATEWAY",
+    "endpoint": "ALPHA_SERVICE_TOKEN_ENDPOINT",
+    "sandbox": "ALPHA_SERVICE_TOKEN_SANDBOX",
+}
+SERVICE_ROTATION_LEDGER_NODES = {
+    "brain": "brain",
+    "brain_service": "brain",
+    "gateway": "gateway",
+    "endpoint": "endpoint",
+    "sandbox": "sandbox",
+}
 
 
 def log_json(
@@ -150,6 +168,105 @@ def run_brain_psql(sql: str, secrets_file: str) -> subprocess.CompletedProcess[s
         timeout=30,
         env=env,
     )
+
+
+def sha_prefix(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+
+def _sql_quote(value: object) -> str:
+    return str(value).replace("'", "''")
+
+
+def _sql_text_array(values: list[str]) -> str:
+    return (
+        "ARRAY[" + ",".join(f"'{_sql_quote(value)}'" for value in values) + "]::text[]"
+    )
+
+
+def build_rotation_ledger_sql(
+    *,
+    secret_name: str,
+    rotation_days: int,
+    nodes_updated: list[str],
+    services_restarted: list[str],
+    verify_status: str,
+    value_hash: str | None,
+    rotated_by: str,
+) -> str:
+    value_hash_sql = "NULL" if value_hash is None else f"'{_sql_quote(value_hash)}'"
+    return (
+        "INSERT INTO alpha_secret_rotations "
+        "(secret_name, rotated_by, rotation_days, nodes_updated, services_restarted, "
+        "verify_status, value_hash) "
+        f"VALUES ('{_sql_quote(secret_name)}', '{_sql_quote(rotated_by)}', "
+        f"{int(rotation_days)}, {_sql_text_array(nodes_updated)}, "
+        f"{_sql_text_array(services_restarted)}, '{_sql_quote(verify_status)}', "
+        f"{value_hash_sql}) "
+        "RETURNING id::text || ' next_due_at=' || to_char(next_due_at, "
+        "'YYYY-MM-DD\"T\"HH24:MI:SSOF');"
+    )
+
+
+def record_rotation_ledger(
+    *,
+    node: str,
+    secrets_file: str,
+    verify_status: str,
+    value_hash: str | None,
+    runner=subprocess.run,
+) -> str:
+    secret_name = SERVICE_ROTATION_NAMES[node]
+    rotation_days = TOKEN_LIFETIME_DAYS
+    rotated_by = f"{getpass.getuser()}@{socket.gethostname()}"
+    sql = build_rotation_ledger_sql(
+        secret_name=secret_name,
+        rotation_days=rotation_days,
+        nodes_updated=[SERVICE_ROTATION_LEDGER_NODES[node]],
+        services_restarted=[],
+        verify_status=verify_status,
+        value_hash=value_hash,
+        rotated_by=rotated_by,
+    )
+    if node in {"brain", "brain_service"}:
+        result = run_brain_psql(sql, secrets_file)
+    else:
+        result = runner(
+            [
+                "ssh",
+                BRAIN_SSH_FOR_DB,
+                f"{PSQL_BIN} -d {PSQL_DB} -U {PSQL_USER} -t -f -",
+            ],
+            capture_output=True,
+            input=sql,
+            text=True,
+            timeout=30,
+        )
+    if result.returncode != 0:
+        err = (
+            result.stderr or result.stdout or ""
+        ).strip() or f"exit {result.returncode}"
+        raise RuntimeError(f"rotation ledger insert failed: {err}")
+    return result.stdout.strip()
+
+
+def best_effort_record_rotation_ledger(
+    *,
+    node: str,
+    secrets_file: str,
+    verify_status: str,
+    value_hash: str | None,
+) -> None:
+    try:
+        result = record_rotation_ledger(
+            node=node,
+            secrets_file=secrets_file,
+            verify_status=verify_status,
+            value_hash=value_hash,
+        )
+        log_json("info", "rotation ledger recorded", node, db=result)
+    except Exception as exc:
+        log_json("error", f"rotation ledger record failed: {exc}", node)
 
 
 def days_remaining(secrets_file: str, secret_key: str) -> float | None:
@@ -414,6 +531,7 @@ def main() -> int:
     log_json("info", "rotation started", node)
 
     old_token: str | None = None
+    token_hash: str | None = None
     if node in ("gateway", "sandbox"):
         old_token = read_secret_value(secrets_file, secret_key)
 
@@ -451,6 +569,7 @@ def main() -> int:
                 return 0
 
         token = generate_token(iss, actor_type, private_key_path, scopes)
+        token_hash = sha_prefix(token)
         log_json("info", "token generated", node, token_length=len(token))
 
         atomic_update_secrets(secrets_file, secret_key, token)
@@ -468,6 +587,13 @@ def main() -> int:
             verify_gateway_sandbox(token)
             log_json("info", "verification result: ok (health 200)", node)
 
+        best_effort_record_rotation_ledger(
+            node=node,
+            secrets_file=secrets_file,
+            verify_status="passed",
+            value_hash=token_hash,
+        )
+
         log_json("info", "rotation complete", node)
         return 0
 
@@ -475,6 +601,12 @@ def main() -> int:
         err = str(exc)
         log_json("error", f"rotation failed: {err}", node)
         if not args.dry_run:
+            best_effort_record_rotation_ledger(
+                node=node,
+                secrets_file=secrets_file,
+                verify_status="failed",
+                value_hash=token_hash,
+            )
             alert_failure(node, err, old_token, secrets_file)
         return 1
 

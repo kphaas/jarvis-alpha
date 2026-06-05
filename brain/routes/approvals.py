@@ -1,12 +1,13 @@
 import os
 import time
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from jose import jwt, JWTError
 from pydantic import BaseModel
 
+from brain.agents.privacy_scrub.drafts import record_privacy_approval_decision
 from brain.db.pool import get_pool
 from brain.db.rls import rls_connection
 from brain.middleware.scopes import check_scopes
@@ -97,12 +98,32 @@ async def list_pending(request: Request):
 
     async with rls_connection(request) as conn:
         rows = await conn.fetch(
-            """SELECT id, action_class, risk_tier, actor_sub, actor_type,
-                      description, status, requested_at, expires_at, overnight
-               FROM alpha_approval_queue
-               WHERE status = 'pending'
-                 AND expires_at > NOW()
-               ORDER BY requested_at ASC"""
+            """
+            WITH privacy_context AS (
+                SELECT
+                    approval_queue_id,
+                    (ARRAY_AGG(DISTINCT case_draft_id))[1] AS case_draft_id,
+                    COUNT(id)::INTEGER AS action_count,
+                    ARRAY_REMOVE(
+                        ARRAY_AGG(DISTINCT status ORDER BY status),
+                        NULL
+                    ) AS action_statuses
+                FROM public.alpha_privacy_actions
+                WHERE approval_queue_id IS NOT NULL
+                GROUP BY approval_queue_id
+            )
+            SELECT q.id, q.action_class, q.risk_tier, q.actor_sub, q.actor_type,
+                   q.description, q.status, q.requested_at, q.expires_at,
+                   q.overnight, pc.case_draft_id AS privacy_case_id,
+                   pc.action_count AS privacy_action_count,
+                   pc.action_statuses AS privacy_action_statuses
+            FROM public.alpha_approval_queue q
+            LEFT JOIN privacy_context pc
+              ON pc.approval_queue_id = q.id
+            WHERE q.status = 'pending'
+              AND q.expires_at > NOW()
+            ORDER BY q.requested_at ASC
+            """
         )
 
     items = []
@@ -121,6 +142,7 @@ async def list_pending(request: Request):
                 else None,
                 "expires_at": r["expires_at"].isoformat() if r["expires_at"] else None,
                 "overnight": r["overnight"],
+                "privacy": _privacy_context_out(r),
             }
         )
 
@@ -161,13 +183,22 @@ async def decide_approval(queue_id: str, req: DecideRequest, request: Request):
 
     try:
         async with rls_connection(request) as conn:
-            rows = await conn.fetch(
-                "SELECT * FROM public.decide_approval($1::uuid, $2, $3, $4)",
-                queue_id,
-                req.decision,
-                actor_sub,
-                nonce,
-            )
+            async with conn.transaction():
+                rows = await conn.fetch(
+                    "SELECT * FROM public.decide_approval($1::uuid, $2, $3, $4)",
+                    queue_id,
+                    req.decision,
+                    actor_sub,
+                    nonce,
+                )
+                row = rows[0] if rows else None
+                if row and "privacy_draft_handoff" in (row["action_class"] or []):
+                    await record_privacy_approval_decision(
+                        conn,
+                        approval_queue_id=UUID(queue_id),
+                        decision=req.decision,
+                        actor=actor_sub,
+                    )
     except Exception as e:
         err = str(e)
         if "APPROVAL_NOT_FOUND" in err:
@@ -194,4 +225,15 @@ async def decide_approval(queue_id: str, req: DecideRequest, request: Request):
         "expires_at": (
             row["expires_at"].isoformat() if req.decision == "approved" else None
         ),
+    }
+
+
+def _privacy_context_out(row) -> dict[str, object] | None:
+    case_id = row["privacy_case_id"]
+    if not case_id:
+        return None
+    return {
+        "case_id": str(case_id),
+        "action_count": int(row["privacy_action_count"] or 0),
+        "action_statuses": list(row["privacy_action_statuses"] or []),
     }
