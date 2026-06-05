@@ -143,6 +143,7 @@ async def list_pending(request: Request):
                 "expires_at": r["expires_at"].isoformat() if r["expires_at"] else None,
                 "overnight": r["overnight"],
                 "privacy": _privacy_context_out(r),
+                "spark": _spark_context_out(r),
             }
         )
 
@@ -236,4 +237,15 @@ def _privacy_context_out(row) -> dict[str, object] | None:
         "case_id": str(case_id),
         "action_count": int(row["privacy_action_count"] or 0),
         "action_statuses": list(row["privacy_action_statuses"] or []),
+    }
+
+
+def _spark_context_out(row) -> dict[str, object] | None:
+    action_class = row["action_class"] or []
+    if "spark_draft_handoff" not in action_class:
+        return None
+    return {
+        "kind": "imessage_draft",
+        "can_send": False,
+        "requires_human_approval": True,
     }
