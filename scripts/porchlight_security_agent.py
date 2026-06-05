@@ -73,6 +73,10 @@ NPM_BIN = os.getenv(
     if Path("/opt/homebrew/bin/npm").exists()
     else "npm",
 )
+FINANCIAL_SECURITY_POSTURE_URL = (
+    os.getenv("PORCHLIGHT_FINANCIAL_SECURITY_POSTURE_URL", "").strip()
+    or os.getenv("FINANCIAL_SECURITY_POSTURE_URL", "").strip()
+)
 SECRET_VERIFY_MAX_AGE_HOURS = 36
 JWT_VERIFY_MIN_HOURS = 24
 DEFAULT_CLOUDFLARE_EXPECTED_ACTORS = {"kennethphaas@gmail.com"}
@@ -89,6 +93,10 @@ DEFAULT_CLOUDFLARE_FORBIDDEN_APP_TERMS = (
     "jarvis-brain",
 )
 DEFAULT_GITHUB_BRANCH_PROTECTION_REPOS = ("kphaas/jarvis-alpha",)
+ACCEPTED_BOOTSTRAP_SECDEF_FUNCTIONS = {
+    "public.pgaudit_ddl_command_end()",
+    "public.pgaudit_sql_drop()",
+}
 
 SECURITY_LAUNCHAGENTS: dict[str, set[str]] = {
     "brain": {
@@ -401,7 +409,13 @@ SELECT rolname,
        rolcanlogin::text,
        oid::text
 FROM pg_roles
-WHERE rolname IN ('jarvisbrain', 'jarvis_alpha_writer', 'jarvis_alpha_app')
+WHERE rolname IN (
+    'jarvisbrain',
+    'jarvis_alpha_writer',
+    'jarvis_alpha_app',
+    'jarvis_alpha_owner',
+    'jarvis_pg_breakglass'
+)
    OR rolsuper
 ORDER BY rolname;
 """.strip()
@@ -439,6 +453,9 @@ ORDER BY rolname;
     missing_required = sorted(
         {"jarvisbrain", "jarvis_alpha_writer", "jarvis_alpha_app"} - set(roles)
     )
+    missing_containment = sorted(
+        {"jarvis_alpha_owner", "jarvis_pg_breakglass"} - set(roles)
+    )
     superusers = sorted(
         name for name, attrs in roles.items() if attrs.get("rolsuper") is True
     )
@@ -454,13 +471,34 @@ ORDER BY rolname;
         issues.append("missing required role(s): " + ", ".join(missing_required))
     if runtime_bypass:
         issues.append("runtime role(s) can bypass RLS: " + ", ".join(runtime_bypass))
-    if roles.get("jarvisbrain", {}).get("rolsuper"):
+    jarvisbrain_superuser = roles.get("jarvisbrain", {}).get("rolsuper") is True
+    secdef_metadata: dict[str, object] = {}
+    if jarvisbrain_superuser:
+        if roles.get("jarvisbrain", {}).get("rolbypassrls"):
+            issues.append("jarvisbrain still has BYPASSRLS")
+        if roles.get("jarvisbrain", {}).get("oid") != "10":
+            issues.append("jarvisbrain is SUPERUSER and is not the bootstrap role")
+        if missing_containment:
+            issues.append(
+                "missing bootstrap containment role(s): "
+                + ", ".join(missing_containment)
+            )
         if superusers == ["jarvisbrain"]:
             issues.append(
                 "jarvisbrain is the only superuser; demotion needs break-glass first"
             )
-        elif roles.get("jarvisbrain", {}).get("oid") != "10":
-            issues.append("jarvisbrain is SUPERUSER and is not the bootstrap role")
+        if not issues:
+            secdef_ok, secdef_detail, secdef_metadata = (
+                _check_security_definer_owner_containment(psql)
+            )
+            if not secdef_ok:
+                issues.append(secdef_detail)
+
+    if jarvisbrain_superuser and issues:
+        issues.insert(
+            0,
+            "jarvisbrain is still SUPERUSER and can bypass FORCE RLS until containment is complete",
+        )
 
     if issues:
         return CheckResult(
@@ -473,26 +511,33 @@ ORDER BY rolname;
                 "superusers": superusers,
                 "runtime_bypass_roles": runtime_bypass,
                 "missing_required_roles": missing_required,
+                "missing_containment_roles": missing_containment,
                 "jarvisbrain": roles.get("jarvisbrain", {}),
+                "security_definer": secdef_metadata,
+                "accepted_exception": None,
             },
         )
 
-    if roles.get("jarvisbrain", {}).get("rolsuper"):
+    if jarvisbrain_superuser:
         return CheckResult(
             name="postgres_role_safety",
             status="warn",
             severity="medium",
-            summary="Postgres role safety is using an accepted bootstrap-role exception.",
+            summary="Postgres bootstrap superuser risk is accepted and contained.",
             detail=(
-                "jarvisbrain is PostgreSQL bootstrap role oid 10 and cannot be "
-                "demoted with supported SQL; runtime roles are NOBYPASSRLS and a "
-                "separate break-glass superuser exists."
+                "jarvisbrain remains a bootstrap superuser, but runtime roles are "
+                "NOBYPASSRLS, break-glass exists, and SECURITY DEFINER functions "
+                "are owned by jarvis_alpha_owner except accepted pgaudit handlers."
             ),
             metadata={
                 "superusers": superusers,
                 "runtime_bypass_roles": runtime_bypass,
-                "accepted_exception": "postgres_bootstrap_role_superuser",
+                "missing_required_roles": missing_required,
+                "missing_containment_roles": missing_containment,
                 "jarvisbrain": roles.get("jarvisbrain", {}),
+                "security_definer": secdef_metadata,
+                "bootstrap_risk": "accepted_contained",
+                "accepted_exception": "postgres_bootstrap_role_superuser",
             },
         )
 
@@ -503,6 +548,80 @@ ORDER BY rolname;
         summary="Postgres runtime roles are NOBYPASSRLS and jarvisbrain is not superuser.",
         metadata={"superusers": superusers},
     )
+
+
+def _check_security_definer_owner_containment(
+    psql: Callable[[str], CommandResult],
+) -> tuple[bool, str, dict[str, object]]:
+    query = """
+SELECT format('%I.%I(%s)',
+              n.nspname,
+              p.proname,
+              pg_get_function_identity_arguments(p.oid)),
+       pg_get_userbyid(p.proowner),
+       l.lanname
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+JOIN pg_language l ON l.oid = p.prolang
+WHERE p.prosecdef
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%'
+ORDER BY n.nspname, p.proname, pg_get_function_identity_arguments(p.oid);
+""".strip()
+    result = psql(query)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()[:500]
+        return (
+            False,
+            "could not inspect SECURITY DEFINER ownership: " + detail,
+            {"error": detail},
+        )
+
+    rows = parse_psql_rows(result.stdout)
+    if not rows:
+        return False, "no SECURITY DEFINER rows returned", {"total": 0}
+
+    owner_counts: dict[str, int] = {}
+    accepted_bootstrap: list[str] = []
+    unexpected: list[str] = []
+    malformed = 0
+    for row in rows:
+        if len(row) < 3:
+            malformed += 1
+            continue
+        identity, owner, language = row[:3]
+        owner_counts[owner] = owner_counts.get(owner, 0) + 1
+        if owner == "jarvis_alpha_owner":
+            continue
+        if (
+            owner == "jarvisbrain"
+            and language == "c"
+            and identity in ACCEPTED_BOOTSTRAP_SECDEF_FUNCTIONS
+        ):
+            accepted_bootstrap.append(identity)
+            continue
+        unexpected.append(f"{identity} owned by {owner}")
+
+    metadata = {
+        "total": len(rows),
+        "owner_counts": owner_counts,
+        "accepted_bootstrap": accepted_bootstrap,
+        "unexpected": unexpected,
+        "malformed_rows": malformed,
+    }
+    if malformed:
+        return (
+            False,
+            f"{malformed} SECURITY DEFINER row(s) could not be parsed",
+            metadata,
+        )
+    if unexpected:
+        return (
+            False,
+            "unexpected SECURITY DEFINER owner(s): " + "; ".join(unexpected[:5]),
+            metadata,
+        )
+    return True, "", metadata
 
 
 def _pg_hba_csv_items(value: str) -> set[str]:
@@ -625,6 +744,7 @@ def check_secret_rotation(
 ) -> CheckResult:
     today = today or datetime.now(UTC).date()
     query = """
+SELECT set_config('rls.role', 'platform_admin', false);
 SELECT secret_name,
        COALESCE(last_rotated_at::date::text, ''),
        rotation_days::text,
@@ -664,13 +784,18 @@ ORDER BY secret_name;
         }
         due_date = datetime.strptime(next_due, "%Y-%m-%d").date()
         days_left = (due_date - today).days
+        try:
+            rotation_days = int(days)
+        except ValueError:
+            rotation_days = 14
+        warning_window_days = min(14, max(1, (rotation_days + 3) // 4))
         if verify == "failed":
             issues.append(f"{name} last verification failed")
         if days_left < 0:
             issues.append(f"{name} overdue since {next_due}")
         elif days_left == 0:
             issues.append(f"{name} due today")
-        elif days_left <= 14:
+        elif days_left <= warning_window_days:
             warnings.append(f"{name} due in {days_left} days")
 
     for name, spec in configured.items():
@@ -2045,6 +2170,167 @@ def check_dependency_cve_scan(
     )
 
 
+def _financial_security_posture_token() -> str | None:
+    return _secret_or_env("JARVIS_FIN_SECURITY_POSTURE_TOKEN") or _secret_or_env(
+        "FINANCIAL_SECURITY_POSTURE_TOKEN"
+    )
+
+
+def _financial_security_posture_url() -> str:
+    return (
+        os.getenv("PORCHLIGHT_FINANCIAL_SECURITY_POSTURE_URL", "").strip()
+        or os.getenv("FINANCIAL_SECURITY_POSTURE_URL", "").strip()
+        or FINANCIAL_SECURITY_POSTURE_URL
+    )
+
+
+def check_financial_security_posture(
+    url: str | None = None,
+    command: Callable[..., CommandResult] = run_command,
+) -> CheckResult:
+    """Read Financial's self-owned posture summary without pulling secrets into Alpha."""
+    url = _financial_security_posture_url() if url is None else url
+    token = _financial_security_posture_token()
+    metadata: dict[str, object] = {"configured": bool(url and token)}
+    if not url or not token:
+        return CheckResult(
+            name="financial_security_posture",
+            status="warn",
+            severity="medium",
+            summary="Financial posture monitor is not configured.",
+            detail=(
+                "Set PORCHLIGHT_FINANCIAL_SECURITY_POSTURE_URL and "
+                "JARVIS_FIN_SECURITY_POSTURE_TOKEN on Brain."
+            ),
+            metadata=metadata,
+        )
+
+    result = command(
+        [
+            "curl",
+            "-sS",
+            "--max-time",
+            "15",
+            "-H",
+            f"Authorization: Bearer {token}",
+            "-w",
+            "\n%{http_code}",
+            url,
+        ],
+        timeout=20,
+    )
+    if result.returncode != 0:
+        return CheckResult(
+            name="financial_security_posture",
+            status="fail",
+            severity="high",
+            summary="Financial posture endpoint is unreachable.",
+            detail=(result.stderr or result.stdout).strip()[:500],
+            metadata=metadata,
+        )
+
+    body, _, status_text = result.stdout.rstrip("\n").rpartition("\n")
+    if not status_text.isdigit():
+        return CheckResult(
+            name="financial_security_posture",
+            status="fail",
+            severity="high",
+            summary="Financial posture endpoint returned an invalid HTTP response.",
+            detail="curl did not emit an HTTP status code",
+            metadata=metadata,
+        )
+    metadata["http_status"] = int(status_text)
+    if status_text != "200":
+        return CheckResult(
+            name="financial_security_posture",
+            status="fail",
+            severity="high",
+            summary="Financial posture endpoint rejected the monitor request.",
+            detail=f"HTTP {status_text}",
+            metadata=metadata,
+        )
+
+    try:
+        payload = json.loads(body or "{}")
+    except json.JSONDecodeError:
+        return CheckResult(
+            name="financial_security_posture",
+            status="fail",
+            severity="high",
+            summary="Financial posture endpoint returned non-JSON.",
+            detail="invalid_json",
+            metadata=metadata,
+        )
+    if not isinstance(payload, dict) or payload.get("service") != "jarvis-financial":
+        return CheckResult(
+            name="financial_security_posture",
+            status="fail",
+            severity="high",
+            summary="Financial posture endpoint returned an unexpected payload.",
+            detail="missing jarvis-financial service marker",
+            metadata=metadata,
+        )
+
+    remote_status = str(payload.get("status") or "fail")
+    if remote_status not in {"pass", "warn", "fail"}:
+        remote_status = "fail"
+    counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
+    controls = (
+        payload.get("controls") if isinstance(payload.get("controls"), list) else []
+    )
+    metadata.update(
+        {
+            "remote_status": remote_status,
+            "counts": counts,
+            "controls": [
+                {
+                    "id": str(control.get("id") or ""),
+                    "status": str(control.get("status") or ""),
+                    "severity": str(control.get("severity") or ""),
+                }
+                for control in controls
+                if isinstance(control, dict)
+            ],
+        }
+    )
+    if remote_status == "pass":
+        return CheckResult(
+            name="financial_security_posture",
+            status="pass",
+            severity="info",
+            summary="Financial self-owned posture checks are passing.",
+            detail=_financial_counts_detail(counts),
+            metadata=metadata,
+        )
+    if remote_status == "warn":
+        return CheckResult(
+            name="financial_security_posture",
+            status="warn",
+            severity="medium",
+            summary="Financial self-owned posture checks need review.",
+            detail=_financial_counts_detail(counts),
+            metadata=metadata,
+        )
+    return CheckResult(
+        name="financial_security_posture",
+        status="fail",
+        severity="high",
+        summary="Financial self-owned posture checks are failing.",
+        detail=_financial_counts_detail(counts),
+        metadata=metadata,
+    )
+
+
+def _financial_counts_detail(counts: object) -> str:
+    if not isinstance(counts, dict):
+        return ""
+    return (
+        f"{counts.get('pass', 0)} pass, "
+        f"{counts.get('warn', 0)} warn, "
+        f"{counts.get('fail', 0)} fail"
+    )
+
+
 def _github_branch_protection_repos() -> list[str]:
     configured = os.getenv("PORCHLIGHT_GITHUB_BRANCH_PROTECTION_REPOS", "").strip()
     if configured:
@@ -2530,6 +2816,7 @@ def run_sweep(args: argparse.Namespace) -> dict[str, object]:
         check_cloudflare_access_policy_drift(),
         check_cloudflare_audit_logs(window_hours=args.cloudflare_audit_window_hours),
         check_dependency_cve_scan(),
+        check_financial_security_posture(),
         check_github_branch_protection_drift(),
         check_route_db_access(),
     ]

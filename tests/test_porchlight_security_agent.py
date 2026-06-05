@@ -159,6 +159,81 @@ def test_family_smoke_live_verification_authenticates_synthetic_parent(
     }
 
 
+def test_secret_rotation_sets_platform_admin_rls_before_read(tmp_path):
+    config_path = tmp_path / "secrets_rotation.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "secrets": {
+                    "ALPHA_BRAIN_SERVICE_TOKEN": {
+                        "rotation_days": 7,
+                        "managed_by": "keyturner",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    seen: dict[str, str] = {}
+
+    def fake_psql(query):
+        seen["query"] = query
+        return porchlight.CommandResult(
+            0,
+            "platform_admin\n"
+            "ALPHA_BRAIN_SERVICE_TOKEN|2026-06-04|7|2026-06-11|7|skipped\n",
+            "",
+        )
+
+    result = porchlight.check_secret_rotation(
+        psql=fake_psql,
+        config_path=config_path,
+        today=porchlight.date(2026, 6, 4),
+    )
+
+    assert "set_config('rls.role', 'platform_admin', false)" in seen["query"]
+    assert result.status == "pass"
+    assert "warnings" not in result.metadata
+    assert (
+        result.metadata["secrets"]["ALPHA_BRAIN_SERVICE_TOKEN"]["last_verify_status"]
+        == "skipped"
+    )
+
+
+def test_secret_rotation_warns_inside_cadence_relative_window(tmp_path):
+    config_path = tmp_path / "secrets_rotation.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "secrets": {
+                    "ALPHA_BRAIN_SERVICE_TOKEN": {
+                        "rotation_days": 7,
+                        "managed_by": "keyturner",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_psql(query):
+        return porchlight.CommandResult(
+            0,
+            "platform_admin\n"
+            "ALPHA_BRAIN_SERVICE_TOKEN|2026-06-04|7|2026-06-11|2|passed\n",
+            "",
+        )
+
+    result = porchlight.check_secret_rotation(
+        psql=fake_psql,
+        config_path=config_path,
+        today=porchlight.date(2026, 6, 9),
+    )
+
+    assert result.status == "warn"
+    assert result.metadata["warnings"] == ["ALPHA_BRAIN_SERVICE_TOKEN due in 2 days"]
+
+
 def test_family_external_smoke_live_verification_authenticates_synthetic_external(
     tmp_path, monkeypatch
 ):
@@ -438,8 +513,8 @@ def test_postgres_role_safety_fails_when_jarvisbrain_is_only_superuser():
             0,
             "\n".join(
                 [
-                    "jarvis_alpha_app|false|false|false|false|false",
-                    "jarvis_alpha_writer|false|false|false|false|false",
+                    "jarvis_alpha_app|false|false|false|false|false|16388",
+                    "jarvis_alpha_writer|false|false|false|false|false|16389",
                     "jarvisbrain|true|false|true|true|true|10",
                 ]
             ),
@@ -454,6 +529,78 @@ def test_postgres_role_safety_fails_when_jarvisbrain_is_only_superuser():
     assert result.metadata["superusers"] == ["jarvisbrain"]
 
 
+def test_postgres_role_safety_warns_when_bootstrap_superuser_is_contained():
+    def fake_psql(query):
+        if "FROM pg_roles" in query:
+            return porchlight.CommandResult(
+                0,
+                "\n".join(
+                    [
+                        "jarvis_alpha_app|false|false|false|false|false|16388",
+                        "jarvis_alpha_owner|false|false|false|false|false|16390",
+                        "jarvis_alpha_writer|false|false|false|false|false|16389",
+                        "jarvis_pg_breakglass|true|false|true|true|true|24576",
+                        "jarvisbrain|true|false|true|true|true|10",
+                    ]
+                ),
+                "",
+            )
+        if "FROM pg_proc" in query:
+            return porchlight.CommandResult(
+                0,
+                "\n".join(
+                    [
+                        "public.record_buddy_event(p_user_id text, p_event_type text, p_title text, p_body text, p_priority integer, p_source text, p_payload jsonb)|jarvis_alpha_owner|plpgsql",
+                        "public.pgaudit_sql_drop()|jarvisbrain|c",
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(query)
+
+    result = porchlight.check_postgres_role_safety(psql=fake_psql)
+
+    assert result.status == "warn"
+    assert result.severity == "medium"
+    assert result.metadata["bootstrap_risk"] == "accepted_contained"
+    assert result.metadata["accepted_exception"] == "postgres_bootstrap_role_superuser"
+    assert result.metadata["security_definer"]["owner_counts"] == {
+        "jarvis_alpha_owner": 1,
+        "jarvisbrain": 1,
+    }
+
+
+def test_postgres_role_safety_fails_when_secdef_owner_split_drifts():
+    def fake_psql(query):
+        if "FROM pg_roles" in query:
+            return porchlight.CommandResult(
+                0,
+                "\n".join(
+                    [
+                        "jarvis_alpha_app|false|false|false|false|false|16388",
+                        "jarvis_alpha_owner|false|false|false|false|false|16390",
+                        "jarvis_alpha_writer|false|false|false|false|false|16389",
+                        "jarvis_pg_breakglass|true|false|true|true|true|24576",
+                        "jarvisbrain|true|false|true|true|true|10",
+                    ]
+                ),
+                "",
+            )
+        if "FROM pg_proc" in query:
+            return porchlight.CommandResult(
+                0,
+                "public.record_buddy_event(p_user_id text)|jarvisbrain|plpgsql",
+                "",
+            )
+        raise AssertionError(query)
+
+    result = porchlight.check_postgres_role_safety(psql=fake_psql)
+
+    assert result.status == "fail"
+    assert result.severity == "critical"
+    assert "unexpected SECURITY DEFINER owner" in result.detail
+
+
 def test_postgres_role_safety_fails_when_runtime_role_bypasses_rls():
     def fake_psql(query):
         return porchlight.CommandResult(
@@ -461,8 +608,8 @@ def test_postgres_role_safety_fails_when_runtime_role_bypasses_rls():
             "\n".join(
                 [
                     "breakglass_admin|true|false|true|true|true|24576",
-                    "jarvis_alpha_app|false|false|false|false|false",
-                    "jarvis_alpha_writer|false|true|false|false|false",
+                    "jarvis_alpha_app|false|false|false|false|false|16388",
+                    "jarvis_alpha_writer|false|true|false|false|false|16389",
                     "jarvisbrain|false|false|true|true|true|10",
                 ]
             ),
@@ -478,11 +625,18 @@ def test_postgres_role_safety_fails_when_runtime_role_bypasses_rls():
 
 def test_postgres_role_safety_warns_for_bootstrap_exception_with_breakglass():
     def fake_psql(query):
+        if "FROM pg_proc" in query:
+            return porchlight.CommandResult(
+                0,
+                "public.record_buddy_event(p_user_id text)|jarvis_alpha_owner|plpgsql",
+                "",
+            )
         return porchlight.CommandResult(
             0,
             "\n".join(
                 [
                     "jarvis_alpha_app|false|false|false|false|false|16388",
+                    "jarvis_alpha_owner|false|false|false|false|false|16390",
                     "jarvis_alpha_writer|false|false|false|false|false|16389",
                     "jarvis_pg_breakglass|true|false|true|true|true|24576",
                     "jarvisbrain|true|false|true|true|true|10",
@@ -496,8 +650,9 @@ def test_postgres_role_safety_warns_for_bootstrap_exception_with_breakglass():
     assert result.status == "warn"
     assert result.severity == "medium"
     assert result.metadata["accepted_exception"] == "postgres_bootstrap_role_superuser"
+    assert result.metadata["bootstrap_risk"] == "accepted_contained"
     assert result.metadata["superusers"] == ["jarvis_pg_breakglass", "jarvisbrain"]
-    assert "bootstrap role oid 10" in result.detail
+    assert "bootstrap superuser" in result.summary
 
 
 def test_postgres_role_safety_fails_for_non_bootstrap_jarvisbrain_superuser():
@@ -1123,6 +1278,85 @@ def test_dependency_cve_scan_warns_when_scanner_missing(tmp_path, monkeypatch):
 
     assert result.status == "warn"
     assert "could not run" in result.summary
+
+
+def test_financial_security_posture_warns_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("JARVIS_FIN_SECURITY_POSTURE_TOKEN", raising=False)
+    monkeypatch.delenv("FINANCIAL_SECURITY_POSTURE_TOKEN", raising=False)
+
+    result = porchlight.check_financial_security_posture(url="")
+
+    assert result.status == "warn"
+    assert result.severity == "medium"
+    assert result.metadata["configured"] is False
+
+
+def test_financial_security_posture_passes_sanitized_response(monkeypatch):
+    monkeypatch.setenv("JARVIS_FIN_SECURITY_POSTURE_TOKEN", "3" * 64)
+
+    def fake_command(args, **kwargs):
+        assert "Authorization: Bearer " + ("3" * 64) in args
+        return porchlight.CommandResult(
+            0,
+            porchlight.json.dumps(
+                {
+                    "service": "jarvis-financial",
+                    "status": "pass",
+                    "counts": {"pass": 7, "warn": 0, "fail": 0},
+                    "controls": [
+                        {
+                            "id": "db.rls_coverage",
+                            "status": "pass",
+                            "severity": "info",
+                            "summary": "All public tables protected.",
+                            "metadata": {"secret": "must-not-copy"},
+                        }
+                    ],
+                }
+            )
+            + "\n200",
+            "",
+        )
+
+    result = porchlight.check_financial_security_posture(
+        url="https://financial.example.test/monitor/security-posture",
+        command=fake_command,
+    )
+
+    assert result.status == "pass"
+    assert result.detail == "7 pass, 0 warn, 0 fail"
+    assert result.metadata["controls"] == [
+        {"id": "db.rls_coverage", "status": "pass", "severity": "info"}
+    ]
+    assert "must-not-copy" not in porchlight.json.dumps(result.metadata)
+
+
+def test_financial_security_posture_fails_on_remote_fail(monkeypatch):
+    monkeypatch.setenv("JARVIS_FIN_SECURITY_POSTURE_TOKEN", "3" * 64)
+
+    def fake_command(args, **kwargs):
+        return porchlight.CommandResult(
+            0,
+            porchlight.json.dumps(
+                {
+                    "service": "jarvis-financial",
+                    "status": "fail",
+                    "counts": {"pass": 5, "warn": 1, "fail": 1},
+                    "controls": [],
+                }
+            )
+            + "\n200",
+            "",
+        )
+
+    result = porchlight.check_financial_security_posture(
+        url="https://financial.example.test/monitor/security-posture",
+        command=fake_command,
+    )
+
+    assert result.status == "fail"
+    assert result.severity == "high"
+    assert result.detail == "5 pass, 1 warn, 1 fail"
 
 
 def test_github_branch_protection_drift_passes(monkeypatch):
