@@ -21,6 +21,7 @@ from brain.agents.privacy_scrub.crypto import (
 )
 from brain.agents.privacy_scrub.policy import ActionType, ApprovalTier, evaluate_tier
 from brain.agents.privacy_scrub.state import (
+    StoredApprovedPrivacyAction,
     StoredCaseDraft,
     StoredCaseDraftListItem,
     StoredDraftAction,
@@ -32,6 +33,7 @@ from brain.agents.privacy_scrub.state import (
     get_target,
     insert_case_draft,
     insert_draft_action,
+    list_approved_privacy_actions as list_stored_approved_privacy_actions,
     list_case_drafts,
     list_draft_actions_for_case,
     list_identity_tuples,
@@ -443,6 +445,15 @@ async def record_privacy_approval_decision(
             actor=actor,
         )
     return actions
+
+
+async def list_approved_privacy_actions(
+    conn: asyncpg.Connection,
+    *,
+    limit: int = 25,
+) -> tuple[StoredApprovedPrivacyAction, ...]:
+    actions = await list_stored_approved_privacy_actions(conn, limit=limit)
+    return tuple(actions)
 
 
 def _inbox_item(row: StoredCaseDraftListItem) -> CaseDraftInboxItem:

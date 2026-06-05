@@ -2,10 +2,12 @@ import { motion } from "framer-motion";
 import { Fingerprint } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { PrivacyCaseDraftPanel } from "../components/privacy/PrivacyCaseDraftPanel";
+import { PrivacyApprovedActionsPanel } from "../components/privacy/PrivacyApprovedActionsPanel";
 import { PrivacyDraftInboxPanel } from "../components/privacy/PrivacyDraftInboxPanel";
 import { PrivacyTargetRegistry } from "../components/privacy/PrivacyTargetRegistry";
 import { PrivacyResultPanel } from "../components/privacy/PrivacyResultPanel";
 import { SubjectIntakeForm } from "../components/privacy/SubjectIntakeForm";
+import { usePrivacyApprovedActions } from "../hooks/usePrivacyApprovedActions";
 import { usePrivacyCaseDraft } from "../hooks/usePrivacyCaseDraft";
 import { usePrivacyDraftInbox } from "../hooks/usePrivacyDraftInbox";
 import { usePrivacyIntake } from "../hooks/usePrivacyIntake";
@@ -37,6 +39,7 @@ export default function Privacy() {
   const subjectId = intake.createdSubject?.subject_id ?? null;
   const draftState = usePrivacyCaseDraft(subjectId, targets.selectedIds);
   const draftInbox = usePrivacyDraftInbox(searchParams.get("case"));
+  const approvedActions = usePrivacyApprovedActions();
   const isDark = theme === "dark";
   const border = isDark ? "border-white/10" : "border-[#141414]/10";
   const panel = isDark ? "bg-white/5" : "bg-[#141414]/5";
@@ -66,7 +69,7 @@ export default function Privacy() {
             <p
               className={`mt-1 text-[10px] font-mono uppercase tracking-widest ${muted}`}
             >
-              P2-G - disposition handoff
+              P3-C - approved action queue
             </p>
           </div>
         </div>
@@ -120,6 +123,16 @@ export default function Privacy() {
           <PrivacyDraftInboxPanel
             inbox={draftInbox}
             approvalQueueId={approvalQueueId}
+            border={border}
+            panel={panel}
+            muted={muted}
+            isDark={isDark}
+            okClass={tone(isDark, "ok")}
+            warnClass={tone(isDark, "warn")}
+            errorClass={tone(isDark, "error")}
+          />
+          <PrivacyApprovedActionsPanel
+            actionsState={approvedActions}
             border={border}
             panel={panel}
             muted={muted}

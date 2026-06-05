@@ -29,6 +29,7 @@ from brain.agents.privacy_scrub.drafts import (
     PrivacyDraftTargetNotFound,
     RetrievedCaseDraft,
     TargetReviewPacket,
+    list_approved_privacy_actions,
 )
 from brain.agents.privacy_scrub.identity import TupleType
 from brain.agents.privacy_scrub.repository import (
@@ -37,6 +38,7 @@ from brain.agents.privacy_scrub.repository import (
     SubjectIntake,
 )
 from brain.agents.privacy_scrub.state import (
+    StoredApprovedPrivacyAction,
     get_subject,
     insert_identity_tuple,
     list_targets,
@@ -196,6 +198,30 @@ class CaseDraftDispositionOut(BaseModel):
     queue_id: UUID | None = None
 
 
+class ApprovedPrivacyActionOut(BaseModel):
+    action_id: UUID
+    case_id: UUID
+    subject_id: UUID
+    target_id: str
+    target_name: str
+    category: str
+    jurisdiction: str
+    opt_out_method: str
+    approval_tier: str
+    status: str
+    approval_queue_id: UUID | None
+    case_status: str
+    approved_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    avg_response_days: int | None = None
+
+
+class ApprovedPrivacyActionsOut(BaseModel):
+    count: int
+    actions: list[ApprovedPrivacyActionOut]
+
+
 @router.post("/subjects", response_model=SubjectCreateOut)
 async def create_privacy_subject(
     request: Request,
@@ -345,6 +371,28 @@ async def list_privacy_case_drafts(
     return CaseDraftListOut(
         count=len(drafts),
         drafts=[_case_draft_summary_out(item) for item in drafts],
+    )
+
+
+@router.get("/actions/approved", response_model=ApprovedPrivacyActionsOut)
+async def list_privacy_approved_actions(
+    request: Request,
+    limit: int = 25,
+    _: str = Depends(require_auth),
+) -> ApprovedPrivacyActionsOut:
+    _assert_adult_or_admin_actor(request)
+    if limit < 1 or limit > 50:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy_approved_action_limit_invalid",
+        )
+
+    async with rls_connection(request) as conn:
+        actions = await list_approved_privacy_actions(conn, limit=limit)
+
+    return ApprovedPrivacyActionsOut(
+        count=len(actions),
+        actions=[_approved_privacy_action_out(action) for action in actions],
     )
 
 
@@ -562,6 +610,29 @@ def _case_draft_summary_out(item: CaseDraftInboxItem) -> CaseDraftSummaryOut:
         payload_key_version=draft.payload_key_version,
         created_at=draft.created_at,
         updated_at=draft.updated_at,
+    )
+
+
+def _approved_privacy_action_out(
+    action: StoredApprovedPrivacyAction,
+) -> ApprovedPrivacyActionOut:
+    return ApprovedPrivacyActionOut(
+        action_id=action.id,
+        case_id=action.case_draft_id,
+        subject_id=action.subject_id,
+        target_id=action.target_id,
+        target_name=action.target_name,
+        category=action.target_category,
+        jurisdiction=action.target_jurisdiction,
+        opt_out_method=action.target_opt_out_method,
+        approval_tier=action.approval_tier,
+        status=action.status,
+        approval_queue_id=action.approval_queue_id,
+        case_status=action.case_status,
+        approved_at=action.approved_at,
+        created_at=action.created_at,
+        updated_at=action.updated_at,
+        avg_response_days=action.target_avg_response_days,
     )
 
 
