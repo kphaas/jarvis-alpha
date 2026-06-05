@@ -248,6 +248,12 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # Manual run is still guarded in-route by agent allowlist, active/enabled
     # status, T1/T2 risk tier, and explicit metadata.manual_run_enabled.
     "POST /v1/agents/{agent_id}/run": ["write", "security_write"],
+    # --- Privacy scrub intake — encrypted local-only writes, no outbound action ---
+    "POST /v1/privacy/subjects": ["write", "security_write"],
+    "POST /v1/privacy/subjects/{subject_id}/identity-tuples": [
+        "write",
+        "security_write",
+    ],
     # --- ChatOps command ingress — read-only, token-authenticated by route ---
     "POST /v1/chatops/mattermost/command": ["read", "security_read"],
     # --- Financial approval bridge — route-local RS256 service auth ---
