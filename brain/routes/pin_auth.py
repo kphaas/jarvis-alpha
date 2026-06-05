@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from jose import jwt
 from pydantic import BaseModel
 
-from brain.db.pool import get_pool
+from brain.db.rls import platform_admin_connection
 from brain.middleware.scopes import check_scopes
 from brain.services.family_pin_sync import FamilyPinSyncError, sync_family_pin_hash
 from jarvis_common.logging_config import get_logger
@@ -121,10 +121,19 @@ _PROFILE_SELECT_SQL = """
 
 @router.post("/pin")
 async def authenticate_pin(req: PinRequest):
-    pool = get_pool()
-    async with pool.acquire() as conn:
+    async with platform_admin_connection(source="http", audit_actor="auth_pin") as conn:
         profile = await conn.fetchrow(
             "SELECT * FROM alpha_profiles WHERE id = $1 AND active = true",
+            req.profile_id,
+        )
+        workspace_row = await conn.fetchrow(
+            """
+            SELECT workspace_id
+            FROM alpha_workspace_users
+            WHERE user_id = $1
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
             req.profile_id,
         )
 
@@ -157,18 +166,6 @@ async def authenticate_pin(req: PinRequest):
             logger.warning("AUTH_FAIL reason=bad_pin profile=%s", req.profile_id)
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    # Look up the user's primary workspace (single workspace today, defer multi-workspace)
-    async with pool.acquire() as conn:
-        workspace_row = await conn.fetchrow(
-            """
-            SELECT workspace_id
-            FROM alpha_workspace_users
-            WHERE user_id = $1
-            ORDER BY created_at ASC
-            LIMIT 1
-            """,
-            req.profile_id,
-        )
     workspace_id = workspace_row["workspace_id"] if workspace_row else None
 
     key_path = os.environ.get("ALPHA_JWT_PRIVATE_KEY", _DEFAULT_KEY)
@@ -206,8 +203,9 @@ async def authenticate_pin(req: PinRequest):
 
 @router.get("/login-profiles", response_model=list[LoginProfileResponse])
 async def list_login_profiles():
-    pool = get_pool()
-    async with pool.acquire() as conn:
+    async with platform_admin_connection(
+        source="http", audit_actor="auth_login_profiles"
+    ) as conn:
         rows = await conn.fetch(_PROFILE_SELECT_SQL)
 
     return [
@@ -226,8 +224,9 @@ async def list_login_profiles():
 async def list_profiles(request: Request):
     check_scopes(request, "admin")
 
-    pool = get_pool()
-    async with pool.acquire() as conn:
+    async with platform_admin_connection(
+        source="http", audit_actor="auth_profiles_admin"
+    ) as conn:
         rows = await conn.fetch(_PROFILE_SELECT_SQL)
 
     return [
@@ -249,23 +248,23 @@ async def set_child_pin(request: Request, req: SetChildPinRequest):
     _validate_new_pin(req.new_pin)
     pin_hash = _hash_pin(req.new_pin)
 
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            profile = await conn.fetchrow(
-                "SELECT id, role FROM alpha_profiles WHERE id = $1", req.profile_id
+    async with platform_admin_connection(
+        source="http", audit_actor="auth_set_child_pin"
+    ) as conn:
+        profile = await conn.fetchrow(
+            "SELECT id, role FROM alpha_profiles WHERE id = $1", req.profile_id
+        )
+        if not profile or profile["role"] != "child":
+            raise HTTPException(
+                status_code=400, detail="Profile not found or not a child profile"
             )
-            if not profile or profile["role"] != "child":
-                raise HTTPException(
-                    status_code=400, detail="Profile not found or not a child profile"
-                )
 
-            await conn.execute(
-                "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = $2",
-                pin_hash,
-                req.profile_id,
-            )
-            await _sync_family_pin_or_409(req.profile_id, pin_hash)
+        await conn.execute(
+            "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = $2",
+            pin_hash,
+            req.profile_id,
+        )
+        await _sync_family_pin_or_409(req.profile_id, pin_hash)
     logger.info(
         "CHILD_PIN_SET profile=%s by=%s",
         req.profile_id,
@@ -286,22 +285,22 @@ async def set_profile_pin(request: Request, req: SetProfilePinRequest):
         )
     pin_hash = _hash_pin(req.new_pin)
 
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            profile = await conn.fetchrow(
-                "SELECT id, role FROM alpha_profiles WHERE id = $1 AND active = true",
-                req.profile_id,
-            )
-            if not profile:
-                raise HTTPException(status_code=404, detail="Profile not found")
+    async with platform_admin_connection(
+        source="http", audit_actor="auth_set_profile_pin"
+    ) as conn:
+        profile = await conn.fetchrow(
+            "SELECT id, role FROM alpha_profiles WHERE id = $1 AND active = true",
+            req.profile_id,
+        )
+        if not profile:
+            raise HTTPException(status_code=404, detail="Profile not found")
 
-            await conn.execute(
-                "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = $2",
-                pin_hash,
-                req.profile_id,
-            )
-            await _sync_family_pin_or_409(req.profile_id, pin_hash)
+        await conn.execute(
+            "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = $2",
+            pin_hash,
+            req.profile_id,
+        )
+        await _sync_family_pin_or_409(req.profile_id, pin_hash)
 
     logger.info(
         "PROFILE_PIN_SET profile=%s role=%s by=%s",
@@ -320,8 +319,9 @@ class SetAdminPinRequest(BaseModel):
 @router.post("/set-admin-pin")
 async def set_admin_pin(request: Request, req: SetAdminPinRequest):
     """Allow admin to update their own PIN. Requires valid current PIN."""
-    pool = get_pool()
-    async with pool.acquire() as conn:
+    async with platform_admin_connection(
+        source="http", audit_actor="auth_set_admin_pin"
+    ) as conn:
         profile = await conn.fetchrow(
             "SELECT * FROM alpha_profiles WHERE id = 'ken' AND active = true"
         )
@@ -351,13 +351,14 @@ async def set_admin_pin(request: Request, req: SetAdminPinRequest):
     _validate_new_pin(req.new_pin)
     pin_hash = _hash_pin(req.new_pin)
 
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.execute(
-                "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = 'ken'",
-                pin_hash,
-            )
-            await _sync_family_pin_or_409("ken", pin_hash)
+    async with platform_admin_connection(
+        source="http", audit_actor="auth_set_admin_pin"
+    ) as conn:
+        await conn.execute(
+            "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = 'ken'",
+            pin_hash,
+        )
+        await _sync_family_pin_or_409("ken", pin_hash)
 
     logger.info("SET_ADMIN_PIN_SUCCESS profile=ken")
     return {"status": "ok", "profile_id": "ken"}
