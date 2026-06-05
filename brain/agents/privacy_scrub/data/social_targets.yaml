@@ -1,0 +1,11 @@
+# =============================================================================
+# Social platform targets — populated in P2.
+#
+# Reserved IDs (do not collide with future entries):
+#   facebook, instagram, twitter_x, tiktok, reddit, linkedin,
+#   pinterest, snapchat, youtube, threads, mastodon, bluesky
+#
+# Each entry follows the schema documented at the top of brokers.yaml.
+# =============================================================================
+
+targets: []

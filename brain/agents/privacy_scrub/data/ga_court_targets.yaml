@@ -1,0 +1,55 @@
+# =============================================================================
+# Georgia county superior court records.
+#
+# Public records are NOT erasable by opt-out. Sealing/access limitation is a
+# court process under Georgia Uniform Superior Court Rule 21 / 21.1 / 21.2 and
+# protected-identifier redaction under O.C.G.A. § 9-11-7.1. Attorney
+# consultation is strongly recommended. The privacy-scrub agent DRAFTS and
+# tracks materials; you or counsel FILE them.
+#
+# Default values for every entry here:
+#   category = public_record
+#   opt_out_method = court_motion
+#   supports_minors = false   (juvenile records have separate procedures)
+#
+# Expand with additional GA counties as needed.
+# =============================================================================
+
+targets:
+  - id: ga_fulton_superior
+    name: Fulton County Superior Court (GA)
+    category: public_record
+    jurisdiction: US_GA
+    opt_out_method: court_motion
+    supports_minors: false
+    notes: |
+      Divorce records are public by default. Evaluate Rule 21 access limitation
+      and 9-11-7.1 protected-identifier redaction with counsel.
+
+  - id: ga_dekalb_superior
+    name: DeKalb County Superior Court (GA)
+    category: public_record
+    jurisdiction: US_GA
+    opt_out_method: court_motion
+    supports_minors: false
+
+  - id: ga_gwinnett_superior
+    name: Gwinnett County Superior Court (GA)
+    category: public_record
+    jurisdiction: US_GA
+    opt_out_method: court_motion
+    supports_minors: false
+
+  - id: ga_cobb_superior
+    name: Cobb County Superior Court (GA)
+    category: public_record
+    jurisdiction: US_GA
+    opt_out_method: court_motion
+    supports_minors: false
+
+  - id: ga_forsyth_superior
+    name: Forsyth County Superior Court (GA)
+    category: public_record
+    jurisdiction: US_GA
+    opt_out_method: court_motion
+    supports_minors: false
