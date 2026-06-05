@@ -103,7 +103,9 @@ def load_spark_bluebubbles_policy(
     )
     blocked_operations = _list_items(connector, "blocked_operations")
     missing_blockers = [
-        operation for operation in required_blocked if operation not in blocked_operations
+        operation
+        for operation in required_blocked
+        if operation not in blocked_operations
     ]
 
     failures: list[str] = []
