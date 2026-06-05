@@ -157,6 +157,10 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/school-email/gmail/health/check": ["write", "external_call"],
     "POST /v1/school-email/candidates/{candidate_id}/status": ["write"],
     "POST /v1/school-email/actions/{candidate_id}/status": ["write"],
+    # --- Spark iMessage — metadata-only BlueBubbles read surface ---
+    "GET /v1/spark/imessage/health": ["read", "security_read"],
+    "GET /v1/spark/imessage/counts": ["read", "security_read"],
+    "GET /v1/spark/imessage/recent-chats/metadata": ["read", "security_read"],
     # --- MCP registry — T1 read, write T2 ---
     "GET /v1/mcp/registry": ["read"],
     "POST /v1/mcp/registry": ["write"],
