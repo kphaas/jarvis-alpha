@@ -75,6 +75,14 @@ NODE_CONFIG = {
         "private_key_path": "~/pki/services/sandbox_private.pem",
         "secrets_file": "~/.secrets",
     },
+    "forge_sentinel": {
+        "iss": "forge",
+        "actor_type": "service",
+        "secret_key": "ALPHA_SENTINEL_SERVICE_TOKEN",
+        "private_key_path": "~/jarvis/pki/services/forge_private.pem",
+        "secrets_file": "~/.secrets",
+        "scopes": ["security_write"],
+    },
     "endpoint": {
         "iss": "endpoint",
         "actor_type": "service",
@@ -98,6 +106,7 @@ SERVICE_ROTATION_NAMES = {
     "gateway": "ALPHA_SERVICE_TOKEN_GATEWAY",
     "endpoint": "ALPHA_SERVICE_TOKEN_ENDPOINT",
     "sandbox": "ALPHA_SERVICE_TOKEN_SANDBOX",
+    "forge_sentinel": "ALPHA_SENTINEL_SERVICE_TOKEN",
 }
 SERVICE_ROTATION_LEDGER_NODES = {
     "brain": "brain",
@@ -105,6 +114,7 @@ SERVICE_ROTATION_LEDGER_NODES = {
     "gateway": "gateway",
     "endpoint": "endpoint",
     "sandbox": "sandbox",
+    "forge_sentinel": "sandbox",
 }
 
 
@@ -482,7 +492,14 @@ def main() -> int:
     parser.add_argument(
         "--node",
         required=True,
-        choices=("brain", "brain_service", "gateway", "sandbox", "endpoint"),
+        choices=(
+            "brain",
+            "brain_service",
+            "gateway",
+            "sandbox",
+            "endpoint",
+            "forge_sentinel",
+        ),
         help="Target node",
     )
     parser.add_argument(
@@ -511,7 +528,7 @@ def main() -> int:
     secrets_file = cfg["secrets_file"]
     private_key_path = cfg["private_key_path"]
 
-    scopes = DEFAULT_SCOPES.get(iss)
+    scopes = list(cfg.get("scopes") or DEFAULT_SCOPES.get(iss) or [])
     if not scopes:
         log_json("error", f"No DEFAULT_SCOPES for iss={iss}", node)
         return 1
@@ -532,7 +549,7 @@ def main() -> int:
 
     old_token: str | None = None
     token_hash: str | None = None
-    if node in ("gateway", "sandbox"):
+    if node in ("gateway", "sandbox", "forge_sentinel"):
         old_token = read_secret_value(secrets_file, secret_key)
 
     try:
