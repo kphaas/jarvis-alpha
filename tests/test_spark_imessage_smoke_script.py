@@ -18,6 +18,8 @@ def test_spark_imessage_smoke_script_avoids_secret_tracing() -> None:
 def test_spark_imessage_smoke_script_checks_read_only_contract() -> None:
     text = SCRIPT.read_text(encoding="utf-8")
 
+    assert ".venv/bin/python" in text
+    assert "SPARK_SMOKE_PYTHON" in text
     assert "/v1/spark/imessage/health" in text
     assert "/v1/spark/imessage/counts" in text
     assert "/v1/spark/imessage/recent-chats/metadata" in text
