@@ -207,6 +207,9 @@ export function WardenTab({
                   <div className="min-w-0">
                     <p className="text-sm font-bold">{control.title}</p>
                     <p className={`mt-1 text-sm ${fg}`}>{control.summary}</p>
+                    {control.detail && (
+                      <p className={`mt-2 text-xs font-mono ${muted}`}>{control.detail}</p>
+                    )}
                     <p className={`mt-2 text-xs font-mono ${muted}`}>
                       {control.category} · owner {control.owner_agent.replaceAll('_', ' ')} · {control.earned}/{control.weight} pts
                     </p>

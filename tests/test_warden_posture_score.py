@@ -24,6 +24,19 @@ def test_warden_posture_score_is_weighted_and_industry_aligned():
             "report": {
                 "status": "warn",
                 "counts": {"checks": 10, "passing": 8},
+                "checks": [
+                    {
+                        "name": "backup_recovery",
+                        "status": "pass",
+                        "summary": "Latest restore drill passed 1.0h ago.",
+                        "metadata": {
+                            "age_hours": 1.0,
+                            "run_id": "2026-06-05_170000",
+                            "source_dump": "jarvis_alpha.dump.gpg",
+                            "notification": {"event": "mm_notify_sent"},
+                        },
+                    }
+                ],
             }
         },
         unifi_health={
@@ -42,12 +55,14 @@ def test_warden_posture_score_is_weighted_and_industry_aligned():
     assert result["model"] == "warden_alpha_posture_v1"
     assert result["basis"] == "industry_aligned"
     assert result["not_certification"] is True
-    assert result["total"] == 100
+    assert result["total"] == 108
     assert 0 < result["score"] < 100
     controls = {control["id"]: control for control in result["controls"]}
     assert controls["tls.service_certs"]["owner_agent"] == "sweep"
     assert controls["tls.unifi_cert_pin"]["status"] == "pass"
     assert controls["secrets.key_rotation"]["status"] == "warn"
+    assert controls["recovery.restore_drill"]["status"] == "pass"
+    assert "notification mm_notify_sent" in controls["recovery.restore_drill"]["detail"]
     assert controls["monitoring.warden_crew"]["status"] == "warn"
     assert controls["monitoring.honeypot"]["owner_agent"] == "tripwire"
     assert result["top_gaps"][0]["status"] != "pass"
@@ -75,7 +90,13 @@ def test_warden_posture_score_uses_porchlight_rls_when_inventory_unavailable():
                         "status": "pass",
                         "summary": "RLS and FORCE RLS are enabled on 62 public tables.",
                         "metadata": {"total_tables": 62},
-                    }
+                    },
+                    {
+                        "name": "backup_recovery",
+                        "status": "fail",
+                        "summary": "Latest restore drill is stale.",
+                        "metadata": {"age_hours": 300},
+                    },
                 ],
             }
         },
@@ -94,3 +115,4 @@ def test_warden_posture_score_uses_porchlight_rls_when_inventory_unavailable():
     assert controls["data.rls_force"]["earned"] == 14
     assert controls["data.rls_force"]["summary"] == "62/62 public tables protected"
     assert "Direct RLS inventory unavailable" in controls["data.rls_force"]["detail"]
+    assert controls["recovery.restore_drill"]["status"] == "fail"

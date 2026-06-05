@@ -43,8 +43,16 @@ function PorchlightProof({ check, muted }: { check: PorchlightCheck; muted: stri
   const metadata = asRecord(check.metadata)
   const tokenRecent = check.name === 'token_rotation_logs' ? proofEntries(metadata.recent) : []
   const loadedByNode = check.name === 'security_launchagents' ? proofEntries(metadata.loaded_by_node) : []
+  const backupRecovery = check.name === 'backup_recovery'
+    ? proofEntries({
+      run: metadata.run_id,
+      dump: metadata.source_dump,
+      age_hours: metadata.age_hours,
+      notification: asRecord(metadata.notification).event,
+    })
+    : []
   const skippedRemote = proofEntries(metadata.skipped_remote)
-  const proof = tokenRecent.length ? tokenRecent : loadedByNode
+  const proof = tokenRecent.length ? tokenRecent : loadedByNode.length ? loadedByNode : backupRecovery
 
   if (!proof.length && !skippedRemote.length) return null
 

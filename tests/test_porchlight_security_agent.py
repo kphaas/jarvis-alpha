@@ -1461,6 +1461,103 @@ def test_notification_filter_suppresses_routine_rotation_warning():
     assert porchlight.has_notifiable_security_condition(report) is False
 
 
+def test_backup_recovery_passes_with_recent_restore_and_notification(monkeypatch):
+    monkeypatch.setattr(porchlight, "remote_ssh_probe_enabled", lambda: True)
+    monkeypatch.setattr(porchlight, "current_node_name", lambda: "brain")
+
+    def fake_ssh(target, command):
+        assert target == "jarvissand@example"
+        assert "restore_drill_*.json" in command
+        return porchlight.CommandResult(
+            0,
+            porchlight.json.dumps(
+                {
+                    "path": "/Users/jarvissand/jarvis/logs/restore_drill.json",
+                    "report_mtime": "2026-06-05T17:00:00+00:00",
+                    "run_id": "2026-06-05_170000",
+                    "status": "pass",
+                    "source_dump": "jarvis_alpha.dump.gpg",
+                    "restore_rc": 1,
+                    "restore_err_count": 2,
+                    "pgaudit_err_count": 2,
+                    "table_count": 77,
+                    "ref_table_count": 77,
+                    "notification": {"event": "mm_notify_sent", "http_code": "200"},
+                }
+            ),
+            "",
+        )
+
+    result = porchlight.check_backup_recovery(
+        node_map={"sandbox": {"ssh_target": "jarvissand@example"}},
+        ssh=fake_ssh,
+        now=porchlight.datetime(2026, 6, 5, 18, 0, tzinfo=porchlight.UTC),
+    )
+
+    assert result.status == "pass"
+    assert result.metadata["age_hours"] == 1.0
+    assert result.metadata["notification"]["event"] == "mm_notify_sent"
+
+
+def test_backup_recovery_warns_when_notification_proof_missing(monkeypatch):
+    monkeypatch.setattr(porchlight, "remote_ssh_probe_enabled", lambda: True)
+    monkeypatch.setattr(porchlight, "current_node_name", lambda: "brain")
+
+    def fake_ssh(_target, _command):
+        return porchlight.CommandResult(
+            0,
+            porchlight.json.dumps(
+                {
+                    "report_mtime": "2026-06-05T17:00:00+00:00",
+                    "run_id": "2026-06-05_170000",
+                    "status": "pass",
+                    "source_dump": "jarvis_alpha.dump.gpg",
+                    "notification": {"event": "unknown"},
+                }
+            ),
+            "",
+        )
+
+    result = porchlight.check_backup_recovery(
+        node_map={"sandbox": {"ssh_target": "jarvissand@example"}},
+        ssh=fake_ssh,
+        now=porchlight.datetime(2026, 6, 5, 18, 0, tzinfo=porchlight.UTC),
+    )
+
+    assert result.status == "warn"
+    assert "notification proof" in result.summary
+
+
+def test_backup_recovery_fails_when_latest_restore_is_stale(monkeypatch):
+    monkeypatch.setattr(porchlight, "remote_ssh_probe_enabled", lambda: True)
+    monkeypatch.setattr(porchlight, "current_node_name", lambda: "brain")
+
+    def fake_ssh(_target, _command):
+        return porchlight.CommandResult(
+            0,
+            porchlight.json.dumps(
+                {
+                    "report_mtime": "2026-05-20T17:00:00+00:00",
+                    "run_id": "2026-05-20_170000",
+                    "status": "pass",
+                    "source_dump": "jarvis_alpha.dump.gpg",
+                    "notification": {"event": "mm_notify_sent", "http_code": "200"},
+                }
+            ),
+            "",
+        )
+
+    result = porchlight.check_backup_recovery(
+        node_map={"sandbox": {"ssh_target": "jarvissand@example"}},
+        ssh=fake_ssh,
+        now=porchlight.datetime(2026, 6, 5, 18, 0, tzinfo=porchlight.UTC),
+        max_age_hours=192,
+    )
+
+    assert result.status == "fail"
+    assert result.severity == "high"
+
+
 def test_notification_filter_suppresses_accepted_bootstrap_role_warning():
     report = porchlight.build_report(
         [
