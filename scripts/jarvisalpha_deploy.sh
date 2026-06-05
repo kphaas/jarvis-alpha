@@ -261,7 +261,7 @@ printf '  Log:     %s\n' "$LOG_FILE"
 if [[ -d "$REPO_DIR/ui/src" ]]; then
   phase_header "UI BUILD"
   ui_start=$SECONDS
-  ui_output=$( (cd "$REPO_DIR/ui" && npm run build --silent) 2>&1 )
+  ui_output=$(bash "$REPO_DIR/scripts/build_alpha_ui.sh" 2>&1)
   ui_ec=$?
   if [ $ui_ec -ne 0 ]; then
     step_fail "ui build" "vite failed"

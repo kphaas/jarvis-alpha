@@ -29,8 +29,6 @@ const qc = new QueryClient({
   defaultOptions: { queries: { staleTime: 15 * 60 * 1000, retry: 1 } },
 })
 
-const brainToken = (import.meta.env.VITE_BRAIN_TOKEN as string) || ''
-
 export default function App() {
   const { theme } = useAppStore()
   return (
@@ -47,8 +45,8 @@ export default function App() {
                   <Route path="/space/:slug" element={<Space />} />
                   <Route path="/briefing" element={<Briefing />} />
                   <Route path="/briefings/:batchRunId" element={<BriefingDetail />} />
-                  <Route path="/mesh" element={<Mesh theme={theme} token={brainToken} />} />
-                  <Route path="/health" element={<Health theme={theme} token={brainToken} />} />
+                  <Route path="/mesh" element={<Mesh theme={theme} />} />
+                  <Route path="/health" element={<Health theme={theme} />} />
                   <Route path="/errors" element={<Errors theme={theme} />} />
                   <Route path="/agents" element={<Agents />} />
                   <Route path="/skills" element={<Skills />} />
