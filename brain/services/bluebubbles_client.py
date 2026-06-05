@@ -1,12 +1,14 @@
-"""Read-only BlueBubbles client for Spark iMessage metadata.
+"""Read-only BlueBubbles client for Spark iMessage data.
 
-This client intentionally exposes only health, counts, and query metadata. It
-does not return chat rows or message bodies. Body access needs a later approval
-path that can prove an explicit thread decision before reading content.
+The default Spark route surface exposes only health, counts, and query
+metadata. Message body reads are available only through the explicit
+approved-thread method so the caller can prove a human approval and runtime
+chat mapping before any content is loaded.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from dataclasses import dataclass
@@ -47,6 +49,7 @@ class SparkBlueBubblesPolicy:
     drafting_mode: str
     thread_default: str
     metadata_only: bool = True
+    approved_message_query_allowed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +85,14 @@ class BlueBubblesRecentChatMetadata:
     data_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class BlueBubblesMessageBody:
+    message_ref_hash: str
+    is_from_me: bool
+    body_text: str
+    created_at: str | None = None
+
+
 def load_spark_bluebubbles_policy(
     vault_root: str | Path | None = None,
 ) -> SparkBlueBubblesPolicy:
@@ -102,6 +113,7 @@ def load_spark_bluebubbles_policy(
         "POST /api/v1/message/multipart",
     )
     blocked_operations = _list_items(connector, "blocked_operations")
+    allowed_operations = _list_items(connector, "allowed_operations")
     missing_blockers = [
         operation
         for operation in required_blocked
@@ -138,6 +150,10 @@ def load_spark_bluebubbles_policy(
         connector_mode=connector_mode,
         drafting_mode=drafting_mode,
         thread_default=thread_default,
+        approved_message_query_allowed=(
+            "POST /api/v1/message/query for approved chat GUIDs only"
+            in allowed_operations
+        ),
     )
 
 
@@ -216,6 +232,59 @@ class BlueBubblesReadOnlyClient:
             limit=_int(metadata.get("limit")),
             data_count=len(data) if isinstance(data, list) else 0,
         )
+
+    async def approved_messages_for_chat(
+        self,
+        *,
+        chat_guid: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[BlueBubblesMessageBody, ...]:
+        """Read message bodies for a caller-verified, approved chat GUID."""
+
+        if not self.policy.approved_message_query_allowed:
+            raise BlueBubblesPolicyError(
+                "approved BlueBubbles message query operation is not allowed"
+            )
+        clean_guid = chat_guid.strip()
+        if not clean_guid:
+            raise BlueBubblesConfigError("approved chat GUID is not configured")
+
+        safe_limit = min(max(limit, 1), 200)
+        payload = await self._request(
+            "POST",
+            "/api/v1/message/query",
+            json_body={
+                "chatGuid": clean_guid,
+                "offset": max(offset, 0),
+                "limit": safe_limit,
+                "sort": "dateCreated",
+                "with": [],
+            },
+        )
+        data = payload.get("data")
+        if not isinstance(data, list):
+            return ()
+
+        messages: list[BlueBubblesMessageBody] = []
+        for index, item in enumerate(data[:safe_limit]):
+            row = _dict(item)
+            body_text = _message_body_text(row)
+            if not body_text:
+                continue
+            messages.append(
+                BlueBubblesMessageBody(
+                    message_ref_hash=_message_ref_hash(row, index),
+                    is_from_me=_message_is_from_me(row),
+                    body_text=body_text,
+                    created_at=_str_or_none(
+                        row.get("dateCreated")
+                        or row.get("date_created")
+                        or row.get("created_at")
+                    ),
+                )
+            )
+        return tuple(messages)
 
     async def _request(
         self,
@@ -356,3 +425,43 @@ def _int(value: Any) -> int:
 
 def _str_or_none(value: Any) -> str | None:
     return str(value) if value is not None else None
+
+
+def _message_body_text(row: dict[str, Any]) -> str:
+    for key in ("text", "message", "body", "attributedBody"):
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    message = _dict(row.get("message"))
+    for key in ("text", "body"):
+        value = message.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
+def _message_is_from_me(row: dict[str, Any]) -> bool:
+    for key in ("isFromMe", "is_from_me", "fromMe", "from_me"):
+        if key in row:
+            return _truthy(row.get(key))
+    return False
+
+
+def _message_ref_hash(row: dict[str, Any], index: int) -> str:
+    raw_ref = (
+        row.get("guid")
+        or row.get("id")
+        or row.get("message_id")
+        or f"message-index:{index}:{_message_body_text(row)}"
+    )
+    return hashlib.sha256(str(raw_ref).encode("utf-8")).hexdigest()
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "y"}
+    return False

@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+import bcrypt
 import pytest
 
 from brain.agents.privacy_scrub import drafts
@@ -28,6 +29,48 @@ def _request() -> SimpleNamespace:
 @asynccontextmanager
 async def _transaction():
     yield
+
+
+@pytest.mark.asyncio
+async def test_unlock_approvals_reads_profile_with_request_rls(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    pin = "121423"
+    pin_hash = bcrypt.hashpw(pin.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    calls = SimpleNamespace(request=None, query=None)
+
+    class FakeConn:
+        async def fetchrow(self, query, *args):
+            calls.query = query
+            return {"pin_hash": pin_hash}
+
+    @asynccontextmanager
+    async def fake_rls_connection(request):
+        calls.request = request
+        yield FakeConn()
+
+    private_key = tmp_path / "jwt_private.pem"
+    private_key.write_text("private", encoding="utf-8")
+
+    monkeypatch.setenv("ALPHA_JWT_PRIVATE_KEY", str(private_key))
+    monkeypatch.setattr(approvals, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(
+        approvals.jwt, "encode", lambda *args, **kwargs: "approval-token"
+    )
+
+    request = _request()
+    response = await approvals.unlock_approvals(
+        approvals.UnlockRequest(pin=pin),
+        request,
+    )
+
+    assert calls.request is request
+    assert "alpha_profiles" in calls.query
+    assert response == {
+        "approval_token": "approval-token",
+        "expires_in": 300,
+    }
 
 
 @pytest.mark.asyncio

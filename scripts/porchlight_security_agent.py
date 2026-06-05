@@ -129,7 +129,6 @@ TOKEN_LOG_COMMAND = (
 
 SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 REVIEWED_ROUTE_DB_ACCESS: dict[str, str] = {
-    "approvals.py": "PIN bootstrap reads Ken profile before request RLS exists; decisions use rls_connection/SECDEF.",
     "briefings.py": "Briefing ingestion/read paths are scope-gated service/admin routes; follow-up is to migrate to explicit service RLS context.",
     "chat.py": "Primary chat persistence uses rls_connection; remaining direct access is a legacy compatibility path pending route split.",
     "costs.py": "Cost collection is admin/service-scoped infrastructure data, not child profile content.",

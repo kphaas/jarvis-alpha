@@ -162,6 +162,8 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/spark/imessage/health": ["read", "security_read"],
     "GET /v1/spark/imessage/counts": ["read", "security_read"],
     "GET /v1/spark/imessage/recent-chats/metadata": ["read", "security_read"],
+    # --- Spark drafts — local draft proposal, no external send ---
+    "POST /v1/spark/drafts/imessage": ["write", "security_write"],
     # --- MCP registry — T1 read, write T2 ---
     "GET /v1/mcp/registry": ["read"],
     "POST /v1/mcp/registry": ["write"],
