@@ -101,6 +101,12 @@ def evaluate_tier(
             reason="Court-motion drafts require human legal review.",
         )
 
+    if action == ActionType.DRAFT and subject.is_minor:
+        return TierDecision(
+            tier="T4",
+            reason="Minor subject drafts require adult review before action.",
+        )
+
     if action == ActionType.DRAFT:
         return TierDecision(
             tier="T2",
