@@ -13,8 +13,16 @@ MIGRATION_PATH = (
     / "migrations"
     / "20260605_010000_privacy_scrub_foundations.sql"
 )
+TARGET_CACHE_RLS_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260605_073000_privacy_targets_cache_rls.sql"
+)
 
 MIGRATION_SQL = MIGRATION_PATH.read_text(encoding="utf-8")
+TARGET_CACHE_RLS_SQL = TARGET_CACHE_RLS_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def test_migration_uses_force_rls_on_sensitive_tables():
@@ -27,6 +35,21 @@ def test_migration_uses_force_rls_on_sensitive_tables():
         "alpha_privacy_action_events",
     ):
         assert f"ALTER TABLE public.{table} FORCE ROW LEVEL SECURITY" in MIGRATION_SQL
+
+
+def test_targets_cache_followup_enables_force_rls():
+    assert (
+        "ALTER TABLE public.alpha_privacy_targets_cache ENABLE ROW LEVEL SECURITY"
+        in TARGET_CACHE_RLS_SQL
+    )
+    assert (
+        "ALTER TABLE public.alpha_privacy_targets_cache FORCE ROW LEVEL SECURITY"
+        in TARGET_CACHE_RLS_SQL
+    )
+    assert "alpha_privacy_targets_cache_platform_admin" in TARGET_CACHE_RLS_SQL
+    assert (
+        "current_setting('rls.role', true) = 'platform_admin'" in TARGET_CACHE_RLS_SQL
+    )
 
 
 def test_migration_policies_have_with_check():

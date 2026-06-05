@@ -185,6 +185,7 @@ async def refresh_targets_cache(
     source_label: str = "yaml",
 ) -> int:
     async with conn.transaction():
+        await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
         await conn.execute("DELETE FROM public.alpha_privacy_targets_cache")
         for target in targets:
             await conn.execute(
@@ -248,26 +249,30 @@ async def append_action_event(
 
 
 async def count_targets(conn: asyncpg.Connection) -> int:
-    return await conn.fetchval(
-        "SELECT COUNT(*) FROM public.alpha_privacy_targets_cache"
-    )
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
+        return await conn.fetchval(
+            "SELECT COUNT(*) FROM public.alpha_privacy_targets_cache"
+        )
 
 
 async def get_target(
     conn: asyncpg.Connection,
     target_id: str,
 ) -> dict[str, object] | None:
-    row = await conn.fetchrow(
-        """
-        SELECT id, name, category, jurisdiction, opt_out_method,
-               opt_out_url, contact_email, supports_minors,
-               requires_sensitive_payload, requires_identity_document,
-               avg_response_days, last_verified, notes, yaml_source
-        FROM public.alpha_privacy_targets_cache
-        WHERE id = $1
-        """,
-        target_id,
-    )
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('rls.role', 'platform_admin', true)")
+        row = await conn.fetchrow(
+            """
+            SELECT id, name, category, jurisdiction, opt_out_method,
+                   opt_out_url, contact_email, supports_minors,
+                   requires_sensitive_payload, requires_identity_document,
+                   avg_response_days, last_verified, notes, yaml_source
+            FROM public.alpha_privacy_targets_cache
+            WHERE id = $1
+            """,
+            target_id,
+        )
     return dict(row) if row else None
 
 
