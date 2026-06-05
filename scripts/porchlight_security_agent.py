@@ -2178,8 +2178,8 @@ def _financial_security_posture_token() -> str | None:
 
 def _financial_security_posture_url() -> str:
     return (
-        os.getenv("PORCHLIGHT_FINANCIAL_SECURITY_POSTURE_URL", "").strip()
-        or os.getenv("FINANCIAL_SECURITY_POSTURE_URL", "").strip()
+        _secret_or_env("PORCHLIGHT_FINANCIAL_SECURITY_POSTURE_URL")
+        or _secret_or_env("FINANCIAL_SECURITY_POSTURE_URL")
         or FINANCIAL_SECURITY_POSTURE_URL
     )
 
