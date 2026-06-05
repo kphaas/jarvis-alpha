@@ -7,7 +7,7 @@ import {
   ShieldAlert, ShieldCheck, DollarSign,
   FileText, Settings, Moon, Sun,
   User, ChevronRight, Lock, Unlock, RefreshCw,
-  FolderOpen, Wrench,
+  FolderOpen, Wrench, Fingerprint,
 } from 'lucide-react'
 import type { Theme } from '../types'
 import { useAppStore } from '../store'
@@ -30,6 +30,7 @@ const NAV = [
   { group: 'SECURE', items: [
     { to: '/approvals', label: 'Approvals',    icon: ShieldCheck   },
     { to: '/security',  label: 'Security',     icon: ShieldAlert   },
+    { to: '/privacy',   label: 'Privacy',      icon: Fingerprint    },
     { to: '/governance',label: 'Governance',   icon: ShieldAlert   },
   ]},
   { group: 'COST', items: [

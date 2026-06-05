@@ -1,0 +1,54 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PRIVACY_PAGE = REPO_ROOT / "ui" / "src" / "pages" / "Privacy.tsx"
+PRIVACY_UI_SOURCES = (
+    PRIVACY_PAGE,
+    REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyIntake.ts",
+    REPO_ROOT / "ui" / "src" / "lib" / "privacyIntake.ts",
+    REPO_ROOT / "ui" / "src" / "types" / "privacy.ts",
+    *(REPO_ROOT / "ui" / "src" / "components" / "privacy").glob("*.tsx"),
+)
+
+
+def test_privacy_intake_ui_is_mounted_in_alpha_app() -> None:
+    app_source = (REPO_ROOT / "ui" / "src" / "App.tsx").read_text(encoding="utf-8")
+    layout_source = (REPO_ROOT / "ui" / "src" / "components" / "Layout.tsx").read_text(
+        encoding="utf-8"
+    )
+
+    assert "const Privacy = lazy(() => import('./pages/Privacy'))" in app_source
+    assert 'path="/privacy"' in app_source
+    assert "label: 'Privacy'" in layout_source
+    assert "Fingerprint" in layout_source
+
+
+def test_privacy_intake_ui_uses_p2b_routes_and_api_wrapper() -> None:
+    source = "\n".join(path.read_text(encoding="utf-8") for path in PRIVACY_UI_SOURCES)
+
+    assert "apiFetch" in source
+    assert "/v1/privacy/subjects" in source
+    assert "/identity-tuples" in source
+    assert "fetch(" not in source
+    assert "XMLHttpRequest" not in source
+
+
+def test_privacy_intake_ui_keeps_phase_boundary_local_only() -> None:
+    source = "\n".join(path.read_text(encoding="utf-8") for path in PRIVACY_UI_SOURCES)
+    forbidden = (
+        "requests",
+        "httpx",
+        "playwright",
+        "selenium",
+        "smtp",
+        "scrape",
+        "runner",
+        "opt_out_url",
+        "approval_queue",
+    )
+
+    for token in forbidden:
+        assert token not in source

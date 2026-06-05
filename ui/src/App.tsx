@@ -23,6 +23,7 @@ const Skills = lazy(() => import('./pages/Skills'))
 const Governance = lazy(() => import('./pages/Governance'))
 const Briefing = lazy(() => import('./pages/Briefing'))
 const BriefingDetail = lazy(() => import('./pages/BriefingDetail'))
+const Privacy = lazy(() => import('./pages/Privacy'))
 
 const qc = new QueryClient({
   defaultOptions: { queries: { staleTime: 15 * 60 * 1000, retry: 1 } },
@@ -54,6 +55,7 @@ export default function App() {
                   <Route path="/ops" element={<Placeholder label="Ops" phase="Next session" />} />
                   <Route path="/approvals" element={<Approvals />} />
                   <Route path="/security" element={<Security />} />
+                  <Route path="/privacy" element={<Privacy />} />
                   <Route path="/governance" element={<Governance />} />
                   <Route path="/cost" element={<Navigate to="/costs" replace />} />
                   <Route path="/costs" element={<CostCenter />} />
