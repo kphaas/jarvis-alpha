@@ -104,6 +104,28 @@ export type CaseDraftCreateResponse = {
   actions: DraftAction[];
 };
 
+export type CaseDraftSummary = {
+  case_id: string;
+  subject_id: string;
+  status: string;
+  target_count: number;
+  action_count: number;
+  highest_approval_tier: string | null;
+  payload_key_version: string;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type CaseDraftListResponse = {
+  count: number;
+  drafts: CaseDraftSummary[];
+};
+
+export type CaseDraftDetailResponse = CaseDraftSummary & {
+  review_packets: TargetReviewPacket[];
+  actions: DraftAction[];
+};
+
 export type ProfileFields = {
   legal_name: string;
   date_of_birth: string;

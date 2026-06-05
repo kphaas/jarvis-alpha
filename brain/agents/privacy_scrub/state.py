@@ -49,6 +49,19 @@ class StoredCaseDraft:
 
 
 @dataclass(frozen=True, slots=True)
+class StoredCaseDraftListItem:
+    case_draft: StoredCaseDraft
+    action_count: int
+    approval_tiers: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class StoredCaseDraftPayload:
+    case_draft: StoredCaseDraft
+    packet_payload_ciphertext: bytes
+
+
+@dataclass(frozen=True, slots=True)
 class StoredDraftAction:
     id: UUID
     subject_id: UUID
@@ -213,6 +226,57 @@ async def insert_case_draft(
     return _row_to_stored_case_draft(row)
 
 
+async def list_case_drafts(
+    conn: asyncpg.Connection,
+    *,
+    limit: int = 25,
+) -> list[StoredCaseDraftListItem]:
+    if limit < 1 or limit > 100:
+        raise ValueError("limit must be between 1 and 100")
+
+    rows = await conn.fetch(
+        """
+        SELECT
+            c.id, c.subject_id, c.created_by_user_id, c.target_count,
+            c.status, c.packet_payload_hash, c.payload_key_version,
+            c.created_at, c.updated_at,
+            COUNT(a.id)::INTEGER AS action_count,
+            ARRAY_REMOVE(
+                ARRAY_AGG(DISTINCT a.approval_tier ORDER BY a.approval_tier),
+                NULL
+            ) AS approval_tiers
+        FROM public.alpha_privacy_case_drafts c
+        LEFT JOIN public.alpha_privacy_actions a
+            ON a.case_draft_id = c.id
+        GROUP BY
+            c.id, c.subject_id, c.created_by_user_id, c.target_count,
+            c.status, c.packet_payload_hash, c.payload_key_version,
+            c.created_at, c.updated_at
+        ORDER BY c.created_at DESC, c.id DESC
+        LIMIT $1
+        """,
+        limit,
+    )
+    return [_row_to_stored_case_draft_list_item(row) for row in rows]
+
+
+async def get_case_draft_payload(
+    conn: asyncpg.Connection,
+    case_draft_id: UUID,
+) -> StoredCaseDraftPayload | None:
+    row = await conn.fetchrow(
+        """
+        SELECT id, subject_id, created_by_user_id, target_count, status,
+               packet_payload_ciphertext, packet_payload_hash,
+               payload_key_version, created_at, updated_at
+        FROM public.alpha_privacy_case_drafts
+        WHERE id = $1
+        """,
+        case_draft_id,
+    )
+    return _row_to_stored_case_draft_payload(row) if row else None
+
+
 async def insert_draft_action(
     conn: asyncpg.Connection,
     *,
@@ -254,6 +318,24 @@ async def insert_draft_action(
     )
     assert row is not None
     return _row_to_stored_draft_action(row)
+
+
+async def list_draft_actions_for_case(
+    conn: asyncpg.Connection,
+    case_draft_id: UUID,
+) -> list[StoredDraftAction]:
+    rows = await conn.fetch(
+        """
+        SELECT id, subject_id, target_id, case_draft_id, action_type,
+               approval_tier, status, draft_payload_hash,
+               payload_key_version, created_at, updated_at
+        FROM public.alpha_privacy_actions
+        WHERE case_draft_id = $1
+        ORDER BY created_at, target_id, id
+        """,
+        case_draft_id,
+    )
+    return [_row_to_stored_draft_action(row) for row in rows]
 
 
 async def list_identity_tuples(
@@ -428,6 +510,25 @@ def _row_to_stored_case_draft(row: asyncpg.Record) -> StoredCaseDraft:
         payload_key_version=row["payload_key_version"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+def _row_to_stored_case_draft_list_item(
+    row: asyncpg.Record,
+) -> StoredCaseDraftListItem:
+    return StoredCaseDraftListItem(
+        case_draft=_row_to_stored_case_draft(row),
+        action_count=row["action_count"],
+        approval_tiers=tuple(row["approval_tiers"] or ()),
+    )
+
+
+def _row_to_stored_case_draft_payload(
+    row: asyncpg.Record,
+) -> StoredCaseDraftPayload:
+    return StoredCaseDraftPayload(
+        case_draft=_row_to_stored_case_draft(row),
+        packet_payload_ciphertext=row["packet_payload_ciphertext"],
     )
 
 

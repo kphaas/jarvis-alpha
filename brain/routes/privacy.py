@@ -18,11 +18,14 @@ from brain.agents.privacy_scrub.config import (
 )
 from brain.agents.privacy_scrub.crypto import PrivacyCrypto
 from brain.agents.privacy_scrub.drafts import (
+    CaseDraftInboxItem,
     CreatedCaseDraft,
     PrivacyCaseDraftRepository,
+    PrivacyDraftCaseNotFound,
     PrivacyDraftError,
     PrivacyDraftSubjectNotFound,
     PrivacyDraftTargetNotFound,
+    RetrievedCaseDraft,
     TargetReviewPacket,
 )
 from brain.agents.privacy_scrub.identity import TupleType
@@ -154,6 +157,28 @@ class CaseDraftCreateOut(BaseModel):
     actions: list[DraftActionOut]
 
 
+class CaseDraftSummaryOut(BaseModel):
+    case_id: UUID
+    subject_id: UUID
+    status: str
+    target_count: int
+    action_count: int
+    highest_approval_tier: str | None
+    payload_key_version: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class CaseDraftListOut(BaseModel):
+    count: int
+    drafts: list[CaseDraftSummaryOut]
+
+
+class CaseDraftDetailOut(CaseDraftSummaryOut):
+    review_packets: list[TargetReviewPacketOut]
+    actions: list[DraftActionOut]
+
+
 @router.post("/subjects", response_model=SubjectCreateOut)
 async def create_privacy_subject(
     request: Request,
@@ -281,6 +306,59 @@ async def create_privacy_case_draft(
     return _case_draft_out(subject_id, result)
 
 
+@router.get("/case-drafts", response_model=CaseDraftListOut)
+async def list_privacy_case_drafts(
+    request: Request,
+    limit: int = 25,
+    _: str = Depends(require_auth),
+) -> CaseDraftListOut:
+    _assert_adult_or_admin_actor(request)
+    if limit < 1 or limit > 50:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy_case_draft_limit_invalid",
+        )
+    crypto = _load_crypto_or_503()
+
+    async with rls_connection(request) as conn:
+        drafts = await PrivacyCaseDraftRepository(conn, crypto).list_case_drafts(
+            limit=limit,
+        )
+
+    return CaseDraftListOut(
+        count=len(drafts),
+        drafts=[_case_draft_summary_out(item) for item in drafts],
+    )
+
+
+@router.get("/case-drafts/{case_id}", response_model=CaseDraftDetailOut)
+async def get_privacy_case_draft(
+    request: Request,
+    case_id: UUID,
+    _: str = Depends(require_auth),
+) -> CaseDraftDetailOut:
+    _assert_adult_or_admin_actor(request)
+    crypto = _load_crypto_or_503()
+
+    try:
+        async with rls_connection(request) as conn:
+            result = await PrivacyCaseDraftRepository(conn, crypto).get_case_draft(
+                case_id,
+            )
+    except PrivacyDraftCaseNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_case_draft_not_found",
+        ) from exc
+    except PrivacyDraftError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="privacy_case_draft_unavailable",
+        ) from exc
+
+    return _case_draft_detail_out(result)
+
+
 @router.get("/targets", response_model=PrivacyTargetsOut)
 async def list_privacy_targets(
     request: Request,
@@ -359,6 +437,45 @@ def _case_draft_out(
         target_count=result.case_draft.target_count,
         action_count=len(result.actions),
         payload_key_version=result.case_draft.payload_key_version,
+        review_packets=[_review_packet_out(packet) for packet in result.review_packets],
+        actions=[
+            DraftActionOut(
+                action_id=action.id,
+                target_id=action.target_id,
+                approval_tier=action.approval_tier,
+                status=action.status,
+            )
+            for action in result.actions
+        ],
+    )
+
+
+def _case_draft_summary_out(item: CaseDraftInboxItem) -> CaseDraftSummaryOut:
+    draft = item.case_draft
+    return CaseDraftSummaryOut(
+        case_id=draft.id,
+        subject_id=draft.subject_id,
+        status=draft.status,
+        target_count=draft.target_count,
+        action_count=item.action_count,
+        highest_approval_tier=item.highest_approval_tier,
+        payload_key_version=draft.payload_key_version,
+        created_at=draft.created_at,
+        updated_at=draft.updated_at,
+    )
+
+
+def _case_draft_detail_out(result: RetrievedCaseDraft) -> CaseDraftDetailOut:
+    item = CaseDraftInboxItem(
+        case_draft=result.case_draft,
+        action_count=len(result.actions),
+        approval_tiers=tuple(
+            sorted({action.approval_tier for action in result.actions})
+        ),
+    )
+    summary = _case_draft_summary_out(item)
+    return CaseDraftDetailOut(
+        **summary.model_dump(),
         review_packets=[_review_packet_out(packet) for packet in result.review_packets],
         actions=[
             DraftActionOut(

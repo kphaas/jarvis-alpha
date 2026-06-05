@@ -241,6 +241,25 @@ def test_pg_backup_configures_authenticated_postgres_env():
     )
 
 
+def test_restore_drill_buddy_event_uses_authenticated_brain_psql():
+    """Restore-drill notifications must survive hardened Brain Postgres auth."""
+    text = (REPO_ROOT / "scripts" / "restore_drill_alpha.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "remote_psql=" in text
+    assert "source ~/jarvis/.secrets" in text
+    assert 'PGPASSWORD="$POSTGRES_PASSWORD"' in text
+    assert "-h 127.0.0.1 -U jarvisbrain -d jarvis_alpha" in text
+
+
+def test_restore_drill_reference_table_count_matches_current_baseline():
+    text = (REPO_ROOT / "scripts" / "restore_drill_alpha.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "REF_TABLES=77" in text
+    assert "including views" in text
+
+
 def test_pg_backup_uses_atomic_rename():
     text = (REPO_ROOT / "scripts" / "pg_backup_alpha.sh").read_text(encoding="utf-8")
     assert ".partial" in text, "must scp to .partial then atomic rename"
