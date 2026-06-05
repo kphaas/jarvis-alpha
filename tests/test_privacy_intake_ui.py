@@ -8,6 +8,7 @@ PRIVACY_PAGE = REPO_ROOT / "ui" / "src" / "pages" / "Privacy.tsx"
 PRIVACY_UI_SOURCES = (
     PRIVACY_PAGE,
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyIntake.ts",
+    REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyCaseDraft.ts",
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyTargets.ts",
     REPO_ROOT / "ui" / "src" / "lib" / "privacyIntake.ts",
     REPO_ROOT / "ui" / "src" / "types" / "privacy.ts",
@@ -37,6 +38,17 @@ def test_privacy_intake_ui_uses_p2b_routes_and_api_wrapper() -> None:
     assert "/v1/privacy/targets/refresh" in source
     assert "fetch(" not in source
     assert "XMLHttpRequest" not in source
+
+
+def test_privacy_review_packet_panel_is_mounted_on_privacy_page() -> None:
+    page_source = PRIVACY_PAGE.read_text(encoding="utf-8")
+    source = "\n".join(path.read_text(encoding="utf-8") for path in PRIVACY_UI_SOURCES)
+
+    assert "usePrivacyCaseDraft(subjectId, targets.selectedIds)" in page_source
+    assert "<PrivacyCaseDraftPanel" in page_source
+    assert "onDraftCreated={targets.clearSelection}" in page_source
+    assert "/case-drafts" in source
+    assert "Review Packet" in source
 
 
 def test_privacy_intake_ui_keeps_phase_boundary_local_only() -> None:
