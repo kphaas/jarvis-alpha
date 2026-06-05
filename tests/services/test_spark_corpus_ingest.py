@@ -84,3 +84,44 @@ def test_group_threads_are_denied_for_phase_two() -> None:
     assert plan.allowed is False
     assert plan.reason == "phase_two_requires_one_to_one_thread"
     assert plan.allowed_operations == ()
+
+
+def test_threadless_sources_are_allowed_without_one_to_one_thread() -> None:
+    gmail_plan = plan_approved_corpus_ingest(
+        SparkCorpusApproval(
+            principal_id="ken",
+            source="gmail",
+            approval_id="spark-approval-005",
+            thread_kind="none",
+            max_messages=250,
+        )
+    )
+    export_plan = plan_approved_corpus_ingest(
+        SparkCorpusApproval(
+            principal_id="ken",
+            source="ai_export",
+            approval_id="spark-approval-006",
+            thread_kind="none",
+            max_messages=1,
+        )
+    )
+
+    assert gmail_plan.allowed is True
+    assert gmail_plan.source == "gmail"
+    assert gmail_plan.max_messages == 250
+    assert export_plan.allowed is True
+    assert export_plan.source == "ai_export"
+
+
+def test_threaded_shape_is_denied_for_threadless_sources() -> None:
+    plan = plan_approved_corpus_ingest(
+        SparkCorpusApproval(
+            principal_id="ken",
+            source="gmail",
+            approval_id="spark-approval-007",
+            thread_kind="group",
+        )
+    )
+
+    assert plan.allowed is False
+    assert plan.reason == "threadless_source_requires_none_thread_kind"

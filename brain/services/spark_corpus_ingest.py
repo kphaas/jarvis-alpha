@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 SparkCorpusSource = Literal["imessage", "gmail", "ai_export", "intake"]
-SparkThreadKind = Literal["one_to_one", "group", "unknown"]
+SparkThreadKind = Literal["one_to_one", "group", "none", "unknown"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,8 +98,11 @@ def _denial_reason(approval: SparkCorpusApproval) -> str | None:
         return "max_messages_must_be_positive"
     if approval.legal_marked:
         return "legal_marked_content_requires_manual_review"
-    if approval.thread_kind != "one_to_one":
-        return "phase_two_requires_one_to_one_thread"
+    if approval.source == "imessage":
+        if approval.thread_kind != "one_to_one":
+            return "phase_two_requires_one_to_one_thread"
+    elif approval.thread_kind not in ("none", "unknown"):
+        return "threadless_source_requires_none_thread_kind"
     if approval.relationship_marked and not approval.relationship_approved:
         return "relationship_marked_content_requires_specific_approval"
     return None
