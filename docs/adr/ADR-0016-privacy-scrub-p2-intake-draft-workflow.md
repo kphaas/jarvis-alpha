@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -22,10 +22,15 @@ action creation.
 P2 must not perform automated opt-out sending, public-internet scanning, account
 login, court filing, or document upload.
 
-P2-F extends the same boundary with a read-only draft review inbox. It may
-decrypt stored review-packet payloads in app code through `PrivacyCrypto` for an
-authenticated adult/admin operator. It must not add SQL decrypt helpers, expose
-plaintext subject profile fields, or create any outbound action path.
+P2-F extends the same boundary with a draft review inbox. It may decrypt stored
+review-packet payloads in app code through `PrivacyCrypto` for an authenticated
+adult/admin operator. It must not add SQL decrypt helpers, expose plaintext
+subject profile fields, or create any outbound action path.
+
+P2-G adds internal disposition controls for reviewed drafts: submit for Alpha
+approval handoff or archive. The handoff creates internal approval queue state
+only; it does not send opt-outs, scan public targets, file court documents, or
+upload evidence.
 
 ## Scope
 
@@ -38,7 +43,8 @@ P2 may add:
 - Target selection from bundled YAML and `alpha_privacy_targets_cache`.
 - Draft action creation in `alpha_privacy_actions`.
 - Append-only action events for draft lifecycle changes.
-- Read-only case draft list/detail routes for operator review.
+- Case draft list/detail routes for operator review.
+- Internal draft disposition routes for approval handoff and archive.
 - Tests for RLS assumptions, approval-tier mapping, digest/encryption behavior,
   minor guardian requirements, and no-outbound behavior.
 
@@ -60,6 +66,8 @@ P2 must not add:
 | Load bundled target registry | T1 | Local metadata only |
 | Create adult opt-out draft | T2 | Draft only; no external send |
 | Create minor opt-out draft | T4 | Requires adult review before draft is actionable |
+| Submit reviewed draft for approval | T2/T4/T5 by action | Internal approval handoff only |
+| Archive reviewed draft | T2 | Internal disposition only |
 | Attach sensitive evidence or ID document reference | T5 | Admin confirmation required |
 | External scan or verification | T4 adult / T5 minor | Out of P2 implementation scope |
 | Send opt-out request | T4 adult / T5 minor | Out of P2 implementation scope |
@@ -106,6 +114,11 @@ P2 must not add:
    - Insert event rows into `alpha_privacy_action_events`.
    - Do not send anything externally.
 
+6. Add draft disposition handoff.
+   - Allow reviewed drafts to be submitted into Alpha approval queue state.
+   - Allow reviewed drafts to be archived.
+   - Keep both paths internal-only and append an action event.
+
 ## Consequences
 
 - Ken gets a reviewable privacy workflow before any external side effects.
@@ -123,5 +136,8 @@ P2 must not add:
   all payload review until a later operator UI decision? Resolved by P2-F:
   app-side decrypt is allowed for review-packet payloads only, through
   authenticated adult/admin Privacy routes.
+- Should reviewed drafts be actionable inside P2? Resolved by P2-G: only
+  internal submit/archive disposition is allowed; external execution stays out
+  of scope.
 - Should sensitive evidence references point to an existing Alpha document store
   or remain external/manual in P2?

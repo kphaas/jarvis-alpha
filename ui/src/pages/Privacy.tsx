@@ -63,7 +63,7 @@ export default function Privacy() {
             <p
               className={`mt-1 text-[10px] font-mono uppercase tracking-widest ${muted}`}
             >
-              P2-F - draft review inbox
+              P2-G - disposition handoff
             </p>
           </div>
         </div>
