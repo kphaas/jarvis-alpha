@@ -44,6 +44,7 @@ from brain.routes.internal_cost import router as internal_cost_router
 from brain.routes.review import router as review_router
 from brain.routes.registry import router as registry_router
 from brain.routes.chatops import router as chatops_router
+from brain.routes.spark_drafts import router as spark_drafts_router
 from brain.routes.spark_imessage import router as spark_imessage_router
 from brain.routes.privacy import router as privacy_router
 from brain.middleware.jwt_auth import JWTAuthMiddleware
@@ -124,6 +125,7 @@ app.include_router(internal_cost_router)
 app.include_router(review_router)
 app.include_router(registry_router)
 app.include_router(chatops_router)
+app.include_router(spark_drafts_router)
 app.include_router(spark_imessage_router)
 app.include_router(privacy_router)
 

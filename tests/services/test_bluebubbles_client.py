@@ -14,13 +14,27 @@ from brain.services.bluebubbles_client import (
 )
 
 
-def _write_policy_tree(root: Path, *, connector_mode: str = "read_only") -> None:
+def _write_policy_tree(
+    root: Path,
+    *,
+    connector_mode: str = "read_only",
+    approved_message_query: bool = False,
+) -> None:
     (root / "spark" / "connectors").mkdir(parents=True)
     (root / "spark" / "policies").mkdir(parents=True)
+    allowed_operations = (
+        """
+allowed_operations:
+  - POST /api/v1/message/query for approved chat GUIDs only
+"""
+        if approved_message_query
+        else ""
+    )
     (root / "spark" / "connectors" / "bluebubbles.yml").write_text(
         f"""
 version: 0.1.0
 mode: {connector_mode}
+{allowed_operations}
 blocked_operations:
   - POST /api/v1/message/text
   - POST /api/v1/message/attachment
@@ -175,3 +189,92 @@ async def test_counts_and_recent_chats_return_metadata_only(tmp_path: Path) -> N
         "/api/v1/message/count/me",
         "/api/v1/chat/query",
     ]
+
+
+@pytest.mark.asyncio
+async def test_approved_messages_for_chat_reads_bodies_only_when_policy_allows(
+    tmp_path: Path,
+) -> None:
+    _write_policy_tree(tmp_path, approved_message_query=True)
+    policy = load_spark_bluebubbles_policy(tmp_path)
+    seen_payloads: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/message/query"
+        assert request.method == "POST"
+        seen_payloads.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(
+            200,
+            json={
+                "status": 200,
+                "message": "Success",
+                "data": [
+                    {
+                        "guid": "message-1",
+                        "text": "private inbound body",
+                        "isFromMe": False,
+                        "dateCreated": "2026-06-05T10:00:00Z",
+                    },
+                    {
+                        "guid": "message-2",
+                        "message": "ken sent body",
+                        "isFromMe": True,
+                    },
+                    {"guid": "message-3", "text": ""},
+                ],
+            },
+        )
+
+    client = BlueBubblesReadOnlyClient(
+        base_url="http://127.0.0.1:1234",
+        password="secret",
+        policy=policy,
+        transport=httpx.MockTransport(handler),
+    )
+
+    messages = await client.approved_messages_for_chat(
+        chat_guid="approved-chat-guid",
+        limit=3,
+    )
+
+    assert seen_payloads == [
+        {
+            "chatGuid": "approved-chat-guid",
+            "offset": 0,
+            "limit": 3,
+            "sort": "dateCreated",
+            "with": [],
+        }
+    ]
+    assert len(messages) == 2
+    assert messages[0].body_text == "private inbound body"
+    assert messages[0].is_from_me is False
+    assert messages[1].body_text == "ken sent body"
+    assert messages[1].is_from_me is True
+    assert "message-1" not in json.dumps([asdict(message) for message in messages])
+
+
+@pytest.mark.asyncio
+async def test_approved_messages_for_chat_fails_closed_without_policy_allowance(
+    tmp_path: Path,
+) -> None:
+    _write_policy_tree(tmp_path, approved_message_query=False)
+    policy = load_spark_bluebubbles_policy(tmp_path)
+    called = False
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, json={"status": 200, "data": []})
+
+    client = BlueBubblesReadOnlyClient(
+        base_url="http://127.0.0.1:1234",
+        password="secret",
+        policy=policy,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(BlueBubblesPolicyError, match="message query"):
+        await client.approved_messages_for_chat(chat_guid="approved-chat-guid")
+
+    assert called is False
