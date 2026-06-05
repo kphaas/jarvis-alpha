@@ -588,7 +588,7 @@ function TopologyDiagram({
   );
 }
 
-export default function Mesh({ theme, token }: { theme: "dark" | "light"; token: string }) {
+export default function Mesh({ theme }: { theme: "dark" | "light" }) {
   const [mesh, setMesh] = useState<MeshStatus | null>(null);
   const [udm, setUdm] = useState<UdmSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -621,7 +621,7 @@ export default function Mesh({ theme, token }: { theme: "dark" | "light"; token:
       setRefreshing(false);
       initialLoad.current = false;
     }
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     load();
