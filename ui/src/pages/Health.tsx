@@ -125,7 +125,7 @@ function temporalStatusColor(status: string): string {
   return "#ef4444";
 }
 
-export default function Health({ theme, token }: { theme: "dark" | "light"; token: string }) {
+export default function Health({ theme }: { theme: "dark" | "light" }) {
   const isDark = theme === "dark";
   const bg = isDark ? "#0f1117" : "#f8fafc";
   const card = isDark ? "#1a1d27" : "#ffffff";
@@ -175,7 +175,7 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
     } catch (e) {
       setError(String(e));
     }
-  }, [token]);
+  }, []);
 
   const fetchAgents = useCallback(async () => {
     setAgentsLoading(true);
@@ -191,7 +191,7 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
     } finally {
       setAgentsLoading(false);
     }
-  }, [token]);
+  }, []);
 
   const fetchTemporalStorage = useCallback(async () => {
     setTemporalStorageLoading(true);
@@ -205,7 +205,7 @@ export default function Health({ theme, token }: { theme: "dark" | "light"; toke
     } finally {
       setTemporalStorageLoading(false);
     }
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     fetchSummary();
