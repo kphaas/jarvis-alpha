@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from brain.services.key_rotation import KEY_FORMAT_RULES
@@ -43,3 +44,37 @@ def test_keyturner_inventory_covers_security_operational_keys():
     missing = expected - set(secrets)
     assert missing == set()
     assert all(secrets[name]["managed_by"] == "keyturner" for name in expected)
+
+
+def test_keyturner_reconcile_migration_covers_current_config():
+    config = json.loads(
+        Path("scripts/secrets_rotation.json").read_text(encoding="utf-8")
+    )
+    configured = set(config["secrets"])
+    migration = Path(
+        "brain/db/migrations/20260604_134000_keyturner_rotation_ledger_reconcile.sql"
+    ).read_text(encoding="utf-8")
+
+    inventory_match = re.search(
+        r"inventory\(secret_name.*?\)\s+AS\s+\(\s+VALUES(?P<body>.*?)\)\s*INSERT",
+        migration,
+        re.DOTALL,
+    )
+    assert inventory_match is not None
+    inventoried = set(re.findall(r"\('([A-Z0-9_]+)'", inventory_match.group("body")))
+
+    expected_match = re.search(
+        r"VALUES(?P<body>.*?)\)\s+AS expected\(secret_name\)",
+        migration,
+        re.DOTALL,
+    )
+    assert expected_match is not None
+    postflight_expected = set(
+        re.findall(r"\('([A-Z0-9_]+)'\)", expected_match.group("body"))
+    )
+
+    assert inventoried == configured
+    assert postflight_expected == configured
+    assert "value_hash" in migration
+    assert "'skipped'" in migration
+    assert "keyturner@reconcile" in migration

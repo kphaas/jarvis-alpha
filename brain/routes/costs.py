@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
 import subprocess
@@ -10,6 +9,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Literal, Optional
 
 import asyncpg
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -305,26 +305,13 @@ async def set_power_rate(
 
 def _forge_curl_sync() -> dict:
     try:
-        proc = subprocess.run(
-            [
-                "curl",
-                "-sSk",
-                "--max-time",
-                "15",
-                "-w",
-                "\n%{http_code}",
-                "https://jarvis-forge.tail40ed36.ts.net:5001/api/costs/report",
-            ],
-            capture_output=True,
-            text=True,
+        response = httpx.get(
+            "https://jarvis-forge.tail40ed36.ts.net:5001/api/costs/report",
+            timeout=15.0,
         )
-        raw = proc.stdout.strip()
-        if "\n" not in raw:
+        if response.status_code != 200:
             return {"total_usd": 0, "by_project": [], "error": "unavailable"}
-        body, _, code_s = raw.rpartition("\n")
-        if int(code_s) != 200:
-            return {"total_usd": 0, "by_project": [], "error": "unavailable"}
-        data = json.loads(body)
+        data = response.json()
         if not isinstance(data, dict):
             return {"total_usd": 0, "by_project": [], "error": "unavailable"}
         return data

@@ -11,8 +11,8 @@ ALLOWLIST: set[tuple[str, str]] = set()
 
 PATTERNS = {
     "httpx verify=False": re.compile(r"verify\s*=\s*False"),
-    "curl -k": re.compile(r"curl\s+[^\\n]*(?:-k|-sk|-ks|--insecure)"),
-    '"-k" curl arg': re.compile(r'"-(?:k|sk|ks)"'),
+    "curl -k": re.compile(r"curl\s+[^\\n]*(?:-[A-Za-z]*k[A-Za-z]*|--insecure)"),
+    '"-k" curl arg': re.compile(r'"-[A-Za-z]*k[A-Za-z]*"'),
     "--insecure": re.compile(r"--insecure"),
 }
 
