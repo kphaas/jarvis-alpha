@@ -1226,6 +1226,85 @@ def test_dependency_cve_scan_warns_when_scanner_missing(tmp_path, monkeypatch):
     assert "could not run" in result.summary
 
 
+def test_financial_security_posture_warns_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("JARVIS_FIN_SECURITY_POSTURE_TOKEN", raising=False)
+    monkeypatch.delenv("FINANCIAL_SECURITY_POSTURE_TOKEN", raising=False)
+
+    result = porchlight.check_financial_security_posture(url="")
+
+    assert result.status == "warn"
+    assert result.severity == "medium"
+    assert result.metadata["configured"] is False
+
+
+def test_financial_security_posture_passes_sanitized_response(monkeypatch):
+    monkeypatch.setenv("JARVIS_FIN_SECURITY_POSTURE_TOKEN", "3" * 64)
+
+    def fake_command(args, **kwargs):
+        assert "Authorization: Bearer " + ("3" * 64) in args
+        return porchlight.CommandResult(
+            0,
+            porchlight.json.dumps(
+                {
+                    "service": "jarvis-financial",
+                    "status": "pass",
+                    "counts": {"pass": 7, "warn": 0, "fail": 0},
+                    "controls": [
+                        {
+                            "id": "db.rls_coverage",
+                            "status": "pass",
+                            "severity": "info",
+                            "summary": "All public tables protected.",
+                            "metadata": {"secret": "must-not-copy"},
+                        }
+                    ],
+                }
+            )
+            + "\n200",
+            "",
+        )
+
+    result = porchlight.check_financial_security_posture(
+        url="https://financial.example.test/monitor/security-posture",
+        command=fake_command,
+    )
+
+    assert result.status == "pass"
+    assert result.detail == "7 pass, 0 warn, 0 fail"
+    assert result.metadata["controls"] == [
+        {"id": "db.rls_coverage", "status": "pass", "severity": "info"}
+    ]
+    assert "must-not-copy" not in porchlight.json.dumps(result.metadata)
+
+
+def test_financial_security_posture_fails_on_remote_fail(monkeypatch):
+    monkeypatch.setenv("JARVIS_FIN_SECURITY_POSTURE_TOKEN", "3" * 64)
+
+    def fake_command(args, **kwargs):
+        return porchlight.CommandResult(
+            0,
+            porchlight.json.dumps(
+                {
+                    "service": "jarvis-financial",
+                    "status": "fail",
+                    "counts": {"pass": 5, "warn": 1, "fail": 1},
+                    "controls": [],
+                }
+            )
+            + "\n200",
+            "",
+        )
+
+    result = porchlight.check_financial_security_posture(
+        url="https://financial.example.test/monitor/security-posture",
+        command=fake_command,
+    )
+
+    assert result.status == "fail"
+    assert result.severity == "high"
+    assert result.detail == "5 pass, 1 warn, 1 fail"
+
+
 def test_github_branch_protection_drift_passes(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "gh-token")
     monkeypatch.setenv(
