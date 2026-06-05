@@ -120,6 +120,13 @@ def test_non_court_draft_is_t2():
     assert evaluate_tier(_ken(), ActionType.DRAFT, _broker()).tier == "T2"
 
 
+def test_minor_non_court_draft_is_t4():
+    decision = evaluate_tier(_ryleigh(), ActionType.DRAFT, _broker())
+
+    assert decision.tier == "T4"
+    assert "adult review" in decision.reason.lower()
+
+
 def test_verify_for_adult_is_t4():
     assert evaluate_tier(_ken(), ActionType.VERIFY, _broker()).tier == "T4"
 

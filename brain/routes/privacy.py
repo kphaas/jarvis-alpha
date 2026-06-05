@@ -17,6 +17,14 @@ from brain.agents.privacy_scrub.config import (
     load_privacy_crypto,
 )
 from brain.agents.privacy_scrub.crypto import PrivacyCrypto
+from brain.agents.privacy_scrub.drafts import (
+    CreatedCaseDraft,
+    PrivacyCaseDraftRepository,
+    PrivacyDraftError,
+    PrivacyDraftSubjectNotFound,
+    PrivacyDraftTargetNotFound,
+    TargetReviewPacket,
+)
 from brain.agents.privacy_scrub.identity import TupleType
 from brain.agents.privacy_scrub.repository import (
     IdentityTupleInput,
@@ -107,6 +115,45 @@ class PrivacyTargetsRefreshOut(BaseModel):
     source_label: str
 
 
+class CaseDraftCreateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_ids: list[str] = Field(min_length=1, max_length=25)
+
+
+class TargetReviewPacketOut(BaseModel):
+    target_id: str
+    target_name: str
+    category: str
+    jurisdiction: str
+    opt_out_method: str
+    approval_tier: str
+    approval_reason: str
+    legal_basis: str
+    required_identifiers: list[str]
+    available_identity_tuple_types: list[str]
+    evidence_checklist: list[str]
+    risk_flags: list[str]
+
+
+class DraftActionOut(BaseModel):
+    action_id: UUID
+    target_id: str
+    approval_tier: str
+    status: str
+
+
+class CaseDraftCreateOut(BaseModel):
+    case_id: UUID
+    subject_id: UUID
+    status: str
+    target_count: int
+    action_count: int
+    payload_key_version: str
+    review_packets: list[TargetReviewPacketOut]
+    actions: list[DraftActionOut]
+
+
 @router.post("/subjects", response_model=SubjectCreateOut)
 async def create_privacy_subject(
     request: Request,
@@ -192,6 +239,48 @@ async def add_privacy_identity_tuple(
     )
 
 
+@router.post(
+    "/subjects/{subject_id}/case-drafts",
+    response_model=CaseDraftCreateOut,
+)
+async def create_privacy_case_draft(
+    request: Request,
+    subject_id: UUID,
+    body: CaseDraftCreateIn,
+    user_id: str = Depends(require_auth),
+) -> CaseDraftCreateOut:
+    _assert_adult_or_admin_actor(request)
+    crypto = _load_crypto_or_503()
+
+    try:
+        async with rls_connection(request) as conn:
+            result = await PrivacyCaseDraftRepository(
+                conn,
+                crypto,
+            ).create_case_draft(
+                user_id=user_id,
+                subject_id=subject_id,
+                target_ids=tuple(body.target_ids),
+            )
+    except PrivacyDraftSubjectNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_subject_not_found",
+        ) from exc
+    except PrivacyDraftTargetNotFound as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy_target_not_found",
+        ) from exc
+    except PrivacyDraftError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy_case_draft_invalid",
+        ) from exc
+
+    return _case_draft_out(subject_id, result)
+
+
 @router.get("/targets", response_model=PrivacyTargetsOut)
 async def list_privacy_targets(
     request: Request,
@@ -256,6 +345,47 @@ def _identity_tuple_input(item: IdentityTupleIn) -> IdentityTupleInput:
         tuple_type=item.tuple_type,
         raw_value=item.value,
         label=item.label,
+    )
+
+
+def _case_draft_out(
+    subject_id: UUID,
+    result: CreatedCaseDraft,
+) -> CaseDraftCreateOut:
+    return CaseDraftCreateOut(
+        case_id=result.case_draft.id,
+        subject_id=subject_id,
+        status=result.case_draft.status,
+        target_count=result.case_draft.target_count,
+        action_count=len(result.actions),
+        payload_key_version=result.case_draft.payload_key_version,
+        review_packets=[_review_packet_out(packet) for packet in result.review_packets],
+        actions=[
+            DraftActionOut(
+                action_id=action.id,
+                target_id=action.target_id,
+                approval_tier=action.approval_tier,
+                status=action.status,
+            )
+            for action in result.actions
+        ],
+    )
+
+
+def _review_packet_out(packet: TargetReviewPacket) -> TargetReviewPacketOut:
+    return TargetReviewPacketOut(
+        target_id=packet.target_id,
+        target_name=packet.target_name,
+        category=packet.category,
+        jurisdiction=packet.jurisdiction,
+        opt_out_method=packet.opt_out_method,
+        approval_tier=packet.approval_tier,
+        approval_reason=packet.approval_reason,
+        legal_basis=packet.legal_basis,
+        required_identifiers=list(packet.required_identifiers),
+        available_identity_tuple_types=list(packet.available_identity_tuple_types),
+        evidence_checklist=list(packet.evidence_checklist),
+        risk_flags=list(packet.risk_flags),
     )
 
 

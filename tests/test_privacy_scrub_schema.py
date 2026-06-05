@@ -20,9 +20,17 @@ TARGET_CACHE_RLS_MIGRATION_PATH = (
     / "migrations"
     / "20260605_073000_privacy_targets_cache_rls.sql"
 )
+CASE_DRAFTS_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260605_120000_privacy_case_drafts.sql"
+)
 
 MIGRATION_SQL = MIGRATION_PATH.read_text(encoding="utf-8")
 TARGET_CACHE_RLS_SQL = TARGET_CACHE_RLS_MIGRATION_PATH.read_text(encoding="utf-8")
+CASE_DRAFTS_SQL = CASE_DRAFTS_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def test_migration_uses_force_rls_on_sensitive_tables():
@@ -52,8 +60,28 @@ def test_targets_cache_followup_enables_force_rls():
     )
 
 
+def test_case_drafts_migration_enables_force_rls_and_action_linkage():
+    assert "CREATE TABLE IF NOT EXISTS public.alpha_privacy_case_drafts" in (
+        CASE_DRAFTS_SQL
+    )
+    assert (
+        "ALTER TABLE public.alpha_privacy_case_drafts ENABLE ROW LEVEL SECURITY"
+        in CASE_DRAFTS_SQL
+    )
+    assert (
+        "ALTER TABLE public.alpha_privacy_case_drafts FORCE ROW LEVEL SECURITY"
+        in CASE_DRAFTS_SQL
+    )
+    assert "privacy_case_drafts_isolation" in CASE_DRAFTS_SQL
+    assert "ADD COLUMN IF NOT EXISTS case_draft_id UUID" in CASE_DRAFTS_SQL
+    assert "ON DELETE RESTRICT" in CASE_DRAFTS_SQL
+    assert "packet_payload_ciphertext    BYTEA NOT NULL" in CASE_DRAFTS_SQL
+    assert "GRANT SELECT, INSERT, UPDATE" in CASE_DRAFTS_SQL
+
+
 def test_migration_policies_have_with_check():
     assert MIGRATION_SQL.count("WITH CHECK") >= 6
+    assert CASE_DRAFTS_SQL.count("WITH CHECK") >= 1
 
 
 def test_migration_has_no_public_decrypt_helper():
@@ -73,6 +101,7 @@ def test_migration_avoids_plaintext_sensitive_columns():
     )
     for token in forbidden:
         assert token not in MIGRATION_SQL
+        assert token not in CASE_DRAFTS_SQL
 
 
 def test_migration_adds_approval_and_append_only_controls():

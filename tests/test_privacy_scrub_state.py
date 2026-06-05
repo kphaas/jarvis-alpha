@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 
 from brain.agents.privacy_scrub.state import (
     count_targets,
     get_target,
+    insert_case_draft,
+    insert_draft_action,
     list_targets,
     refresh_targets_cache,
 )
@@ -51,6 +55,41 @@ class FakeTargetCacheConnection:
     async def fetchval(self, query: str, *args: object) -> int:
         self.fetchvals.append((query, args))
         return self.fetchval_result
+
+
+class FakeDraftWriteConnection:
+    def __init__(self) -> None:
+        self.fetchrows: list[tuple[str, tuple[object, ...]]] = []
+
+    async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+        self.fetchrows.append((query, args))
+        if "INSERT INTO public.alpha_privacy_case_drafts" in query:
+            return {
+                "id": args[0],
+                "subject_id": args[0],
+                "created_by_user_id": args[1],
+                "target_count": args[2],
+                "status": "draft",
+                "packet_payload_hash": args[4],
+                "payload_key_version": args[5],
+                "created_at": None,
+                "updated_at": None,
+            }
+        if "INSERT INTO public.alpha_privacy_actions" in query:
+            return {
+                "id": args[2],
+                "subject_id": args[0],
+                "target_id": args[1],
+                "case_draft_id": args[2],
+                "action_type": args[3],
+                "approval_tier": args[4],
+                "status": "pending",
+                "draft_payload_hash": args[6],
+                "payload_key_version": args[7],
+                "created_at": None,
+                "updated_at": None,
+            }
+        raise AssertionError(f"unexpected fetchrow query: {query}")
 
 
 def _target() -> Target:
@@ -131,3 +170,66 @@ async def test_list_targets_sets_platform_admin_rls_context() -> None:
     assert "FROM public.alpha_privacy_targets_cache" in query
     assert "ORDER BY category, jurisdiction, name, id" in query
     assert args == ()
+
+
+@pytest.mark.asyncio
+async def test_insert_case_draft_writes_encrypted_packet_payload() -> None:
+    conn = FakeDraftWriteConnection()
+    subject_id = uuid4()
+
+    case = await insert_case_draft(
+        conn,  # type: ignore[arg-type]
+        subject_id=subject_id,
+        created_by_user_id="ken",
+        target_count=2,
+        packet_payload_ciphertext=b"ciphertext",
+        packet_payload_hash="sha256:" + "1" * 64,
+        payload_key_version="payload-v1",
+    )
+
+    query, args = conn.fetchrows[0]
+    assert "INSERT INTO public.alpha_privacy_case_drafts" in query
+    assert "packet_payload_ciphertext" in query
+    assert args[0] == subject_id
+    assert args[3] == b"ciphertext"
+    assert case.subject_id == subject_id
+    assert case.target_count == 2
+
+
+@pytest.mark.asyncio
+async def test_insert_draft_action_is_limited_to_draft_action_type() -> None:
+    conn = FakeDraftWriteConnection()
+    subject_id = uuid4()
+    case_id = uuid4()
+
+    action = await insert_draft_action(
+        conn,  # type: ignore[arg-type]
+        subject_id=subject_id,
+        target_id="spokeo",
+        case_draft_id=case_id,
+        action_type="draft",
+        approval_tier="T2",
+        draft_payload_ciphertext=b"ciphertext",
+        draft_payload_hash="sha256:" + "2" * 64,
+        payload_key_version="payload-v1",
+    )
+
+    query, args = conn.fetchrows[0]
+    assert "INSERT INTO public.alpha_privacy_actions" in query
+    assert "case_draft_id" in query
+    assert args[3] == "draft"
+    assert action.case_draft_id == case_id
+    assert action.status == "pending"
+
+    with pytest.raises(ValueError, match="draft"):
+        await insert_draft_action(
+            conn,  # type: ignore[arg-type]
+            subject_id=subject_id,
+            target_id="spokeo",
+            case_draft_id=case_id,
+            action_type="send_opt_out",
+            approval_tier="T4",
+            draft_payload_ciphertext=b"ciphertext",
+            draft_payload_hash="sha256:" + "3" * 64,
+            payload_key_version="payload-v1",
+        )

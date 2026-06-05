@@ -35,6 +35,34 @@ class StoredSubject:
     updated_at: datetime | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class StoredCaseDraft:
+    id: UUID
+    subject_id: UUID
+    created_by_user_id: str
+    target_count: int
+    status: str
+    packet_payload_hash: str
+    payload_key_version: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StoredDraftAction:
+    id: UUID
+    subject_id: UUID
+    target_id: str
+    case_draft_id: UUID
+    action_type: str
+    approval_tier: str
+    status: str
+    draft_payload_hash: str | None
+    payload_key_version: str | None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 async def insert_subject(
     conn: asyncpg.Connection,
     *,
@@ -146,6 +174,86 @@ async def insert_identity_tuple(
         tuple_obj.active,
     )
     return row["id"] if row else None
+
+
+async def insert_case_draft(
+    conn: asyncpg.Connection,
+    *,
+    subject_id: UUID,
+    created_by_user_id: str,
+    target_count: int,
+    packet_payload_ciphertext: bytes,
+    packet_payload_hash: str,
+    payload_key_version: str,
+) -> StoredCaseDraft:
+    if target_count < 1:
+        raise ValueError("target_count must be positive")
+    if not created_by_user_id.strip():
+        raise ValueError("created_by_user_id is required")
+    if not packet_payload_ciphertext:
+        raise ValueError("packet_payload_ciphertext is required")
+
+    row = await conn.fetchrow(
+        """
+        INSERT INTO public.alpha_privacy_case_drafts
+            (subject_id, created_by_user_id, target_count,
+             packet_payload_ciphertext, packet_payload_hash, payload_key_version)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, subject_id, created_by_user_id, target_count, status,
+                  packet_payload_hash, payload_key_version, created_at, updated_at
+        """,
+        subject_id,
+        created_by_user_id,
+        target_count,
+        packet_payload_ciphertext,
+        packet_payload_hash,
+        payload_key_version,
+    )
+    assert row is not None
+    return _row_to_stored_case_draft(row)
+
+
+async def insert_draft_action(
+    conn: asyncpg.Connection,
+    *,
+    subject_id: UUID,
+    target_id: str,
+    case_draft_id: UUID,
+    action_type: str,
+    approval_tier: str,
+    draft_payload_ciphertext: bytes,
+    draft_payload_hash: str,
+    payload_key_version: str,
+) -> StoredDraftAction:
+    if not target_id.strip():
+        raise ValueError("target_id is required")
+    if action_type != "draft":
+        raise ValueError("P2-E only creates draft actions")
+    if not draft_payload_ciphertext:
+        raise ValueError("draft_payload_ciphertext is required")
+
+    row = await conn.fetchrow(
+        """
+        INSERT INTO public.alpha_privacy_actions
+            (subject_id, target_id, case_draft_id, action_type, approval_tier,
+             status, draft_payload_ciphertext, draft_payload_hash,
+             payload_key_version)
+        VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8)
+        RETURNING id, subject_id, target_id, case_draft_id, action_type,
+                  approval_tier, status, draft_payload_hash,
+                  payload_key_version, created_at, updated_at
+        """,
+        subject_id,
+        target_id,
+        case_draft_id,
+        action_type,
+        approval_tier,
+        draft_payload_ciphertext,
+        draft_payload_hash,
+        payload_key_version,
+    )
+    assert row is not None
+    return _row_to_stored_draft_action(row)
 
 
 async def list_identity_tuples(
@@ -304,6 +412,36 @@ def _row_to_stored_subject(row: asyncpg.Record) -> StoredSubject:
         status=SubjectStatus(row["status"]),
         subject_payload_hash=row["subject_payload_hash"],
         subject_payload_key_version=row["subject_payload_key_version"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_stored_case_draft(row: asyncpg.Record) -> StoredCaseDraft:
+    return StoredCaseDraft(
+        id=row["id"],
+        subject_id=row["subject_id"],
+        created_by_user_id=row["created_by_user_id"],
+        target_count=row["target_count"],
+        status=row["status"],
+        packet_payload_hash=row["packet_payload_hash"],
+        payload_key_version=row["payload_key_version"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_stored_draft_action(row: asyncpg.Record) -> StoredDraftAction:
+    return StoredDraftAction(
+        id=row["id"],
+        subject_id=row["subject_id"],
+        target_id=row["target_id"],
+        case_draft_id=row["case_draft_id"],
+        action_type=row["action_type"],
+        approval_tier=row["approval_tier"],
+        status=row["status"],
+        draft_payload_hash=row["draft_payload_hash"],
+        payload_key_version=row["payload_key_version"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
