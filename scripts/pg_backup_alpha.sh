@@ -127,6 +127,18 @@ make_event() {
     printf '%s' "$out"
 }
 
+# ─── Authenticated Postgres env ────────────────────────────────────────
+# Postgres local/loopback auth is intentionally scram-sha-256. Keep pg_dump,
+# psql, and best-effort buddy_event writes on the same authenticated path.
+configure_pg_auth() {
+    if [[ -z "${POSTGRES_PASSWORD:-}" ]]; then
+        return 0
+    fi
+    export PGHOST="${PGHOST:-127.0.0.1}"
+    export PGUSER="${PGUSER:-jarvisbrain}"
+    export PGPASSWORD="${PGPASSWORD:-$POSTGRES_PASSWORD}"
+}
+
 # ─── Observability: Mattermost + Buddy events ──────────────────────────
 # Both helpers are fire-and-forget. They MUST NOT propagate failures upward.
 # Token sourced from ~/jarvis/.secrets (GATEWAY_TOKEN). URL falls back to
@@ -205,9 +217,11 @@ fi
 trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 
 # ─── Preflight ─────────────────────────────────────────────────────────
-# Pre-read GATEWAY_TOKEN only (not full source) so mm_notify can fire even if
-# preflight fails. Other secrets are sourced after preflight passes.
+# Pre-read only the secrets needed for failure notification and authenticated
+# local psql. Other secrets are sourced after preflight passes.
 GATEWAY_TOKEN=$(awk -F= '/^GATEWAY_TOKEN=/{sub(/^[^=]+=/, ""); print; exit}' "$SECRETS_FILE" 2>/dev/null || true)
+POSTGRES_PASSWORD=$(awk -F= '/^POSTGRES_PASSWORD=/{sub(/^[^=]+=/, ""); print; exit}' "$SECRETS_FILE" 2>/dev/null || true)
+configure_pg_auth
 
 PREFLIGHT_ERR="$LOG_DIR/pg_backup.preflight.err"
 if ! bash "$PREFLIGHT" >/dev/null 2>"$PREFLIGHT_ERR"; then
@@ -223,12 +237,13 @@ set -a
 source "$SECRETS_FILE"
 set +a
 
-for v in BACKUP_SSH_HOST BACKUP_SSH_USER BACKUP_SSH_KEY BACKUP_SSH_TARGET_DIR BACKUP_GPG_PASSPHRASE; do
+for v in BACKUP_SSH_HOST BACKUP_SSH_USER BACKUP_SSH_KEY BACKUP_SSH_TARGET_DIR BACKUP_GPG_PASSPHRASE POSTGRES_PASSWORD; do
     if [[ -z "${!v:-}" ]]; then
         log_json "$(make_event secret_missing var="$v")"
         exit 1
     fi
 done
+configure_pg_auth
 
 PG_DUMP_VERSION=$("$PG_DUMP" --version | head -1)
 GIT_COMMIT=$(cd "$SCRIPT_DIR/.." && git rev-parse HEAD 2>/dev/null || echo unknown)

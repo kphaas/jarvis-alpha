@@ -229,6 +229,18 @@ def test_pg_backup_calls_preflight():
     assert "preflight_brain_backup.sh" in text
 
 
+def test_pg_backup_configures_authenticated_postgres_env():
+    """Backups must work after local Postgres trust auth is disabled."""
+    text = (REPO_ROOT / "scripts" / "pg_backup_alpha.sh").read_text(encoding="utf-8")
+    assert "configure_pg_auth" in text
+    assert 'PGHOST="${PGHOST:-127.0.0.1}"' in text
+    assert 'PGUSER="${PGUSER:-jarvisbrain}"' in text
+    assert 'PGPASSWORD="${PGPASSWORD:-$POSTGRES_PASSWORD}"' in text
+    assert "POSTGRES_PASSWORD" in re.search(r"for v in .*?; do", text, re.DOTALL).group(
+        0
+    )
+
+
 def test_pg_backup_uses_atomic_rename():
     text = (REPO_ROOT / "scripts" / "pg_backup_alpha.sh").read_text(encoding="utf-8")
     assert ".partial" in text, "must scp to .partial then atomic rename"
