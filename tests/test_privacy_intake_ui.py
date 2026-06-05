@@ -59,6 +59,8 @@ def test_privacy_draft_inbox_is_mounted_on_privacy_page() -> None:
 
     assert "usePrivacyDraftInbox()" in page_source
     assert "<PrivacyDraftInboxPanel" in page_source
+    assert "P2-G - disposition handoff" in page_source
+    assert "P2-F - draft review inbox" not in page_source
     assert "/v1/privacy/case-drafts" in source
     assert "submit-approval" in source
     assert "archive" in source
