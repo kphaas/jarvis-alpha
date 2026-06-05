@@ -222,11 +222,21 @@ def test_unifi_health_route_is_read_classified():
     assert determine_risk_tier(classes) == "T1"
 
 
-def test_agent_manual_run_route_is_admin_classified():
+def test_agent_manual_run_route_passes_to_route_local_guard():
     classes = classify_route("POST", "/v1/agents/chatops_smoke/run")
 
-    assert "admin" in classes
-    assert determine_risk_tier(classes) == "T5"
+    assert classes == ["write", "security_write"]
+    assert determine_risk_tier(classes) == "T2"
+
+
+def test_agent_enable_disable_routes_remain_admin_classified():
+    enable_classes = classify_route("POST", "/v1/agents/chatops_smoke/enable")
+    disable_classes = classify_route("POST", "/v1/agents/chatops_smoke/disable")
+
+    assert "admin" in enable_classes
+    assert determine_risk_tier(enable_classes) == "T5"
+    assert "admin" in disable_classes
+    assert determine_risk_tier(disable_classes) == "T5"
 
 
 def test_manual_run_requires_explicit_low_risk_enabled_opt_in():
