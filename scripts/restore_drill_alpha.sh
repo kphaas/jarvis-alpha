@@ -21,8 +21,9 @@ REPORT_JSON="${LOG_DIR}/restore_drill_${RUN_TS}.json"
 DRILL_DB="jarvis_alpha_drill"
 IMAGE="pgvector/pgvector:pg16"
 
-# Live Brain reference baseline (from Phase 6A discovery, 2026-05-28)
-REF_TABLES=68
+# Live Brain reference baseline (verified after privacy/security migrations,
+# 2026-06-05). Counts information_schema public entries, including views.
+REF_TABLES=77
 REF_TOLERANCE=2
 
 # Tools
@@ -153,12 +154,14 @@ buddy_event() {
     local payload
     payload=$("$JQ" -nc --arg run_id "$RUN_TS" --arg host "$HOST_SHORT" \
         '{run_id:$run_id, host:$host, source:"restore_drill_alpha"}')
+    local remote_psql
+    remote_psql='set -a; source ~/jarvis/.secrets; set +a; PGPASSWORD="$POSTGRES_PASSWORD" /opt/homebrew/Cellar/postgresql@16/16.13/bin/psql -h 127.0.0.1 -U jarvisbrain -d jarvis_alpha -v ON_ERROR_STOP=0 -q'
     # Build SQL on stdin to avoid nested -c quoting; $..$ dollar-quoting handles
     # any single quotes/special chars in title/body.
     if ! printf "INSERT INTO alpha_buddy_events (event_type, title, body, priority, source, payload) VALUES ('%s', \$tt\$%s\$tt\$, \$bb\$%s\$bb\$, %s, 'restore_drill_alpha', '%s'::jsonb);\n" \
             "$event_type" "$title" "$body" "$priority" "$payload" \
         | ssh -o BatchMode=yes -o ConnectTimeout=3 jarvisbrain@jarvis-brain \
-            "/opt/homebrew/Cellar/postgresql@16/16.13/bin/psql -d jarvis_alpha -v ON_ERROR_STOP=0 -q" \
+            "$remote_psql" \
             >/dev/null 2>&1; then
         log_json "$(make_event buddy_event_failed event_type="$event_type" reason=ssh_or_psql)"
     fi
