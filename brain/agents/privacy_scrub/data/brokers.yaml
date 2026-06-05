@@ -1,0 +1,124 @@
+# =============================================================================
+# Data broker registry.
+#
+# Source of truth for alpha_privacy_targets_cache.category='data_broker'.
+# Bumped quarterly; `last_verified` per entry is the canary for staleness.
+#
+# Schema (per target):
+#   id                  required, slug, must be unique across ALL yaml files
+#   name                required, human label
+#   category            required, one of: data_broker | social | public_record | breach_db
+#   jurisdiction        required, one of: US_FEDERAL | US_GA | GLOBAL
+#   opt_out_method      required, one of: email | web_form | api | manual_only | court_motion
+#   opt_out_url         optional
+#   contact_email       optional
+#   supports_minors     optional bool, default false
+#   requires_sensitive_payload optional bool, default false
+#   requires_identity_document optional bool, default false
+#   avg_response_days   optional int
+#   last_verified       optional ISO date (YYYY-MM-DD)
+#   notes               optional free text
+# =============================================================================
+
+targets:
+  - id: spokeo
+    name: Spokeo
+    category: data_broker
+    jurisdiction: US_FEDERAL
+    opt_out_method: web_form
+    opt_out_url: https://www.spokeo.com/optout
+    supports_minors: false
+    avg_response_days: 5
+    last_verified: 2026-05-01
+    notes: Search by URL; confirm via email link.
+
+  - id: beenverified
+    name: BeenVerified
+    category: data_broker
+    jurisdiction: US_FEDERAL
+    opt_out_method: web_form
+    opt_out_url: https://www.beenverified.com/app/optout/search
+    supports_minors: false
+    avg_response_days: 7
+    last_verified: 2026-05-01
+
+  - id: whitepages
+    name: Whitepages
+    category: data_broker
+    jurisdiction: US_FEDERAL
+    opt_out_method: web_form
+    opt_out_url: https://www.whitepages.com/suppression-requests
+    supports_minors: false
+    avg_response_days: 7
+    last_verified: 2026-05-01
+
+  - id: peoplefinder
+    name: PeopleFinder
+    category: data_broker
+    jurisdiction: US_FEDERAL
+    opt_out_method: web_form
+    opt_out_url: https://www.peoplefinder.com/optout.php
+    supports_minors: false
+    avg_response_days: 10
+    last_verified: 2026-05-01
+
+  - id: intelius
+    name: Intelius
+    category: data_broker
+    jurisdiction: US_FEDERAL
+    opt_out_method: web_form
+    opt_out_url: https://www.intelius.com/opt-out
+    supports_minors: false
+    avg_response_days: 10
+    last_verified: 2026-05-01
+
+  - id: mylife
+    name: MyLife
+    category: data_broker
+    jurisdiction: US_FEDERAL
+    opt_out_method: email
+    contact_email: privacy@mylife.com
+    supports_minors: false
+    avg_response_days: 14
+    last_verified: 2026-05-01
+    notes: Notoriously slow; expect repeated follow-up cycles.
+
+  - id: radaris
+    name: Radaris
+    category: data_broker
+    jurisdiction: US_FEDERAL
+    opt_out_method: web_form
+    opt_out_url: https://radaris.com/control/privacy
+    supports_minors: false
+    avg_response_days: 7
+    last_verified: 2026-05-01
+
+  - id: peekyou
+    name: PeekYou
+    category: data_broker
+    jurisdiction: US_FEDERAL
+    opt_out_method: web_form
+    opt_out_url: https://www.peekyou.com/about/contact/optout/
+    supports_minors: false
+    avg_response_days: 7
+    last_verified: 2026-05-01
+
+  - id: thatsthem
+    name: ThatsThem
+    category: data_broker
+    jurisdiction: US_FEDERAL
+    opt_out_method: web_form
+    opt_out_url: https://thatsthem.com/optout
+    supports_minors: false
+    avg_response_days: 5
+    last_verified: 2026-05-01
+
+  - id: fastpeoplesearch
+    name: FastPeopleSearch
+    category: data_broker
+    jurisdiction: US_FEDERAL
+    opt_out_method: web_form
+    opt_out_url: https://www.fastpeoplesearch.com/removal
+    supports_minors: false
+    avg_response_days: 5
+    last_verified: 2026-05-01
