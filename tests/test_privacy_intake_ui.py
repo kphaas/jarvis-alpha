@@ -8,6 +8,7 @@ PRIVACY_PAGE = REPO_ROOT / "ui" / "src" / "pages" / "Privacy.tsx"
 PRIVACY_UI_SOURCES = (
     PRIVACY_PAGE,
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyIntake.ts",
+    REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyTargets.ts",
     REPO_ROOT / "ui" / "src" / "lib" / "privacyIntake.ts",
     REPO_ROOT / "ui" / "src" / "types" / "privacy.ts",
     *(REPO_ROOT / "ui" / "src" / "components" / "privacy").glob("*.tsx"),
@@ -32,6 +33,8 @@ def test_privacy_intake_ui_uses_p2b_routes_and_api_wrapper() -> None:
     assert "apiFetch" in source
     assert "/v1/privacy/subjects" in source
     assert "/identity-tuples" in source
+    assert "/v1/privacy/targets" in source
+    assert "/v1/privacy/targets/refresh" in source
     assert "fetch(" not in source
     assert "XMLHttpRequest" not in source
 
@@ -46,8 +49,9 @@ def test_privacy_intake_ui_keeps_phase_boundary_local_only() -> None:
         "smtp",
         "scrape",
         "runner",
-        "opt_out_url",
         "approval_queue",
+        "send_opt_out",
+        "alpha_privacy_actions",
     )
 
     for token in forbidden:

@@ -6,6 +6,7 @@ send opt-out actions, call public internet targets, or start runners.
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -22,8 +23,14 @@ from brain.agents.privacy_scrub.repository import (
     PrivacySubjectRepository,
     SubjectIntake,
 )
-from brain.agents.privacy_scrub.state import get_subject, insert_identity_tuple
+from brain.agents.privacy_scrub.state import (
+    get_subject,
+    insert_identity_tuple,
+    list_targets,
+    refresh_targets_cache,
+)
 from brain.agents.privacy_scrub.subjects import Role
+from brain.agents.privacy_scrub.targets import load_all_targets
 from brain.db.rls import rls_connection
 from brain.middleware.jwt_auth import require_auth
 
@@ -70,6 +77,34 @@ class IdentityTupleCreateOut(BaseModel):
     tuple_type: TupleType
     key_version: str
     inserted: bool
+
+
+class PrivacyTargetOut(BaseModel):
+    id: str
+    name: str
+    category: str
+    jurisdiction: str
+    opt_out_method: str
+    opt_out_url: str | None = None
+    contact_email: str | None = None
+    supports_minors: bool
+    requires_sensitive_payload: bool
+    requires_identity_document: bool
+    avg_response_days: int | None = None
+    last_verified: date | None = None
+    notes: str | None = None
+    yaml_source: str
+    loaded_at: datetime | None = None
+
+
+class PrivacyTargetsOut(BaseModel):
+    count: int
+    targets: list[PrivacyTargetOut]
+
+
+class PrivacyTargetsRefreshOut(BaseModel):
+    count: int
+    source_label: str
 
 
 @router.post("/subjects", response_model=SubjectCreateOut)
@@ -155,6 +190,42 @@ async def add_privacy_identity_tuple(
         key_version=crypto.digest_key_version,
         inserted=tuple_id is not None,
     )
+
+
+@router.get("/targets", response_model=PrivacyTargetsOut)
+async def list_privacy_targets(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> PrivacyTargetsOut:
+    _assert_adult_or_admin_actor(request)
+    async with rls_connection(request) as conn:
+        targets = await list_targets(conn)
+
+    return PrivacyTargetsOut(
+        count=len(targets),
+        targets=[PrivacyTargetOut(**target) for target in targets],
+    )
+
+
+@router.post("/targets/refresh", response_model=PrivacyTargetsRefreshOut)
+async def refresh_privacy_targets(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> PrivacyTargetsRefreshOut:
+    _assert_adult_or_admin_actor(request)
+    source_label = "bundled_yaml"
+    try:
+        targets = load_all_targets()
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="privacy_targets_registry_invalid",
+        ) from exc
+
+    async with rls_connection(request) as conn:
+        count = await refresh_targets_cache(conn, targets, source_label=source_label)
+
+    return PrivacyTargetsRefreshOut(count=count, source_label=source_label)
 
 
 def _assert_adult_or_admin_actor(request: Request) -> None:
