@@ -134,7 +134,6 @@ REVIEWED_ROUTE_DB_ACCESS: dict[str, str] = {
     "dream.py": "Dream control plane uses service/admin paths with platform-admin policies; broader refactor is tracked separately.",
     "dream_planning.py": "Model policy lookup is platform-admin service configuration and sets rls.role inside transaction.",
     "internal_cost.py": "Internal cost ingestion is service-scoped and explicitly checks cost.report scope.",
-    "pin_auth.py": "Authentication bootstrap must read active profiles before issuing JWT/RLS context.",
     "prompts.py": "Prompt registry is global system configuration; write path is auth-protected and pending RLS wrapper.",
     "watchdog.py": "Watchdog ingest path is service-scoped; user-facing events use rls_connection.",
 }

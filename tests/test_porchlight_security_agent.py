@@ -506,6 +506,12 @@ def test_route_db_access_review_passes_when_reviewed(tmp_path: Path):
     assert result.metadata["uses_rls_helper"] == ["rls.py"]
 
 
+def test_route_db_access_default_allowlist_has_no_stale_entries():
+    result = porchlight.check_route_db_access()
+
+    assert result.metadata["stale_reviews"] == []
+
+
 def test_postgres_role_safety_fails_when_jarvisbrain_is_only_superuser():
     def fake_psql(query):
         assert "FROM pg_roles" in query
