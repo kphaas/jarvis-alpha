@@ -7,21 +7,30 @@ opt-outs, file court motions, or invoke browser/network automation.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 from uuid import UUID
 
 import asyncpg
 
-from brain.agents.privacy_scrub.crypto import PrivacyCrypto
+from brain.agents.privacy_scrub.crypto import (
+    EncryptedPayload,
+    PrivacyCrypto,
+    sha256_digest,
+)
 from brain.agents.privacy_scrub.policy import ActionType, ApprovalTier, evaluate_tier
 from brain.agents.privacy_scrub.state import (
     StoredCaseDraft,
+    StoredCaseDraftListItem,
     StoredDraftAction,
     StoredSubject,
     append_action_event,
+    get_case_draft_payload,
     get_subject,
     get_target,
     insert_case_draft,
     insert_draft_action,
+    list_case_drafts,
+    list_draft_actions_for_case,
     list_identity_tuples,
 )
 from brain.agents.privacy_scrub.subjects import Subject
@@ -46,6 +55,10 @@ class PrivacyDraftSubjectNotFound(PrivacyDraftError):
 
 class PrivacyDraftTargetNotFound(PrivacyDraftError):
     """A selected target does not exist in the local target cache."""
+
+
+class PrivacyDraftCaseNotFound(PrivacyDraftError):
+    """The requested case draft is not visible to the current RLS actor."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +98,29 @@ class CreatedCaseDraft:
     case_draft: StoredCaseDraft
     actions: tuple[StoredDraftAction, ...]
     review_packets: tuple[TargetReviewPacket, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CaseDraftInboxItem:
+    case_draft: StoredCaseDraft
+    action_count: int
+    approval_tiers: tuple[str, ...]
+
+    @property
+    def highest_approval_tier(self) -> str | None:
+        return self.approval_tiers[-1] if self.approval_tiers else None
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievedCaseDraft:
+    case_draft: StoredCaseDraft
+    actions: tuple[StoredDraftAction, ...]
+    review_packets: tuple[TargetReviewPacket, ...]
+
+    @property
+    def highest_approval_tier(self) -> str | None:
+        tiers = sorted({action.approval_tier for action in self.actions})
+        return tiers[-1] if tiers else None
 
 
 class PrivacyCaseDraftRepository:
@@ -181,9 +217,52 @@ class PrivacyCaseDraftRepository:
             review_packets=review_packets,
         )
 
+    async def list_case_drafts(
+        self,
+        *,
+        limit: int = 25,
+    ) -> tuple[CaseDraftInboxItem, ...]:
+        rows = await list_case_drafts(self._conn, limit=limit)
+        return tuple(_inbox_item(row) for row in rows)
+
+    async def get_case_draft(self, case_id: UUID) -> RetrievedCaseDraft:
+        stored_payload = await get_case_draft_payload(self._conn, case_id)
+        if stored_payload is None:
+            raise PrivacyDraftCaseNotFound("privacy case draft not found")
+        if (
+            sha256_digest(stored_payload.packet_payload_ciphertext)
+            != stored_payload.case_draft.packet_payload_hash
+        ):
+            raise PrivacyDraftError("privacy case draft payload hash mismatch")
+
+        try:
+            packet_payload = self._crypto.decrypt_json_payload(
+                EncryptedPayload(
+                    ciphertext=stored_payload.packet_payload_ciphertext,
+                    payload_hash=stored_payload.case_draft.packet_payload_hash,
+                    key_version=stored_payload.case_draft.payload_key_version,
+                )
+            )
+        except ValueError as exc:
+            raise PrivacyDraftError("privacy case draft decrypt failed") from exc
+        actions = tuple(await list_draft_actions_for_case(self._conn, case_id))
+        return RetrievedCaseDraft(
+            case_draft=stored_payload.case_draft,
+            actions=actions,
+            review_packets=_review_packets_from_payload(packet_payload),
+        )
+
     async def _active_tuple_types(self, subject_id: UUID) -> tuple[str, ...]:
         tuples = await list_identity_tuples(self._conn, subject_id, active_only=True)
         return tuple(sorted({item.tuple_type.value for item in tuples}))
+
+
+def _inbox_item(row: StoredCaseDraftListItem) -> CaseDraftInboxItem:
+    return CaseDraftInboxItem(
+        case_draft=row.case_draft,
+        action_count=row.action_count,
+        approval_tiers=row.approval_tiers,
+    )
 
 
 def _normalize_target_ids(target_ids: tuple[str, ...]) -> tuple[str, ...]:
@@ -332,3 +411,60 @@ def _case_payload(
         "available_identity_tuple_types": list(tuple_types),
         "review_packets": [packet.to_payload() for packet in review_packets],
     }
+
+
+_APPROVAL_TIERS = {"T1", "T2", "T3", "T4", "T5"}
+
+
+def _review_packets_from_payload(
+    payload: dict[str, object],
+) -> tuple[TargetReviewPacket, ...]:
+    packet_version = payload.get("packet_version")
+    if packet_version != "p2e-v1":
+        raise PrivacyDraftError("unsupported privacy case draft packet version")
+    raw_packets = payload.get("review_packets")
+    if not isinstance(raw_packets, list):
+        raise PrivacyDraftError("privacy case draft packets missing")
+    return tuple(_review_packet_from_payload(packet) for packet in raw_packets)
+
+
+def _review_packet_from_payload(packet: object) -> TargetReviewPacket:
+    if not isinstance(packet, dict):
+        raise PrivacyDraftError("privacy case draft packet invalid")
+    return TargetReviewPacket(
+        target_id=_payload_str(packet, "target_id"),
+        target_name=_payload_str(packet, "target_name"),
+        category=_payload_str(packet, "category"),
+        jurisdiction=_payload_str(packet, "jurisdiction"),
+        opt_out_method=_payload_str(packet, "opt_out_method"),
+        approval_tier=_payload_approval_tier(packet.get("approval_tier")),
+        approval_reason=_payload_str(packet, "approval_reason"),
+        legal_basis=_payload_str(packet, "legal_basis"),
+        required_identifiers=_payload_str_tuple(packet, "required_identifiers"),
+        available_identity_tuple_types=_payload_str_tuple(
+            packet,
+            "available_identity_tuple_types",
+        ),
+        evidence_checklist=_payload_str_tuple(packet, "evidence_checklist"),
+        risk_flags=_payload_str_tuple(packet, "risk_flags"),
+    )
+
+
+def _payload_str(packet: dict[object, object], key: str) -> str:
+    value = packet.get(key)
+    if not isinstance(value, str):
+        raise PrivacyDraftError(f"privacy case draft packet missing {key}")
+    return value
+
+
+def _payload_str_tuple(packet: dict[object, object], key: str) -> tuple[str, ...]:
+    value = packet.get(key)
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise PrivacyDraftError(f"privacy case draft packet missing {key}")
+    return tuple(value)
+
+
+def _payload_approval_tier(value: object) -> ApprovalTier:
+    if not isinstance(value, str) or value not in _APPROVAL_TIERS:
+        raise PrivacyDraftError("privacy case draft packet has invalid approval tier")
+    return cast(ApprovalTier, value)

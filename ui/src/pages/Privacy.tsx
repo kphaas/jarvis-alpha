@@ -1,10 +1,12 @@
 import { motion } from "framer-motion";
 import { Fingerprint } from "lucide-react";
 import { PrivacyCaseDraftPanel } from "../components/privacy/PrivacyCaseDraftPanel";
+import { PrivacyDraftInboxPanel } from "../components/privacy/PrivacyDraftInboxPanel";
 import { PrivacyTargetRegistry } from "../components/privacy/PrivacyTargetRegistry";
 import { PrivacyResultPanel } from "../components/privacy/PrivacyResultPanel";
 import { SubjectIntakeForm } from "../components/privacy/SubjectIntakeForm";
 import { usePrivacyCaseDraft } from "../hooks/usePrivacyCaseDraft";
+import { usePrivacyDraftInbox } from "../hooks/usePrivacyDraftInbox";
 import { usePrivacyIntake } from "../hooks/usePrivacyIntake";
 import { usePrivacyTargets } from "../hooks/usePrivacyTargets";
 import { useAppStore } from "../store";
@@ -31,6 +33,7 @@ export default function Privacy() {
   const targets = usePrivacyTargets();
   const subjectId = intake.createdSubject?.subject_id ?? null;
   const draftState = usePrivacyCaseDraft(subjectId, targets.selectedIds);
+  const draftInbox = usePrivacyDraftInbox();
   const isDark = theme === "dark";
   const border = isDark ? "border-white/10" : "border-[#141414]/10";
   const panel = isDark ? "bg-white/5" : "bg-[#141414]/5";
@@ -60,7 +63,7 @@ export default function Privacy() {
             <p
               className={`mt-1 text-[10px] font-mono uppercase tracking-widest ${muted}`}
             >
-              P2-E - review packet drafts
+              P2-F - draft review inbox
             </p>
           </div>
         </div>
@@ -99,7 +102,20 @@ export default function Privacy() {
             draftState={draftState}
             subjectId={subjectId}
             selectedCount={targets.selectedCount}
-            onDraftCreated={targets.clearSelection}
+            onDraftCreated={() => {
+              targets.clearSelection();
+              draftInbox.refreshDrafts();
+            }}
+            border={border}
+            panel={panel}
+            muted={muted}
+            isDark={isDark}
+            okClass={tone(isDark, "ok")}
+            warnClass={tone(isDark, "warn")}
+            errorClass={tone(isDark, "error")}
+          />
+          <PrivacyDraftInboxPanel
+            inbox={draftInbox}
             border={border}
             panel={panel}
             muted={muted}

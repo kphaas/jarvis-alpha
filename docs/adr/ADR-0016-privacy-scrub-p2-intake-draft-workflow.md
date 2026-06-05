@@ -22,6 +22,11 @@ action creation.
 P2 must not perform automated opt-out sending, public-internet scanning, account
 login, court filing, or document upload.
 
+P2-F extends the same boundary with a read-only draft review inbox. It may
+decrypt stored review-packet payloads in app code through `PrivacyCrypto` for an
+authenticated adult/admin operator. It must not add SQL decrypt helpers, expose
+plaintext subject profile fields, or create any outbound action path.
+
 ## Scope
 
 P2 may add:
@@ -33,6 +38,7 @@ P2 may add:
 - Target selection from bundled YAML and `alpha_privacy_targets_cache`.
 - Draft action creation in `alpha_privacy_actions`.
 - Append-only action events for draft lifecycle changes.
+- Read-only case draft list/detail routes for operator review.
 - Tests for RLS assumptions, approval-tier mapping, digest/encryption behavior,
   minor guardian requirements, and no-outbound behavior.
 
@@ -112,8 +118,10 @@ P2 must not add:
 ## Open Questions
 
 - Which Alpha UI surface should host privacy intake: Security, Admin, or a new
-  Privacy tab?
+  Privacy tab? Resolved by P2-C: a new Privacy tab.
 - Should P2 expose decrypt-for-review through app code for Ken only, or defer
-  all payload review until a later operator UI decision?
+  all payload review until a later operator UI decision? Resolved by P2-F:
+  app-side decrypt is allowed for review-packet payloads only, through
+  authenticated adult/admin Privacy routes.
 - Should sensitive evidence references point to an existing Alpha document store
   or remain external/manual in P2?

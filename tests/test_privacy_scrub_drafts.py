@@ -9,12 +9,17 @@ import pytest
 from brain.agents.privacy_scrub import drafts
 from brain.agents.privacy_scrub.crypto import PrivacyCrypto, PrivacyCryptoConfig
 from brain.agents.privacy_scrub.drafts import (
+    CaseDraftInboxItem,
     PrivacyCaseDraftRepository,
     PrivacyDraftError,
+    RetrievedCaseDraft,
+    TargetReviewPacket,
 )
 from brain.agents.privacy_scrub.identity import IdentityTuple, TupleType
 from brain.agents.privacy_scrub.state import (
     StoredCaseDraft,
+    StoredCaseDraftListItem,
+    StoredCaseDraftPayload,
     StoredDraftAction,
     StoredSubject,
 )
@@ -200,6 +205,154 @@ async def test_case_draft_repository_creates_encrypted_actions(monkeypatch) -> N
     ]
     assert conn.transaction_entries == 1
     assert conn.transaction_exits == 1
+
+
+@pytest.mark.asyncio
+async def test_case_draft_repository_lists_inbox_metadata(monkeypatch) -> None:
+    case_id = uuid4()
+    subject_id = uuid4()
+
+    async def fake_list_case_drafts(conn, *, limit=25):
+        assert limit == 10
+        return [
+            StoredCaseDraftListItem(
+                case_draft=StoredCaseDraft(
+                    id=case_id,
+                    subject_id=subject_id,
+                    created_by_user_id="ken",
+                    target_count=2,
+                    status="draft",
+                    packet_payload_hash="sha256:" + "1" * 64,
+                    payload_key_version="payload-v1",
+                ),
+                action_count=2,
+                approval_tiers=("T2", "T4"),
+            )
+        ]
+
+    monkeypatch.setattr(drafts, "list_case_drafts", fake_list_case_drafts)
+
+    result = await PrivacyCaseDraftRepository(
+        FakeDraftConnection(),  # type: ignore[arg-type]
+        _crypto(),
+    ).list_case_drafts(limit=10)
+
+    assert result == (
+        CaseDraftInboxItem(
+            case_draft=StoredCaseDraft(
+                id=case_id,
+                subject_id=subject_id,
+                created_by_user_id="ken",
+                target_count=2,
+                status="draft",
+                packet_payload_hash="sha256:" + "1" * 64,
+                payload_key_version="payload-v1",
+            ),
+            action_count=2,
+            approval_tiers=("T2", "T4"),
+        ),
+    )
+    assert result[0].highest_approval_tier == "T4"
+
+
+@pytest.mark.asyncio
+async def test_case_draft_repository_returns_stored_review_packet(
+    monkeypatch,
+) -> None:
+    case_id = uuid4()
+    subject_id = uuid4()
+    action_id = uuid4()
+    packet = TargetReviewPacket(
+        target_id="spokeo",
+        target_name="Spokeo",
+        category="data_broker",
+        jurisdiction="US_FEDERAL",
+        opt_out_method="web_form",
+        approval_tier="T2",
+        approval_reason="Local draft generation has no external side effects.",
+        legal_basis="Personal data broker opt-out or suppression request.",
+        required_identifiers=("full_name_or_name",),
+        available_identity_tuple_types=("full_name",),
+        evidence_checklist=("Confirm selected subject and target before approval.",),
+        risk_flags=(),
+    )
+    encrypted = _crypto().encrypt_json_payload(
+        {
+            "packet_version": "p2e-v1",
+            "subject_id": str(subject_id),
+            "review_packets": [packet.to_payload()],
+        }
+    )
+
+    async def fake_get_case_draft_payload(conn, case_id_arg):
+        assert case_id_arg == case_id
+        return StoredCaseDraftPayload(
+            case_draft=StoredCaseDraft(
+                id=case_id,
+                subject_id=subject_id,
+                created_by_user_id="ken",
+                target_count=1,
+                status="draft",
+                packet_payload_hash=encrypted.payload_hash,
+                payload_key_version=encrypted.key_version,
+            ),
+            packet_payload_ciphertext=encrypted.ciphertext,
+        )
+
+    async def fake_list_draft_actions_for_case(conn, case_id_arg):
+        assert case_id_arg == case_id
+        return [
+            StoredDraftAction(
+                id=action_id,
+                subject_id=subject_id,
+                target_id="spokeo",
+                case_draft_id=case_id,
+                action_type="draft",
+                approval_tier="T2",
+                status="pending",
+                draft_payload_hash="sha256:" + "2" * 64,
+                payload_key_version="payload-v1",
+            )
+        ]
+
+    monkeypatch.setattr(drafts, "get_case_draft_payload", fake_get_case_draft_payload)
+    monkeypatch.setattr(
+        drafts,
+        "list_draft_actions_for_case",
+        fake_list_draft_actions_for_case,
+    )
+
+    result = await PrivacyCaseDraftRepository(
+        FakeDraftConnection(),  # type: ignore[arg-type]
+        _crypto(),
+    ).get_case_draft(case_id)
+
+    assert result == RetrievedCaseDraft(
+        case_draft=StoredCaseDraft(
+            id=case_id,
+            subject_id=subject_id,
+            created_by_user_id="ken",
+            target_count=1,
+            status="draft",
+            packet_payload_hash=encrypted.payload_hash,
+            payload_key_version=encrypted.key_version,
+        ),
+        actions=(
+            StoredDraftAction(
+                id=action_id,
+                subject_id=subject_id,
+                target_id="spokeo",
+                case_draft_id=case_id,
+                action_type="draft",
+                approval_tier="T2",
+                status="pending",
+                draft_payload_hash="sha256:" + "2" * 64,
+                payload_key_version="payload-v1",
+            ),
+        ),
+        review_packets=(packet,),
+    )
+    assert "ken@example.com" not in str(result)
 
 
 @pytest.mark.asyncio

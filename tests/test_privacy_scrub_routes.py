@@ -10,8 +10,11 @@ from fastapi import HTTPException
 
 from brain.agents.privacy_scrub.config import PrivacyScrubConfigError
 from brain.agents.privacy_scrub.drafts import (
+    CaseDraftInboxItem,
     CreatedCaseDraft,
+    PrivacyDraftCaseNotFound,
     PrivacyDraftTargetNotFound,
+    RetrievedCaseDraft,
     TargetReviewPacket,
 )
 from brain.agents.privacy_scrub.identity import IdentityTuple, TupleType
@@ -80,6 +83,14 @@ def test_privacy_intake_routes_are_classified_t2_security_writes() -> None:
 
 
 def test_privacy_target_routes_are_classified() -> None:
+    for path in (
+        "/v1/privacy/case-drafts",
+        f"/v1/privacy/case-drafts/{uuid4()}",
+    ):
+        classes = classify_route("GET", path)
+        assert classes == ["read", "security_read"]
+        assert determine_risk_tier(classes) == "T2"
+
     read_classes = classify_route("GET", "/v1/privacy/targets")
     assert read_classes == ["read", "security_read"]
     assert determine_risk_tier(read_classes) == "T2"
@@ -580,6 +591,151 @@ async def test_create_privacy_case_draft_maps_missing_target(monkeypatch) -> Non
 
     assert exc.value.status_code == 400
     assert exc.value.detail == "privacy_target_not_found"
+
+
+@pytest.mark.asyncio
+async def test_list_privacy_case_drafts_returns_inbox_metadata(monkeypatch) -> None:
+    subject_id = uuid4()
+    case_id = uuid4()
+    calls = SimpleNamespace(limit=None)
+
+    class FakeRepo:
+        def __init__(self, conn, crypto) -> None:
+            pass
+
+        async def list_case_drafts(self, *, limit=25):
+            calls.limit = limit
+            return (
+                CaseDraftInboxItem(
+                    case_draft=StoredCaseDraft(
+                        id=case_id,
+                        subject_id=subject_id,
+                        created_by_user_id="ken",
+                        target_count=2,
+                        status="draft",
+                        packet_payload_hash="sha256:" + "1" * 64,
+                        payload_key_version="payload-v1",
+                    ),
+                    action_count=2,
+                    approval_tiers=("T2", "T4"),
+                ),
+            )
+
+    monkeypatch.setattr(privacy, "load_privacy_crypto", lambda: object())
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "PrivacyCaseDraftRepository", FakeRepo)
+
+    response = await privacy.list_privacy_case_drafts(
+        _request(),
+        10,
+        "ken",
+    )
+
+    assert response.count == 1
+    assert response.drafts[0].case_id == case_id
+    assert response.drafts[0].subject_id == subject_id
+    assert response.drafts[0].action_count == 2
+    assert response.drafts[0].highest_approval_tier == "T4"
+    assert calls.limit == 10
+
+
+@pytest.mark.asyncio
+async def test_get_privacy_case_draft_returns_review_packet(monkeypatch) -> None:
+    subject_id = uuid4()
+    case_id = uuid4()
+    action_id = uuid4()
+
+    class FakeRepo:
+        def __init__(self, conn, crypto) -> None:
+            pass
+
+        async def get_case_draft(self, case_id_arg):
+            assert case_id_arg == case_id
+            return RetrievedCaseDraft(
+                case_draft=StoredCaseDraft(
+                    id=case_id,
+                    subject_id=subject_id,
+                    created_by_user_id="ken",
+                    target_count=1,
+                    status="draft",
+                    packet_payload_hash="sha256:" + "1" * 64,
+                    payload_key_version="payload-v1",
+                ),
+                actions=(
+                    StoredDraftAction(
+                        id=action_id,
+                        subject_id=subject_id,
+                        target_id="spokeo",
+                        case_draft_id=case_id,
+                        action_type="draft",
+                        approval_tier="T2",
+                        status="pending",
+                        draft_payload_hash="sha256:" + "2" * 64,
+                        payload_key_version="payload-v1",
+                    ),
+                ),
+                review_packets=(
+                    TargetReviewPacket(
+                        target_id="spokeo",
+                        target_name="Spokeo",
+                        category="data_broker",
+                        jurisdiction="US_FEDERAL",
+                        opt_out_method="web_form",
+                        approval_tier="T2",
+                        approval_reason=(
+                            "Local draft generation has no external side effects."
+                        ),
+                        legal_basis=(
+                            "Personal data broker opt-out or suppression request."
+                        ),
+                        required_identifiers=("full_name_or_name",),
+                        available_identity_tuple_types=("full_name",),
+                        evidence_checklist=("Confirm selected subject and target.",),
+                        risk_flags=(),
+                    ),
+                ),
+            )
+
+    monkeypatch.setattr(privacy, "load_privacy_crypto", lambda: object())
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "PrivacyCaseDraftRepository", FakeRepo)
+
+    response = await privacy.get_privacy_case_draft(
+        _request(),
+        case_id,
+        "ken",
+    )
+
+    assert response.case_id == case_id
+    assert response.action_count == 1
+    assert response.highest_approval_tier == "T2"
+    assert response.actions[0].action_id == action_id
+    assert response.review_packets[0].target_name == "Spokeo"
+    assert "ken@example.com" not in str(response.model_dump())
+
+
+@pytest.mark.asyncio
+async def test_get_privacy_case_draft_maps_missing_case(monkeypatch) -> None:
+    class FakeRepo:
+        def __init__(self, conn, crypto) -> None:
+            pass
+
+        async def get_case_draft(self, case_id):
+            raise PrivacyDraftCaseNotFound("missing")
+
+    monkeypatch.setattr(privacy, "load_privacy_crypto", lambda: object())
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "PrivacyCaseDraftRepository", FakeRepo)
+
+    with pytest.raises(HTTPException) as exc:
+        await privacy.get_privacy_case_draft(
+            _request(),
+            uuid4(),
+            "ken",
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "privacy_case_draft_not_found"
 
 
 def test_privacy_route_has_no_outbound_imports_or_plaintext_logging() -> None:
