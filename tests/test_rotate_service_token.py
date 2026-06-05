@@ -158,3 +158,16 @@ def test_record_rotation_ledger_uses_brain_ssh_for_remote_node(monkeypatch):
     assert seen["kwargs"]["input"].count("ALPHA_SERVICE_TOKEN_ENDPOINT") == 1
     assert "'endpoint'" in seen["kwargs"]["input"]
     assert "hash456" in seen["kwargs"]["input"]
+
+
+def test_forge_sentinel_rotation_uses_dedicated_security_token():
+    cfg = rotator.NODE_CONFIG["forge_sentinel"]
+
+    assert cfg["iss"] == "forge"
+    assert cfg["secret_key"] == "ALPHA_SENTINEL_SERVICE_TOKEN"
+    assert cfg["scopes"] == ["security_write"]
+    assert (
+        rotator.SERVICE_ROTATION_NAMES["forge_sentinel"]
+        == "ALPHA_SENTINEL_SERVICE_TOKEN"
+    )
+    assert rotator.SERVICE_ROTATION_LEDGER_NODES["forge_sentinel"] == "sandbox"

@@ -71,30 +71,39 @@ def test_keyturner_reconcile_migration_covers_current_config():
         Path("scripts/secrets_rotation.json").read_text(encoding="utf-8")
     )
     configured = set(config["secrets"])
-    migration = Path(
-        "brain/db/migrations/20260604_134000_keyturner_rotation_ledger_reconcile.sql"
-    ).read_text(encoding="utf-8")
+    migrations = [
+        path.read_text(encoding="utf-8")
+        for path in sorted(
+            Path("brain/db/migrations").glob("*keyturner*rotation*reconcile*.sql")
+        )
+    ]
+    assert migrations
 
-    inventory_match = re.search(
-        r"inventory\(secret_name.*?\)\s+AS\s+\(\s+VALUES(?P<body>.*?)\)\s*INSERT",
-        migration,
-        re.DOTALL,
-    )
-    assert inventory_match is not None
-    inventoried = set(re.findall(r"\('([A-Z0-9_]+)'", inventory_match.group("body")))
+    inventoried: set[str] = set()
+    postflight_expected: set[str] = set()
+    for migration in migrations:
+        inventory_match = re.search(
+            r"inventory\(secret_name.*?\)\s+AS\s+\(\s+VALUES(?P<body>.*?)\)\s*INSERT",
+            migration,
+            re.DOTALL,
+        )
+        assert inventory_match is not None
+        inventoried.update(
+            re.findall(r"\('([A-Z0-9_]+)'", inventory_match.group("body"))
+        )
 
-    expected_match = re.search(
-        r"VALUES(?P<body>.*?)\)\s+AS expected\(secret_name\)",
-        migration,
-        re.DOTALL,
-    )
-    assert expected_match is not None
-    postflight_expected = set(
-        re.findall(r"\('([A-Z0-9_]+)'\)", expected_match.group("body"))
-    )
+        expected_match = re.search(
+            r"VALUES(?P<body>.*?)\)\s+AS expected\(secret_name\)",
+            migration,
+            re.DOTALL,
+        )
+        assert expected_match is not None
+        postflight_expected.update(
+            re.findall(r"\('([A-Z0-9_]+)'\)", expected_match.group("body"))
+        )
 
     assert inventoried == configured
     assert postflight_expected == configured
-    assert "value_hash" in migration
-    assert "'skipped'" in migration
-    assert "keyturner@reconcile" in migration
+    assert all("value_hash" in migration for migration in migrations)
+    assert all("'skipped'" in migration for migration in migrations)
+    assert all("keyturner@reconcile" in migration for migration in migrations)
