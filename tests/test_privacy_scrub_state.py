@@ -508,6 +508,7 @@ async def test_update_privacy_action_manual_disposition_records_encrypted_hashes
     assert "manual_note_ciphertext = $5" in query
     assert "evidence_payload_ciphertext = $7" in query
     assert "approval_queue_id IS NOT NULL" in query
+    assert "$10::timestamptz" in query
     assert args[0] == action_id
     assert args[1] == "sent"
     assert args[8] == "payload-v2"
@@ -534,6 +535,8 @@ async def test_update_privacy_action_verification_sets_confirmed_status() -> Non
     assert action.manual_disposition == "handled"
     assert "confirmed_at = CASE" in query
     assert "verification_due_at = CASE" in query
+    assert "$7::timestamptz" in query
+    assert "NULL::timestamptz" in query
     assert args[0] == action_id
     assert args[1] == "confirmed"
     assert args[5] == "payload-v2"
