@@ -23,6 +23,7 @@ DEFAULT_MANAGED_AGENTS = (
     "sweep",
     "tripwire",
     "ledger",
+    "sentry",
 )
 STALE_SCHEDULED_RUN_SECONDS = 5 * 60
 STALE_POSTURE_SWEEP_SECONDS = 30 * 60 * 60
