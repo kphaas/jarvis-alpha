@@ -95,7 +95,23 @@ DEFAULT_CLOUDFLARE_FORBIDDEN_APP_TERMS = (
     "jarvis brain",
     "jarvis-brain",
 )
-DEFAULT_GITHUB_BRANCH_PROTECTION_REPOS = ("kphaas/jarvis-alpha",)
+DEFAULT_GITHUB_BRANCH_PROTECTION_REPOS = (
+    "kphaas/jarvis-alpha",
+    "kphaas/jarvis-financial",
+    "kphaas/jarvis-forge",
+)
+DEFAULT_GITHUB_REQUIRED_CHECKS = (
+    "base-staleness",
+    "ci-pass",
+    "lint",
+    "secret-scan",
+    "test",
+    "typecheck",
+)
+REMOTE_JWT_ALLOWED_KEYS = {
+    "ALPHA_SERVICE_TOKEN",
+    "ALPHA_SENTINEL_SERVICE_TOKEN",
+}
 ACCEPTED_BOOTSTRAP_SECDEF_FUNCTIONS = {
     "public.pgaudit_ddl_command_end()",
     "public.pgaudit_sql_drop()",
@@ -901,7 +917,7 @@ def _remote_jwt_verify(
         return "skipped", "node is not in SSH map"
     if not remote_ssh_probe_enabled():
         return "skipped", "remote SSH probe not configured"
-    if secret_key != "ALPHA_SERVICE_TOKEN":
+    if secret_key not in REMOTE_JWT_ALLOWED_KEYS:
         return "skipped", f"remote JWT key {secret_key} is not allowlisted"
     command = f"porchlight jwt-exp {secret_key} {min_hours:g}"
     result = ssh(node_info["ssh_target"], command)
@@ -1132,6 +1148,11 @@ def _verify_secret_live(
     verify = spec.get("verify") if isinstance(spec.get("verify"), dict) else {}
     verify_type = str(verify.get("type") or "none")
     if verify_type == "none":
+        if spec.get("requires_alter_role"):
+            return (
+                "skipped",
+                "manual DB credential rotation is ledger-tracked; no safe live probe configured",
+            )
         return "skipped", "no live probe configured"
     if verify_type == "jwt_exp":
         nodes = spec.get("nodes") if isinstance(spec.get("nodes"), list) else []
@@ -2005,6 +2026,23 @@ def check_cloudflare_access_policy_drift(
                     "unexpected_policy_emails": unexpected,
                 },
             )
+    elif matched_policy_emails:
+        return CheckResult(
+            name="cloudflare_access_policy_drift",
+            status="warn",
+            severity="medium",
+            summary="Cloudflare Access exact policy membership is not configured.",
+            detail=(
+                "Set PORCHLIGHT_CLOUDFLARE_EXPECTED_POLICY_EMAILS so Porchlight "
+                "can detect unexpected family/external access drift."
+            ),
+            metadata={
+                "expected_hosts": expected_hosts,
+                "matched": matched,
+                "expected_policy_emails_count": 0,
+                "matched_policy_emails_count": len(matched_policy_emails),
+            },
+        )
 
     return CheckResult(
         name="cloudflare_access_policy_drift",
@@ -2524,7 +2562,7 @@ def _github_branch_protection_repos() -> list[str]:
 def _github_required_checks() -> set[str]:
     configured = os.getenv("PORCHLIGHT_GITHUB_REQUIRED_CHECKS", "").strip()
     if not configured:
-        return set()
+        return set(DEFAULT_GITHUB_REQUIRED_CHECKS)
     return {item.strip() for item in configured.split(",") if item.strip()}
 
 
@@ -2618,16 +2656,46 @@ def check_github_branch_protection_drift(
             continue
         contexts = _status_check_contexts(payload)
         missing_checks = sorted(required_checks - contexts)
-        has_reviews = isinstance(payload.get("required_pull_request_reviews"), dict)
-        has_status_checks = isinstance(payload.get("required_status_checks"), dict)
+        reviews = payload.get("required_pull_request_reviews")
+        status_checks = payload.get("required_status_checks")
+        has_reviews = isinstance(reviews, dict)
+        has_status_checks = isinstance(status_checks, dict)
+        required_review_count = (
+            int(reviews.get("required_approving_review_count") or 0)
+            if isinstance(reviews, dict)
+            else 0
+        )
+        dismisses_stale_reviews = (
+            bool(reviews.get("dismiss_stale_reviews"))
+            if isinstance(reviews, dict)
+            else False
+        )
+        requires_last_push_approval = (
+            bool(reviews.get("require_last_push_approval"))
+            if isinstance(reviews, dict)
+            else False
+        )
+        strict_status_checks = (
+            bool(status_checks.get("strict"))
+            if isinstance(status_checks, dict)
+            else False
+        )
         if not has_reviews:
             findings.append(f"{repo}:{branch} missing PR-review requirement")
+        elif required_review_count < 1:
+            findings.append(f"{repo}:{branch} requires no approving review")
+        if has_reviews and not dismisses_stale_reviews:
+            findings.append(f"{repo}:{branch} does not dismiss stale reviews")
+        if has_reviews and not requires_last_push_approval:
+            findings.append(f"{repo}:{branch} does not require last-push approval")
         if required_checks and missing_checks:
             findings.append(
                 f"{repo}:{branch} missing required checks: {', '.join(missing_checks)}"
             )
         elif not has_status_checks:
             warnings.append(f"{repo}:{branch} has no required status checks")
+        if has_status_checks and not strict_status_checks:
+            findings.append(f"{repo}:{branch} does not require up-to-date branches")
         repo_results.append(
             {
                 "repo": repo,
@@ -2635,6 +2703,10 @@ def check_github_branch_protection_drift(
                 "status": "checked",
                 "has_pr_reviews": has_reviews,
                 "has_status_checks": has_status_checks,
+                "required_approving_review_count": required_review_count,
+                "dismiss_stale_reviews": dismisses_stale_reviews,
+                "require_last_push_approval": requires_last_push_approval,
+                "strict_status_checks": strict_status_checks,
                 "required_checks": sorted(required_checks),
                 "contexts": sorted(contexts),
             }
