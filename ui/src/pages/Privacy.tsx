@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { PrivacyCaseDraftPanel } from "../components/privacy/PrivacyCaseDraftPanel";
 import { PrivacyApprovedActionsPanel } from "../components/privacy/PrivacyApprovedActionsPanel";
 import { PrivacyDraftInboxPanel } from "../components/privacy/PrivacyDraftInboxPanel";
+import { PrivacyRemovalControlPanel } from "../components/privacy/PrivacyRemovalControlPanel";
 import { PrivacyTargetRegistry } from "../components/privacy/PrivacyTargetRegistry";
 import { PrivacyResultPanel } from "../components/privacy/PrivacyResultPanel";
 import { SubjectIntakeForm } from "../components/privacy/SubjectIntakeForm";
@@ -11,6 +12,7 @@ import { usePrivacyApprovedActions } from "../hooks/usePrivacyApprovedActions";
 import { usePrivacyCaseDraft } from "../hooks/usePrivacyCaseDraft";
 import { usePrivacyDraftInbox } from "../hooks/usePrivacyDraftInbox";
 import { usePrivacyIntake } from "../hooks/usePrivacyIntake";
+import { usePrivacyRemovalControl } from "../hooks/usePrivacyRemovalControl";
 import { usePrivacyTargets } from "../hooks/usePrivacyTargets";
 import { useAppStore } from "../store";
 
@@ -42,6 +44,7 @@ export default function Privacy() {
   const draftState = usePrivacyCaseDraft(subjectId, targets.selectedIds);
   const draftInbox = usePrivacyDraftInbox(caseId);
   const approvedActions = usePrivacyApprovedActions(actionId, caseId);
+  const removalControl = usePrivacyRemovalControl();
   const isDark = theme === "dark";
   const border = isDark ? "border-white/10" : "border-[#141414]/10";
   const panel = isDark ? "bg-white/5" : "bg-[#141414]/5";
@@ -86,7 +89,8 @@ export default function Privacy() {
               className={`mt-2 max-w-2xl text-sm leading-6 ${muted}`}
             >
               Manual MVP v0.1: encrypted intake, approval handoff, local
-              disposition, verification, and report evidence.
+              disposition, verification, report evidence, and P4 removal
+              control.
             </p>
           </div>
         </div>
@@ -108,6 +112,17 @@ export default function Privacy() {
         </div>
       </div>
       </div>
+
+      <PrivacyRemovalControlPanel
+        control={removalControl}
+        border={border}
+        panel={panel}
+        muted={muted}
+        isDark={isDark}
+        okClass={tone(isDark, "ok")}
+        warnClass={tone(isDark, "warn")}
+        errorClass={tone(isDark, "error")}
+      />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.75fr)]">
         <SubjectIntakeForm

@@ -13,6 +13,7 @@ PRIVACY_UI_SOURCES = (
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyApprovedActions.ts",
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyCaseDraft.ts",
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyDraftInbox.ts",
+    REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyRemovalControl.ts",
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyTargets.ts",
     REPO_ROOT / "ui" / "src" / "lib" / "privacyIntake.ts",
     REPO_ROOT / "ui" / "src" / "types" / "privacy.ts",
@@ -114,6 +115,22 @@ def test_privacy_approved_actions_panel_is_mounted_on_privacy_page() -> None:
     assert "P3-E verification" not in source
     assert "P3-F timeline" not in source
     assert "P3-G report" not in source
+
+
+def test_privacy_removal_control_panel_is_mounted_on_privacy_page() -> None:
+    page_source = PRIVACY_PAGE.read_text(encoding="utf-8")
+    source = "\n".join(path.read_text(encoding="utf-8") for path in PRIVACY_UI_SOURCES)
+
+    assert "usePrivacyRemovalControl()" in page_source
+    assert "<PrivacyRemovalControlPanel" in page_source
+    assert "/v1/privacy/removal-control/summary" in source
+    assert "P4 Removal Control Plane" in source
+    assert "Incogni and DeleteMe are the benchmark" in source
+    assert "outbound disabled" in source
+    assert "North-star gaps" in source
+    assert "P4-A" in source
+    assert "P4-G" in source
+    assert "PrivacyRemovalControlSummaryResponse" in source
 
 
 def test_alpha_pin_gate_supports_longer_pins_and_session_cookie_refresh() -> None:

@@ -222,6 +222,58 @@ export type PrivacyCaseReportResponse = {
   evidence_manifest: PrivacyEvidenceManifest;
 };
 
+export type PrivacyRemovalCounts = {
+  targets_total: number;
+  broker_targets: number;
+  public_record_targets: number;
+  authorizations_active: number;
+  adapter_profiles: number;
+  adapter_profiles_recurring: number;
+  evidence_items: number;
+  monitor_runs: number;
+  monitor_runs_due: number;
+  search_deindex_items: number;
+  public_record_triage_items: number;
+  approved_actions_open: number;
+  approved_actions_terminal: number;
+};
+
+export type PrivacyRemovalLane = {
+  code: string;
+  label: string;
+  status: "ready" | "needs_input";
+  north_star: string;
+  current_state: string;
+  next_step: string;
+  evidence_key: string;
+  metric: number;
+};
+
+export type PrivacyRemovalLens = {
+  code: string;
+  label: string;
+  status: "ready" | "needs_input";
+  summary: string;
+  checkpoints: string[];
+};
+
+export type PrivacyRemovalBenchmark = {
+  provider: string;
+  capability: string;
+  alpha_gap: string;
+  control: string;
+};
+
+export type PrivacyRemovalControlSummaryResponse = {
+  generated_at: string;
+  mode: string;
+  outbound_enabled: boolean;
+  counts: PrivacyRemovalCounts;
+  lanes: PrivacyRemovalLane[];
+  lenses: PrivacyRemovalLens[];
+  benchmarks: PrivacyRemovalBenchmark[];
+};
+
 export type ProfileFields = {
   legal_name: string;
   date_of_birth: string;
