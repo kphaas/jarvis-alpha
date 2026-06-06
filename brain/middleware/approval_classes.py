@@ -336,6 +336,7 @@ TIER_RULES: list[tuple[set[str], str]] = [
     ({"external_call"}, "T2"),
     ({"write"}, "T2"),
     ({"security_read"}, "T2"),
+    ({"auth"}, "T2"),
     ({"read"}, "T1"),
 ]
 
