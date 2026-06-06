@@ -18,6 +18,10 @@ from brain.services.internet_scout.models import (
     InternetScoutBrowserRunRequest,
     InternetScoutBrowserRunResponse,
     InternetScoutConsumerRequest,
+    InternetScoutMemoryPromotion,
+    InternetScoutMemoryPromotionCandidate,
+    InternetScoutMemoryPromotionCreateRequest,
+    InternetScoutMemoryPromotionReviewRequest,
     InternetScoutRequest,
     InternetTool,
 )
@@ -62,15 +66,61 @@ class FakeRepo:
             {"mark": "failed", "request_id": request_id, "error_text": error_text}
         )
 
+    async def count_recent_browser_runs(self, user_id):
+        return 0
+
     async def load_packet(self, request_id):
         source = build_source_reference(
             url="https://public.example.test/report",
-            content="Stored",
+            content="Stored Beacon source.",
         )
         return InternetEvidencePacket(
             request=InternetScoutRequest(requester="stored"),
             sources=[source],
-            claims=[],
+            claims=[
+                EvidenceClaim(
+                    claim="Stored Beacon source.",
+                    source_url=source.url,
+                    citation_text="Stored Beacon source.",
+                    confidence="medium",
+                )
+            ],
+        )
+
+    async def create_memory_promotions(self, **kwargs):
+        self.created.append({"memory_promotions": kwargs})
+        return [
+            InternetScoutMemoryPromotion(
+                id=uuid4(),
+                request_id=kwargs["request_id"],
+                target_user_id=kwargs["target_user_id"],
+                requested_by=kwargs["requested_by"],
+                source_url="https://public.example.test/report",
+                source_host="public.example.test",
+                source_content_hash="a" * 64,
+                citation_text="Stored Beacon source.",
+                proposed_fact=kwargs["candidates"][0].proposed_fact,
+                category=kwargs["candidates"][0].category,
+                status="pending_review",
+                semantic_result={},
+            )
+        ]
+
+    async def review_memory_promotion(self, **kwargs):
+        self.events.append({"memory_review": kwargs})
+        return InternetScoutMemoryPromotion(
+            id=kwargs["promotion_id"],
+            request_id=self.request_id,
+            target_user_id=uuid4(),
+            requested_by="ken",
+            source_url="https://public.example.test/report",
+            source_host="public.example.test",
+            source_content_hash="a" * 64,
+            citation_text="Stored Beacon source.",
+            proposed_fact="Beacon has a reviewed fact.",
+            category="project",
+            status="promoted" if kwargs["decision"] == "approve" else "rejected",
+            semantic_result={"saved": kwargs["decision"] == "approve"},
         )
 
 
@@ -252,6 +302,55 @@ async def test_internet_scout_browser_approval_request_queues_only(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_internet_scout_create_memory_promotions_from_stored_evidence(
+    monkeypatch,
+):
+    FakeRepo.created = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+    target_user_id = uuid4()
+
+    response = await internet_scout.internet_scout_create_memory_promotions(
+        FakeRepo.request_id,
+        InternetScoutMemoryPromotionCreateRequest(
+            target_user_id=target_user_id,
+            candidates=[
+                InternetScoutMemoryPromotionCandidate(
+                    claim_index=0,
+                    proposed_fact="Beacon has a reviewed fact.",
+                    category="project",
+                )
+            ],
+        ),
+        _request(scopes=["internet_scout.memory_promote"]),
+        _user_id="ken",
+    )
+
+    assert response.promotions[0].target_user_id == target_user_id
+    assert response.promotions[0].status == "pending_review"
+    assert FakeRepo.created[0]["memory_promotions"]["requested_by"] == "ken"
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_review_memory_promotion_approves(monkeypatch):
+    FakeRepo.events = []
+    promotion_id = uuid4()
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+
+    response = await internet_scout.internet_scout_review_memory_promotion(
+        promotion_id,
+        InternetScoutMemoryPromotionReviewRequest(decision="approve"),
+        _request(scopes=["internet_scout.memory_promote"]),
+        _user_id="ken",
+    )
+
+    assert response.promotion.id == promotion_id
+    assert response.promotion.status == "promoted"
+    assert FakeRepo.events[0]["memory_review"]["reviewer"] == "ken"
+
+
+@pytest.mark.asyncio
 async def test_internet_scout_browser_run_approved_executes_and_consumes(monkeypatch):
     FakeRepo.created = []
     FakeRepo.events = []
@@ -314,7 +413,11 @@ async def test_internet_scout_browser_run_approved_executes_and_consumes(monkeyp
         internet_scout, "require_approved_browser_task", fake_require_approved
     )
     monkeypatch.setattr(internet_scout, "consume_browser_task_approval", fake_consume)
-    monkeypatch.setattr(internet_scout, "BrowserTaskRunner", FakeBrowserRunner)
+    monkeypatch.setattr(
+        internet_scout,
+        "build_browser_task_runner_from_env",
+        lambda: FakeBrowserRunner(),
+    )
 
     response = await internet_scout.internet_scout_browser_run_approved(
         InternetScoutBrowserRunRequest(
@@ -373,6 +476,20 @@ def test_internet_scout_routes_are_classified():
     assert classify_route(
         "POST",
         "/v1/internet-scout/browser-task/approval-request",
+    ) == [
+        "write",
+        "security_write",
+    ]
+    assert classify_route(
+        "POST",
+        "/v1/internet-scout/requests/123/memory-promotions",
+    ) == [
+        "write",
+        "security_write",
+    ]
+    assert classify_route(
+        "POST",
+        "/v1/internet-scout/memory-promotions/123/review",
     ) == [
         "write",
         "security_write",

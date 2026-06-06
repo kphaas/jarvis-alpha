@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+from importlib import import_module, metadata
+import os
+from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
@@ -23,6 +27,11 @@ from brain.services.internet_scout.models import (
 )
 from brain.services.internet_scout.policy import evaluate_policy
 from brain.services.internet_scout.safety import validate_url
+from brain.services.internet_scout.sanitizer import sanitize_untrusted_text
+
+EXPECTED_PLAYWRIGHT_VERSION = "1.49.1"
+DEFAULT_BROWSER_RUNS_PER_HOUR = 3
+DEFAULT_BROWSER_TIMEOUT_MS = 20_000
 
 
 class BrowserRuntimeUnavailableError(RuntimeError):
@@ -44,13 +53,120 @@ class BrowserTaskAdapter(Protocol):
 
 
 class DisabledBrowserTaskAdapter:
+    def __init__(self, reason: str = "browser_runtime_not_configured") -> None:
+        self.reason = reason
+
     async def run(
         self,
         *,
         request: InternetScoutRequest,
         sandbox: BrowserSandboxPolicy,
     ) -> list[BrowserRunObservation]:
-        raise BrowserRuntimeUnavailableError("browser_runtime_not_configured")
+        raise BrowserRuntimeUnavailableError(self.reason)
+
+
+class BrowserScreenshotStore:
+    """Content-addressed screenshot store for reviewed browser observations."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def save_png(self, data: bytes) -> str:
+        digest = hashlib.sha256(data).hexdigest()
+        self.root.mkdir(parents=True, exist_ok=True)
+        path = self.root / f"{digest}.png"
+        if not path.exists():
+            path.write_bytes(data)
+        return f"sha256:{digest}"
+
+
+class PlaywrightBrowserTaskAdapter:
+    """Production browser adapter for public, read-only page observation."""
+
+    def __init__(
+        self,
+        *,
+        screenshot_store: BrowserScreenshotStore,
+        timeout_ms: int = DEFAULT_BROWSER_TIMEOUT_MS,
+    ) -> None:
+        self.screenshot_store = screenshot_store
+        self.timeout_ms = timeout_ms
+
+    @classmethod
+    def from_env(cls) -> "PlaywrightBrowserTaskAdapter":
+        screenshot_dir = os.getenv("BEACON_BROWSER_SCREENSHOT_DIR", "").strip()
+        if not screenshot_dir:
+            raise BrowserRuntimeUnavailableError(
+                "browser_screenshot_dir_not_configured"
+            )
+        _require_playwright_version()
+        timeout_ms = _bounded_int_env(
+            "BEACON_BROWSER_TIMEOUT_MS",
+            default=DEFAULT_BROWSER_TIMEOUT_MS,
+            minimum=5_000,
+            maximum=60_000,
+        )
+        return cls(
+            screenshot_store=BrowserScreenshotStore(Path(screenshot_dir)),
+            timeout_ms=timeout_ms,
+        )
+
+    async def run(
+        self,
+        *,
+        request: InternetScoutRequest,
+        sandbox: BrowserSandboxPolicy,
+    ) -> list[BrowserRunObservation]:
+        if not request.urls:
+            raise BrowserSandboxPolicyError("browser_start_url_required")
+
+        module = import_module("playwright.async_api")
+        async_playwright = getattr(module, "async_playwright")
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=True)
+            try:
+                context = await browser.new_context(
+                    accept_downloads=False,
+                    ignore_https_errors=False,
+                )
+                page = await context.new_page()
+                await page.goto(
+                    request.urls[0],
+                    wait_until="domcontentloaded",
+                    timeout=self.timeout_ms,
+                )
+                final_url = str(page.url)
+                final_safety = validate_url(final_url)
+                if (
+                    not final_safety.allowed
+                    or final_safety.host not in sandbox.allowed_hosts
+                ):
+                    raise BrowserSandboxPolicyError(
+                        "browser_cross_host_navigation_blocked"
+                    )
+                title = await page.title()
+                raw_visible_text = await page.locator("body").inner_text(
+                    timeout=self.timeout_ms
+                )
+                sanitized = sanitize_untrusted_text(raw_visible_text, max_chars=5000)
+                screenshot = await page.screenshot(full_page=True)
+                screenshot_ref = self.screenshot_store.save_png(screenshot)
+                content_hash = hashlib.sha256(
+                    sanitized.text.encode("utf-8")
+                ).hexdigest()
+                return [
+                    BrowserRunObservation(
+                        url=final_safety.normalized_url or final_url,
+                        host=final_safety.host or "",
+                        title=title,
+                        visible_text=sanitized.text,
+                        screenshot_ref=screenshot_ref,
+                        content_hash=content_hash,
+                        risk_markers=sanitized.risk_markers,
+                    )
+                ]
+            finally:
+                await browser.close()
 
 
 class BrowserTaskRunner:
@@ -92,6 +208,30 @@ class BrowserTaskRunner:
             screenshots_review_required=True,
             blocked_reasons=[],
         )
+
+
+def build_browser_task_runner_from_env() -> BrowserTaskRunner:
+    runtime = os.getenv("BEACON_BROWSER_RUNTIME", "").strip().lower()
+    if runtime in {"", "disabled", "off"}:
+        return BrowserTaskRunner()
+    if runtime != "playwright":
+        return BrowserTaskRunner(
+            adapter=DisabledBrowserTaskAdapter("browser_runtime_not_supported")
+        )
+    try:
+        adapter = PlaywrightBrowserTaskAdapter.from_env()
+    except BrowserRuntimeUnavailableError as exc:
+        return BrowserTaskRunner(adapter=DisabledBrowserTaskAdapter(str(exc)))
+    return BrowserTaskRunner(adapter=adapter)
+
+
+def browser_hourly_run_limit() -> int:
+    return _bounded_int_env(
+        "BEACON_BROWSER_MAX_RUNS_PER_HOUR",
+        default=DEFAULT_BROWSER_RUNS_PER_HOUR,
+        minimum=1,
+        maximum=10,
+    )
 
 
 def normalize_browser_request(request: InternetScoutRequest) -> InternetScoutRequest:
@@ -180,3 +320,35 @@ def _validate_observations(
             )
         if sandbox.require_screenshot and not observation.screenshot_ref:
             raise HTTPException(status_code=502, detail="browser_screenshot_missing")
+
+
+def _require_playwright_version() -> None:
+    expected = os.getenv(
+        "BEACON_BROWSER_PLAYWRIGHT_VERSION",
+        EXPECTED_PLAYWRIGHT_VERSION,
+    ).strip()
+    try:
+        actual = metadata.version("playwright")
+    except metadata.PackageNotFoundError as exc:
+        raise BrowserRuntimeUnavailableError(
+            "browser_playwright_not_installed"
+        ) from exc
+    if actual != expected:
+        raise BrowserRuntimeUnavailableError("browser_playwright_version_mismatch")
+
+
+def _bounded_int_env(
+    name: str,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return default
+    return min(max(parsed, minimum), maximum)

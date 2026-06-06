@@ -149,6 +149,14 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "write",
         "security_write",
     ],
+    "POST /v1/internet-scout/requests/{request_id}/memory-promotions": [
+        "write",
+        "security_write",
+    ],
+    "POST /v1/internet-scout/memory-promotions/{promotion_id}/review": [
+        "write",
+        "security_write",
+    ],
     # P8 browser runner verifies and consumes the exact approved Beacon queue
     # row in-route; outer middleware stays pass-through like other bridges.
     "POST /v1/internet-scout/browser-task/run-approved": [
