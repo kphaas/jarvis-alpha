@@ -4,8 +4,12 @@ from types import SimpleNamespace
 
 from fastapi import Response
 
+from brain.middleware.approval_classes import classify_route
 from brain.middleware.jwt_auth import ALPHA_SESSION_COOKIE, _request_token
-from brain.routes.pin_auth import _set_alpha_session_cookie
+from brain.routes.pin_auth import (
+    _session_cookie_max_age_seconds,
+    _set_alpha_session_cookie,
+)
 
 
 def _request(*, authorization: str = "", cookie: str = ""):
@@ -39,3 +43,28 @@ def test_pin_auth_sets_secure_httponly_session_cookie() -> None:
     assert "Path=/" in cookie
     assert "SameSite=strict" in cookie
     assert "Secure" in cookie
+
+
+def test_session_cookie_refresh_route_is_classified_as_auth() -> None:
+    assert classify_route("POST", "/v1/auth/session-cookie") == ["auth"]
+
+
+def test_session_cookie_max_age_uses_remaining_jwt_lifetime(monkeypatch) -> None:
+    monkeypatch.setattr("brain.routes.pin_auth.time.time", lambda: 1_000)
+    request = SimpleNamespace(state=SimpleNamespace(jwt_exp=4_600))
+
+    assert _session_cookie_max_age_seconds(request) == 3_600
+
+
+def test_session_cookie_max_age_never_drops_below_one(monkeypatch) -> None:
+    monkeypatch.setattr("brain.routes.pin_auth.time.time", lambda: 1_000)
+    request = SimpleNamespace(state=SimpleNamespace(jwt_exp=900))
+
+    assert _session_cookie_max_age_seconds(request) == 1
+
+
+def test_session_cookie_max_age_falls_back_to_session_hours(monkeypatch) -> None:
+    monkeypatch.setenv("ALPHA_SESSION_HOURS", "2")
+    request = SimpleNamespace(state=SimpleNamespace())
+
+    assert _session_cookie_max_age_seconds(request) == 7_200

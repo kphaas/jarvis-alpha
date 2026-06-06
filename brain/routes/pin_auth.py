@@ -107,6 +107,13 @@ def _set_alpha_session_cookie(
     )
 
 
+def _session_cookie_max_age_seconds(request: Request) -> int:
+    exp = getattr(request.state, "jwt_exp", None)
+    if isinstance(exp, (int, float)):
+        return max(int(exp) - int(time.time()), 1)
+    return _session_hours() * 3600
+
+
 async def _sync_family_pin_or_409(profile_id: str, pin_hash: str) -> None:
     try:
         await sync_family_pin_hash(profile_id, pin_hash)
@@ -220,6 +227,20 @@ async def authenticate_pin(req: PinRequest, response: Response):
         .replace("+00:00", "Z")
     )
     return {"token": token, "expires_at": expires_at}
+
+
+@router.post("/session-cookie")
+async def refresh_session_cookie(request: Request, response: Response):
+    token = getattr(request.state, "jwt_token", None)
+    if not isinstance(token, str) or not token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    _set_alpha_session_cookie(
+        response,
+        token,
+        max_age_seconds=_session_cookie_max_age_seconds(request),
+    )
+    return {"status": "ok"}
 
 
 @router.get("/login-profiles", response_model=list[LoginProfileResponse])
