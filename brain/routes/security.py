@@ -30,7 +30,10 @@ from brain.agents.warden import (
     owner_routes,
     weekly_security_brief,
 )
-from brain.services.warden_posture import build_warden_posture_score
+from brain.services.warden_posture import (
+    build_trade_guard_financial_evidence,
+    build_warden_posture_score,
+)
 
 logger = get_logger("alpha_brain")
 security_router = APIRouter(prefix="/v1/security", tags=["security"])
@@ -1087,6 +1090,7 @@ async def warden_status(request: Request):
         crew=crew,
         honeypot_hits_24h=honeypot_hits_24h,
     )
+    trade_guard_financial_evidence = build_trade_guard_financial_evidence(porchlight)
     routed_controls = owner_routes(
         [
             control
@@ -1115,6 +1119,7 @@ async def warden_status(request: Request):
         },
         **hardening_state,
         "posture_score": posture_score,
+        "trade_guard_financial_evidence": trade_guard_financial_evidence,
         "owner_routes": routed_controls,
         "weekly_brief": weekly_brief,
         "auto_ticket_candidates": ticket_candidates,

@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Activity, AlertTriangle, CheckCircle, LockKeyhole, Route, ShieldCheck } from 'lucide-react'
+import { Activity, AlertTriangle, CheckCircle, DatabaseZap, LockKeyhole, Route, ShieldCheck } from 'lucide-react'
 import type { SecurityAgentEvent, WardenAgent, WardenStatus } from '../../types/security'
 import { SectionSkeleton, SectionUnavailable, relativeAccessedLabel, type SecurityThemeProps } from './utils'
 
@@ -73,6 +73,7 @@ export function TradeGuardTab({
   const owner = wardenStatus?.supervisor?.display_name ?? 'Warden'
   const remediation = String(tradeGuard?.metadata.remediation ?? 'approval_only')
   const enforcement = String(tradeGuard?.metadata.enforcement ?? 'planned_not_active')
+  const financialEvidence = wardenStatus?.trade_guard_financial_evidence
 
   return (
     <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
@@ -132,6 +133,68 @@ export function TradeGuardTab({
                 <p className={`mt-1 text-[10px] font-mono uppercase ${muted}`}>trading boundary</p>
               </div>
             ))}
+          </div>
+        </section>
+      )}
+
+      {tradeGuard && financialEvidence && (
+        <section>
+          <p className="mb-3 text-[10px] font-mono uppercase opacity-40 tracking-widest">
+            Financial evidence
+          </p>
+          <div className={`rounded-2xl border ${border} ${subtle} p-4`}>
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <DatabaseZap className="h-4 w-4 text-sky-300" />
+                  <p className="text-sm font-bold">Financial self-owned posture</p>
+                  <span className={`rounded border px-2 py-0.5 text-[10px] font-mono uppercase ${badgeClass(financialEvidence.status)}`}>
+                    {financialEvidence.status}
+                  </span>
+                </div>
+                <p className={`mt-2 text-xs ${fg}`}>{financialEvidence.summary}</p>
+                <p className={`mt-2 text-[10px] font-mono ${muted}`}>
+                  source {financialEvidence.source} · remote {financialEvidence.remote_status ?? 'unknown'} · HTTP {financialEvidence.http_status ?? '-'}
+                </p>
+              </div>
+              <div className="grid grid-cols-4 gap-2 text-center md:min-w-64">
+                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-2 py-2">
+                  <p className="text-sm font-bold font-mono text-emerald-400">{financialEvidence.counts.pass}</p>
+                  <p className={`text-[9px] font-mono uppercase ${muted}`}>pass</p>
+                </div>
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-2 py-2">
+                  <p className="text-sm font-bold font-mono text-amber-300">{financialEvidence.counts.warn}</p>
+                  <p className={`text-[9px] font-mono uppercase ${muted}`}>warn</p>
+                </div>
+                <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-2 py-2">
+                  <p className="text-sm font-bold font-mono text-rose-300">{financialEvidence.counts.fail}</p>
+                  <p className={`text-[9px] font-mono uppercase ${muted}`}>fail</p>
+                </div>
+                <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-2 py-2">
+                  <p className="text-sm font-bold font-mono text-sky-300">{financialEvidence.trade_powers}</p>
+                  <p className={`text-[9px] font-mono uppercase ${muted}`}>powers</p>
+                </div>
+              </div>
+            </div>
+            {financialEvidence.controls.length > 0 && (
+              <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2">
+                {financialEvidence.controls.map((control) => (
+                  <div key={control.id} className="rounded-xl border border-white/10 px-3 py-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="truncate text-xs font-mono">{control.id}</p>
+                      <span className={`shrink-0 rounded border px-2 py-0.5 text-[10px] font-mono uppercase ${badgeClass(control.status)}`}>
+                        {control.status || 'unknown'}
+                      </span>
+                    </div>
+                    <p className={`mt-1 text-[10px] font-mono uppercase ${muted}`}>{control.severity || 'info'}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
+              <LockKeyhole className="mr-1 inline h-3.5 w-3.5" />
+              Evidence is read-only. Trade Guard consumes Financial's sanitized posture and cannot mutate broker, order, or account state.
+            </div>
           </div>
         </section>
       )}

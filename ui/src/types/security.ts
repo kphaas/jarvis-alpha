@@ -379,6 +379,30 @@ export interface WardenTicketCandidate {
   status: string
 }
 
+export interface TradeGuardFinancialControl {
+  id: string
+  status: string
+  severity: string
+}
+
+export interface TradeGuardFinancialEvidence {
+  status: "pass" | "warn" | "fail" | "unavailable" | string
+  source: string
+  read_only: boolean
+  trade_powers: number
+  summary: string
+  detail: string
+  remote_status?: string
+  configured?: boolean
+  http_status?: number | null
+  counts: {
+    pass: number
+    warn: number
+    fail: number
+  }
+  controls: TradeGuardFinancialControl[]
+}
+
 export interface WardenStatus {
   supervisor: WardenAgent | null
   agents: WardenAgent[]
@@ -391,6 +415,7 @@ export interface WardenStatus {
   active_hardening?: string
   next_hardening: string
   posture_score?: WardenPostureScore
+  trade_guard_financial_evidence?: TradeGuardFinancialEvidence
   owner_routes?: WardenOwnerRoute[]
   weekly_brief?: WardenWeeklyBrief
   auto_ticket_candidates?: WardenTicketCandidate[]
