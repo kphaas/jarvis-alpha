@@ -19,7 +19,8 @@ from brain.services.internet_scout.browser_approvals import (
 from brain.services.internet_scout.browser_runner import (
     BrowserRuntimeUnavailableError,
     BrowserSandboxPolicyError,
-    BrowserTaskRunner,
+    browser_hourly_run_limit,
+    build_browser_task_runner_from_env,
     normalize_browser_request,
 )
 from brain.services.internet_scout.consumers import (
@@ -28,12 +29,17 @@ from brain.services.internet_scout.consumers import (
 )
 from brain.services.internet_scout.executor import InternetScoutExecutor
 from brain.services.internet_scout.local_llm import build_local_llm_response
+from brain.services.internet_scout.memory_promotions import MemoryPromotionPolicyError
 from brain.services.internet_scout.models import (
     InternetScoutBrowserApprovalResponse,
     InternetScoutBrowserRunRequest,
     InternetScoutBrowserRunResponse,
     InternetScoutConsumerRequest,
     InternetScoutLocalLLMResponse,
+    InternetScoutMemoryPromotionCreateRequest,
+    InternetScoutMemoryPromotionCreateResponse,
+    InternetScoutMemoryPromotionReviewRequest,
+    InternetScoutMemoryPromotionReviewResponse,
     InternetScoutRequest,
     InternetScoutStoredResponse,
     InternetTool,
@@ -179,6 +185,65 @@ async def _execute_and_store_research(
 
 
 @router.post(
+    "/requests/{request_id}/memory-promotions",
+    response_model=InternetScoutMemoryPromotionCreateResponse,
+)
+async def internet_scout_create_memory_promotions(
+    request_id: UUID,
+    body: InternetScoutMemoryPromotionCreateRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> InternetScoutMemoryPromotionCreateResponse:
+    """Create reviewed memory-promotion candidates from stored Beacon evidence."""
+    check_scopes(request, "internet_scout.memory_promote", "admin")
+    actor = str(getattr(request.state, "user_id", "unknown"))
+    async with rls_connection(request) as conn:
+        repo = InternetScoutRepository(conn)
+        packet = await repo.load_packet(request_id)
+        if packet is None:
+            raise HTTPException(status_code=404, detail="Beacon request not found")
+        try:
+            promotions = await repo.create_memory_promotions(
+                request_id=request_id,
+                packet=packet,
+                target_user_id=body.target_user_id,
+                requested_by=actor,
+                candidates=body.candidates,
+            )
+        except MemoryPromotionPolicyError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return InternetScoutMemoryPromotionCreateResponse(
+        request_id=request_id,
+        promotions=promotions,
+    )
+
+
+@router.post(
+    "/memory-promotions/{promotion_id}/review",
+    response_model=InternetScoutMemoryPromotionReviewResponse,
+)
+async def internet_scout_review_memory_promotion(
+    promotion_id: UUID,
+    body: InternetScoutMemoryPromotionReviewRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> InternetScoutMemoryPromotionReviewResponse:
+    """Approve or reject a Beacon memory promotion candidate."""
+    check_scopes(request, "internet_scout.memory_promote", "admin")
+    reviewer = str(getattr(request.state, "user_id", "unknown"))
+    async with rls_connection(request) as conn:
+        promotion = await InternetScoutRepository(conn).review_memory_promotion(
+            promotion_id=promotion_id,
+            decision=body.decision,
+            reviewer=reviewer,
+            reviewer_note=body.reviewer_note,
+        )
+    if promotion is None:
+        raise HTTPException(status_code=404, detail="Beacon promotion not found")
+    return InternetScoutMemoryPromotionReviewResponse(promotion=promotion)
+
+
+@router.post(
     "/browser-task/approval-request",
     response_model=InternetScoutBrowserApprovalResponse,
 )
@@ -278,6 +343,16 @@ async def internet_scout_browser_run_approved(
             raise HTTPException(status_code=403, detail=str(exc)) from exc
 
         repo = InternetScoutRepository(conn)
+        max_runs = browser_hourly_run_limit()
+        recent_runs = await repo.count_recent_browser_runs(actor)
+        if recent_runs >= max_runs:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": "browser_run_quota_exceeded",
+                    "max_runs_per_hour": max_runs,
+                },
+            )
         request_id = await repo.create_request(
             user_id=actor,
             request=browser_body,
@@ -297,7 +372,7 @@ async def internet_scout_browser_run_approved(
         )
 
     try:
-        result = await BrowserTaskRunner().execute(
+        result = await build_browser_task_runner_from_env().execute(
             request_id=request_id,
             approval_queue_id=body.approval_queue_id,
             request=browser_body,

@@ -12,6 +12,21 @@ from pydantic import BaseModel, Field, field_validator
 ApprovalTier = Literal["T1", "T2", "T3", "T4", "T5"]
 Sensitivity = Literal["normal", "privacy", "legal", "financial", "minor"]
 BeaconConsumer = Literal["forge", "family", "financial"]
+SemanticMemoryCategory = Literal[
+    "preference",
+    "person",
+    "project",
+    "constraint",
+    "health",
+    "child_profile",
+]
+MemoryPromotionStatus = Literal[
+    "pending_review",
+    "rejected",
+    "promoted",
+    "skipped",
+    "failed",
+]
 
 
 class InternetTool(str, Enum):
@@ -281,3 +296,53 @@ class InternetScoutBrowserRunResponse(BaseModel):
     )
     screenshots_review_required: bool = True
     blocked_reasons: list[str] = Field(default_factory=list)
+
+
+class InternetScoutMemoryPromotionCandidate(BaseModel):
+    claim_index: int = Field(ge=0)
+    proposed_fact: str = Field(min_length=1, max_length=500)
+    category: SemanticMemoryCategory
+    reviewer_note: str | None = Field(default=None, max_length=1000)
+
+
+class InternetScoutMemoryPromotionCreateRequest(BaseModel):
+    target_user_id: UUID
+    candidates: list[InternetScoutMemoryPromotionCandidate] = Field(
+        min_length=1,
+        max_length=10,
+    )
+
+
+class InternetScoutMemoryPromotion(BaseModel):
+    id: UUID
+    request_id: UUID
+    target_user_id: UUID
+    requested_by: str
+    source_url: str
+    source_host: str
+    source_content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    citation_text: str = Field(min_length=1, max_length=1000)
+    proposed_fact: str = Field(min_length=1, max_length=500)
+    category: SemanticMemoryCategory
+    status: MemoryPromotionStatus
+    semantic_result: dict[str, object] = Field(default_factory=dict)
+    reviewer_note: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    reviewed_at: datetime | None = None
+
+
+class InternetScoutMemoryPromotionCreateResponse(BaseModel):
+    request_id: UUID
+    promotions: list[InternetScoutMemoryPromotion] = Field(
+        default_factory=list,
+        max_length=10,
+    )
+
+
+class InternetScoutMemoryPromotionReviewRequest(BaseModel):
+    decision: Literal["approve", "reject"]
+    reviewer_note: str | None = Field(default=None, max_length=1000)
+
+
+class InternetScoutMemoryPromotionReviewResponse(BaseModel):
+    promotion: InternetScoutMemoryPromotion

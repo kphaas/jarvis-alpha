@@ -10,6 +10,14 @@ MIGRATION_PATH = (
     / "20260606_094500_beacon_internet_evidence.sql"
 )
 MIGRATION_SQL = MIGRATION_PATH.read_text(encoding="utf-8")
+MEMORY_PROMOTION_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260606_120000_beacon_memory_promotion.sql"
+)
+MEMORY_PROMOTION_SQL = MEMORY_PROMOTION_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def test_beacon_migration_creates_expected_tables():
@@ -47,3 +55,37 @@ def test_beacon_migration_grants_runtime_least_privilege():
     assert "public.alpha_internet_sources" in MIGRATION_SQL
     assert "public.alpha_internet_evidence" in MIGRATION_SQL
     assert "public.alpha_internet_tool_events" in MIGRATION_SQL
+
+
+def test_beacon_memory_promotion_migration_forces_rls():
+    assert (
+        "CREATE TABLE IF NOT EXISTS public.alpha_internet_memory_promotions"
+        in MEMORY_PROMOTION_SQL
+    )
+    assert (
+        "ALTER TABLE public.alpha_internet_memory_promotions ENABLE ROW LEVEL SECURITY"
+        in MEMORY_PROMOTION_SQL
+    )
+    assert (
+        "ALTER TABLE public.alpha_internet_memory_promotions FORCE ROW LEVEL SECURITY"
+        in MEMORY_PROMOTION_SQL
+    )
+    assert "WITH CHECK" in MEMORY_PROMOTION_SQL
+    assert "alpha_internet_memory_promotions_hash_check" in MEMORY_PROMOTION_SQL
+
+
+def test_beacon_memory_promotion_function_is_secdef_and_bounded():
+    assert "CREATE OR REPLACE FUNCTION public.save_beacon_semantic_memory" in (
+        MEMORY_PROMOTION_SQL
+    )
+    assert "SECURITY DEFINER" in MEMORY_PROMOTION_SQL
+    assert "REVOKE ALL ON FUNCTION public.save_beacon_semantic_memory" in (
+        MEMORY_PROMOTION_SQL
+    )
+    assert "OWNER TO jarvisbrain" in MEMORY_PROMOTION_SQL
+    assert "source)" in MEMORY_PROMOTION_SQL
+    assert "VALUES (p_user_id, btrim(p_fact), p_category, 'promoted')" in (
+        MEMORY_PROMOTION_SQL
+    )
+    assert "char_length(p_fact) > 500" in MEMORY_PROMOTION_SQL
+    assert "source_content_hash" in MEMORY_PROMOTION_SQL

@@ -6,7 +6,7 @@ tools, memory, approvals, or secrets.
 
 ## Status
 
-P8/P9:
+P10/P11:
 
 - ADR and service contracts exist.
 - Policy, URL/content safety, sanitizer, evidence, and planning helpers exist.
@@ -20,9 +20,15 @@ P8/P9:
 - `/v1/internet-scout/requests/{request_id}` returns RLS-visible stored evidence.
 - Browser-use approval requests can be queued and an approved-runner route can
   verify and consume the exact approval row.
-- The browser runner is adapter-based and fails closed unless a reviewed
-  browser runtime is injected.
-- No memory ingest, scheduler, or outbound action is wired.
+- Browser runs have an hourly operator quota, same-host observation checks,
+  screenshot review markers, and content-addressed screenshot storage.
+- The browser runner is adapter-based and fails closed unless
+  `BEACON_BROWSER_RUNTIME=playwright` is configured with the reviewed runtime
+  settings.
+- Reviewed Beacon evidence can be promoted into semantic memory only through
+  `/v1/internet-scout/requests/{request_id}/memory-promotions` and
+  `/v1/internet-scout/memory-promotions/{promotion_id}/review`.
+- No scheduler, autonomous browsing loop, or outbound action is wired.
 
 ## Placement
 
@@ -39,6 +45,20 @@ services can depend on the contracts without depending on brand language.
 
 ## Deferred Work
 
-- P10: reviewed evidence promotion into memory/RAG, if approved.
-- P11: production browser runtime adapter with dependency pinning, host
-  sandboxing, screenshot storage, and operational run limits.
+- P12: production deployment wiring for the Playwright runtime, including
+  package installation, browser binary provisioning, LaunchAgent configuration,
+  screenshot retention policy, and operational alerts.
+- Future: scheduled Beacon agent behavior, multi-step action planning, and any
+  browser-use flow involving T5 privacy/legal/financial/minor data.
+
+## Browser Runtime Configuration
+
+The default runtime is disabled. To enable the production adapter in a reviewed
+deployment, set:
+
+- `BEACON_BROWSER_RUNTIME=playwright`
+- `BEACON_BROWSER_SCREENSHOT_DIR=<local private screenshot path>`
+- `BEACON_BROWSER_PLAYWRIGHT_VERSION=1.49.1`
+- `BEACON_BROWSER_TIMEOUT_MS=20000` unless a smaller reviewed value is needed
+- `BEACON_BROWSER_MAX_RUNS_PER_HOUR=3` unless the operator approves a higher
+  bounded limit

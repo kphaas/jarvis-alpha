@@ -4,17 +4,23 @@ from __future__ import annotations
 
 import json
 from hashlib import sha256
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 from brain.services.internet_scout.models import (
     EvidenceClaim,
     InternetEvidencePacket,
+    InternetScoutMemoryPromotion,
+    InternetScoutMemoryPromotionCandidate,
     InternetScoutRequest,
     PolicyDecision,
     Sensitivity,
     SourceReference,
 )
+from brain.services.internet_scout.memory_promotions import (
+    validate_memory_promotion_candidate,
+)
+from brain.services.internet_scout.sanitizer import sanitize_untrusted_text
 
 JsonObject = dict[str, object]
 
@@ -121,6 +127,23 @@ class InternetScoutRepository:
             _digest(error_text),
         )
 
+    async def count_recent_browser_runs(self, user_id: str) -> int:
+        value = await self.conn.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM public.alpha_internet_tool_events AS event
+            JOIN public.alpha_internet_requests AS request
+              ON request.id = event.request_id
+            WHERE request.user_id = $1
+              AND event.tool = 'browser_use'
+              AND event.event_type = 'browser_run'
+              AND event.status = 'succeeded'
+              AND event.created_at >= NOW() - INTERVAL '1 hour'
+            """,
+            user_id,
+        )
+        return int(value or 0)
+
     async def load_packet(self, request_id: UUID) -> InternetEvidencePacket | None:
         request_row = await self.conn.fetchrow(
             """
@@ -184,6 +207,142 @@ class InternetScoutRepository:
             for row in claim_rows
         ]
         return InternetEvidencePacket(request=request, sources=sources, claims=claims)
+
+    async def create_memory_promotions(
+        self,
+        *,
+        request_id: UUID,
+        packet: InternetEvidencePacket,
+        target_user_id: UUID,
+        requested_by: str,
+        candidates: list[InternetScoutMemoryPromotionCandidate],
+    ) -> list[InternetScoutMemoryPromotion]:
+        promotions: list[InternetScoutMemoryPromotion] = []
+        for candidate in candidates:
+            claim, source = validate_memory_promotion_candidate(
+                packet=packet,
+                candidate=candidate,
+            )
+            row = await self.conn.fetchrow(
+                """
+                INSERT INTO public.alpha_internet_memory_promotions (
+                    request_id, target_user_id, requested_by, source_url,
+                    source_host, source_content_hash, citation_text,
+                    proposed_fact, category, reviewer_note
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                RETURNING *
+                """,
+                request_id,
+                target_user_id,
+                requested_by,
+                source.url,
+                source.host,
+                source.content_hash,
+                claim.citation_text,
+                candidate.proposed_fact.strip(),
+                candidate.category,
+                candidate.reviewer_note,
+            )
+            if not row:
+                raise RuntimeError("Beacon memory promotion insert returned no row")
+            promotions.append(_promotion_from_row(row))
+        return promotions
+
+    async def review_memory_promotion(
+        self,
+        *,
+        promotion_id: UUID,
+        decision: str,
+        reviewer: str,
+        reviewer_note: str | None = None,
+    ) -> InternetScoutMemoryPromotion | None:
+        row = await self.conn.fetchrow(
+            """
+            SELECT *
+            FROM public.alpha_internet_memory_promotions
+            WHERE id = $1
+              AND status = 'pending_review'
+            """,
+            promotion_id,
+        )
+        if row is None:
+            return None
+
+        if decision == "reject":
+            updated = await self.conn.fetchrow(
+                """
+                UPDATE public.alpha_internet_memory_promotions
+                SET status = 'rejected',
+                    reviewed_by = $2,
+                    reviewed_at = NOW(),
+                    reviewer_note = COALESCE($3, reviewer_note)
+                WHERE id = $1
+                RETURNING *
+                """,
+                promotion_id,
+                reviewer,
+                reviewer_note,
+            )
+            return _promotion_from_row(updated)
+
+        proposed_fact = str(row["proposed_fact"])
+        sanitized_fact = sanitize_untrusted_text(proposed_fact, max_chars=500)
+        if sanitized_fact.risk_markers or sanitized_fact.text != proposed_fact.strip():
+            updated = await self.conn.fetchrow(
+                """
+                UPDATE public.alpha_internet_memory_promotions
+                SET status = 'failed',
+                    reviewed_by = $2,
+                    reviewed_at = NOW(),
+                    semantic_result = $3::jsonb,
+                    reviewer_note = COALESCE($4, reviewer_note)
+                WHERE id = $1
+                RETURNING *
+                """,
+                promotion_id,
+                reviewer,
+                json.dumps(
+                    {
+                        "saved": False,
+                        "reason": "promoted_fact_failed_review_validation",
+                    }
+                ),
+                reviewer_note,
+            )
+            return _promotion_from_row(updated)
+
+        semantic_result = await self.conn.fetchval(
+            """
+            SELECT public.save_beacon_semantic_memory($1::uuid, $2, $3, $4, $5)
+            """,
+            row["target_user_id"],
+            row["proposed_fact"],
+            row["category"],
+            row["source_url"],
+            row["source_content_hash"],
+        )
+        semantic_payload = _jsonb(semantic_result)
+        status = "promoted" if semantic_payload.get("saved") is True else "skipped"
+        updated = await self.conn.fetchrow(
+            """
+            UPDATE public.alpha_internet_memory_promotions
+            SET status = $2,
+                reviewed_by = $3,
+                reviewed_at = NOW(),
+                semantic_saved_at = CASE WHEN $2 = 'promoted' THEN NOW() ELSE NULL END,
+                semantic_result = $4::jsonb,
+                reviewer_note = COALESCE($5, reviewer_note)
+            WHERE id = $1
+            RETURNING *
+            """,
+            promotion_id,
+            status,
+            reviewer,
+            json.dumps(semantic_payload),
+            reviewer_note,
+        )
+        return _promotion_from_row(updated)
 
     async def _insert_source(
         self,
@@ -273,3 +432,25 @@ def _sensitivity_json(value: object) -> Sensitivity:
     if value in {"normal", "privacy", "legal", "financial", "minor"}:
         return cast(Sensitivity, value)
     return "normal"
+
+
+def _promotion_from_row(row: Any) -> InternetScoutMemoryPromotion:
+    if row is None:
+        raise RuntimeError("Beacon memory promotion row is missing")
+    return InternetScoutMemoryPromotion(
+        id=row["id"],
+        request_id=row["request_id"],
+        target_user_id=row["target_user_id"],
+        requested_by=row["requested_by"],
+        source_url=row["source_url"],
+        source_host=row["source_host"],
+        source_content_hash=row["source_content_hash"],
+        citation_text=row["citation_text"],
+        proposed_fact=row["proposed_fact"],
+        category=row["category"],
+        status=row["status"],
+        semantic_result=_jsonb(row["semantic_result"]),
+        reviewer_note=row["reviewer_note"],
+        created_at=row["created_at"],
+        reviewed_at=row["reviewed_at"],
+    )
