@@ -258,7 +258,7 @@ class BlueBubblesReadOnlyClient:
                 "chatGuid": clean_guid,
                 "offset": max(offset, 0),
                 "limit": safe_limit,
-                "sort": "dateCreated",
+                "sort": "DESC",
                 "with": [],
             },
         )
