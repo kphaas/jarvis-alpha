@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from hashlib import sha256
+from typing import cast
 from uuid import UUID
 
 from brain.services.internet_scout.models import (
@@ -11,6 +12,7 @@ from brain.services.internet_scout.models import (
     InternetEvidencePacket,
     InternetScoutRequest,
     PolicyDecision,
+    Sensitivity,
     SourceReference,
 )
 
@@ -158,7 +160,7 @@ class InternetScoutRepository:
             max_pages=_int_json(shape.get("max_pages"), default=1),
             max_depth=_int_json(shape.get("max_depth"), default=0),
             needs_interaction=bool(shape.get("needs_interaction", False)),
-            sensitivity=_str_json(shape.get("sensitivity"), default="normal"),
+            sensitivity=_sensitivity_json(shape.get("sensitivity")),
             requester=str(request_row["requester"]),
         )
         sources = [
@@ -266,5 +268,7 @@ def _int_json(value: object, *, default: int) -> int:
     return default
 
 
-def _str_json(value: object, *, default: str) -> str:
-    return value if isinstance(value, str) else default
+def _sensitivity_json(value: object) -> Sensitivity:
+    if value in {"normal", "privacy", "legal", "financial", "minor"}:
+        return cast(Sensitivity, value)
+    return "normal"

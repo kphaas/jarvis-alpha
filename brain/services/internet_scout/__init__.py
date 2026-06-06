@@ -1,12 +1,12 @@
 """Beacon internet-scout service contracts.
 
-Beacon is Alpha's read-only internet evidence broker. P1 intentionally exposes
-planning, policy, safety, sanitizer, and evidence helpers only; real outbound
-egress is deferred to Gateway-owned endpoints in later phases.
+Beacon is Alpha's internet evidence broker. Brain owns policy, planning, and
+stored evidence; Gateway owns guarded public egress and extraction.
 """
 
 from brain.services.internet_scout.models import (
     EvidenceClaim,
+    InternetScoutBrowserApprovalResponse,
     InternetScoutPlan,
     InternetScoutRequest,
     InternetScoutStoredResponse,
@@ -21,6 +21,7 @@ from brain.services.internet_scout.policy import evaluate_policy, select_tool
 __all__ = [
     "EvidenceClaim",
     "InternetScoutExecutor",
+    "InternetScoutBrowserApprovalResponse",
     "InternetScoutOrchestrator",
     "InternetScoutPlan",
     "InternetScoutRequest",

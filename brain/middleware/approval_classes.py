@@ -134,6 +134,10 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "external_call",
         "cost_incurring",
     ],
+    "POST /v1/internet-scout/browser-task/approval-request": [
+        "write",
+        "security_write",
+    ],
     "GET /v1/internet-scout/requests/{request_id}": ["read", "security_read"],
     # --- Honeypot events — T1 read ---
     "GET /v1/honeypot/events": ["read"],
