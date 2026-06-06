@@ -77,6 +77,58 @@ def _porchlight_check(report: dict[str, Any], name: str) -> dict[str, Any] | Non
     return None
 
 
+def build_trade_guard_financial_evidence(
+    porchlight: dict | None,
+) -> dict[str, Any]:
+    """Summarize Financial posture using Porchlight's sanitized read-only check."""
+    report = (porchlight or {}).get("report") or {}
+    check = _porchlight_check(report, "financial_security_posture")
+    if not check:
+        return {
+            "status": "unavailable",
+            "source": "porchlight.financial_security_posture",
+            "read_only": True,
+            "trade_powers": 0,
+            "summary": "Financial posture evidence has not been reported yet.",
+            "detail": "Run Porchlight after Financial posture monitoring is configured.",
+            "counts": {"pass": 0, "warn": 0, "fail": 0},
+            "controls": [],
+        }
+
+    status = str(check.get("status") or "unavailable")
+    if status not in {"pass", "warn", "fail"}:
+        status = "unavailable"
+    metadata = check.get("metadata") if isinstance(check.get("metadata"), dict) else {}
+    counts = metadata.get("counts") if isinstance(metadata.get("counts"), dict) else {}
+    controls = metadata.get("controls") if isinstance(metadata.get("controls"), list) else []
+    sanitized_controls = [
+        {
+            "id": str(control.get("id") or ""),
+            "status": str(control.get("status") or ""),
+            "severity": str(control.get("severity") or ""),
+        }
+        for control in controls
+        if isinstance(control, dict)
+    ]
+    return {
+        "status": status,
+        "source": "porchlight.financial_security_posture",
+        "read_only": True,
+        "trade_powers": 0,
+        "summary": str(check.get("summary") or "Financial posture evidence available."),
+        "detail": str(check.get("detail") or ""),
+        "remote_status": str(metadata.get("remote_status") or status),
+        "configured": bool(metadata.get("configured")),
+        "http_status": metadata.get("http_status"),
+        "counts": {
+            "pass": int(counts.get("pass") or 0),
+            "warn": int(counts.get("warn") or 0),
+            "fail": int(counts.get("fail") or 0),
+        },
+        "controls": sanitized_controls,
+    }
+
+
 def _rls_control_from_direct_inventory(rls: dict | None) -> dict[str, Any] | None:
     rls_total = int((rls or {}).get("total_tables") or 0)
     if rls_total <= 0:
