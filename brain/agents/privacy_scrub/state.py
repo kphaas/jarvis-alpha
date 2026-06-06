@@ -96,11 +96,37 @@ class StoredApprovedPrivacyAction:
     case_status: str
     case_created_at: datetime | None
     approved_at: datetime | None
+    manual_disposition: str | None = None
+    manual_disposition_at: datetime | None = None
+    manual_disposition_by: str | None = None
+    manual_note_hash: str | None = None
+    evidence_payload_hash: str | None = None
+    workflow_payload_key_version: str | None = None
+    sent_at: datetime | None = None
+    confirmed_at: datetime | None = None
+    verification_due_at: datetime | None = None
+    error_code: str | None = None
+    error_digest: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class StoredPrivacyActionEvent:
+    id: UUID
+    action_id: UUID
+    case_draft_id: UUID
+    target_id: str
+    target_name: str
+    event_type: str
+    actor: str
+    event_payload_hash: str | None
+    created_at: datetime | None
+
+
 _CASE_DRAFT_STATUSES = {"draft", "submitted_for_approval", "archived"}
+_MANUAL_DISPOSITIONS = {"handled", "deferred", "blocked"}
+_VERIFICATION_OUTCOMES = {"confirmed", "needs_followup", "failed"}
 
 
 async def insert_subject(
@@ -304,6 +330,22 @@ async def get_case_draft_payload(
     return _row_to_stored_case_draft_payload(row) if row else None
 
 
+async def get_case_draft(
+    conn: asyncpg.Connection,
+    case_draft_id: UUID,
+) -> StoredCaseDraft | None:
+    row = await conn.fetchrow(
+        """
+        SELECT id, subject_id, created_by_user_id, target_count, status,
+               packet_payload_hash, payload_key_version, created_at, updated_at
+        FROM public.alpha_privacy_case_drafts
+        WHERE id = $1
+        """,
+        case_draft_id,
+    )
+    return _row_to_stored_case_draft(row) if row else None
+
+
 async def insert_draft_action(
     conn: asyncpg.Connection,
     *,
@@ -379,6 +421,11 @@ async def list_approved_privacy_actions(
             a.id, a.subject_id, a.target_id, a.case_draft_id, a.action_type,
             a.approval_tier, a.status, a.approval_queue_id,
             a.draft_payload_hash, a.payload_key_version,
+            a.manual_disposition, a.manual_disposition_at,
+            a.manual_disposition_by, a.manual_note_hash,
+            a.evidence_payload_hash, a.workflow_payload_key_version,
+            a.sent_at, a.confirmed_at, a.verification_due_at,
+            a.error_code, a.error_digest,
             a.created_at, a.updated_at,
             t.name AS target_name,
             t.category AS target_category,
@@ -401,13 +448,291 @@ async def list_approved_privacy_actions(
             ORDER BY e.created_at DESC, e.id DESC
             LIMIT 1
         ) AS approved_event ON TRUE
-        WHERE a.status = 'approved'
+        WHERE a.status IN ('approved', 'sent', 'confirmed', 'failed')
+          AND a.approval_queue_id IS NOT NULL
         ORDER BY approved_at DESC NULLS LAST, a.created_at DESC, a.id DESC
         LIMIT $1
         """,
         limit,
     )
     return [_row_to_stored_approved_privacy_action(row) for row in rows]
+
+
+async def update_privacy_action_manual_disposition(
+    conn: asyncpg.Connection,
+    *,
+    action_id: UUID,
+    disposition: str,
+    actor: str,
+    manual_note_ciphertext: bytes | None = None,
+    manual_note_hash: str | None = None,
+    evidence_payload_ciphertext: bytes | None = None,
+    evidence_payload_hash: str | None = None,
+    workflow_payload_key_version: str | None = None,
+    verification_due_at: datetime | None = None,
+) -> StoredApprovedPrivacyAction | None:
+    if disposition not in _MANUAL_DISPOSITIONS:
+        raise ValueError("invalid privacy action manual disposition")
+    if not actor.strip():
+        raise ValueError("manual disposition actor is required")
+
+    status = {
+        "handled": "sent",
+        "deferred": "approved",
+        "blocked": "failed",
+    }[disposition]
+
+    row = await conn.fetchrow(
+        """
+        WITH updated AS (
+            UPDATE public.alpha_privacy_actions
+            SET status = $2,
+                manual_disposition = $3,
+                manual_disposition_at = NOW(),
+                manual_disposition_by = $4,
+                manual_note_ciphertext = $5,
+                manual_note_hash = $6,
+                evidence_payload_ciphertext = $7,
+                evidence_payload_hash = $8,
+                workflow_payload_key_version = $9,
+                sent_at = CASE
+                    WHEN $3 = 'handled' THEN COALESCE(sent_at, NOW())
+                    ELSE sent_at
+                END,
+                verification_due_at = CASE
+                    WHEN $3 IN ('handled', 'deferred') THEN $10
+                    ELSE verification_due_at
+                END,
+                error_code = CASE
+                    WHEN $3 = 'blocked' THEN 'manual_blocked'
+                    ELSE error_code
+                END,
+                error_digest = CASE
+                    WHEN $3 = 'blocked' THEN COALESCE($8, $6, error_digest)
+                    ELSE error_digest
+                END
+            WHERE id = $1
+              AND status IN ('approved', 'sent')
+              AND approval_queue_id IS NOT NULL
+            RETURNING *
+        )
+        SELECT
+            a.id, a.subject_id, a.target_id, a.case_draft_id, a.action_type,
+            a.approval_tier, a.status, a.approval_queue_id,
+            a.draft_payload_hash, a.payload_key_version,
+            a.manual_disposition, a.manual_disposition_at,
+            a.manual_disposition_by, a.manual_note_hash,
+            a.evidence_payload_hash, a.workflow_payload_key_version,
+            a.sent_at, a.confirmed_at, a.verification_due_at,
+            a.error_code, a.error_digest,
+            a.created_at, a.updated_at,
+            t.name AS target_name,
+            t.category AS target_category,
+            t.jurisdiction AS target_jurisdiction,
+            t.opt_out_method AS target_opt_out_method,
+            t.avg_response_days AS target_avg_response_days,
+            c.status AS case_status,
+            c.created_at AS case_created_at,
+            COALESCE(approved_event.created_at, a.updated_at) AS approved_at
+        FROM updated AS a
+        JOIN public.alpha_privacy_case_drafts AS c
+          ON c.id = a.case_draft_id
+        JOIN public.alpha_privacy_targets_cache AS t
+          ON t.id = a.target_id
+        LEFT JOIN LATERAL (
+            SELECT e.created_at
+            FROM public.alpha_privacy_action_events AS e
+            WHERE e.action_id = a.id
+              AND e.event_type = 'approved'
+            ORDER BY e.created_at DESC, e.id DESC
+            LIMIT 1
+        ) AS approved_event ON TRUE
+        """,
+        action_id,
+        status,
+        disposition,
+        actor,
+        manual_note_ciphertext,
+        manual_note_hash,
+        evidence_payload_ciphertext,
+        evidence_payload_hash,
+        workflow_payload_key_version,
+        verification_due_at,
+    )
+    return _row_to_stored_approved_privacy_action(row) if row else None
+
+
+async def update_privacy_action_verification(
+    conn: asyncpg.Connection,
+    *,
+    action_id: UUID,
+    outcome: str,
+    actor: str,
+    evidence_payload_ciphertext: bytes | None = None,
+    evidence_payload_hash: str | None = None,
+    workflow_payload_key_version: str | None = None,
+    verification_due_at: datetime | None = None,
+) -> StoredApprovedPrivacyAction | None:
+    if outcome not in _VERIFICATION_OUTCOMES:
+        raise ValueError("invalid privacy action verification outcome")
+    if not actor.strip():
+        raise ValueError("verification actor is required")
+
+    status = {
+        "confirmed": "confirmed",
+        "needs_followup": "sent",
+        "failed": "failed",
+    }[outcome]
+
+    row = await conn.fetchrow(
+        """
+        WITH updated AS (
+            UPDATE public.alpha_privacy_actions
+            SET status = $2,
+                manual_disposition = COALESCE(manual_disposition, 'handled'),
+                evidence_payload_ciphertext = COALESCE($4, evidence_payload_ciphertext),
+                evidence_payload_hash = COALESCE($5, evidence_payload_hash),
+                workflow_payload_key_version = COALESCE(
+                    $6,
+                    workflow_payload_key_version
+                ),
+                sent_at = CASE
+                    WHEN $3 IN ('confirmed', 'needs_followup')
+                        THEN COALESCE(sent_at, NOW())
+                    ELSE sent_at
+                END,
+                confirmed_at = CASE
+                    WHEN $3 = 'confirmed' THEN NOW()
+                    ELSE confirmed_at
+                END,
+                verification_due_at = CASE
+                    WHEN $3 = 'needs_followup' THEN $7
+                    ELSE NULL
+                END,
+                error_code = CASE
+                    WHEN $3 = 'failed' THEN 'verification_failed'
+                    ELSE error_code
+                END,
+                error_digest = CASE
+                    WHEN $3 = 'failed' THEN COALESCE($5, error_digest)
+                    ELSE error_digest
+                END
+            WHERE id = $1
+              AND status IN ('approved', 'sent', 'failed')
+              AND approval_queue_id IS NOT NULL
+            RETURNING *
+        )
+        SELECT
+            a.id, a.subject_id, a.target_id, a.case_draft_id, a.action_type,
+            a.approval_tier, a.status, a.approval_queue_id,
+            a.draft_payload_hash, a.payload_key_version,
+            a.manual_disposition, a.manual_disposition_at,
+            a.manual_disposition_by, a.manual_note_hash,
+            a.evidence_payload_hash, a.workflow_payload_key_version,
+            a.sent_at, a.confirmed_at, a.verification_due_at,
+            a.error_code, a.error_digest,
+            a.created_at, a.updated_at,
+            t.name AS target_name,
+            t.category AS target_category,
+            t.jurisdiction AS target_jurisdiction,
+            t.opt_out_method AS target_opt_out_method,
+            t.avg_response_days AS target_avg_response_days,
+            c.status AS case_status,
+            c.created_at AS case_created_at,
+            COALESCE(approved_event.created_at, a.updated_at) AS approved_at
+        FROM updated AS a
+        JOIN public.alpha_privacy_case_drafts AS c
+          ON c.id = a.case_draft_id
+        JOIN public.alpha_privacy_targets_cache AS t
+          ON t.id = a.target_id
+        LEFT JOIN LATERAL (
+            SELECT e.created_at
+            FROM public.alpha_privacy_action_events AS e
+            WHERE e.action_id = a.id
+              AND e.event_type = 'approved'
+            ORDER BY e.created_at DESC, e.id DESC
+            LIMIT 1
+        ) AS approved_event ON TRUE
+        """,
+        action_id,
+        status,
+        outcome,
+        evidence_payload_ciphertext,
+        evidence_payload_hash,
+        workflow_payload_key_version,
+        verification_due_at,
+    )
+    return _row_to_stored_approved_privacy_action(row) if row else None
+
+
+async def list_privacy_actions_for_case(
+    conn: asyncpg.Connection,
+    *,
+    case_draft_id: UUID,
+) -> list[StoredApprovedPrivacyAction]:
+    rows = await conn.fetch(
+        """
+        SELECT
+            a.id, a.subject_id, a.target_id, a.case_draft_id, a.action_type,
+            a.approval_tier, a.status, a.approval_queue_id,
+            a.draft_payload_hash, a.payload_key_version,
+            a.manual_disposition, a.manual_disposition_at,
+            a.manual_disposition_by, a.manual_note_hash,
+            a.evidence_payload_hash, a.workflow_payload_key_version,
+            a.sent_at, a.confirmed_at, a.verification_due_at,
+            a.error_code, a.error_digest,
+            a.created_at, a.updated_at,
+            t.name AS target_name,
+            t.category AS target_category,
+            t.jurisdiction AS target_jurisdiction,
+            t.opt_out_method AS target_opt_out_method,
+            t.avg_response_days AS target_avg_response_days,
+            c.status AS case_status,
+            c.created_at AS case_created_at,
+            COALESCE(approved_event.created_at, a.updated_at) AS approved_at
+        FROM public.alpha_privacy_actions AS a
+        JOIN public.alpha_privacy_case_drafts AS c
+          ON c.id = a.case_draft_id
+        JOIN public.alpha_privacy_targets_cache AS t
+          ON t.id = a.target_id
+        LEFT JOIN LATERAL (
+            SELECT e.created_at
+            FROM public.alpha_privacy_action_events AS e
+            WHERE e.action_id = a.id
+              AND e.event_type = 'approved'
+            ORDER BY e.created_at DESC, e.id DESC
+            LIMIT 1
+        ) AS approved_event ON TRUE
+        WHERE a.case_draft_id = $1
+        ORDER BY t.category, t.name, a.created_at, a.id
+        """,
+        case_draft_id,
+    )
+    return [_row_to_stored_approved_privacy_action(row) for row in rows]
+
+
+async def list_privacy_action_events_for_case(
+    conn: asyncpg.Connection,
+    *,
+    case_draft_id: UUID,
+) -> list[StoredPrivacyActionEvent]:
+    rows = await conn.fetch(
+        """
+        SELECT
+            e.id, e.action_id, a.case_draft_id, a.target_id,
+            t.name AS target_name, e.event_type, e.actor,
+            e.event_payload_hash, e.created_at
+        FROM public.alpha_privacy_action_events AS e
+        JOIN public.alpha_privacy_actions AS a
+          ON a.id = e.action_id
+        JOIN public.alpha_privacy_targets_cache AS t
+          ON t.id = a.target_id
+        WHERE a.case_draft_id = $1
+        ORDER BY e.created_at, e.id
+        """,
+        case_draft_id,
+    )
+    return [_row_to_stored_privacy_action_event(row) for row in rows]
 
 
 async def enqueue_approval_request(
@@ -784,6 +1109,33 @@ def _row_to_stored_approved_privacy_action(
         case_status=row["case_status"],
         case_created_at=row["case_created_at"],
         approved_at=row["approved_at"],
+        manual_disposition=row["manual_disposition"],
+        manual_disposition_at=row["manual_disposition_at"],
+        manual_disposition_by=row["manual_disposition_by"],
+        manual_note_hash=row["manual_note_hash"],
+        evidence_payload_hash=row["evidence_payload_hash"],
+        workflow_payload_key_version=row["workflow_payload_key_version"],
+        sent_at=row["sent_at"],
+        confirmed_at=row["confirmed_at"],
+        verification_due_at=row["verification_due_at"],
+        error_code=row["error_code"],
+        error_digest=row["error_digest"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+def _row_to_stored_privacy_action_event(
+    row: asyncpg.Record,
+) -> StoredPrivacyActionEvent:
+    return StoredPrivacyActionEvent(
+        id=row["id"],
+        action_id=row["action_id"],
+        case_draft_id=row["case_draft_id"],
+        target_id=row["target_id"],
+        target_name=row["target_name"],
+        event_type=row["event_type"],
+        actor=row["actor"],
+        event_payload_hash=row["event_payload_hash"],
+        created_at=row["created_at"],
     )

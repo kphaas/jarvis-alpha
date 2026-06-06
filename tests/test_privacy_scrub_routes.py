@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -25,6 +26,7 @@ from brain.agents.privacy_scrub.state import (
     StoredApprovedPrivacyAction,
     StoredCaseDraft,
     StoredDraftAction,
+    StoredPrivacyActionEvent,
     StoredSubject,
 )
 from brain.agents.privacy_scrub.subjects import Role, SubjectStatus
@@ -33,6 +35,11 @@ from brain.agents.privacy_scrub.targets import (
     OptOutMethod,
     Target,
     TargetCategory,
+)
+from brain.agents.privacy_scrub.workflow import (
+    PrivacyActionWorkflowResult,
+    PrivacyCaseReport,
+    PrivacyCaseTimeline,
 )
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
 from brain.routes import privacy
@@ -74,11 +81,78 @@ def _stored_subject(subject_id: UUID, user_id: str = "ken") -> StoredSubject:
     )
 
 
+def _stored_case_draft(case_id: UUID, subject_id: UUID) -> StoredCaseDraft:
+    return StoredCaseDraft(
+        id=case_id,
+        subject_id=subject_id,
+        created_by_user_id="ken",
+        target_count=1,
+        status="submitted_for_approval",
+        packet_payload_hash="sha256:" + "2" * 64,
+        payload_key_version="payload-v1",
+    )
+
+
+def _stored_approved_action(
+    *,
+    action_id: UUID,
+    case_id: UUID,
+    subject_id: UUID,
+    status: str = "approved",
+    manual_disposition: str | None = None,
+) -> StoredApprovedPrivacyAction:
+    return StoredApprovedPrivacyAction(
+        id=action_id,
+        subject_id=subject_id,
+        target_id="spokeo",
+        case_draft_id=case_id,
+        action_type="draft",
+        approval_tier="T2",
+        status=status,
+        approval_queue_id=uuid4(),
+        draft_payload_hash="sha256:" + "3" * 64,
+        payload_key_version="payload-v1",
+        target_name="Spokeo",
+        target_category="data_broker",
+        target_jurisdiction="US_FEDERAL",
+        target_opt_out_method="web_form",
+        target_avg_response_days=5,
+        case_status="submitted_for_approval",
+        case_created_at=None,
+        approved_at=None,
+        manual_disposition=manual_disposition,
+        manual_note_hash="sha256:" + "4" * 64 if manual_disposition else None,
+        evidence_payload_hash="sha256:" + "5" * 64 if manual_disposition else None,
+        workflow_payload_key_version="payload-v2" if manual_disposition else None,
+    )
+
+
+def _stored_privacy_event(
+    *,
+    case_id: UUID,
+    action_id: UUID,
+    event_type: str,
+) -> StoredPrivacyActionEvent:
+    return StoredPrivacyActionEvent(
+        id=uuid4(),
+        action_id=action_id,
+        case_draft_id=case_id,
+        target_id="spokeo",
+        target_name="Spokeo",
+        event_type=event_type,
+        actor="ken",
+        event_payload_hash="sha256:" + "6" * 64,
+        created_at=datetime.now(UTC),
+    )
+
+
 def test_privacy_intake_routes_are_classified_t2_security_writes() -> None:
     for path in (
         "/v1/privacy/subjects",
         f"/v1/privacy/subjects/{uuid4()}/identity-tuples",
         f"/v1/privacy/subjects/{uuid4()}/case-drafts",
+        f"/v1/privacy/actions/{uuid4()}/manual-disposition",
+        f"/v1/privacy/actions/{uuid4()}/verification",
         f"/v1/privacy/case-drafts/{uuid4()}/submit-approval",
         f"/v1/privacy/case-drafts/{uuid4()}/archive",
     ):
@@ -92,6 +166,8 @@ def test_privacy_target_routes_are_classified() -> None:
         "/v1/privacy/case-drafts",
         "/v1/privacy/actions/approved",
         f"/v1/privacy/case-drafts/{uuid4()}",
+        f"/v1/privacy/case-drafts/{uuid4()}/timeline",
+        f"/v1/privacy/case-drafts/{uuid4()}/report",
     ):
         classes = classify_route("GET", path)
         assert classes == ["read", "security_read"]
@@ -701,6 +777,175 @@ async def test_list_privacy_approved_actions_returns_ready_metadata(
     assert calls.limit == 10
     assert calls.conn is not None
     assert "ken@example.com" not in str(response.model_dump())
+
+
+@pytest.mark.asyncio
+async def test_record_privacy_action_manual_disposition_returns_workflow_result(
+    monkeypatch,
+) -> None:
+    subject_id = uuid4()
+    case_id = uuid4()
+    action_id = uuid4()
+    calls = SimpleNamespace(action_id=None, actor=None, disposition=None)
+
+    class FakeWorkflowRepo:
+        def __init__(self, conn, crypto) -> None:
+            pass
+
+        async def record_manual_disposition(
+            self,
+            *,
+            action_id,
+            actor,
+            disposition,
+            operator_note=None,
+            evidence_reference=None,
+            verification_due_at=None,
+        ):
+            calls.action_id = action_id
+            calls.actor = actor
+            calls.disposition = disposition
+            return PrivacyActionWorkflowResult(
+                action=_stored_approved_action(
+                    action_id=action_id,
+                    case_id=case_id,
+                    subject_id=subject_id,
+                    status="sent",
+                    manual_disposition="handled",
+                ),
+                event_type="sent",
+            )
+
+    monkeypatch.setattr(privacy, "load_privacy_crypto", lambda: object())
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "PrivacyActionWorkflowRepository", FakeWorkflowRepo)
+
+    response = await privacy.record_privacy_action_manual_disposition(
+        _request(),
+        action_id,
+        privacy.PrivacyActionManualDispositionIn(
+            disposition="handled",
+            operator_note="done",
+        ),
+        "ken",
+    )
+
+    assert response.event_type == "sent"
+    assert response.action.action_id == action_id
+    assert response.action.status == "sent"
+    assert response.action.manual_disposition == "handled"
+    assert response.action.manual_note_hash == "sha256:" + "4" * 64
+    assert calls.action_id == action_id
+    assert calls.actor == "ken"
+    assert calls.disposition == "handled"
+    assert "done" not in str(response.model_dump())
+
+
+@pytest.mark.asyncio
+async def test_record_privacy_action_verification_returns_confirmed(
+    monkeypatch,
+) -> None:
+    subject_id = uuid4()
+    case_id = uuid4()
+    action_id = uuid4()
+    calls = SimpleNamespace(outcome=None)
+
+    class FakeWorkflowRepo:
+        def __init__(self, conn, crypto) -> None:
+            pass
+
+        async def record_verification(
+            self,
+            *,
+            action_id,
+            actor,
+            outcome,
+            operator_note=None,
+            evidence_reference=None,
+            verification_due_at=None,
+        ):
+            calls.outcome = outcome
+            return PrivacyActionWorkflowResult(
+                action=_stored_approved_action(
+                    action_id=action_id,
+                    case_id=case_id,
+                    subject_id=subject_id,
+                    status="confirmed",
+                    manual_disposition="handled",
+                ),
+                event_type="confirmed",
+            )
+
+    monkeypatch.setattr(privacy, "load_privacy_crypto", lambda: object())
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "PrivacyActionWorkflowRepository", FakeWorkflowRepo)
+
+    response = await privacy.record_privacy_action_verification(
+        _request(),
+        action_id,
+        privacy.PrivacyActionVerificationIn(outcome="confirmed"),
+        "ken",
+    )
+
+    assert response.event_type == "confirmed"
+    assert response.action.status == "confirmed"
+    assert response.action.manual_disposition == "handled"
+    assert calls.outcome == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_privacy_case_timeline_and_report_return_hash_only_metadata(
+    monkeypatch,
+) -> None:
+    subject_id = uuid4()
+    case_id = uuid4()
+    action_id = uuid4()
+    case_draft = _stored_case_draft(case_id, subject_id)
+    action = _stored_approved_action(
+        action_id=action_id,
+        case_id=case_id,
+        subject_id=subject_id,
+        status="sent",
+        manual_disposition="handled",
+    )
+    event = _stored_privacy_event(
+        case_id=case_id,
+        action_id=action_id,
+        event_type="sent",
+    )
+
+    class FakeWorkflowReader:
+        def __init__(self, conn) -> None:
+            pass
+
+        async def get_timeline(self, case_id_arg):
+            assert case_id_arg == case_id
+            return PrivacyCaseTimeline(case_draft=case_draft, events=(event,))
+
+        async def get_report(self, case_id_arg):
+            assert case_id_arg == case_id
+            return PrivacyCaseReport(
+                case_draft=case_draft,
+                actions=(action,),
+                events=(event,),
+                generated_at=datetime.now(UTC),
+            )
+
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "PrivacyCaseWorkflowReader", FakeWorkflowReader)
+
+    timeline = await privacy.get_privacy_case_timeline(_request(), case_id, "ken")
+    report = await privacy.get_privacy_case_report(_request(), case_id, "ken")
+
+    assert timeline.case_id == case_id
+    assert timeline.event_count == 1
+    assert timeline.events[0].event_payload_hash == "sha256:" + "6" * 64
+    assert report.case_id == case_id
+    assert report.action_count == 1
+    assert report.actions[0].evidence_payload_hash == "sha256:" + "5" * 64
+    dumped = str(report.model_dump())
+    assert "ciphertext" not in dumped
+    assert "ken@example.com" not in dumped
 
 
 @pytest.mark.asyncio

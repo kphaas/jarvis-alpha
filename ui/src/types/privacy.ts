@@ -147,6 +147,17 @@ export type ApprovedPrivacyAction = {
   approval_tier: string;
   status: string;
   case_status: string;
+  manual_disposition: string | null;
+  manual_disposition_at: string | null;
+  manual_disposition_by: string | null;
+  manual_note_hash: string | null;
+  evidence_payload_hash: string | null;
+  workflow_payload_key_version: string | null;
+  sent_at: string | null;
+  confirmed_at: string | null;
+  verification_due_at: string | null;
+  error_code: string | null;
+  error_digest: string | null;
   approved_at: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -156,6 +167,47 @@ export type ApprovedPrivacyAction = {
 export type ApprovedPrivacyActionsResponse = {
   count: number;
   actions: ApprovedPrivacyAction[];
+};
+
+export type ManualDisposition = "handled" | "deferred" | "blocked";
+
+export type VerificationOutcome = "confirmed" | "needs_followup" | "failed";
+
+export type ActionWorkflowResponse = {
+  event_type: string;
+  action: ApprovedPrivacyAction;
+};
+
+export type PrivacyCaseEvent = {
+  event_id: string;
+  action_id: string;
+  case_id: string;
+  target_id: string;
+  target_name: string;
+  event_type: string;
+  actor: string;
+  event_payload_hash: string | null;
+  created_at: string | null;
+};
+
+export type PrivacyCaseTimelineResponse = {
+  case_id: string;
+  subject_id: string;
+  status: string;
+  event_count: number;
+  events: PrivacyCaseEvent[];
+};
+
+export type PrivacyCaseReportResponse = {
+  case_id: string;
+  subject_id: string;
+  status: string;
+  target_count: number;
+  action_count: number;
+  event_count: number;
+  generated_at: string;
+  actions: ApprovedPrivacyAction[];
+  events: PrivacyCaseEvent[];
 };
 
 export type ProfileFields = {
