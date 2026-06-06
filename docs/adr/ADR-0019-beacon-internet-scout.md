@@ -29,8 +29,10 @@ Beacon will be implemented as:
 - Gateway-owned internet egress endpoints in later phases;
 - read-only evidence APIs for other JARVIS systems after review.
 
-P0/P1 is intentionally no-outbound. It creates the ADR, package skeleton, brand
-asset, deterministic guards, and tests only.
+P0/P1 was intentionally no-outbound. It created the ADR, package skeleton,
+brand asset, deterministic guards, and tests only. P2/P3 adds reviewed
+Gateway-owned search/fetch egress and RLS-protected evidence persistence while
+preserving the same prompt-injection and Brain-egress boundaries.
 
 ## Architecture
 
@@ -91,5 +93,5 @@ found inside fetched content.
 ## Consequences
 
 Beacon starts with enterprise guardrails instead of a fast scraper. Later phases
-can safely add search, fetch, crawl, and browser-use capabilities because the
-policy and evidence boundary is already explicit and testable.
+can safely add deeper extraction, crawl, and browser-use capabilities because
+the policy and evidence boundary is already explicit and testable.

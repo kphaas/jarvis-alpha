@@ -7,6 +7,8 @@ from hashlib import sha256
 
 from brain.services.internet_scout.models import (
     EvidenceClaim,
+    GatewayFetchResponse,
+    GatewaySearchResponse,
     InternetEvidencePacket,
     InternetScoutRequest,
     SourceReference,
@@ -48,3 +50,57 @@ def build_evidence_packet(
         sources=sources,
         claims=claims or [],
     )
+
+
+def packet_from_search_response(
+    *,
+    request: InternetScoutRequest,
+    response: GatewaySearchResponse,
+) -> InternetEvidencePacket:
+    sources: list[SourceReference] = []
+    claims: list[EvidenceClaim] = []
+    for result in response.results:
+        source = build_source_reference(
+            url=result.url,
+            title=result.title,
+            content=result.description,
+            fetched_at=response.fetched_at,
+        )
+        sources.append(source)
+        if result.description.strip():
+            claims.append(
+                EvidenceClaim(
+                    claim=result.description.strip()[:2000],
+                    source_url=source.url,
+                    citation_text=result.description.strip()[:1000],
+                    confidence="medium",
+                )
+            )
+    return build_evidence_packet(request=request, sources=sources, claims=claims)
+
+
+def packet_from_fetch_response(
+    *,
+    request: InternetScoutRequest,
+    response: GatewayFetchResponse,
+) -> InternetEvidencePacket:
+    source = build_source_reference(
+        url=response.url,
+        title=None,
+        content=response.text,
+        fetched_at=response.fetched_at,
+    )
+    excerpt = response.text.strip()[:1000]
+    claims = (
+        [
+            EvidenceClaim(
+                claim=excerpt[:2000],
+                source_url=source.url,
+                citation_text=excerpt,
+                confidence="medium",
+            )
+        ]
+        if excerpt
+        else []
+    )
+    return build_evidence_packet(request=request, sources=[source], claims=claims)

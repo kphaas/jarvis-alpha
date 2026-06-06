@@ -51,6 +51,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/auth/set-child-pin": ["write", "security_write"],
     "POST /v1/auth/set-profile-pin": ["write", "security_write"],
     "POST /v1/auth/set-admin-pin": ["write", "security_write"],
+    "POST /v1/auth/session-cookie": ["auth"],
     # Admin
     "POST /v1/admin": ["admin"],
     # Destructive
@@ -127,6 +128,13 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/health/temporal-storage": ["read", "security_read"],
     # --- Helm read-only workspace summary ---
     "GET /v1/helm/summary": ["read", "security_read"],
+    # --- Beacon internet evidence broker ---
+    "POST /v1/internet-scout/research": [
+        "write",
+        "external_call",
+        "cost_incurring",
+    ],
+    "GET /v1/internet-scout/requests/{request_id}": ["read", "security_read"],
     # --- Honeypot events — T1 read ---
     "GET /v1/honeypot/events": ["read"],
     # --- Honeypot traps — T1 read (they just log) ---
@@ -328,6 +336,7 @@ TIER_RULES: list[tuple[set[str], str]] = [
     ({"external_call"}, "T2"),
     ({"write"}, "T2"),
     ({"security_read"}, "T2"),
+    ({"auth"}, "T2"),
     ({"read"}, "T1"),
 ]
 
