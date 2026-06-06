@@ -87,7 +87,12 @@ def test_spark_approval_handoff_ui_links_to_spark_review() -> None:
 def test_spark_guardrail_ui_is_editable_without_message_content() -> None:
     source = "\n".join(
         path.read_text(encoding="utf-8")
-        for path in (SPARK_PAGE, SPARK_GUARDRAIL_HOOK, SPARK_GUARDRAIL_PANEL, SPARK_TYPES)
+        for path in (
+            SPARK_PAGE,
+            SPARK_GUARDRAIL_HOOK,
+            SPARK_GUARDRAIL_PANEL,
+            SPARK_TYPES,
+        )
     )
 
     assert "SparkGuardrailsPanel" in source
