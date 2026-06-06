@@ -64,6 +64,7 @@ jobs:
     timeout-minutes: 30
     env:
       PYTEST_MARKERS: ${{ vars.JARVIS_PYTEST_MARKERS != '' && vars.JARVIS_PYTEST_MARKERS || 'not integration' }}
+      UV_PYTHON: "3.12"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -134,6 +135,11 @@ jobs:
           echo "${HOME}/Library/Python/3.12/bin" >> "${GITHUB_PATH}"
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
 
+      - name: Install Python 3.12
+        run: |
+          set -euo pipefail
+          uv python install 3.12
+
       - name: Sync Python dependencies
         run: |
           set -euo pipefail
@@ -147,19 +153,19 @@ jobs:
             DEV_FLAG="--group dev"
           fi
 
-          uv sync ${WORKSPACE_FLAG} --all-extras ${DEV_FLAG}
+          uv sync --python 3.12 ${WORKSPACE_FLAG} --all-extras ${DEV_FLAG}
 
       - name: Python lint and format
         run: |
           set -euo pipefail
-          uv run ruff check .
-          uv run ruff format --check .
+          uv run --python 3.12 ruff check .
+          uv run --python 3.12 ruff format --check .
 
       - name: Python tests
         run: |
           set -euo pipefail
           set +e
-          uv run pytest -m "${PYTEST_MARKERS}"
+          uv run --python 3.12 pytest -m "${PYTEST_MARKERS}"
           rc=$?
           set -e
           if [ "${rc}" -eq 5 ]; then
