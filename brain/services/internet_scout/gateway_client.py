@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from brain.services.gateway_egress import GatewayEgressError, call_gateway_proxy
 from brain.services.internet_scout.models import (
+    GatewayCrawlResponse,
     GatewayExtractResponse,
     GatewayFetchResponse,
     GatewaySearchResponse,
@@ -59,3 +60,26 @@ class InternetScoutGatewayClient:
         except GatewayEgressError as exc:
             raise InternetScoutGatewayError(f"Beacon extraction failed: {exc}") from exc
         return GatewayExtractResponse.model_validate(payload)
+
+    async def crawl(
+        self,
+        *,
+        url: str,
+        max_pages: int,
+        max_depth: int,
+        max_bytes: int,
+    ) -> GatewayCrawlResponse:
+        try:
+            payload = await call_gateway_proxy(
+                "internet/crawl",
+                {
+                    "url": url,
+                    "max_pages": max_pages,
+                    "max_depth": max_depth,
+                    "max_bytes": max_bytes,
+                },
+                timeout_s=60,
+            )
+        except GatewayEgressError as exc:
+            raise InternetScoutGatewayError(f"Beacon crawl failed: {exc}") from exc
+        return GatewayCrawlResponse.model_validate(payload)

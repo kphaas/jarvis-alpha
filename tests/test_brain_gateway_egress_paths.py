@@ -127,7 +127,9 @@ def test_gemini_costs_use_gateway_google_billing_proxy(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_internet_scout_client_uses_gateway_search_fetch_and_extract(monkeypatch):
+async def test_internet_scout_client_uses_gateway_search_fetch_extract_and_crawl(
+    monkeypatch,
+):
     calls: list[tuple[str, dict]] = []
 
     async def fake_gateway(path: str, payload: dict, *, timeout_s: int):
@@ -175,6 +177,34 @@ async def test_internet_scout_client_uses_gateway_search_fetch_and_extract(monke
                 "risk_markers": [],
                 "redirect_chain": ["https://public.example.test/report"],
             }
+        if path == "internet/crawl":
+            return {
+                "seed_url": "https://public.example.test/report",
+                "seed_host": "public.example.test",
+                "fetched_at": "2026-06-06T13:00:00Z",
+                "max_pages": 2,
+                "max_depth": 1,
+                "pages": [
+                    {
+                        "url": "https://public.example.test/report",
+                        "host": "public.example.test",
+                        "depth": 0,
+                        "status_code": 200,
+                        "content_type": "text/html",
+                        "content_hash": "d" * 64,
+                        "fetched_at": "2026-06-06T13:00:00Z",
+                        "extracted_text": "Beacon crawled body.",
+                        "extractor": "trafilatura",
+                        "extraction_fallback": False,
+                        "truncated": False,
+                        "risk_markers": [],
+                        "redirect_chain": ["https://public.example.test/report"],
+                        "discovered_links": [
+                            "https://public.example.test/next",
+                        ],
+                    }
+                ],
+            }
         raise AssertionError(path)
 
     monkeypatch.setattr(
@@ -189,10 +219,17 @@ async def test_internet_scout_client_uses_gateway_search_fetch_and_extract(monke
         url="https://public.example.test/report",
         max_bytes=1000,
     )
+    crawl = await client.crawl(
+        url="https://public.example.test/report",
+        max_pages=2,
+        max_depth=1,
+        max_bytes=1000,
+    )
 
     assert search.results[0].title == "Beacon"
     assert fetch.text == "Beacon source body."
     assert extract.extracted_text == "Beacon extracted body."
+    assert crawl.pages[0].extracted_text == "Beacon crawled body."
     assert calls == [
         ("internet/search", {"query": "beacon", "count": 5, "provider": "brave"}),
         (
@@ -202,5 +239,14 @@ async def test_internet_scout_client_uses_gateway_search_fetch_and_extract(monke
         (
             "internet/extract",
             {"url": "https://public.example.test/report", "max_bytes": 1000},
+        ),
+        (
+            "internet/crawl",
+            {
+                "url": "https://public.example.test/report",
+                "max_pages": 2,
+                "max_depth": 1,
+                "max_bytes": 1000,
+            },
         ),
     ]
