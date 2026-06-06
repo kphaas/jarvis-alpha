@@ -23,6 +23,33 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
+function caseStatusLabel(status: string) {
+  if (status === "draft") return "Draft";
+  if (status === "submitted_for_approval") return "In workflow";
+  if (status === "completed") return "Completed";
+  if (status === "archived") return "Archived";
+  return status;
+}
+
+function caseStatusTone(status: string, isDark: boolean) {
+  if (status === "completed") {
+    return isDark
+      ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
+      : "border-emerald-700/30 bg-emerald-50 text-emerald-800";
+  }
+  if (status === "archived") {
+    return isDark
+      ? "border-white/10 bg-white/5 text-white/45"
+      : "border-[#141414]/10 bg-[#141414]/5 text-[#141414]/45";
+  }
+  if (status === "submitted_for_approval") {
+    return isDark
+      ? "border-amber-400/30 bg-amber-500/10 text-amber-200"
+      : "border-amber-700/30 bg-amber-50 text-amber-800";
+  }
+  return chipClass(isDark);
+}
+
 export function PrivacyDraftInboxPanel({
   inbox,
   approvalQueueId,
@@ -49,15 +76,26 @@ export function PrivacyDraftInboxPanel({
     inbox.dispositionResult?.case_id === inbox.selectedDraft?.case_id
       ? inbox.dispositionResult
       : null;
+  const activeDraftCount = inbox.drafts.filter(
+    (draft) => draft.status === "draft" || draft.status === "submitted_for_approval",
+  ).length;
+  const completedDraftCount = inbox.drafts.filter(
+    (draft) => draft.status === "completed",
+  ).length;
 
   return (
     <section className={`rounded-xl border ${border} ${panel} p-5`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Inbox className="h-4 w-4 text-emerald-400" />
-          <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>
-            Draft Inbox
-          </h2>
+          <div>
+            <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>
+              Draft Inbox
+            </h2>
+            <p className={`mt-1 text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+              {activeDraftCount} active / {completedDraftCount} completed
+            </p>
+          </div>
         </div>
         <button
           type="button"
@@ -104,13 +142,13 @@ export function PrivacyDraftInboxPanel({
                 <p
                   className={`mt-1 text-[10px] font-mono uppercase tracking-widest ${muted}`}
                 >
-                  {draft.status} - {formatDate(draft.created_at)}
+                  {caseStatusLabel(draft.status)} - {formatDate(draft.created_at)}
                 </p>
               </div>
               <span
-                className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${chipClass(isDark)}`}
+                className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${caseStatusTone(draft.status, isDark)}`}
               >
-                {draft.highest_approval_tier ?? "T-"}
+                {draft.highest_approval_tier ?? "T-"} / {caseStatusLabel(draft.status)}
               </span>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -180,7 +218,7 @@ export function PrivacyDraftInboxPanel({
               />
               <KeyValue
                 label="Status"
-                value={inbox.selectedDraft.status}
+                value={caseStatusLabel(inbox.selectedDraft.status)}
                 mutedClass={muted}
               />
               <KeyValue

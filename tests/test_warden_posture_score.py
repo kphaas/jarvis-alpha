@@ -1,4 +1,7 @@
-from brain.services.warden_posture import build_warden_posture_score
+from brain.services.warden_posture import (
+    build_trade_guard_financial_evidence,
+    build_warden_posture_score,
+)
 
 
 def test_warden_posture_score_is_weighted_and_industry_aligned():
@@ -141,3 +144,53 @@ def test_warden_posture_score_uses_porchlight_rls_when_inventory_unavailable():
     assert controls["data.rls_force"]["summary"] == "62/62 public tables protected"
     assert "Direct RLS inventory unavailable" in controls["data.rls_force"]["detail"]
     assert controls["recovery.restore_drill"]["status"] == "fail"
+
+
+def test_trade_guard_financial_evidence_uses_sanitized_porchlight_check():
+    result = build_trade_guard_financial_evidence(
+        {
+            "report": {
+                "checks": [
+                    {
+                        "name": "financial_security_posture",
+                        "status": "warn",
+                        "summary": "Financial self-owned posture checks need review.",
+                        "detail": "6 pass, 1 warn, 0 fail",
+                        "metadata": {
+                            "configured": True,
+                            "http_status": 200,
+                            "remote_status": "warn",
+                            "counts": {"pass": 6, "warn": 1, "fail": 0},
+                            "controls": [
+                                {
+                                    "id": "orders.kill_switch",
+                                    "status": "pass",
+                                    "severity": "info",
+                                    "secret": "must-not-copy",
+                                }
+                            ],
+                        },
+                    }
+                ]
+            }
+        }
+    )
+
+    assert result["status"] == "warn"
+    assert result["source"] == "porchlight.financial_security_posture"
+    assert result["read_only"] is True
+    assert result["trade_powers"] == 0
+    assert result["counts"] == {"pass": 6, "warn": 1, "fail": 0}
+    assert result["controls"] == [
+        {"id": "orders.kill_switch", "status": "pass", "severity": "info"}
+    ]
+    assert "must-not-copy" not in str(result)
+
+
+def test_trade_guard_financial_evidence_unavailable_without_porchlight_check():
+    result = build_trade_guard_financial_evidence({"report": {"checks": []}})
+
+    assert result["status"] == "unavailable"
+    assert result["read_only"] is True
+    assert result["trade_powers"] == 0
+    assert result["controls"] == []
