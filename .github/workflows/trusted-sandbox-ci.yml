@@ -19,22 +19,6 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "requirements*.txt"
-  push:
-    branches:
-      - "claude-code/**"
-      - "codex/**"
-    paths:
-      - ".github/workflows/trusted-sandbox-ci.yml"
-      - "api/**"
-      - "brain/**"
-      - "common/**"
-      - "gateway/**"
-      - "scripts/**"
-      - "tests/**"
-      - "ui/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - "requirements*.txt"
   workflow_dispatch:
 
 permissions:
@@ -51,7 +35,6 @@ jobs:
       vars.JARVIS_ENABLE_SANDBOX_RUNNER == 'true' &&
       (
         github.event_name == 'workflow_dispatch' ||
-        github.event_name == 'push' ||
         (
           github.event.pull_request.head.repo.full_name == github.repository &&
           (
@@ -91,15 +74,6 @@ jobs:
                 claude-code/*|codex/*) ;;
                 *)
                   echo "::error::Self-hosted PR checks require claude-code/* or codex/* branches."
-                  exit 1
-                  ;;
-              esac
-              ;;
-            push)
-              case "${REF_NAME}" in
-                claude-code/*|codex/*) ;;
-                *)
-                  echo "::error::Self-hosted push checks require claude-code/* or codex/* branches."
                   exit 1
                   ;;
               esac
