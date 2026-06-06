@@ -1,5 +1,7 @@
 import hmac
 import json
+import os
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -122,6 +124,18 @@ class _FetchedInternetContent:
 class _SearchProviderCredential:
     provider: str
     api_key: str
+
+
+@dataclass(slots=True)
+class _SearchProviderCircuit:
+    failures: list[float]
+    open_until: float = 0.0
+
+
+_SEARCH_PROVIDERS = ("brave", "perplexity")
+_SEARCH_CIRCUITS: dict[str, _SearchProviderCircuit] = {
+    provider: _SearchProviderCircuit(failures=[]) for provider in _SEARCH_PROVIDERS
+}
 
 
 def _accepted_gateway_tokens() -> list[str]:
@@ -370,83 +384,249 @@ async def internet_search(
         raise HTTPException(status_code=400, detail="unsupported search provider")
 
     count = min(max(req.count, 1), 10)
-    credential = _select_search_provider(req.provider)
+    candidates = _select_search_provider_candidates(req.provider)
+    if not candidates:
+        raise HTTPException(
+            status_code=503, detail="Search provider key not configured"
+        )
+
+    last_error: HTTPException | None = None
     async with httpx.AsyncClient(timeout=20.0) as client:
-        if credential.provider == "brave":
-            raw_results = await _search_brave(
-                client=client,
-                query=req.query,
-                count=count,
-                api_key=credential.api_key,
+        for credential in candidates:
+            start = time.monotonic()
+            try:
+                results = await _execute_search_provider(
+                    client=client,
+                    credential=credential,
+                    query=req.query,
+                    count=count,
+                )
+            except HTTPException as exc:
+                last_error = exc
+                _record_search_provider_failure(credential.provider)
+                logger.warning(
+                    "beacon_search_provider_failed provider=%s status_code=%s",
+                    credential.provider,
+                    exc.status_code,
+                )
+                if req.provider != "auto":
+                    raise
+                continue
+            except httpx.HTTPError as exc:
+                last_error = HTTPException(
+                    status_code=502,
+                    detail=f"{credential.provider.title()} Search request failed",
+                )
+                _record_search_provider_failure(credential.provider)
+                logger.warning(
+                    "beacon_search_provider_failed provider=%s status_code=%s",
+                    credential.provider,
+                    last_error.status_code,
+                )
+                if req.provider != "auto":
+                    raise last_error from exc
+                continue
+            latency_ms = int((time.monotonic() - start) * 1000)
+            _record_search_provider_success(credential.provider)
+            logger.info(
+                "beacon_search_completed provider=%s result_count=%d latency_ms=%d",
+                credential.provider,
+                len(results),
+                latency_ms,
             )
-            results = _normalize_search_results(
-                raw_results,
-                count=count,
-                description_keys=("description",),
-            )
-        else:
-            raw_results = await _search_perplexity(
-                client=client,
-                query=req.query,
-                count=count,
-                api_key=credential.api_key,
-            )
-            results = _normalize_search_results(
-                raw_results,
-                count=count,
-                description_keys=("snippet",),
-            )
+            return {
+                "provider": credential.provider,
+                "query_hash": _hash_text(req.query),
+                "fetched_at": datetime.now(UTC).isoformat(),
+                "results": results,
+            }
 
-    logger.info(
-        "beacon_search_completed provider=%s result_count=%d",
-        credential.provider,
-        len(results),
-    )
+    if last_error is not None:
+        raise last_error
+    raise HTTPException(status_code=503, detail="Search provider key not configured")
 
+
+@router.post("/internet/health")
+async def internet_health(authorization: str = Header(...)):
+    """Return Gateway-owned Beacon provider health without exposing secrets."""
+    _authorize_gateway_call(authorization)
+    providers = [_search_provider_health(provider) for provider in _SEARCH_PROVIDERS]
+    configured = [provider for provider in providers if provider["configured"]]
+    usable = [
+        provider
+        for provider in providers
+        if provider["configured"] and not provider["circuit_open"]
+    ]
     return {
-        "provider": credential.provider,
-        "query_hash": _hash_text(req.query),
-        "fetched_at": datetime.now(UTC).isoformat(),
-        "results": results,
+        "status": "ok" if usable else "degraded",
+        "provider_order": list(_configured_search_provider_order()),
+        "providers": providers,
+        "configured_provider_count": len(configured),
+        "usable_provider_count": len(usable),
+        "checked_at": datetime.now(UTC).isoformat(),
     }
 
 
+async def _execute_search_provider(
+    *,
+    client: httpx.AsyncClient,
+    credential: _SearchProviderCredential,
+    query: str,
+    count: int,
+) -> list[dict[str, object]]:
+    if credential.provider == "brave":
+        raw_results = await _search_brave(
+            client=client,
+            query=query,
+            count=count,
+            api_key=credential.api_key,
+        )
+        return _normalize_search_results(
+            raw_results,
+            count=count,
+            description_keys=("description",),
+        )
+    raw_results = await _search_perplexity(
+        client=client,
+        query=query,
+        count=count,
+        api_key=credential.api_key,
+    )
+    return _normalize_search_results(
+        raw_results,
+        count=count,
+        description_keys=("snippet",),
+    )
+
+
+def _select_search_provider_candidates(
+    requested_provider: str,
+) -> list[_SearchProviderCredential]:
+    if requested_provider in {"brave", "perplexity"}:
+        key = _search_provider_key(requested_provider)
+        if not key:
+            raise HTTPException(
+                status_code=503,
+                detail=f"{requested_provider.title()} Search API key not configured",
+            )
+        if _is_search_provider_circuit_open(requested_provider):
+            raise HTTPException(
+                status_code=503,
+                detail=f"{requested_provider.title()} Search circuit is open",
+            )
+        return [_SearchProviderCredential(provider=requested_provider, api_key=key)]
+
+    candidates: list[_SearchProviderCredential] = []
+    for provider in _configured_search_provider_order():
+        key = _search_provider_key(provider)
+        if key and not _is_search_provider_circuit_open(provider):
+            candidates.append(_SearchProviderCredential(provider=provider, api_key=key))
+    return candidates
+
+
+def _configured_search_provider_order() -> tuple[str, ...]:
+    raw = os.getenv("BEACON_SEARCH_PROVIDER_ORDER", "brave,perplexity")
+    ordered: list[str] = []
+    for item in raw.split(","):
+        provider = item.strip().lower()
+        if provider in _SEARCH_PROVIDERS and provider not in ordered:
+            ordered.append(provider)
+    return tuple(ordered or _SEARCH_PROVIDERS)
+
+
+def _search_provider_key(provider: str) -> str | None:
+    if provider == "brave":
+        return _secret_or_none("BRAVE_SEARCH_API_KEY") or _secret_or_none(
+            "BRAVE_API_KEY"
+        )
+    if provider == "perplexity":
+        return _secret_or_none("PERPLEXITY_API_KEY")
+    return None
+
+
+def _search_provider_health(provider: str) -> dict[str, object]:
+    circuit = _SEARCH_CIRCUITS[provider]
+    cooldown_remaining_s = (
+        max(0, int(circuit.open_until - time.monotonic()))
+        if _is_search_provider_circuit_open(provider)
+        else None
+    )
+    return {
+        "provider": provider,
+        "configured": _search_provider_key(provider) is not None,
+        "circuit_open": cooldown_remaining_s is not None,
+        "failure_count": len(circuit.failures),
+        "cooldown_remaining_seconds": cooldown_remaining_s,
+    }
+
+
+def _record_search_provider_failure(provider: str) -> None:
+    now = time.monotonic()
+    circuit = _SEARCH_CIRCUITS[provider]
+    window_s = _bounded_int_env(
+        "BEACON_SEARCH_CIRCUIT_WINDOW_SECONDS",
+        default=300,
+        minimum=30,
+        maximum=3600,
+    )
+    threshold = _bounded_int_env(
+        "BEACON_SEARCH_CIRCUIT_FAILURE_THRESHOLD",
+        default=3,
+        minimum=1,
+        maximum=20,
+    )
+    circuit.failures = [
+        failed_at for failed_at in circuit.failures if failed_at >= now - window_s
+    ]
+    circuit.failures.append(now)
+    if len(circuit.failures) >= threshold:
+        cooldown_s = _bounded_int_env(
+            "BEACON_SEARCH_CIRCUIT_COOLDOWN_SECONDS",
+            default=300,
+            minimum=30,
+            maximum=3600,
+        )
+        circuit.open_until = now + cooldown_s
+
+
+def _record_search_provider_success(provider: str) -> None:
+    circuit = _SEARCH_CIRCUITS[provider]
+    circuit.failures = []
+    circuit.open_until = 0.0
+
+
+def _is_search_provider_circuit_open(provider: str) -> bool:
+    circuit = _SEARCH_CIRCUITS[provider]
+    if not circuit.open_until:
+        return False
+    if time.monotonic() >= circuit.open_until:
+        circuit.open_until = 0.0
+        circuit.failures = []
+        return False
+    return True
+
+
+def _bounded_int_env(
+    name: str,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return min(max(value, minimum), maximum)
+
+
 def _select_search_provider(requested_provider: str) -> _SearchProviderCredential:
-    brave_key = _secret_or_none("BRAVE_SEARCH_API_KEY") or _secret_or_none(
-        "BRAVE_API_KEY"
-    )
-    perplexity_key = _secret_or_none("PERPLEXITY_API_KEY")
-
-    if requested_provider == "brave":
-        if not brave_key:
-            raise HTTPException(
-                status_code=503,
-                detail="Brave Search API key not configured",
-            )
-        return _SearchProviderCredential(provider="brave", api_key=brave_key)
-
-    if requested_provider == "perplexity":
-        if not perplexity_key:
-            raise HTTPException(
-                status_code=503,
-                detail="Perplexity Search API key not configured",
-            )
-        return _SearchProviderCredential(
-            provider="perplexity",
-            api_key=perplexity_key,
+    candidates = _select_search_provider_candidates(requested_provider)
+    if not candidates:
+        raise HTTPException(
+            status_code=503, detail="Search provider key not configured"
         )
-
-    if brave_key:
-        return _SearchProviderCredential(provider="brave", api_key=brave_key)
-    if perplexity_key:
-        return _SearchProviderCredential(
-            provider="perplexity",
-            api_key=perplexity_key,
-        )
-    raise HTTPException(
-        status_code=503,
-        detail="Search provider key not configured",
-    )
+    return candidates[0]
 
 
 async def _search_brave(
@@ -469,7 +649,13 @@ async def _search_brave(
             status_code=502,
             detail=f"Brave Search API error: HTTP {response.status_code}",
         )
-    payload: object = response.json()
+    try:
+        payload: object = response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Brave Search API returned invalid JSON",
+        ) from exc
     web = payload.get("web") if isinstance(payload, dict) else None
     return web.get("results") if isinstance(web, dict) else None
 
@@ -499,7 +685,13 @@ async def _search_perplexity(
             status_code=502,
             detail=f"Perplexity Search API error: HTTP {response.status_code}",
         )
-    payload: object = response.json()
+    try:
+        payload: object = response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Perplexity Search API returned invalid JSON",
+        ) from exc
     return payload.get("results") if isinstance(payload, dict) else None
 
 

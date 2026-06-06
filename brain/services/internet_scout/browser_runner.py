@@ -234,6 +234,52 @@ def browser_hourly_run_limit() -> int:
     )
 
 
+def browser_runtime_health() -> dict[str, object]:
+    runtime = os.getenv("BEACON_BROWSER_RUNTIME", "").strip().lower()
+    screenshot_dir = os.getenv("BEACON_BROWSER_SCREENSHOT_DIR", "").strip()
+    installed_version = _installed_playwright_version()
+    runtime_enabled = runtime not in {"", "disabled", "off"}
+    runtime_supported = runtime in {"", "disabled", "off", "playwright"}
+    version_ok = installed_version == EXPECTED_PLAYWRIGHT_VERSION
+    screenshot_path = Path(screenshot_dir) if screenshot_dir else None
+    screenshot_dir_exists = (
+        screenshot_path.exists() and screenshot_path.is_dir()
+        if screenshot_path is not None
+        else False
+    )
+    screenshot_dir_writable = (
+        os.access(screenshot_path, os.W_OK)
+        if screenshot_path is not None and screenshot_dir_exists
+        else False
+    )
+    ok = (
+        runtime_enabled
+        and runtime == "playwright"
+        and version_ok
+        and screenshot_dir_exists
+        and screenshot_dir_writable
+    )
+    return {
+        "ok": ok,
+        "runtime": runtime or "disabled",
+        "runtime_enabled": runtime_enabled,
+        "runtime_supported": runtime_supported,
+        "expected_playwright_version": EXPECTED_PLAYWRIGHT_VERSION,
+        "installed_playwright_version": installed_version,
+        "playwright_version_ok": version_ok,
+        "screenshot_dir_configured": bool(screenshot_dir),
+        "screenshot_dir_exists": screenshot_dir_exists,
+        "screenshot_dir_writable": screenshot_dir_writable,
+        "timeout_ms": _bounded_int_env(
+            "BEACON_BROWSER_TIMEOUT_MS",
+            default=DEFAULT_BROWSER_TIMEOUT_MS,
+            minimum=5_000,
+            maximum=60_000,
+        ),
+        "max_runs_per_hour": browser_hourly_run_limit(),
+    }
+
+
 def normalize_browser_request(request: InternetScoutRequest) -> InternetScoutRequest:
     return request.model_copy(
         update={"tool_hint": InternetTool.BROWSER_USE, "needs_interaction": True}
@@ -320,6 +366,13 @@ def _validate_observations(
             )
         if sandbox.require_screenshot and not observation.screenshot_ref:
             raise HTTPException(status_code=502, detail="browser_screenshot_missing")
+
+
+def _installed_playwright_version() -> str | None:
+    try:
+        return metadata.version("playwright")
+    except metadata.PackageNotFoundError:
+        return None
 
 
 def _require_playwright_version() -> None:

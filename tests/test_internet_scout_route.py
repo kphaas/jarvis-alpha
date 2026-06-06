@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -15,6 +16,8 @@ from brain.services.internet_scout.models import (
     BrowserSandboxPolicy,
     EvidenceClaim,
     InternetEvidencePacket,
+    InternetScoutHealthCheck,
+    InternetScoutHealthResponse,
     InternetScoutBrowserRunRequest,
     InternetScoutBrowserRunResponse,
     InternetScoutConsumerRequest,
@@ -23,6 +26,7 @@ from brain.services.internet_scout.models import (
     InternetScoutMemoryPromotionCreateRequest,
     InternetScoutMemoryPromotionReviewRequest,
     InternetScoutRequest,
+    InternetScoutRetentionReport,
     InternetTool,
 )
 
@@ -184,6 +188,60 @@ async def test_internet_scout_research_stores_evidence(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_internet_scout_health_returns_production_checks(monkeypatch):
+    async def fake_build_health(conn):
+        return InternetScoutHealthResponse(
+            status="ok",
+            checks={
+                "database": InternetScoutHealthCheck(
+                    ok=True,
+                    status="ok",
+                    detail="present",
+                )
+            },
+            retention=InternetScoutRetentionReport(
+                evidence_retention_days=90,
+                screenshot_retention_days=30,
+                generated_at=datetime(2026, 6, 6, tzinfo=UTC),
+            ),
+            checked_at=datetime(2026, 6, 6, tzinfo=UTC),
+        )
+
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "build_beacon_health", fake_build_health)
+
+    response = await internet_scout.internet_scout_health(
+        _request(scopes=["internet_scout.read"]),
+        _user_id="ken",
+    )
+
+    assert response.status == "ok"
+    assert response.checks["database"].ok is True
+    assert response.retention.mode == "report_only"
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_retention_report_is_report_only(monkeypatch):
+    async def fake_retention_report(conn):
+        return InternetScoutRetentionReport(
+            evidence_retention_days=90,
+            screenshot_retention_days=30,
+            old_request_count=7,
+        )
+
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "build_retention_report", fake_retention_report)
+
+    response = await internet_scout.internet_scout_retention_report(
+        _request(scopes=["internet_scout.read"]),
+        _user_id="ken",
+    )
+
+    assert response.mode == "report_only"
+    assert response.old_request_count == 7
+
+
+@pytest.mark.asyncio
 async def test_internet_scout_loads_stored_evidence(monkeypatch):
     monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
     monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
@@ -218,6 +276,60 @@ async def test_internet_scout_local_llm_tool_returns_citation_envelope(monkeypat
     assert response.citations[0].source_url == "https://public.example.test/report"
     assert "Beacon source." in response.answer_context
     assert FakeRepo.stored
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_agent_run_returns_production_envelope(monkeypatch):
+    FakeRepo.created = []
+    FakeRepo.events = []
+    FakeRepo.stored = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+    monkeypatch.setattr(internet_scout, "InternetScoutExecutor", lambda: FakeExecutor())
+
+    response = await internet_scout.internet_scout_agent_run(
+        InternetScoutRequest(query="beacon"),
+        _request(scopes=["internet_scout.research"]),
+        _user_id="ken",
+    )
+
+    assert response.status == "completed"
+    assert response.selected_tool == InternetTool.SEARCH
+    assert response.request_id == FakeRepo.request_id
+    assert response.confidence == "medium"
+    assert response.raw_web_content_is_untrusted is True
+    assert response.citations[0].source_url == "https://public.example.test/report"
+    assert "untrusted data" in response.untrusted_warnings[0]
+    assert FakeRepo.stored
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_agent_run_returns_browser_approval_required(
+    monkeypatch,
+):
+    FakeRepo.created = []
+    FakeRepo.events = []
+    FakeRepo.stored = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+
+    response = await internet_scout.internet_scout_agent_run(
+        InternetScoutRequest(
+            query="open the public page",
+            urls=["https://public.example.test/start"],
+            needs_interaction=True,
+        ),
+        _request(scopes=["internet_scout.research"]),
+        _user_id="ken",
+    )
+
+    assert response.status == "approval_required"
+    assert response.selected_tool == InternetTool.BROWSER_USE
+    assert response.approval_required is True
+    assert response.request_id == FakeRepo.request_id
+    assert FakeRepo.created[0]["decision"].requires_approval is True
+    assert any(event.get("event_type") == "policy" for event in FakeRepo.events)
+    assert FakeRepo.stored == []
 
 
 @pytest.mark.asyncio
@@ -455,7 +567,20 @@ async def test_internet_scout_browser_approval_request_rejects_empty_task():
 
 
 def test_internet_scout_routes_are_classified():
+    assert classify_route("GET", "/v1/internet-scout/health") == [
+        "read",
+        "security_read",
+    ]
+    assert classify_route("GET", "/v1/internet-scout/retention/report") == [
+        "read",
+        "security_read",
+    ]
     assert classify_route("POST", "/v1/internet-scout/research") == [
+        "write",
+        "external_call",
+        "cost_incurring",
+    ]
+    assert classify_route("POST", "/v1/internet-scout/agent/run") == [
         "write",
         "external_call",
         "cost_incurring",
