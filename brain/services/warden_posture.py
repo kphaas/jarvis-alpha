@@ -225,6 +225,40 @@ def build_warden_posture_score(
         )
     )
 
+    sentry = next((agent for agent in crew if agent.get("agent_id") == "sentry"), None)
+    sentry_metadata = sentry.get("metadata") if isinstance(sentry, dict) else {}
+    if not isinstance(sentry_metadata, dict):
+        sentry_metadata = {}
+    sentry_domains = sentry_metadata.get("protected_domains")
+    sentry_monitors = sentry_metadata.get("monitors")
+    sentry_ready = (
+        bool(sentry)
+        and bool(sentry.get("enabled"))
+        and sentry.get("status") == "active"
+        and bool(sentry_metadata.get("warden_managed"))
+        and isinstance(sentry_domains, list)
+        and len(sentry_domains) >= 5
+        and isinstance(sentry_monitors, list)
+        and len(sentry_monitors) >= 5
+    )
+    controls.append(
+        posture_control(
+            control_id="data.boundary_monitoring",
+            title="Cross-system data boundary monitoring",
+            category="Data protection",
+            owner_agent="sentry",
+            status="pass" if sentry_ready else "warn" if sentry else "fail",
+            weight=8,
+            summary=(
+                "Sentry monitors approved Family, Alpha, Brain, Forge, and Financial boundaries"
+                if sentry_ready
+                else "Sentry data-boundary monitoring is not fully registered"
+            ),
+            detail="Read-only readiness control; live boundary scans are a planned Sentry capability.",
+            framework_refs=("SOC2 CC6.1", "SOC2 CC6.6", "NIST CSF PR.DS"),
+        )
+    )
+
     ports = (perimeter or {}).get("ports") or []
     ports_passing = sum(
         1 for port in ports if port.get("reachable") == port.get("expected")
