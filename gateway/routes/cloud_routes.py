@@ -1,7 +1,10 @@
-import json
 import hmac
+import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
+from html.parser import HTMLParser
+from importlib import import_module
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -82,6 +85,27 @@ class InternetFetchRequest(BaseModel):
     max_bytes: int = Field(
         default=DEFAULT_MAX_CONTENT_BYTES, ge=1, le=DEFAULT_MAX_CONTENT_BYTES
     )
+
+
+class InternetExtractRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=4000)
+    max_bytes: int = Field(
+        default=DEFAULT_MAX_CONTENT_BYTES, ge=1, le=DEFAULT_MAX_CONTENT_BYTES
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _FetchedInternetContent:
+    url: str
+    host: str
+    status_code: int
+    content_type: str | None
+    fetched_at: datetime
+    raw_text: str
+    text: str
+    truncated: bool
+    risk_markers: list[str]
+    redirect_chain: list[str]
 
 
 def _accepted_gateway_tokens() -> list[str]:
@@ -402,14 +426,60 @@ async def internet_fetch(
 ):
     """Fetch one public URL through Gateway-owned egress with Beacon guards."""
     _authorize_gateway_call(authorization)
-    safety = validate_url(req.url)
+    fetched = await _fetch_public_content(url=req.url, max_bytes=req.max_bytes)
+    return _fetch_payload(fetched)
+
+
+@router.post("/internet/extract")
+async def internet_extract(
+    req: InternetExtractRequest,
+    authorization: str = Header(...),
+):
+    """Extract main text from one guarded public URL without trusting page content."""
+    _authorize_gateway_call(authorization)
+    fetched = await _fetch_public_content(url=req.url, max_bytes=req.max_bytes)
+    extracted_text, extractor = _extract_main_text(fetched.raw_text)
+    extraction_fallback = not extracted_text.strip()
+    if extraction_fallback:
+        fallback_text = _fallback_text_from_html(fetched.raw_text)
+        if fallback_text:
+            extracted_text = fallback_text
+            extractor = "fallback_html_text"
+        else:
+            extracted_text = fetched.text
+            extractor = "fallback_sanitized_text"
+
+    sanitized = sanitize_untrusted_text(extracted_text)
+    risk_markers = sorted(set([*fetched.risk_markers, *sanitized.risk_markers]))
+    return {
+        "url": fetched.url,
+        "host": fetched.host,
+        "status_code": fetched.status_code,
+        "content_type": fetched.content_type,
+        "content_hash": _hash_text(sanitized.text),
+        "fetched_at": fetched.fetched_at.isoformat(),
+        "extracted_text": sanitized.text,
+        "extractor": extractor,
+        "extraction_fallback": extraction_fallback,
+        "truncated": fetched.truncated or sanitized.truncated,
+        "risk_markers": risk_markers,
+        "redirect_chain": fetched.redirect_chain,
+    }
+
+
+async def _fetch_public_content(
+    *,
+    url: str,
+    max_bytes: int,
+) -> _FetchedInternetContent:
+    safety = validate_url(url)
     if not safety.allowed or not safety.normalized_url:
         raise HTTPException(
             status_code=400,
             detail={"error": "unsafe_url", "reasons": safety.reasons},
         )
 
-    max_bytes = min(max(req.max_bytes, 1), DEFAULT_MAX_CONTENT_BYTES)
+    max_bytes = min(max(max_bytes, 1), DEFAULT_MAX_CONTENT_BYTES)
     async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
         async with client.stream("GET", safety.normalized_url) as response:
             chain = [safety.normalized_url]
@@ -462,20 +532,102 @@ async def internet_fetch(
         raise HTTPException(status_code=502, detail="Final URL safety result invalid")
 
     body = b"".join(chunks)
-    text = body.decode("utf-8", errors="replace")
-    sanitized = sanitize_untrusted_text(text)
+    raw_text = body.decode("utf-8", errors="replace")
+    sanitized = sanitize_untrusted_text(raw_text)
+    return _FetchedInternetContent(
+        url=final.normalized_url,
+        host=final.host,
+        status_code=response.status_code,
+        content_type=response.headers.get("content-type"),
+        fetched_at=datetime.now(UTC),
+        raw_text=raw_text,
+        text=sanitized.text,
+        truncated=sanitized.truncated,
+        risk_markers=sanitized.risk_markers,
+        redirect_chain=[
+            result.normalized_url
+            for result in redirect_results
+            if result.normalized_url is not None
+        ],
+    )
+
+
+def _fetch_payload(fetched: _FetchedInternetContent) -> dict[str, object]:
     return {
-        "url": final.normalized_url,
-        "host": final.host,
-        "status_code": response.status_code,
-        "content_type": response.headers.get("content-type"),
-        "content_hash": _hash_text(sanitized.text),
-        "fetched_at": datetime.now(UTC).isoformat(),
-        "text": sanitized.text,
-        "truncated": sanitized.truncated,
-        "risk_markers": sanitized.risk_markers,
-        "redirect_chain": [result.normalized_url for result in redirect_results],
+        "url": fetched.url,
+        "host": fetched.host,
+        "status_code": fetched.status_code,
+        "content_type": fetched.content_type,
+        "content_hash": _hash_text(fetched.text),
+        "fetched_at": fetched.fetched_at.isoformat(),
+        "text": fetched.text,
+        "truncated": fetched.truncated,
+        "risk_markers": fetched.risk_markers,
+        "redirect_chain": fetched.redirect_chain,
     }
+
+
+def _extract_main_text(raw_text: str) -> tuple[str, str]:
+    try:
+        trafilatura = import_module("trafilatura")
+        extracted = trafilatura.extract(
+            raw_text,
+            include_comments=False,
+            include_tables=True,
+            output_format="txt",
+        )
+    except ImportError:
+        return "", "trafilatura_missing"
+    except Exception as exc:
+        logger.warning(
+            "beacon_extract_failed",
+            extra={
+                "event": "beacon_extract_failed",
+                "extractor": "trafilatura",
+                "error_class": exc.__class__.__name__,
+            },
+        )
+        return "", "trafilatura_error"
+
+    if not isinstance(extracted, str) or not extracted.strip():
+        return "", "trafilatura_empty"
+    return extracted, "trafilatura"
+
+
+class _HTMLTextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._parts: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        if tag.lower() in {"script", "style", "noscript"}:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in {"script", "style", "noscript"} and self._skip_depth:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth:
+            return
+        stripped = data.strip()
+        if stripped:
+            self._parts.append(stripped)
+
+    def text(self) -> str:
+        return " ".join(" ".join(self._parts).split())
+
+
+def _fallback_text_from_html(raw_text: str) -> str:
+    parser = _HTMLTextExtractor()
+    parser.feed(raw_text)
+    parser.close()
+    return parser.text()
 
 
 def _hash_text(value: str) -> str:

@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from brain.services.internet_scout.evidence import (
     build_evidence_packet,
     build_source_reference,
     content_hash,
+    packet_from_extract_response,
 )
-from brain.services.internet_scout.models import EvidenceClaim, InternetScoutRequest
+from brain.services.internet_scout.models import (
+    EvidenceClaim,
+    GatewayExtractResponse,
+    InternetScoutRequest,
+    InternetTool,
+)
 from brain.services.internet_scout.sanitizer import sanitize_untrusted_text
 
 
@@ -61,3 +69,33 @@ def test_evidence_packet_is_structured_and_cited():
 
     assert packet.sources == [source]
     assert packet.claims[0].source_url == source.url
+
+
+def test_extract_response_builds_packet_from_extracted_text():
+    response = GatewayExtractResponse(
+        url="https://public.example.test/report",
+        host="public.example.test",
+        status_code=200,
+        content_type="text/html",
+        content_hash="a" * 64,
+        fetched_at=datetime(2026, 6, 6, 13, 0, tzinfo=UTC),
+        extracted_text="Main extracted article text.",
+        extractor="trafilatura",
+        extraction_fallback=False,
+        truncated=False,
+        risk_markers=[],
+        redirect_chain=["https://public.example.test/report"],
+    )
+
+    packet = packet_from_extract_response(
+        request=InternetScoutRequest(
+            urls=["https://public.example.test/report"],
+            tool_hint=InternetTool.EXTRACT,
+        ),
+        response=response,
+    )
+
+    assert packet.sources[0].content_hash == content_hash(
+        "Main extracted article text."
+    )
+    assert packet.claims[0].citation_text == "Main extracted article text."
