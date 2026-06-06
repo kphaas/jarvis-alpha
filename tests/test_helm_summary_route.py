@@ -87,7 +87,9 @@ class FakeHelmActionConn:
             else "financial"
         )
         action_id = f"{connector}-pending-approvals"
-        title = "Review medical alert" if connector == "medical" else "Review paper gate"
+        title = (
+            "Review medical alert" if connector == "medical" else "Review paper gate"
+        )
         requested_at = datetime(2026, 6, 6, 12, 0, tzinfo=UTC)
         return [
             {
@@ -232,7 +234,9 @@ async def test_helm_financial_summary_returns_alpha_queue_status(monkeypatch) ->
     assert response["paper"] == {"status": "read_only", "readiness": "brokered"}
     assert response["net_worth"] == {"status": "brokered"}
     assert response["approvals"]["items"][0]["connector_id"] == "financial"
-    assert response["approvals"]["items"][0]["action_id"] == "financial-pending-approvals"
+    assert (
+        response["approvals"]["items"][0]["action_id"] == "financial-pending-approvals"
+    )
     assert "actor_sub" not in str(response)
 
 
@@ -276,7 +280,9 @@ async def test_helm_medical_summary_brokers_redacted_family_export(monkeypatch) 
 
     monkeypatch.setenv("JARVIS_FAMILY_API_URL", "https://family.invalid")
     monkeypatch.setattr(helm, "_family_service_token", lambda: "service-token")
-    monkeypatch.setattr(helm, "platform_admin_connection", fake_platform_admin_connection)
+    monkeypatch.setattr(
+        helm, "platform_admin_connection", fake_platform_admin_connection
+    )
     monkeypatch.setattr(helm.httpx, "AsyncClient", FakeClient)
 
     response = await helm.helm_medical_summary(
@@ -305,7 +311,9 @@ async def test_helm_action_status_returns_redacted_status(monkeypatch) -> None:
         assert audit_actor == "helm_action_status:ken"
         yield conn
 
-    monkeypatch.setattr(helm, "platform_admin_connection", fake_platform_admin_connection)
+    monkeypatch.setattr(
+        helm, "platform_admin_connection", fake_platform_admin_connection
+    )
 
     response = await helm.helm_action_status(
         _request(scopes=["helm.read"]),
