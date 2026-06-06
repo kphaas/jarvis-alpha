@@ -100,7 +100,9 @@ def build_trade_guard_financial_evidence(
         status = "unavailable"
     metadata = check.get("metadata") if isinstance(check.get("metadata"), dict) else {}
     counts = metadata.get("counts") if isinstance(metadata.get("counts"), dict) else {}
-    controls = metadata.get("controls") if isinstance(metadata.get("controls"), list) else []
+    controls = (
+        metadata.get("controls") if isinstance(metadata.get("controls"), list) else []
+    )
     sanitized_controls = [
         {
             "id": str(control.get("id") or ""),
