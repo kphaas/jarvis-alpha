@@ -500,7 +500,7 @@ async def update_privacy_action_manual_disposition(
                     ELSE sent_at
                 END,
                 verification_due_at = CASE
-                    WHEN $3 IN ('handled', 'deferred') THEN $10
+                    WHEN $3 IN ('handled', 'deferred') THEN $10::timestamptz
                     ELSE verification_due_at
                 END,
                 error_code = CASE
@@ -606,8 +606,8 @@ async def update_privacy_action_verification(
                     ELSE confirmed_at
                 END,
                 verification_due_at = CASE
-                    WHEN $3 = 'needs_followup' THEN $7
-                    ELSE NULL
+                    WHEN $3 = 'needs_followup' THEN $7::timestamptz
+                    ELSE NULL::timestamptz
                 END,
                 error_code = CASE
                     WHEN $3 = 'failed' THEN 'verification_failed'
