@@ -1,4 +1,4 @@
-# ADR-0020: Privacy Agent MVP v0.1 Boundary
+# ADR-0021: Privacy Agent MVP v0.1 Boundary
 
 ## Status
 
