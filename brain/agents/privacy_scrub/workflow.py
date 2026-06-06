@@ -8,7 +8,7 @@ filings.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -23,6 +23,7 @@ from brain.agents.privacy_scrub.state import (
     get_case_draft,
     list_privacy_action_events_for_case,
     list_privacy_actions_for_case,
+    mark_case_draft_completed_if_terminal,
     update_privacy_action_manual_disposition,
     update_privacy_action_verification,
 )
@@ -151,6 +152,12 @@ class PrivacyActionWorkflowRepository:
                 event_payload_ciphertext=event_payload.ciphertext,
                 event_payload_hash=event_payload.payload_hash,
             )
+            completed_case = await mark_case_draft_completed_if_terminal(
+                self._conn,
+                case_draft_id=action.case_draft_id,
+            )
+            if completed_case is not None:
+                action = replace(action, case_status=completed_case.status)
 
         logger.info(
             "privacy_action_manual_disposition action_id=%s disposition=%s event=%s",
@@ -229,6 +236,12 @@ class PrivacyActionWorkflowRepository:
                 event_payload_ciphertext=event_payload.ciphertext,
                 event_payload_hash=event_payload.payload_hash,
             )
+            completed_case = await mark_case_draft_completed_if_terminal(
+                self._conn,
+                case_draft_id=action.case_draft_id,
+            )
+            if completed_case is not None:
+                action = replace(action, case_status=completed_case.status)
 
         logger.info(
             "privacy_action_verification action_id=%s outcome=%s event=%s",

@@ -124,7 +124,12 @@ class StoredPrivacyActionEvent:
     created_at: datetime | None
 
 
-_CASE_DRAFT_STATUSES = {"draft", "submitted_for_approval", "archived"}
+_CASE_DRAFT_STATUSES = {
+    "draft",
+    "submitted_for_approval",
+    "archived",
+    "completed",
+}
 _MANUAL_DISPOSITIONS = {"handled", "deferred", "blocked"}
 _VERIFICATION_OUTCOMES = {"confirmed", "needs_followup", "failed"}
 
@@ -803,6 +808,47 @@ async def update_case_draft_status(
         case_draft_id,
         status,
         list(expected_statuses),
+    )
+    return _row_to_stored_case_draft(row) if row else None
+
+
+async def mark_case_draft_completed_if_terminal(
+    conn: asyncpg.Connection,
+    *,
+    case_draft_id: UUID,
+) -> StoredCaseDraft | None:
+    row = await conn.fetchrow(
+        """
+        WITH action_summary AS (
+            SELECT
+                COUNT(*)::int AS action_count,
+                COUNT(*) FILTER (
+                    WHERE status IN ('confirmed', 'failed')
+                )::int AS terminal_count
+            FROM public.alpha_privacy_actions
+            WHERE case_draft_id = $1
+              AND approval_queue_id IS NOT NULL
+        ),
+        updated AS (
+            UPDATE public.alpha_privacy_case_drafts
+            SET status = 'completed'
+            WHERE id = $1
+              AND status = 'submitted_for_approval'
+              AND EXISTS (
+                  SELECT 1
+                  FROM action_summary
+                  WHERE action_count > 0
+                    AND terminal_count = action_count
+              )
+            RETURNING id, subject_id, created_by_user_id, target_count, status,
+                      packet_payload_hash, payload_key_version,
+                      created_at, updated_at
+        )
+        SELECT id, subject_id, created_by_user_id, target_count, status,
+               packet_payload_hash, payload_key_version, created_at, updated_at
+        FROM updated
+        """,
+        case_draft_id,
     )
     return _row_to_stored_case_draft(row) if row else None
 

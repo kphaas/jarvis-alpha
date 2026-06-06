@@ -59,9 +59,13 @@ def test_privacy_draft_inbox_is_mounted_on_privacy_page() -> None:
     page_source = PRIVACY_PAGE.read_text(encoding="utf-8")
     source = "\n".join(path.read_text(encoding="utf-8") for path in PRIVACY_UI_SOURCES)
 
-    assert 'usePrivacyDraftInbox(searchParams.get("case"))' in page_source
+    assert 'const caseId = searchParams.get("case")' in page_source
+    assert 'const actionId = searchParams.get("action")' in page_source
+    assert "usePrivacyDraftInbox(caseId)" in page_source
     assert "<PrivacyDraftInboxPanel" in page_source
-    assert "MVP v0.1 - manual privacy workflow" in page_source
+    assert "AT-0 Privacy Agent" in page_source
+    assert "Manual Privacy Console" in page_source
+    assert "MVP v0.1 - review packets" in page_source
     assert "P2-F - draft review inbox" not in page_source
     assert "/v1/privacy/case-drafts" in source
     assert "submit-approval" in source
@@ -77,7 +81,7 @@ def test_privacy_approved_actions_panel_is_mounted_on_privacy_page() -> None:
     page_source = PRIVACY_PAGE.read_text(encoding="utf-8")
     source = "\n".join(path.read_text(encoding="utf-8") for path in PRIVACY_UI_SOURCES)
 
-    assert "usePrivacyApprovedActions()" in page_source
+    assert "usePrivacyApprovedActions(actionId, caseId)" in page_source
     assert "<PrivacyApprovedActionsPanel" in page_source
     assert "/v1/privacy/actions/approved" in source
     assert "/manual-disposition" in source
@@ -88,7 +92,10 @@ def test_privacy_approved_actions_panel_is_mounted_on_privacy_page() -> None:
     assert "Ready for manual operator handling" in source
     assert "Manual handling recorded. Verification can be added" in source
     assert "Verification recorded. Case report is ready." in source
-    assert "tracked actions" in source
+    assert "Needs handling" in source
+    assert "Completed actions" in source
+    assert "Show completed" in source
+    assert "Case status" in source
     assert "Record disposition" in source
     assert "Record verification" in source
     assert "Case report" in source
@@ -113,7 +120,7 @@ def test_privacy_approval_handoff_ui_links_to_review_packet() -> None:
     assert "/privacy?case=" in approvals_source
     assert "Review packet" in approvals_source
     assert "useSearchParams" in privacy_source
-    assert 'usePrivacyDraftInbox(searchParams.get("case"))' in privacy_source
+    assert "usePrivacyDraftInbox(caseId)" in privacy_source
     assert "initialCaseId" in hook_source
     assert "Approval queue" in panel_source
 
