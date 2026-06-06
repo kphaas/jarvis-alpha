@@ -30,3 +30,45 @@ export interface SparkIMessageDraftApprovalResponse extends SparkIMessageDraftRe
   queue_id: string
   approval_status: string
 }
+
+export type SparkMode = 'draft_only' | 'hybrid_review' | 'auto_guarded'
+
+export type SparkSensitivity =
+  | 'relationship'
+  | 'minor'
+  | 'family'
+  | 'legal'
+  | 'medical'
+  | 'financial'
+  | 'security'
+  | 'custody'
+
+export interface SparkProtectedRelationship {
+  id: string
+  label: string
+  relationship: string
+  sensitivity: SparkSensitivity
+  default_mode: SparkMode
+  approval_required: boolean
+  notes?: string | null
+}
+
+export interface SparkPersonaCalibration {
+  target_voice: string[]
+  avoid_voice: string[]
+  signature_phrases: string[]
+  response_length: 'short' | 'short_medium' | 'medium'
+  uncertainty_policy: string
+  escalation_style: string
+  urgency_policy: string
+}
+
+export interface SparkGuardrailState {
+  principal_id: string
+  active_mode: SparkMode
+  auto_send_enabled: boolean
+  protected_topics: SparkSensitivity[]
+  protected_relationships: SparkProtectedRelationship[]
+  calibration: SparkPersonaCalibration
+  updated_at: string
+}

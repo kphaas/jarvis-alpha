@@ -10,6 +10,7 @@ import {
   Sparkles,
 } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
+import { SparkGuardrailsPanel } from "../components/spark/SparkGuardrailsPanel"
 import { useSparkDraftReview } from "../hooks/useSparkDraftReview"
 import { useAppStore } from "../store"
 import type { SparkIMessageDraftResponse } from "../types/spark"
@@ -292,6 +293,16 @@ export default function Spark() {
           </div>
         </section>
       </div>
+
+      <SparkGuardrailsPanel
+        border={border}
+        panel={panel}
+        input={input}
+        muted={muted}
+        okClass={okClass}
+        warnClass={warnClass}
+        errorClass={errorClass}
+      />
     </motion.div>
   )
 }
