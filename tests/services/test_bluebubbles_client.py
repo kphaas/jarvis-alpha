@@ -242,7 +242,7 @@ async def test_approved_messages_for_chat_reads_bodies_only_when_policy_allows(
             "chatGuid": "approved-chat-guid",
             "offset": 0,
             "limit": 3,
-            "sort": "dateCreated",
+            "sort": "DESC",
             "with": [],
         }
     ]
