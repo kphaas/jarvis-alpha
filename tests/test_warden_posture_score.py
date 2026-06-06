@@ -48,6 +48,29 @@ def test_warden_posture_score_is_weighted_and_industry_aligned():
         crew=[
             {"enabled": True, "status": "active", "needs_attention": False},
             {"enabled": True, "status": "active", "needs_attention": True},
+            {
+                "agent_id": "sentry",
+                "enabled": True,
+                "status": "active",
+                "needs_attention": False,
+                "metadata": {
+                    "warden_managed": True,
+                    "protected_domains": [
+                        "family",
+                        "alpha",
+                        "brain",
+                        "forge",
+                        "financial",
+                    ],
+                    "monitors": [
+                        "family_external_boundary",
+                        "alpha_financial_boundary",
+                        "brain_data_boundary",
+                        "forge_code_boundary",
+                        "pii_log_boundary",
+                    ],
+                },
+            },
         ],
         honeypot_hits_24h=0,
     )
@@ -55,9 +78,11 @@ def test_warden_posture_score_is_weighted_and_industry_aligned():
     assert result["model"] == "warden_alpha_posture_v1"
     assert result["basis"] == "industry_aligned"
     assert result["not_certification"] is True
-    assert result["total"] == 108
+    assert result["total"] == 116
     assert 0 < result["score"] < 100
     controls = {control["id"]: control for control in result["controls"]}
+    assert controls["data.boundary_monitoring"]["owner_agent"] == "sentry"
+    assert controls["data.boundary_monitoring"]["status"] == "pass"
     assert controls["tls.service_certs"]["owner_agent"] == "sweep"
     assert controls["tls.unifi_cert_pin"]["status"] == "pass"
     assert controls["secrets.key_rotation"]["status"] == "warn"

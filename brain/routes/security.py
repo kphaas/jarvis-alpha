@@ -965,6 +965,7 @@ async def warden_status(request: Request):
         "sweep",
         "tripwire",
         "ledger",
+        "sentry",
     ]
     pool = get_pool()
     async with platform_admin_connection(
@@ -1182,6 +1183,7 @@ async def security_agent_events(
         "sweep",
         "tripwire",
         "ledger",
+        "sentry",
     ]
     filters = ["agent_id = ANY($1::text[])"]
     params: list = [managed_ids]

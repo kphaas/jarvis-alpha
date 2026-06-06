@@ -146,4 +146,5 @@ async def test_security_agent_events_surfaces_warden_events(monkeypatch) -> None
         "sweep",
         "tripwire",
         "ledger",
+        "sentry",
     ]
