@@ -34,11 +34,27 @@ MANUAL_WORKFLOW_MIGRATION_PATH = (
     / "migrations"
     / "20260606_090000_privacy_manual_workflow.sql"
 )
+CASE_COMPLETED_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260606_111500_privacy_case_draft_completed_status.sql"
+)
+CASE_COMPLETED_ROLLBACK_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "brain"
+    / "db"
+    / "rollbacks"
+    / "20260606_111500_privacy_case_draft_completed_status_rollback.sql"
+)
 
 MIGRATION_SQL = MIGRATION_PATH.read_text(encoding="utf-8")
 TARGET_CACHE_RLS_SQL = TARGET_CACHE_RLS_MIGRATION_PATH.read_text(encoding="utf-8")
 CASE_DRAFTS_SQL = CASE_DRAFTS_MIGRATION_PATH.read_text(encoding="utf-8")
 MANUAL_WORKFLOW_SQL = MANUAL_WORKFLOW_MIGRATION_PATH.read_text(encoding="utf-8")
+CASE_COMPLETED_SQL = CASE_COMPLETED_MIGRATION_PATH.read_text(encoding="utf-8")
+CASE_COMPLETED_ROLLBACK_SQL = CASE_COMPLETED_ROLLBACK_PATH.read_text(encoding="utf-8")
 
 
 def test_migration_uses_force_rls_on_sensitive_tables():
@@ -100,6 +116,23 @@ def test_manual_workflow_migration_stores_only_encrypted_notes_and_hashes():
     )
     assert "operator_note TEXT" not in MANUAL_WORKFLOW_SQL
     assert "evidence_reference TEXT" not in MANUAL_WORKFLOW_SQL
+
+
+def test_case_completed_status_migration_has_reversible_constraint_change():
+    assert "alpha_privacy_case_drafts_status_check" in CASE_COMPLETED_SQL
+    assert "'completed'" in CASE_COMPLETED_SQL
+    assert "DROP CONSTRAINT IF EXISTS alpha_privacy_case_drafts_status_check" in (
+        CASE_COMPLETED_SQL
+    )
+    assert "UPDATE public.alpha_privacy_case_drafts" in CASE_COMPLETED_ROLLBACK_SQL
+    assert "SET status = 'submitted_for_approval'" in CASE_COMPLETED_ROLLBACK_SQL
+    assert (
+        "'completed'"
+        not in CASE_COMPLETED_ROLLBACK_SQL.split(
+            "ADD CONSTRAINT alpha_privacy_case_drafts_status_check",
+            1,
+        )[1]
+    )
 
 
 def test_migration_policies_have_with_check():

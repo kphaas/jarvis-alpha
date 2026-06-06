@@ -14,6 +14,7 @@ from brain.agents.privacy_scrub.state import (
     list_approved_privacy_actions,
     list_privacy_action_events_for_case,
     list_privacy_actions_for_case,
+    mark_case_draft_completed_if_terminal,
     list_targets,
     mark_approval_queue_actions_decided,
     mark_case_actions_awaiting_approval,
@@ -86,6 +87,18 @@ class FakeDraftWriteConnection:
                 "status": "draft",
                 "packet_payload_hash": args[4],
                 "payload_key_version": args[5],
+                "created_at": None,
+                "updated_at": None,
+            }
+        if "action_summary AS" in query and "status = 'completed'" in query:
+            return {
+                "id": args[0],
+                "subject_id": uuid4(),
+                "created_by_user_id": "ken",
+                "target_count": 1,
+                "status": "completed",
+                "packet_payload_hash": "sha256:" + "3" * 64,
+                "payload_key_version": "payload-v1",
                 "created_at": None,
                 "updated_at": None,
             }
@@ -423,6 +436,29 @@ async def test_update_case_draft_status_checks_expected_status() -> None:
     assert result.status == "submitted_for_approval"
     assert "status = ANY($3::text[])" in query
     assert args[2] == ["draft"]
+
+
+@pytest.mark.asyncio
+async def test_mark_case_draft_completed_if_terminal_requires_terminal_actions() -> (
+    None
+):
+    conn = FakeDraftWriteConnection()
+    case_id = uuid4()
+
+    result = await mark_case_draft_completed_if_terminal(
+        conn,  # type: ignore[arg-type]
+        case_draft_id=case_id,
+    )
+
+    query, args = conn.fetchrows[0]
+    assert result is not None
+    assert result.id == case_id
+    assert result.status == "completed"
+    assert "COUNT(*) FILTER" in query
+    assert "status IN ('confirmed', 'failed')" in query
+    assert "status = 'submitted_for_approval'" in query
+    assert "terminal_count = action_count" in query
+    assert args == (case_id,)
 
 
 @pytest.mark.asyncio

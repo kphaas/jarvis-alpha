@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { privacyGetJson, privacyJson } from "../lib/privacyIntake";
 import type {
@@ -28,8 +28,14 @@ type VerificationInput = {
   verification_due_at?: string | null;
 };
 
-export function usePrivacyApprovedActions() {
+export function usePrivacyApprovedActions(
+  initialActionId: string | null = null,
+  initialCaseId: string | null = null,
+) {
   const queryClient = useQueryClient();
+  const [manualSelectedActionId, setManualSelectedActionId] = useState<
+    string | null
+  >(null);
   const [caseWorkflow, setCaseWorkflow] = useState<{
     caseId: string;
     timeline: PrivacyCaseTimelineResponse;
@@ -45,6 +51,17 @@ export function usePrivacyApprovedActions() {
       ),
     staleTime: 60 * 1000,
   });
+  const actions = useMemo(
+    () => actionsQuery.data?.actions ?? [],
+    [actionsQuery.data?.actions],
+  );
+  const deepLinkedCaseActionId =
+    initialCaseId && !initialActionId
+      ? actions.find((action) => action.case_id === initialCaseId)?.action_id ??
+        null
+      : null;
+  const selectedActionId =
+    manualSelectedActionId ?? initialActionId ?? deepLinkedCaseActionId;
   const manualDispositionMutation = useMutation({
     mutationFn: (input: ManualDispositionInput) =>
       privacyJson<ActionWorkflowResponse>(
@@ -88,7 +105,7 @@ export function usePrivacyApprovedActions() {
     return verificationMutation.mutateAsync(input);
   }
 
-  async function loadCaseWorkflow(caseId: string) {
+  const loadCaseWorkflow = useCallback(async (caseId: string) => {
     setCaseWorkflowLoading(true);
     setCaseWorkflowError(null);
     try {
@@ -108,11 +125,25 @@ export function usePrivacyApprovedActions() {
     } finally {
       setCaseWorkflowLoading(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!selectedActionId) return;
+    const selectedAction = actions.find(
+      (action) => action.action_id === selectedActionId,
+    );
+    if (selectedAction && selectedAction.case_id !== caseWorkflow?.caseId) {
+      void loadCaseWorkflow(selectedAction.case_id);
+    }
+  }, [actions, caseWorkflow?.caseId, loadCaseWorkflow, selectedActionId]);
 
   return {
-    actions: actionsQuery.data?.actions ?? [],
+    actions,
     count: actionsQuery.data?.count ?? 0,
+    selectedActionId,
+    selectedAction:
+      actions.find((action) => action.action_id === selectedActionId) ?? null,
+    selectAction: setManualSelectedActionId,
     isLoading: actionsQuery.isLoading,
     error: actionsQuery.error,
     workflowError:

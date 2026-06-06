@@ -2,8 +2,11 @@ import { useState, type FormEvent } from "react";
 import {
   CalendarClock,
   CheckCircle2,
+  ChevronDown,
   ClipboardList,
   FileText,
+  History,
+  ListChecks,
   RefreshCw,
   SendHorizontal,
   ShieldCheck,
@@ -85,6 +88,10 @@ function actionStateText(action: ApprovedPrivacyAction) {
   return "Ready";
 }
 
+function isTerminalAction(action: ApprovedPrivacyAction) {
+  return action.status === "confirmed" || action.status === "failed";
+}
+
 function workflowStatus(action: ApprovedPrivacyAction) {
   if (action.status === "confirmed") {
     return {
@@ -144,6 +151,28 @@ export function PrivacyApprovedActionsPanel({
   errorClass: string;
 }) {
   const [drafts, setDrafts] = useState<Record<string, WorkflowDraft>>({});
+  const [showCompleted, setShowCompleted] = useState(false);
+  const openActions = actionsState.actions.filter(
+    (action) => !isTerminalAction(action),
+  );
+  const completedActions = actionsState.actions.filter(isTerminalAction);
+  const selectedCompletedAction =
+    actionsState.selectedAction &&
+    isTerminalAction(actionsState.selectedAction) &&
+    !showCompleted
+      ? actionsState.selectedAction
+      : null;
+  const visibleCompletedActions = showCompleted
+    ? completedActions
+    : selectedCompletedAction
+      ? [selectedCompletedAction]
+      : [];
+  const completedActionIds = new Set(
+    visibleCompletedActions.map((action) => action.action_id),
+  );
+  const hiddenCompletedCount = completedActions.filter(
+    (action) => !completedActionIds.has(action.action_id),
+  ).length;
 
   function draftFor(actionId: string) {
     return drafts[actionId] ?? defaultDraft();
@@ -186,6 +215,129 @@ export function PrivacyApprovedActionsPanel({
       verification_due_at: localDateToIso(draft.verificationDueAt),
     });
     await actionsState.loadCaseWorkflow(action.case_id);
+  }
+
+  function selectAction(action: ApprovedPrivacyAction) {
+    actionsState.selectAction(action.action_id);
+    void actionsState.loadCaseWorkflow(action.case_id);
+  }
+
+  function renderActionCard(action: ApprovedPrivacyAction) {
+    const status = workflowStatus(action);
+    const statusClass =
+      status.className === "error"
+        ? errorClass
+        : status.className === "warn"
+          ? warnClass
+          : okClass;
+    const selected = actionsState.selectedActionId === action.action_id;
+    const terminal = isTerminalAction(action);
+
+    return (
+      <article
+        key={action.action_id}
+        className={`rounded-lg border p-3 transition ${
+          selected ? "border-emerald-400/70 bg-emerald-500/10" : border
+        }`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold">
+              {action.target_name}
+            </p>
+            <p
+              className={`truncate text-[10px] font-mono uppercase tracking-widest ${muted}`}
+            >
+              Case {shortId(action.case_id)} - {formatDate(action.approved_at)}
+            </p>
+          </div>
+          <span
+            className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${chipClass(isDark)}`}
+          >
+            {action.approval_tier} / {actionStateText(action)}
+          </span>
+        </div>
+
+        <div className={`mt-3 grid gap-3 rounded-lg border p-3 text-sm ${border}`}>
+          <KeyValue label="Action ID" value={action.action_id} mutedClass={muted} />
+          <KeyValue label="Target ID" value={action.target_id} mutedClass={muted} />
+          <KeyValue label="Status" value={action.status} mutedClass={muted} />
+          <KeyValue
+            label="Case status"
+            value={action.case_status}
+            mutedClass={muted}
+          />
+          <KeyValue
+            label="Method"
+            value={TARGET_METHOD_LABEL[action.opt_out_method]}
+            mutedClass={muted}
+          />
+          <KeyValue
+            label="Jurisdiction"
+            value={action.jurisdiction}
+            mutedClass={muted}
+          />
+          <KeyValue
+            label="Response window"
+            value={
+              action.avg_response_days === null
+                ? "unknown"
+                : `${action.avg_response_days} days`
+            }
+            mutedClass={muted}
+          />
+          <KeyValue
+            label="Due"
+            value={formatDate(action.verification_due_at)}
+            mutedClass={muted}
+          />
+          <KeyValue
+            label="Evidence hash"
+            value={action.evidence_payload_hash ?? "none"}
+            mutedClass={muted}
+          />
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <StatusLine
+            icon={status.className === "error" ? "error" : "ok"}
+            className={statusClass}
+            text={status.text}
+          />
+          <button
+            type="button"
+            onClick={() => selectAction(action)}
+            className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm transition hover:border-emerald-400/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 ${border}`}
+          >
+            <FileText className="h-4 w-4" />
+            Case report
+          </button>
+        </div>
+
+        {!terminal && (
+          <WorkflowForms
+            action={action}
+            draft={draftFor(action.action_id)}
+            border={border}
+            muted={muted}
+            isDark={isDark}
+            isSaving={actionsState.isSaving}
+            onDraft={(patch) => updateDraft(action.action_id, patch)}
+            onDisposition={(event) => submitDisposition(event, action)}
+            onVerification={(event) => submitVerification(event, action)}
+          />
+        )}
+
+        {actionsState.caseWorkflow?.caseId === action.case_id && (
+          <CaseWorkflowView
+            actionsState={actionsState}
+            border={border}
+            muted={muted}
+            isDark={isDark}
+          />
+        )}
+      </article>
+    );
   }
 
   return (
@@ -236,113 +388,78 @@ export function PrivacyApprovedActionsPanel({
               text="No approved actions ready"
             />
           )}
-        {actionsState.actions.map((action) => {
-          const status = workflowStatus(action);
-          const statusClass =
-            status.className === "error"
-              ? errorClass
-              : status.className === "warn"
-                ? warnClass
-                : okClass;
-
-          return (
-          <article key={action.action_id} className={`rounded-lg border p-3 ${border}`}>
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold">
-                  {action.target_name}
-                </p>
-                <p
-                  className={`truncate text-[10px] font-mono uppercase tracking-widest ${muted}`}
+        {!actionsState.isLoading &&
+          !actionsState.error &&
+          actionsState.actions.length > 0 && (
+            <div className={`grid gap-2 rounded-lg border p-3 ${border}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <ListChecks className="h-4 w-4 text-emerald-400" />
+                  <p
+                    className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+                  >
+                    Needs handling
+                  </p>
+                </div>
+                <span
+                  className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${chipClass(isDark)}`}
                 >
-                  Case {shortId(action.case_id)} - {formatDate(action.approved_at)}
+                  {openActions.length} open
+                </span>
+              </div>
+              {openActions.length === 0 ? (
+                <StatusLine
+                  icon="ok"
+                  className={okClass}
+                  text="No open manual actions"
+                />
+              ) : (
+                <div className="space-y-3">
+                  {openActions.map((action) => renderActionCard(action))}
+                </div>
+              )}
+            </div>
+          )}
+        {visibleCompletedActions.length > 0 && (
+          <div className={`grid gap-3 rounded-lg border p-3 ${border}`}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <History className="h-4 w-4 text-emerald-400" />
+                <p
+                  className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+                >
+                  Completed actions
                 </p>
               </div>
               <span
                 className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${chipClass(isDark)}`}
               >
-                {action.approval_tier} / {actionStateText(action)}
+                {completedActions.length} terminal
               </span>
             </div>
-
-            <div className={`mt-3 grid gap-3 rounded-lg border p-3 text-sm ${border}`}>
-              <KeyValue label="Action ID" value={action.action_id} mutedClass={muted} />
-              <KeyValue label="Target ID" value={action.target_id} mutedClass={muted} />
-              <KeyValue label="Status" value={action.status} mutedClass={muted} />
-              <KeyValue
-                label="Method"
-                value={TARGET_METHOD_LABEL[action.opt_out_method]}
-                mutedClass={muted}
-              />
-              <KeyValue
-                label="Jurisdiction"
-                value={action.jurisdiction}
-                mutedClass={muted}
-              />
-              <KeyValue
-                label="Response window"
-                value={
-                  action.avg_response_days === null
-                    ? "unknown"
-                    : `${action.avg_response_days} days`
-                }
-                mutedClass={muted}
-              />
-              <KeyValue
-                label="Due"
-                value={formatDate(action.verification_due_at)}
-                mutedClass={muted}
-              />
-              <KeyValue
-                label="Evidence hash"
-                value={action.evidence_payload_hash ?? "none"}
-                mutedClass={muted}
-              />
-            </div>
-
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-              <StatusLine
-                icon="ok"
-                className={statusClass}
-                text={status.text}
-              />
-              <button
-                type="button"
-                onClick={() => actionsState.loadCaseWorkflow(action.case_id)}
-                className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm transition ${border}`}
-              >
-                <FileText className="h-4 w-4" />
-                Case report
-              </button>
-            </div>
-
-            <WorkflowForms
-              action={action}
-              draft={draftFor(action.action_id)}
-              border={border}
-              muted={muted}
-              isDark={isDark}
-              isSaving={actionsState.isSaving}
-              onDraft={(patch) => updateDraft(action.action_id, patch)}
-              onDisposition={(event) => submitDisposition(event, action)}
-              onVerification={(event) => submitVerification(event, action)}
+            {visibleCompletedActions.map((action) => renderActionCard(action))}
+          </div>
+        )}
+        {completedActions.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowCompleted((current) => !current)}
+            className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border px-3 text-sm transition hover:border-emerald-400/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 ${border}`}
+          >
+            <ChevronDown
+              className={`h-4 w-4 transition ${showCompleted ? "rotate-180" : ""}`}
             />
-
-            {actionsState.caseWorkflow?.caseId === action.case_id && (
-              <CaseWorkflowView
-                actionsState={actionsState}
-                border={border}
-                muted={muted}
-                isDark={isDark}
-              />
-            )}
-          </article>
-          );
-        })}
+            {showCompleted
+              ? "Hide completed"
+              : `Show completed${hiddenCompletedCount ? ` (${hiddenCompletedCount})` : ""}`}
+          </button>
+        )}
         {!actionsState.isLoading && !actionsState.error && actionsState.count > 0 && (
           <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest">
             <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-            <span className={muted}>{actionsState.count} tracked actions</span>
+            <span className={muted}>
+              {openActions.length} open / {completedActions.length} completed
+            </span>
           </div>
         )}
       </div>

@@ -12,11 +12,13 @@ type DispositionPath = "submit-approval" | "archive";
 
 export function usePrivacyDraftInbox(initialCaseId: string | null = null) {
   const queryClient = useQueryClient();
-  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(
-    initialCaseId,
-  );
+  const [manualSelectedCaseId, setManualSelectedCaseId] = useState<
+    string | null
+  >(null);
   const [pendingDispositionPath, setPendingDispositionPath] =
     useState<DispositionPath | null>(null);
+  const selectedCaseId = manualSelectedCaseId ?? initialCaseId;
+
   const listQuery = useQuery({
     queryKey: DRAFT_LIST_KEY,
     queryFn: () =>
@@ -48,7 +50,7 @@ export function usePrivacyDraftInbox(initialCaseId: string | null = null) {
       setPendingDispositionPath(variables.path);
     },
     onSuccess: (result) => {
-      setSelectedCaseId(result.case_id);
+      setManualSelectedCaseId(result.case_id);
       void queryClient.invalidateQueries({ queryKey: DRAFT_LIST_KEY });
       void queryClient.invalidateQueries({
         queryKey: ["privacy", "case-drafts", result.case_id],
@@ -91,7 +93,7 @@ export function usePrivacyDraftInbox(initialCaseId: string | null = null) {
     error: listQuery.error,
     refreshDrafts,
     selectedCaseId,
-    selectCase: setSelectedCaseId,
+    selectCase: setManualSelectedCaseId,
     selectedDraft: detailQuery.data ?? null,
     detailLoading: detailQuery.isLoading,
     detailError: detailQuery.error,
