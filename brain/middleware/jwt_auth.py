@@ -131,6 +131,8 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             request.state.iss = payload.get("iss", "user")
             request.state.max_rating = payload.get("max_rating", "all_ages")
             request.state.child_age = payload.get("child_age")
+            request.state.jwt_token = token
+            request.state.jwt_exp = payload.get("exp")
         except jwt.ExpiredSignatureError:
             return JSONResponse(status_code=401, content={"error": "Token expired"})
         except jwt.InvalidTokenError as e:

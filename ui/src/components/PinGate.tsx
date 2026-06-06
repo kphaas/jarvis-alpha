@@ -33,6 +33,17 @@ function getJwtExpSeconds(token: string): number | null {
   }
 }
 
+async function refreshHttpOnlySessionCookie(token: string): Promise<void> {
+  const base = import.meta.env.VITE_BRAIN_URL as string
+  await fetch(`${base}/v1/auth/session-cookie`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+}
+
 export function PinGate({ children }: PinGateProps) {
   const [authenticated, setAuthenticated] = useState(false)
   const [pin, setPin] = useState('')
@@ -49,6 +60,7 @@ export function PinGate({ children }: PinGateProps) {
     const exp = getJwtExpSeconds(token)
     if (exp !== null && exp > Date.now() / 1000) {
       setAuthenticated(true)
+      void refreshHttpOnlySessionCookie(token).catch(() => undefined)
     }
   }, [])
 
