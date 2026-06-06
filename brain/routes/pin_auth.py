@@ -217,6 +217,9 @@ def _session_broker_response(request: Request) -> SessionBrokerResponse:
                 capabilities=[
                     "alpha.summary.read",
                     "family.summary.read",
+                    "financial.summary.read",
+                    "medical.safety.read",
+                    "helm.action.status.read",
                     "helm.action.propose",
                 ],
             ),
@@ -234,6 +237,11 @@ def _session_broker_response(request: Request) -> SessionBrokerResponse:
                 request,
                 required_scope="financial.read",
                 capabilities=["financial.summary.read"],
+            ),
+            "medical": _application_grant(
+                request,
+                required_scope="helm.read",
+                capabilities=["medical.safety.read"],
             ),
         },
     )

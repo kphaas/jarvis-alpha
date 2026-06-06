@@ -128,6 +128,24 @@ class HelmActionProposalOut(BaseModel):
     risk_tier: str
 
 
+class HelmActionStatusItem(BaseModel):
+    approval_queue_id: str
+    connector_id: str
+    action_id: str
+    status: str
+    risk_tier: str
+    title: str
+    requested_at: str | None = None
+    expires_at: str | None = None
+
+
+class HelmActionStatusOut(BaseModel):
+    service: str = "jarvis-alpha"
+    generated_at: str
+    actions: list[HelmActionStatusItem]
+    by_connector: dict[str, dict[str, int]] = Field(default_factory=dict)
+
+
 def _row_value(row: object, key: str, default: object | None = None) -> object | None:
     if isinstance(row, Mapping):
         return row.get(key, default)
@@ -297,6 +315,167 @@ def _family_service_token() -> str:
     return jwt.encode(payload, _family_service_private_key(), algorithm="RS256")
 
 
+def _financial_base_url() -> str | None:
+    value = os.environ.get("JARVIS_FINANCIAL_API_URL", "").strip()
+    return value.rstrip("/") if value else None
+
+
+def _financial_verify_tls() -> bool:
+    return os.environ.get("JARVIS_FINANCIAL_VERIFY_TLS", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _financial_summary_path() -> str:
+    value = os.environ.get("JARVIS_FINANCIAL_HELM_SUMMARY_PATH", "").strip()
+    return value or "/health/detailed"
+
+
+def _iso_value(value: object | None) -> str | None:
+    return value.isoformat() if hasattr(value, "isoformat") else None
+
+
+def _json_object(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _status_counts(actions: list[HelmActionStatusItem]) -> dict[str, dict[str, int]]:
+    counts: dict[str, dict[str, int]] = {}
+    for action in actions:
+        connector_counts = counts.setdefault(action.connector_id, {})
+        connector_counts[action.status] = connector_counts.get(action.status, 0) + 1
+    return counts
+
+
+def _extract_action_class(action_classes: object, prefix: str, fallback: str) -> str:
+    if isinstance(action_classes, list):
+        for action_class in action_classes:
+            if isinstance(action_class, str) and action_class.startswith(prefix):
+                return action_class.removeprefix(prefix)
+    return fallback
+
+
+def _title_from_description(description: str) -> str:
+    marker = " - "
+    if description.startswith("Helm proposal: ") and marker in description:
+        return description.split(marker, 1)[1]
+    return description
+
+
+def _helm_action_item(row: object) -> HelmActionStatusItem:
+    action_classes = _row_value(row, "action_class", [])
+    connector_id = _extract_action_class(action_classes, "connector:", "unknown")
+    action_id = _extract_action_class(action_classes, "action:", "unknown")
+    description = _str_value(row, "description", "Helm proposal")
+    return HelmActionStatusItem(
+        approval_queue_id=str(_row_value(row, "id", "")),
+        connector_id=connector_id,
+        action_id=action_id,
+        status=_str_value(row, "status", "unknown"),
+        risk_tier=_str_value(row, "risk_tier", "T5"),
+        title=_title_from_description(description),
+        requested_at=_iso_value(_row_value(row, "requested_at")),
+        expires_at=_iso_value(_row_value(row, "expires_at")),
+    )
+
+
+async def _helm_action_status_items(
+    conn: Any,
+    *,
+    connector_id: str | None = None,
+    limit: int = 50,
+) -> list[HelmActionStatusItem]:
+    action_filter = ["helm_action_proposal"]
+    if connector_id:
+        action_filter.append(f"connector:{connector_id}")
+    rows = await conn.fetch(
+        """
+        SELECT id, action_class, risk_tier, status, description, requested_at, expires_at
+        FROM public.alpha_approval_queue
+        WHERE action_class @> $1::TEXT[]
+          AND status IN ('pending', 'approved', 'denied', 'expired', 'executed')
+        ORDER BY requested_at DESC
+        LIMIT $2
+        """,
+        action_filter,
+        limit,
+    )
+    return [_helm_action_item(row) for row in rows]
+
+
+async def _optional_financial_payload() -> dict[str, Any]:
+    base_url = _financial_base_url()
+    if not base_url:
+        return {}
+    try:
+        async with httpx.AsyncClient(
+            timeout=5.0,
+            verify=_financial_verify_tls(),
+        ) as client:
+            response = await client.get(f"{base_url}{_financial_summary_path()}")
+    except (OSError, httpx.HTTPError):
+        return {"status": "unavailable"}
+
+    if response.status_code >= 400:
+        return {"status": "unavailable"}
+    try:
+        payload = response.json()
+    except ValueError:
+        return {"status": "unavailable"}
+    return _json_object(payload)
+
+
+def _financial_readiness(payload: dict[str, Any]) -> str:
+    paper = _json_object(payload.get("paper"))
+    if isinstance(paper.get("readiness"), str):
+        return str(paper["readiness"])
+    if isinstance(payload.get("paper_readiness"), dict):
+        value = _json_object(payload["paper_readiness"]).get("status")
+        if isinstance(value, str):
+            return value
+    return "brokered"
+
+
+def _financial_net_worth(payload: dict[str, Any]) -> str:
+    net_worth = _json_object(payload.get("net_worth"))
+    if isinstance(net_worth.get("status"), str):
+        return str(net_worth["status"])
+    return "brokered"
+
+
+async def _family_service_json(path: str) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(
+            timeout=5.0,
+            verify=_family_verify_tls(),
+        ) as client:
+            response = await client.get(
+                f"{_family_base_url()}{path}",
+                headers={"Authorization": f"Bearer {_family_service_token()}"},
+            )
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503, detail="family_summary_unavailable"
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail="family_summary_unavailable"
+        ) from exc
+
+    if response.status_code == 401 or response.status_code == 403:
+        raise HTTPException(status_code=502, detail="family_service_scope_rejected")
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail="family_summary_unavailable")
+
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=502, detail="family_summary_invalid")
+    return payload
+
+
 def _proposal_parameters_hash(body: HelmActionProposalRequest) -> str:
     canonical = json.dumps(
         body.model_dump(exclude={"idempotency_key"}),
@@ -407,32 +586,7 @@ async def helm_family_summary(
     check_scopes(request, "helm.read", "admin")
     actor = str(getattr(request.state, "user_id", "unknown"))
 
-    try:
-        async with httpx.AsyncClient(
-            timeout=5.0,
-            verify=_family_verify_tls(),
-        ) as client:
-            response = await client.get(
-                f"{_family_base_url()}/v1/helm/home-summary",
-                headers={"Authorization": f"Bearer {_family_service_token()}"},
-            )
-    except OSError as exc:
-        raise HTTPException(
-            status_code=503, detail="family_summary_unavailable"
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502, detail="family_summary_unavailable"
-        ) from exc
-
-    if response.status_code == 401 or response.status_code == 403:
-        raise HTTPException(status_code=502, detail="family_service_scope_rejected")
-    if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail="family_summary_unavailable")
-
-    payload = response.json()
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=502, detail="family_summary_invalid")
+    payload = await _family_service_json("/v1/helm/home-summary")
 
     return {
         **payload,
@@ -443,6 +597,104 @@ async def helm_family_summary(
             "mode": "service_scope",
         },
     }
+
+
+@router.get("/financial/summary")
+async def helm_financial_summary(
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> dict[str, Any]:
+    """Return a redacted Financial posture summary through Alpha authority."""
+    check_scopes(request, "helm.read", "admin")
+    actor = str(getattr(request.state, "user_id", "unknown"))
+
+    async with platform_admin_connection(
+        source="http",
+        audit_actor=f"helm_financial_summary:{actor}",
+    ) as conn:
+        actions = await _helm_action_status_items(conn, connector_id="financial")
+
+    downstream = await _optional_financial_payload()
+    pending = sum(1 for action in actions if action.status == "pending")
+    generated_at = datetime.now(UTC).isoformat()
+    return {
+        "service": "jarvis-financial",
+        "generated_at": generated_at,
+        "status": "brokered",
+        "paper": {
+            "status": "read_only",
+            "readiness": _financial_readiness(downstream),
+        },
+        "net_worth": {
+            "status": _financial_net_worth(downstream),
+        },
+        "pending_approvals": pending,
+        "approvals": {
+            "pending": pending,
+            "items": [action.model_dump() for action in actions[:10]],
+        },
+        "_broker": {
+            "authority": "jarvis-alpha",
+            "source": "jarvis-financial",
+            "actor": actor,
+            "mode": "alpha_queue_status",
+        },
+    }
+
+
+@router.get("/medical/summary")
+async def helm_medical_summary(
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> dict[str, Any]:
+    """Return a redacted Medical safety summary through Alpha authority."""
+    check_scopes(request, "helm.read", "admin")
+    actor = str(getattr(request.state, "user_id", "unknown"))
+
+    async with platform_admin_connection(
+        source="http",
+        audit_actor=f"helm_medical_summary:{actor}",
+    ) as conn:
+        actions = await _helm_action_status_items(conn, connector_id="medical")
+
+    payload = await _family_service_json("/v1/helm/medical-summary")
+    pending = sum(1 for action in actions if action.status == "pending")
+    return {
+        **payload,
+        "pending_approvals": pending,
+        "approvals": {
+            "pending": pending,
+            "items": [action.model_dump() for action in actions[:10]],
+        },
+        "_broker": {
+            "authority": "jarvis-alpha",
+            "source": "jarvis-family",
+            "actor": actor,
+            "mode": "service_scope",
+        },
+    }
+
+
+@router.get("/actions/status", response_model=HelmActionStatusOut)
+async def helm_action_status(
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> HelmActionStatusOut:
+    """Return redacted status for Helm-originated Alpha approval rows."""
+    check_scopes(request, "helm.read", "admin")
+    actor = str(getattr(request.state, "user_id", "unknown"))
+
+    async with platform_admin_connection(
+        source="http",
+        audit_actor=f"helm_action_status:{actor}",
+    ) as conn:
+        actions = await _helm_action_status_items(conn)
+
+    return HelmActionStatusOut(
+        generated_at=datetime.now(UTC).isoformat(),
+        actions=actions,
+        by_connector=_status_counts(actions),
+    )
 
 
 @router.post("/actions/propose", response_model=HelmActionProposalOut)
@@ -493,7 +745,11 @@ async def helm_action_proposal(
                 $1::text[], $2::text, $3::text, $4::text, $5::text, $6::text, $7::text
             )
             """,
-            ["helm_action_proposal", f"connector:{body.connector_id}"],
+            [
+                "helm_action_proposal",
+                f"connector:{body.connector_id}",
+                f"action:{body.action_id}",
+            ],
             body.risk_tier,
             actor_sub,
             actor_type,

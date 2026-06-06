@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -71,6 +72,38 @@ class FakeApprovalConn:
     async def fetchval(self, query: str, *args: object):
         self.fetchval_calls.append((query, args))
         return "queue-1"
+
+
+class FakeHelmActionConn:
+    def __init__(self) -> None:
+        self.fetch_calls: list[tuple[str, tuple[object, ...]]] = []
+
+    async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+        self.fetch_calls.append((query, args))
+        action_filter = args[0] if args else []
+        connector = (
+            "medical"
+            if isinstance(action_filter, list) and "connector:medical" in action_filter
+            else "financial"
+        )
+        action_id = f"{connector}-pending-approvals"
+        title = "Review medical alert" if connector == "medical" else "Review paper gate"
+        requested_at = datetime(2026, 6, 6, 12, 0, tzinfo=UTC)
+        return [
+            {
+                "id": f"queue-{connector}",
+                "action_class": [
+                    "helm_action_proposal",
+                    f"connector:{connector}",
+                    f"action:{action_id}",
+                ],
+                "risk_tier": "T5",
+                "status": "pending",
+                "description": f"Helm proposal: {connector.title()} - {title}",
+                "requested_at": requested_at,
+                "expires_at": requested_at + timedelta(minutes=10),
+            }
+        ]
 
 
 @pytest.mark.asyncio
@@ -172,6 +205,122 @@ async def test_helm_family_summary_brokers_family_service_token(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_helm_financial_summary_returns_alpha_queue_status(monkeypatch) -> None:
+    conn = FakeHelmActionConn()
+
+    @asynccontextmanager
+    async def fake_platform_admin_connection(*, source: str, audit_actor: str):
+        assert source == "http"
+        assert audit_actor == "helm_financial_summary:ken"
+        yield conn
+
+    monkeypatch.delenv("JARVIS_FINANCIAL_API_URL", raising=False)
+    monkeypatch.setattr(
+        helm, "platform_admin_connection", fake_platform_admin_connection
+    )
+
+    response = await helm.helm_financial_summary(
+        _request(scopes=["helm.read"]),
+        _user_id="ken",
+    )
+
+    assert conn.fetch_calls[0][1][0] == [
+        "helm_action_proposal",
+        "connector:financial",
+    ]
+    assert response["pending_approvals"] == 1
+    assert response["paper"] == {"status": "read_only", "readiness": "brokered"}
+    assert response["net_worth"] == {"status": "brokered"}
+    assert response["approvals"]["items"][0]["connector_id"] == "financial"
+    assert response["approvals"]["items"][0]["action_id"] == "financial-pending-approvals"
+    assert "actor_sub" not in str(response)
+
+
+@pytest.mark.asyncio
+async def test_helm_medical_summary_brokers_redacted_family_export(monkeypatch) -> None:
+    conn = FakeHelmActionConn()
+    calls: dict[str, object] = {}
+
+    @asynccontextmanager
+    async def fake_platform_admin_connection(*, source: str, audit_actor: str):
+        assert source == "http"
+        assert audit_actor == "helm_medical_summary:ken"
+        yield conn
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "safety_status": "ok",
+                "critical_facts": 2,
+                "alerts": 0,
+                "children": 2,
+            }
+
+    class FakeClient:
+        def __init__(self, *, timeout: float, verify: bool) -> None:
+            calls["timeout"] = timeout
+            calls["verify"] = verify
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, url: str, *, headers: dict[str, str]):
+            calls["url"] = url
+            calls["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setenv("JARVIS_FAMILY_API_URL", "https://family.invalid")
+    monkeypatch.setattr(helm, "_family_service_token", lambda: "service-token")
+    monkeypatch.setattr(helm, "platform_admin_connection", fake_platform_admin_connection)
+    monkeypatch.setattr(helm.httpx, "AsyncClient", FakeClient)
+
+    response = await helm.helm_medical_summary(
+        _request(scopes=["helm.read"]),
+        _user_id="ken",
+    )
+
+    assert calls["url"] == "https://family.invalid/v1/helm/medical-summary"
+    assert calls["headers"] == {"Authorization": "Bearer service-token"}
+    assert response["safety_status"] == "ok"
+    assert response["critical_facts"] == 2
+    assert response["pending_approvals"] == 1
+    assert response["approvals"]["items"][0]["connector_id"] == "medical"
+    assert response["_broker"]["authority"] == "jarvis-alpha"
+    assert response["_broker"]["source"] == "jarvis-family"
+    assert "Sloane" not in str(response)
+
+
+@pytest.mark.asyncio
+async def test_helm_action_status_returns_redacted_status(monkeypatch) -> None:
+    conn = FakeHelmActionConn()
+
+    @asynccontextmanager
+    async def fake_platform_admin_connection(*, source: str, audit_actor: str):
+        assert source == "http"
+        assert audit_actor == "helm_action_status:ken"
+        yield conn
+
+    monkeypatch.setattr(helm, "platform_admin_connection", fake_platform_admin_connection)
+
+    response = await helm.helm_action_status(
+        _request(scopes=["helm.read"]),
+        _user_id="ken",
+    )
+    payload = response.model_dump()
+
+    assert conn.fetch_calls[0][1][0] == ["helm_action_proposal"]
+    assert payload["actions"][0]["approval_queue_id"] == "queue-financial"
+    assert payload["actions"][0]["title"] == "Review paper gate"
+    assert payload["by_connector"] == {"financial": {"pending": 1}}
+    assert "actor_sub" not in str(payload)
+
+
+@pytest.mark.asyncio
 async def test_helm_action_proposal_queues_approval(monkeypatch) -> None:
     conn = FakeApprovalConn()
 
@@ -204,6 +353,7 @@ async def test_helm_action_proposal_queues_approval(monkeypatch) -> None:
     assert conn.fetchval_calls[0][1][0] == [
         "helm_action_proposal",
         "connector:family",
+        "action:family-critical-alerts",
     ]
     assert conn.fetchval_calls[0][1][1] == "T4"
     assert (
@@ -216,6 +366,18 @@ async def test_helm_action_proposal_queues_approval(monkeypatch) -> None:
 
 def test_helm_family_and_action_routes_are_classified() -> None:
     assert classify_route("GET", "/v1/helm/family/summary") == [
+        "read",
+        "security_read",
+    ]
+    assert classify_route("GET", "/v1/helm/financial/summary") == [
+        "read",
+        "security_read",
+    ]
+    assert classify_route("GET", "/v1/helm/medical/summary") == [
+        "read",
+        "security_read",
+    ]
+    assert classify_route("GET", "/v1/helm/actions/status") == [
         "read",
         "security_read",
     ]
