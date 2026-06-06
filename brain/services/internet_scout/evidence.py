@@ -7,6 +7,7 @@ from hashlib import sha256
 
 from brain.services.internet_scout.models import (
     EvidenceClaim,
+    GatewayCrawlResponse,
     GatewayExtractResponse,
     GatewayFetchResponse,
     GatewaySearchResponse,
@@ -132,3 +133,32 @@ def packet_from_extract_response(
         else []
     )
     return build_evidence_packet(request=request, sources=[source], claims=claims)
+
+
+def packet_from_crawl_response(
+    *,
+    request: InternetScoutRequest,
+    response: GatewayCrawlResponse,
+) -> InternetEvidencePacket:
+    sources: list[SourceReference] = []
+    claims: list[EvidenceClaim] = []
+    for page in response.pages:
+        source = build_source_reference(
+            url=page.url,
+            title=f"Beacon crawl depth {page.depth}",
+            content=page.extracted_text,
+            fetched_at=page.fetched_at,
+        )
+        sources.append(source)
+        excerpt = page.extracted_text.strip()[:1000]
+        if not excerpt:
+            continue
+        claims.append(
+            EvidenceClaim(
+                claim=excerpt[:2000],
+                source_url=source.url,
+                citation_text=excerpt,
+                confidence="medium",
+            )
+        )
+    return build_evidence_packet(request=request, sources=sources, claims=claims)
