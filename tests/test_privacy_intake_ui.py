@@ -61,7 +61,7 @@ def test_privacy_draft_inbox_is_mounted_on_privacy_page() -> None:
 
     assert 'usePrivacyDraftInbox(searchParams.get("case"))' in page_source
     assert "<PrivacyDraftInboxPanel" in page_source
-    assert "P3-G - manual action workflow" in page_source
+    assert "MVP v0.1 - manual privacy workflow" in page_source
     assert "P2-F - draft review inbox" not in page_source
     assert "/v1/privacy/case-drafts" in source
     assert "submit-approval" in source
@@ -86,6 +86,9 @@ def test_privacy_approved_actions_panel_is_mounted_on_privacy_page() -> None:
     assert "/report" in source
     assert "Approved Actions" in source
     assert "Ready for manual operator handling" in source
+    assert "Manual handling recorded. Verification can be added" in source
+    assert "Verification recorded. Case report is ready." in source
+    assert "tracked actions" in source
     assert "Record disposition" in source
     assert "Record verification" in source
     assert "Case report" in source
