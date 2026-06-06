@@ -6,6 +6,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PRIVACY_PAGE = REPO_ROOT / "ui" / "src" / "pages" / "Privacy.tsx"
 APPROVALS_PAGE = REPO_ROOT / "ui" / "src" / "pages" / "Approvals.tsx"
+PIN_GATE = REPO_ROOT / "ui" / "src" / "components" / "PinGate.tsx"
 PRIVACY_UI_SOURCES = (
     PRIVACY_PAGE,
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyIntake.ts",
@@ -64,8 +65,9 @@ def test_privacy_draft_inbox_is_mounted_on_privacy_page() -> None:
     assert "usePrivacyDraftInbox(caseId)" in page_source
     assert "<PrivacyDraftInboxPanel" in page_source
     assert "AT-0 Privacy Agent" in page_source
-    assert "Manual Privacy Console" in page_source
-    assert "MVP v0.1 - review packets" in page_source
+    assert "AT-0 Privacy Console" in page_source
+    assert "Manual MVP v0.1: encrypted intake" in page_source
+    assert "font-serif italic" not in page_source
     assert "P2-F - draft review inbox" not in page_source
     assert "/v1/privacy/case-drafts" in source
     assert "submit-approval" in source
@@ -99,6 +101,31 @@ def test_privacy_approved_actions_panel_is_mounted_on_privacy_page() -> None:
     assert "Record disposition" in source
     assert "Record verification" in source
     assert "Case report" in source
+    assert "Manual disposition" in source
+    assert "Verification" in source
+    assert "Timeline" in source
+    assert "Evidence status" in source
+    assert "Evidence hashes" in source
+    assert "Needs evidence" in source
+    assert "data-testid={`privacy-action-${shortId(action.action_id)}`}" in source
+    assert "htmlFor={`${idPrefix}-disposition`}" in source
+    assert "htmlFor={`${idPrefix}-verification`}" in source
+    assert "P3-D disposition" not in source
+    assert "P3-E verification" not in source
+    assert "P3-F timeline" not in source
+    assert "P3-G report" not in source
+
+
+def test_alpha_pin_gate_supports_longer_pins_and_session_cookie_refresh() -> None:
+    source = PIN_GATE.read_text(encoding="utf-8")
+
+    assert "const MAX_PIN_LENGTH = 12" in source
+    assert "maxLength={MAX_PIN_LENGTH}" in source
+    assert "slice(0, MAX_PIN_LENGTH)" in source
+    assert "await refreshHttpOnlySessionCookie(data.token)" in source
+    assert "Invalid PIN for ${selectedProfile?.display_name" in source
+    assert "One Alpha session unlocks approved AT-0 operator surfaces." in source
+    assert "Numeric PINs up to {MAX_PIN_LENGTH} digits are supported." in source
 
 
 def test_privacy_approval_handoff_ui_links_to_review_packet() -> None:
