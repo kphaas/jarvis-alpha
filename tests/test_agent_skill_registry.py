@@ -102,6 +102,8 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["ledger"].display_name == "Ledger"
     assert agents["sentry"].enabled is True
     assert agents["sentry"].display_name == "Sentry"
+    assert agents["trade_guard"].enabled is True
+    assert agents["trade_guard"].display_name == "Trade Guard"
     assert agents["approval_canary"].enabled is False
     assert agents["approval_canary"].risk_tier == "T4"
     assert "approval.canary_t4" in agents["approval_canary"].allowed_skills
@@ -124,6 +126,7 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
         "tripwire",
         "ledger",
         "sentry",
+        "trade_guard",
     ]
     assert (
         agents["warden"].metadata["active_network_hardening"]
@@ -157,6 +160,13 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert "financial" in agents["sentry"].metadata["protected_domains"]
     assert "pii_log_boundary" in agents["sentry"].metadata["monitors"]
     assert "sentry.boundary_inventory" in agents["sentry"].allowed_skills
+    assert agents["trade_guard"].risk_tier == "T4"
+    assert agents["trade_guard"].metadata["warden_role"] == "trading_safety_monitor"
+    assert agents["trade_guard"].metadata["enforcement"] == "planned_not_active"
+    assert agents["trade_guard"].approval_policy["trade_execution"] == "blocked"
+    assert "financial" in agents["trade_guard"].metadata["protected_domains"]
+    assert "kill_switch_health" in agents["trade_guard"].metadata["monitors"]
+    assert "trade_guard.kill_switch_review" in agents["trade_guard"].allowed_skills
     assert "evidence.package_report" in skills
     assert skills["evidence.package_report"].status == "planned"
     assert skills["evidence.package_report"].metadata["owner_agent"] == "ledger"
@@ -178,6 +188,10 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
         "sentry.boundary_inventory": "sentry",
         "sentry.cross_system_flow_review": "sentry",
         "sentry.pii_log_boundary_scan": "sentry",
+        "trade_guard.mode_boundary_review": "trade_guard",
+        "trade_guard.kill_switch_review": "trade_guard",
+        "trade_guard.order_path_boundary_review": "trade_guard",
+        "trade_guard.broker_credential_review": "trade_guard",
     }
     for skill_name, owner_agent in saved_skills.items():
         assert skills[skill_name].status == "planned"

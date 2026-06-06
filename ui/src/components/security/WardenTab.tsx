@@ -275,6 +275,11 @@ export function WardenTab({
                     Packages security events, access changes, Cloudflare drift, and key rotations into tamper-evident reports.
                   </div>
                 )}
+                {agent.agent_id === 'trade_guard' && (
+                  <div className="mt-3 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs font-mono text-rose-300">
+                    Read-only trading safety monitor. Order placement, broker mutation, and remediation stay blocked unless Warden routes an approval.
+                  </div>
+                )}
                 {stringList(agent.metadata.capabilities).length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {stringList(agent.metadata.capabilities).map((capability) => (

@@ -102,6 +102,7 @@ def test_supervision_event_uses_security_alerts_and_recovery_message():
 def test_warden_default_managed_agents_include_ledger_and_sentry():
     assert "ledger" in DEFAULT_MANAGED_AGENTS
     assert "sentry" in DEFAULT_MANAGED_AGENTS
+    assert "trade_guard" in DEFAULT_MANAGED_AGENTS
     assert managed_agent_ids({}) == DEFAULT_MANAGED_AGENTS
 
 
