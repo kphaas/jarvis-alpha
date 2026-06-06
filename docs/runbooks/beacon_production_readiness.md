@@ -65,6 +65,9 @@ Expected:
 - `checks.gateway.metadata.usable_provider_count` is greater than zero.
 - `checks.browser_runtime.ok` is true when browser execution is expected.
 - `retention.mode` is `report_only`.
+- `checks.recent_evidence` is diagnostic. A recent failed request should be
+  investigated, but it does not block readiness when the core dependency checks
+  are healthy.
 
 ## Full Smoke
 
@@ -72,6 +75,19 @@ Run this after deploy and before calling the MVP ready:
 
 ```bash
 python scripts/smoke_beacon_production.py
+```
+
+For production targets, the smoke script uses a target-side token by default:
+
+```bash
+python scripts/smoke_beacon_production.py \
+  --token-ssh-target jarvisbrain@jarvis-brain.tail40ed36.ts.net
+```
+
+You can also provide an explicit token:
+
+```bash
+BEACON_SMOKE_TOKEN="<redacted>" python scripts/smoke_beacon_production.py
 ```
 
 Expected:

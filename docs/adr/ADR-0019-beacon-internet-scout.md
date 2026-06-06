@@ -47,7 +47,9 @@ closed if that provider's key is missing. P13-P17 add production readiness
 surfaces: Brain health and report-only retention endpoints, Gateway provider
 health and circuit-breaker fallback, a production agent response envelope, and a
 smoke/runbook path. Retention remains inventory-only; deletion requires a
-separate reviewed change.
+separate reviewed change. Follow-up production readiness keeps recent evidence
+failures as visible diagnostics while making the core dependency checks
+database, Gateway, browser runtime, and retention authoritative for readiness.
 
 ## Architecture
 
@@ -122,6 +124,7 @@ found inside fetched content.
 | Evidence lifecycle | P15 reports old evidence rows and screenshot files only; deletion is intentionally out of scope for MVP. |
 | Local LLM misuse | P16 returns citations, confidence, explicit untrusted-content warnings, and not-verified notes instead of raw authority. |
 | Operator readiness | P17 adds a smoke script and rollback runbook before deploy approval. |
+| Readiness noise | Recent evidence failures remain diagnostic warnings; they do not block readiness when database, Gateway, browser runtime, and retention are healthy. |
 
 ## Consequences
 

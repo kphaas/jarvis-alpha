@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shlex
 import ssl
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import urllib.error
 import urllib.request
 
 DEFAULT_BASE_URL = "https://jarvis-brain.tail40ed36.ts.net:8186"
+DEFAULT_TOKEN_SSH_TARGET = "jarvisbrain@jarvis-brain.tail40ed36.ts.net"
 
 
 def main() -> int:
@@ -31,10 +33,22 @@ def main() -> int:
         action="store_true",
         default=os.getenv("BEACON_SMOKE_SKIP_AGENT", "0") == "1",
     )
+    parser.add_argument(
+        "--token-ssh-target",
+        default=os.getenv("BEACON_SMOKE_TOKEN_SSH_TARGET", DEFAULT_TOKEN_SSH_TARGET),
+        help=(
+            "SSH target used to generate a target-side smoke token when "
+            "BEACON_SMOKE_TOKEN is not set."
+        ),
+    )
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
-    token = _smoke_token(profile=args.profile)
+    token = _smoke_token(
+        profile=args.profile,
+        base_url=base_url,
+        token_ssh_target=args.token_ssh_target,
+    )
     results: dict[str, object] = {}
 
     health = _call_json("GET", base_url, "/v1/internet-scout/health", token)
@@ -97,15 +111,46 @@ def main() -> int:
     return 0
 
 
-def _smoke_token(*, profile: str) -> str:
-    token = (
-        os.getenv("BEACON_SMOKE_TOKEN")
-        or os.getenv("ALPHA_TEST_TOKEN")
-        or os.getenv("ALPHA_SERVICE_TOKEN")
-    )
+def _smoke_token(
+    *,
+    profile: str,
+    base_url: str,
+    token_ssh_target: str | None,
+) -> str:
+    token = os.getenv("BEACON_SMOKE_TOKEN")
     if token:
         return token
 
+    if _is_local_base_url(base_url):
+        return _local_smoke_token(profile=profile)
+
+    if token_ssh_target:
+        generated = subprocess.check_output(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=no",
+                token_ssh_target,
+                "cd ~/jarvis-alpha && .venv/bin/python scripts/gen_test_token.py "
+                f"{shlex.quote(profile)}",
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if not generated:
+            raise RuntimeError("target token generation returned no token")
+        return generated
+
+    raise RuntimeError(
+        "set BEACON_SMOKE_TOKEN or BEACON_SMOKE_TOKEN_SSH_TARGET for production smoke"
+    )
+
+
+def _local_smoke_token(*, profile: str) -> str:
     repo_root = Path(__file__).resolve().parents[1]
     python_bin = os.getenv("PYTHON_BIN", str(repo_root / ".venv/bin/python"))
     generated = subprocess.check_output(
@@ -116,6 +161,14 @@ def _smoke_token(*, profile: str) -> str:
     if not generated:
         raise RuntimeError("test token generation returned no token")
     return generated
+
+
+def _is_local_base_url(base_url: str) -> bool:
+    return (
+        "://localhost" in base_url
+        or "://127.0.0.1" in base_url
+        or "://[::1]" in base_url
+    )
 
 
 def _call_json(
