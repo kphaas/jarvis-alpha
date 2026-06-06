@@ -137,7 +137,29 @@ class GatewayFetchResponse(BaseModel):
     redirect_chain: list[str | None] = Field(default_factory=list, max_length=10)
 
 
+class GatewayExtractResponse(BaseModel):
+    url: str
+    host: str
+    status_code: int
+    content_type: str | None = None
+    content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    fetched_at: datetime
+    extracted_text: str
+    extractor: str
+    extraction_fallback: bool
+    truncated: bool
+    risk_markers: list[str] = Field(default_factory=list)
+    redirect_chain: list[str | None] = Field(default_factory=list, max_length=10)
+
+
 class InternetScoutStoredResponse(BaseModel):
     request_id: UUID
     plan: InternetScoutPlan
     evidence: InternetEvidencePacket
+
+
+class InternetScoutBrowserApprovalResponse(BaseModel):
+    request_id: UUID
+    approval_queue_id: UUID
+    approval_status: Literal["pending"] = "pending"
+    plan: InternetScoutPlan

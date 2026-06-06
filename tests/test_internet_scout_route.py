@@ -13,6 +13,7 @@ from brain.services.internet_scout.evidence import build_source_reference
 from brain.services.internet_scout.models import (
     InternetEvidencePacket,
     InternetScoutRequest,
+    InternetTool,
 )
 
 
@@ -134,11 +135,71 @@ async def test_internet_scout_loads_stored_evidence(monkeypatch):
     assert response.evidence.sources[0].url == "https://public.example.test/report"
 
 
+@pytest.mark.asyncio
+async def test_internet_scout_browser_approval_request_queues_only(monkeypatch):
+    FakeRepo.created = []
+    FakeRepo.events = []
+    FakeRepo.stored = []
+    queue_id = uuid4()
+    enqueue_calls: list[dict[str, object]] = []
+
+    async def fake_enqueue(conn, **kwargs):
+        enqueue_calls.append(kwargs)
+        return queue_id
+
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+    monkeypatch.setattr(internet_scout, "enqueue_browser_task_approval", fake_enqueue)
+
+    response = await internet_scout.internet_scout_browser_approval_request(
+        InternetScoutRequest(
+            query="open a public page and click through pagination",
+            needs_interaction=True,
+        ),
+        _request(scopes=["internet_scout.research"]),
+        _user_id="ken",
+    )
+
+    assert response.request_id == FakeRepo.request_id
+    assert response.approval_queue_id == queue_id
+    assert response.approval_status == "pending"
+    assert response.plan.decision.tool == InternetTool.BROWSER_USE
+    assert response.plan.decision.requires_approval is True
+    assert FakeRepo.created[0]["decision"].allowed is False
+    assert enqueue_calls[0]["actor_sub"] == "ken"
+    assert any(
+        event.get("event_type") == "approval_request"
+        and event.get("status") == "queued"
+        for event in FakeRepo.events
+    )
+    assert FakeRepo.stored == []
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_browser_approval_request_rejects_empty_task():
+    with pytest.raises(HTTPException) as exc:
+        await internet_scout.internet_scout_browser_approval_request(
+            InternetScoutRequest(needs_interaction=True),
+            _request(scopes=["internet_scout.research"]),
+            _user_id="ken",
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "browser_use_task_required"
+
+
 def test_internet_scout_routes_are_classified():
     assert classify_route("POST", "/v1/internet-scout/research") == [
         "write",
         "external_call",
         "cost_incurring",
+    ]
+    assert classify_route(
+        "POST",
+        "/v1/internet-scout/browser-task/approval-request",
+    ) == [
+        "write",
+        "security_write",
     ]
     assert classify_route("GET", "/v1/internet-scout/requests/123") == [
         "read",
