@@ -11,7 +11,7 @@ import type {
   LogEntry, RotatableKey, RotationResult, SecretAuditEvent,
   SecretsAuditResponse, HoneypotData, McpRegistry, LogsQueryResponse,
   PorchlightResponse, PorchlightReport, AgentManualRunResponse, KeyturnerStatus,
-  WardenStatus,
+  WardenStatus, SecurityAgentEvent, SecurityAgentEventsResponse,
 } from "../types/security";
 import {
   OverviewTab, IdentityTab, NetworkTab, SweepTab,
@@ -54,6 +54,7 @@ export default function Security() {
   const [perimeter, setPerimeter] = useState<Perimeter | null>(null);
   const [certs, setCerts] = useState<CertRow[] | null>(null);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const [agentEvents, setAgentEvents] = useState<SecurityAgentEvent[]>([]);
 
   const [loadJwt, setLoadJwt] = useState(true);
   const [loadRls, setLoadRls] = useState(true);
@@ -61,6 +62,7 @@ export default function Security() {
   const [loadPerimeter, setLoadPerimeter] = useState(true);
   const [loadCerts, setLoadCerts] = useState(true);
   const [loadLogs, setLoadLogs] = useState(true);
+  const [loadAgentEvents, setLoadAgentEvents] = useState(true);
 
   const [errJwt, setErrJwt] = useState(false);
   const [errRls, setErrRls] = useState(false);
@@ -68,6 +70,7 @@ export default function Security() {
   const [errPerimeter, setErrPerimeter] = useState(false);
   const [errCerts, setErrCerts] = useState(false);
   const [errLogs, setErrLogs] = useState(false);
+  const [errAgentEvents, setErrAgentEvents] = useState(false);
 
   const [rotatableKeys, setRotatableKeys] = useState<RotatableKey[]>([]);
   const [secretsAuditEvents, setSecretsAuditEvents] = useState<SecretAuditEvent[]>([]);
@@ -112,19 +115,20 @@ export default function Security() {
 
     if (showLoading) {
       setLoadJwt(true); setLoadRls(true); setLoadChild(true);
-      setLoadPerimeter(true); setLoadCerts(true); setLoadLogs(true);
+      setLoadPerimeter(true); setLoadCerts(true); setLoadLogs(true); setLoadAgentEvents(true);
       setLoadRotatableKeys(true); setLoadSecretsAudit(true); setLoadKeyturner(true); setLoadWarden(true);
       setLoadHoneypot(true); setLoadMcp(true); setLoadPorchlight(true);
     }
 
     try {
-      const [j, r, c, p, cert, logs, rk, sa, kt, warden, hp, mcp, porch] = await Promise.all([
+      const [j, r, c, p, cert, logs, agentEventsResult, rk, sa, kt, warden, hp, mcp, porch] = await Promise.all([
         apiJson<JwtCheck>("/v1/security/jwt-check").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<RlsStatus>("/v1/security/rls-status").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<ChildProfileStatus>("/v1/security/child-profiles").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<Perimeter>("/v1/security/perimeter").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<CertRow[]>("/v1/mesh/certs").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<LogsQueryResponse>("/v1/logs/query?limit=20&level=WARNING&service=alpha_brain").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
+        apiJson<SecurityAgentEventsResponse>("/v1/security/agent-events?limit=25").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<{ keys: RotatableKey[] }>("/v1/security/rotatable-keys").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const, data: { keys: [] as RotatableKey[] } })),
         apiJson<SecretsAuditResponse>("/v1/security/secrets-audit?limit=20").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
         apiJson<KeyturnerStatus>("/v1/security/keyturner-status").then((data) => ({ ok: true as const, data })).catch(() => ({ ok: false as const })),
@@ -146,6 +150,8 @@ export default function Security() {
         if (data.status !== "error") { setLogEntries(data.entries ?? []); setErrLogs(false); }
         else { setLogEntries([]); setErrLogs(true); }
       } else { setLogEntries([]); setErrLogs(true); }
+      if (agentEventsResult.ok) { setAgentEvents(agentEventsResult.data.events ?? []); setErrAgentEvents(false); }
+      else { setAgentEvents([]); setErrAgentEvents(true); }
       if (rk.ok) { setRotatableKeys(rk.data.keys ?? []); setErrRotatableKeys(false); }
       else { setRotatableKeys([]); setErrRotatableKeys(true); }
       if (sa.ok) { setSecretsAuditEvents(sa.data.events ?? []); setErrSecretsAudit(Boolean(sa.data.error)); }
@@ -159,7 +165,7 @@ export default function Security() {
       fetchRunning.current = false;
       if (mounted.current && showLoading) {
         setLoadJwt(false); setLoadRls(false); setLoadChild(false);
-        setLoadPerimeter(false); setLoadCerts(false); setLoadLogs(false);
+        setLoadPerimeter(false); setLoadCerts(false); setLoadLogs(false); setLoadAgentEvents(false);
         setLoadRotatableKeys(false); setLoadSecretsAudit(false); setLoadKeyturner(false); setLoadWarden(false);
         setLoadHoneypot(false); setLoadMcp(false); setLoadPorchlight(false);
       }
@@ -384,7 +390,15 @@ export default function Security() {
       )}
 
       {activeTab === "Events" && (
-        <EventsTab {...theme_props} logEntries={logEntries} loadLogs={loadLogs} errLogs={errLogs} />
+        <EventsTab
+          {...theme_props}
+          agentEvents={agentEvents}
+          loadAgentEvents={loadAgentEvents}
+          errAgentEvents={errAgentEvents}
+          logEntries={logEntries}
+          loadLogs={loadLogs}
+          errLogs={errLogs}
+        />
       )}
     </motion.div>
   );

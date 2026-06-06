@@ -88,6 +88,29 @@ export interface LogsQueryResponse {
   entries?: LogEntry[]
 }
 
+export interface SecurityAgentEvent {
+  id: string
+  agent_id: string
+  run_id?: string | null
+  event_type: string
+  severity: string
+  title: string
+  message: string
+  correlation_id?: string | null
+  channel_key: string
+  notification_status: string
+  notification_error?: string | null
+  payload: Record<string, unknown>
+  notification_result: Record<string, unknown>
+  created_at: string
+  notified_at?: string | null
+}
+
+export interface SecurityAgentEventsResponse {
+  count: number
+  events: SecurityAgentEvent[]
+}
+
 export interface RotatableKey {
   key_name: string
   provider: string

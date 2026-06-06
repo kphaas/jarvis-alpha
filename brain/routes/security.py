@@ -8,6 +8,7 @@ import os
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -91,6 +92,65 @@ class SentinelReportResponse(BaseModel):
     accepted: bool
     event_id: str
     notification_status: str
+
+
+class SecurityAgentEventOut(BaseModel):
+    id: str
+    agent_id: str
+    run_id: str | None = None
+    event_type: str
+    severity: str
+    title: str
+    message: str
+    correlation_id: str | None = None
+    channel_key: str
+    notification_status: str
+    notification_error: str | None = None
+    payload: dict = Field(default_factory=dict)
+    notification_result: dict = Field(default_factory=dict)
+    created_at: str
+    notified_at: str | None = None
+
+
+class SecurityAgentEventsResponse(BaseModel):
+    count: int
+    events: list[SecurityAgentEventOut]
+
+
+def _jsonb(value) -> dict:
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        return json.loads(value)
+    return dict(value)
+
+
+def _iso(value) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _security_agent_event_from_row(row) -> SecurityAgentEventOut:
+    return SecurityAgentEventOut(
+        id=str(row["id"]),
+        agent_id=row["agent_id"],
+        run_id=str(row["run_id"]) if row["run_id"] else None,
+        event_type=row["event_type"],
+        severity=row["severity"],
+        title=row["title"],
+        message=row["message"],
+        correlation_id=row["correlation_id"],
+        channel_key=row["channel_key"],
+        notification_status=row["notification_status"],
+        notification_error=row["notification_error"],
+        payload=_jsonb(row["payload"]),
+        notification_result=_jsonb(row["notification_result"]),
+        created_at=_iso(row["created_at"]) or "",
+        notified_at=_iso(row["notified_at"]),
+    )
 
 
 def _sentinel_event_severity(counts: dict[str, int]) -> str:
@@ -1098,6 +1158,58 @@ async def sentinel_report(
         accepted=True,
         event_id=result.event_id,
         notification_status=result.notification_status,
+    )
+
+
+@security_router.get("/agent-events", response_model=SecurityAgentEventsResponse)
+async def security_agent_events(
+    request: Request,
+    limit: int = Query(default=25, ge=1, le=100),
+    severity: Literal[
+        "debug", "info", "needs_input", "warning", "error", "critical", "all"
+    ] = Query(default="all"),
+) -> SecurityAgentEventsResponse:
+    """Return managed security-agent events for the Security dashboard."""
+    from brain.db.pool import get_pool
+    from brain.db.rls import platform_admin_connection
+    from brain.middleware.scopes import check_scopes
+
+    check_scopes(request, "security.read", "security_read")
+    managed_ids = [
+        "warden",
+        "porchlight",
+        "keyturner",
+        "sweep",
+        "tripwire",
+        "ledger",
+    ]
+    filters = ["agent_id = ANY($1::text[])"]
+    params: list = [managed_ids]
+    if severity != "all":
+        params.append(severity)
+        filters.append(f"severity = ${len(params)}")
+    params.append(limit)
+    where = " AND ".join(filters)
+    pool = get_pool()
+    async with platform_admin_connection(
+        source="http", audit_actor="security_agent_events", pool=pool
+    ) as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT id, agent_id, run_id, event_type, severity, title, message,
+                   correlation_id, channel_key, notification_status,
+                   notification_error, payload, notification_result, created_at,
+                   notified_at
+            FROM public.alpha_agent_events
+            WHERE {where}
+            ORDER BY created_at DESC
+            LIMIT ${len(params)}
+            """,
+            *params,
+        )
+    return SecurityAgentEventsResponse(
+        count=len(rows),
+        events=[_security_agent_event_from_row(row) for row in rows],
     )
 
 
