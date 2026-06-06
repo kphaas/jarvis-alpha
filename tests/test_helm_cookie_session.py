@@ -110,6 +110,9 @@ def test_session_broker_reports_operator_apps_authorized_without_token_leak() ->
             "capabilities": [
                 "alpha.summary.read",
                 "family.summary.read",
+                "financial.summary.read",
+                "medical.safety.read",
+                "helm.action.status.read",
                 "helm.action.propose",
             ],
         },
@@ -131,6 +134,12 @@ def test_session_broker_reports_operator_apps_authorized_without_token_leak() ->
             "granted_scopes": ["*"],
             "capabilities": ["financial.summary.read"],
         },
+        "medical": {
+            "status": "authorized",
+            "required_scopes": ["helm.read"],
+            "granted_scopes": ["*"],
+            "capabilities": ["medical.safety.read"],
+        },
     }
     assert "secret-token" not in str(payload)
 
@@ -149,6 +158,6 @@ def test_session_broker_reports_missing_app_scopes_for_non_admin() -> None:
 
     payload = _session_broker_response(request).model_dump()
 
-    for application in ("helm", "privacy", "family", "financial"):
+    for application in ("helm", "privacy", "family", "financial", "medical"):
         assert payload["applications"][application]["status"] == "missing_scope"
         assert payload["applications"][application]["capabilities"] == []

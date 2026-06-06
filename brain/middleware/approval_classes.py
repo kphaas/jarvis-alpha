@@ -130,6 +130,9 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Helm read-only workspace summary ---
     "GET /v1/helm/summary": ["read", "security_read"],
     "GET /v1/helm/family/summary": ["read", "security_read"],
+    "GET /v1/helm/financial/summary": ["read", "security_read"],
+    "GET /v1/helm/medical/summary": ["read", "security_read"],
+    "GET /v1/helm/actions/status": ["read", "security_read"],
     "POST /v1/helm/actions/propose": ["write", "security_write"],
     # --- Beacon internet evidence broker ---
     "GET /v1/internet-scout/health": ["read", "security_read"],
