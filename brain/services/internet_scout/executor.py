@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 
 from brain.services.internet_scout.evidence import (
+    packet_from_crawl_response,
     packet_from_extract_response,
     packet_from_fetch_response,
     packet_from_search_response,
@@ -16,7 +17,11 @@ from brain.services.internet_scout.models import (
     InternetTool,
     PolicyDecision,
 )
-from brain.services.internet_scout.policy import evaluate_policy
+from brain.services.internet_scout.policy import (
+    CRAWL_MAX_DEPTH_WITHOUT_APPROVAL,
+    CRAWL_MAX_PAGES_WITHOUT_APPROVAL,
+    evaluate_policy,
+)
 from brain.services.internet_scout.safety import DEFAULT_MAX_CONTENT_BYTES
 
 
@@ -73,6 +78,20 @@ class InternetScoutExecutor:
             return decision, packet_from_extract_response(
                 request=request,
                 response=extract_response,
+            )
+
+        if decision.tool == InternetTool.CRAWL:
+            if not request.urls:
+                raise HTTPException(status_code=400, detail="url is required")
+            crawl_response = await self.gateway_client.crawl(
+                url=request.urls[0],
+                max_pages=min(request.max_pages, CRAWL_MAX_PAGES_WITHOUT_APPROVAL),
+                max_depth=min(request.max_depth, CRAWL_MAX_DEPTH_WITHOUT_APPROVAL),
+                max_bytes=DEFAULT_MAX_CONTENT_BYTES,
+            )
+            return decision, packet_from_crawl_response(
+                request=request,
+                response=crawl_response,
             )
 
         raise HTTPException(

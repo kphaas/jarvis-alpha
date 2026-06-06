@@ -13,8 +13,10 @@ from brain.services.internet_scout.browser_approvals import (
     enqueue_browser_task_approval,
 )
 from brain.services.internet_scout.executor import InternetScoutExecutor
+from brain.services.internet_scout.local_llm import build_local_llm_response
 from brain.services.internet_scout.models import (
     InternetScoutBrowserApprovalResponse,
+    InternetScoutLocalLLMResponse,
     InternetScoutRequest,
     InternetScoutStoredResponse,
     InternetTool,
@@ -33,8 +35,27 @@ async def internet_scout_research(
     request: Request,
     _user_id: str = Depends(require_auth),
 ) -> InternetScoutStoredResponse:
-    """Run a P2 Beacon search/fetch request and store structured evidence."""
+    """Run a Beacon research request and store structured evidence."""
     check_scopes(request, "internet_scout.research", "admin")
+    return await _execute_and_store_research(body, request)
+
+
+@router.post("/local-llm/tool", response_model=InternetScoutLocalLLMResponse)
+async def internet_scout_local_llm_tool(
+    body: InternetScoutRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> InternetScoutLocalLLMResponse:
+    """Return Beacon evidence in a local-LLM-safe citation envelope."""
+    check_scopes(request, "internet_scout.research", "admin")
+    stored = await _execute_and_store_research(body, request)
+    return build_local_llm_response(stored)
+
+
+async def _execute_and_store_research(
+    body: InternetScoutRequest,
+    request: Request,
+) -> InternetScoutStoredResponse:
     actor = str(getattr(request.state, "user_id", "unknown"))
     plan = InternetScoutOrchestrator().plan(body)
 

@@ -11,6 +11,7 @@ from brain.middleware.approval_classes import classify_route
 from brain.routes import internet_scout
 from brain.services.internet_scout.evidence import build_source_reference
 from brain.services.internet_scout.models import (
+    EvidenceClaim,
     InternetEvidencePacket,
     InternetScoutRequest,
     InternetTool,
@@ -77,7 +78,14 @@ class FakeExecutor:
         return None, InternetEvidencePacket(
             request=body,
             sources=[source],
-            claims=[],
+            claims=[
+                EvidenceClaim(
+                    claim="Beacon source.",
+                    source_url=source.url,
+                    citation_text="Beacon source.",
+                    confidence="medium",
+                )
+            ],
         )
 
 
@@ -136,6 +144,28 @@ async def test_internet_scout_loads_stored_evidence(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_internet_scout_local_llm_tool_returns_citation_envelope(monkeypatch):
+    FakeRepo.created = []
+    FakeRepo.events = []
+    FakeRepo.stored = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+    monkeypatch.setattr(internet_scout, "InternetScoutExecutor", lambda: FakeExecutor())
+
+    response = await internet_scout.internet_scout_local_llm_tool(
+        InternetScoutRequest(query="beacon"),
+        _request(scopes=["internet_scout.research"]),
+        _user_id="ken",
+    )
+
+    assert response.request_id == FakeRepo.request_id
+    assert response.raw_web_content_is_untrusted is True
+    assert response.citations[0].source_url == "https://public.example.test/report"
+    assert "Beacon source." in response.answer_context
+    assert FakeRepo.stored
+
+
+@pytest.mark.asyncio
 async def test_internet_scout_browser_approval_request_queues_only(monkeypatch):
     FakeRepo.created = []
     FakeRepo.events = []
@@ -190,6 +220,11 @@ async def test_internet_scout_browser_approval_request_rejects_empty_task():
 
 def test_internet_scout_routes_are_classified():
     assert classify_route("POST", "/v1/internet-scout/research") == [
+        "write",
+        "external_call",
+        "cost_incurring",
+    ]
+    assert classify_route("POST", "/v1/internet-scout/local-llm/tool") == [
         "write",
         "external_call",
         "cost_incurring",
