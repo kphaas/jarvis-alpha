@@ -201,8 +201,20 @@ def _session_broker_response(request: Request) -> SessionBrokerResponse:
                 status="authorized" if helm_authorized else "missing_scope",
                 required_scopes=["helm.read"],
                 granted_scopes=_session_scopes(request),
-                capabilities=["alpha.summary.read"] if helm_authorized else [],
-            )
+                capabilities=[
+                    "alpha.summary.read",
+                    "family.summary.read",
+                    "helm.action.propose",
+                ]
+                if helm_authorized
+                else [],
+            ),
+            "family": SessionApplicationGrant(
+                status="authorized" if helm_authorized else "missing_scope",
+                required_scopes=["helm.read"],
+                granted_scopes=_session_scopes(request),
+                capabilities=["family.summary.read"] if helm_authorized else [],
+            ),
         },
     )
 

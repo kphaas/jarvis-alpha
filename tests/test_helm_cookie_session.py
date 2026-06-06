@@ -106,7 +106,17 @@ def test_session_broker_reports_helm_authorized_without_token_leak() -> None:
         "status": "authorized",
         "required_scopes": ["helm.read"],
         "granted_scopes": ["*"],
-        "capabilities": ["alpha.summary.read"],
+        "capabilities": [
+            "alpha.summary.read",
+            "family.summary.read",
+            "helm.action.propose",
+        ],
+    }
+    assert payload["applications"]["family"] == {
+        "status": "authorized",
+        "required_scopes": ["helm.read"],
+        "granted_scopes": ["*"],
+        "capabilities": ["family.summary.read"],
     }
     assert "secret-token" not in str(payload)
 
@@ -127,3 +137,5 @@ def test_session_broker_reports_missing_helm_scope_for_non_admin() -> None:
 
     assert payload["applications"]["helm"]["status"] == "missing_scope"
     assert payload["applications"]["helm"]["capabilities"] == []
+    assert payload["applications"]["family"]["status"] == "missing_scope"
+    assert payload["applications"]["family"]["capabilities"] == []
