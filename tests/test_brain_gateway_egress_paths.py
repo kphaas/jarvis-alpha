@@ -4,6 +4,7 @@ import pytest
 
 from brain.routes import costs, dev
 from brain.services.gmail_client import GmailClient
+from brain.services.internet_scout.gateway_client import InternetScoutGatewayClient
 
 
 @pytest.mark.asyncio
@@ -123,3 +124,59 @@ def test_gemini_costs_use_gateway_google_billing_proxy(monkeypatch):
 
     assert result == {"total_usd": 12.34, "source": "gcp_api"}
     assert calls == [("google_billing", {"currency_code": "USD"})]
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_client_uses_gateway_search_and_fetch(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def fake_gateway(path: str, payload: dict, *, timeout_s: int):
+        calls.append((path, payload))
+        if path == "internet/search":
+            return {
+                "provider": "brave",
+                "query_hash": "a" * 64,
+                "fetched_at": "2026-06-06T13:00:00Z",
+                "results": [
+                    {
+                        "title": "Beacon",
+                        "url": "https://public.example.test/report",
+                        "host": "public.example.test",
+                        "description": "Beacon source.",
+                        "risk_markers": [],
+                    }
+                ],
+            }
+        if path == "internet/fetch":
+            return {
+                "url": "https://public.example.test/report",
+                "host": "public.example.test",
+                "status_code": 200,
+                "content_type": "text/html",
+                "content_hash": "b" * 64,
+                "fetched_at": "2026-06-06T13:00:00Z",
+                "text": "Beacon source body.",
+                "truncated": False,
+                "risk_markers": [],
+                "redirect_chain": ["https://public.example.test/report"],
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(
+        "brain.services.internet_scout.gateway_client.call_gateway_proxy",
+        fake_gateway,
+    )
+    client = InternetScoutGatewayClient()
+
+    search = await client.search(query="beacon")
+    fetch = await client.fetch(url="https://public.example.test/report", max_bytes=1000)
+
+    assert search.results[0].title == "Beacon"
+    assert fetch.text == "Beacon source body."
+    assert calls == [
+        ("internet/search", {"query": "beacon", "count": 5, "provider": "brave"}),
+        (
+            "internet/fetch",
+            {"url": "https://public.example.test/report", "max_bytes": 1000},
+        ),
+    ]
