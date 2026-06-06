@@ -35,13 +35,24 @@ function getJwtExpSeconds(token: string): number | null {
 
 async function refreshHttpOnlySessionCookie(token: string): Promise<void> {
   const base = import.meta.env.VITE_BRAIN_URL as string
-  await fetch(`${base}/v1/auth/session-cookie`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  })
+  const urls =
+    window.location.origin === base
+      ? [`${base}/v1/auth/session-cookie`]
+      : ['/v1/auth/session-cookie', `${base}/v1/auth/session-cookie`]
+
+  for (const url of urls) {
+    try {
+      await fetch(url, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+    } catch {
+      continue
+    }
+  }
 }
 
 export function PinGate({ children }: PinGateProps) {
