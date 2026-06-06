@@ -6,14 +6,16 @@ tools, memory, approvals, or secrets.
 
 ## Status
 
-P0/P1 only:
+P2/P3:
 
 - ADR and service contracts exist.
 - Policy, URL/content safety, sanitizer, evidence, and planning helpers exist.
-- No route is mounted.
-- No Gateway internet endpoint is implemented.
-- No search API, crawler, browser-use runner, memory ingest, or outbound action
-  is wired.
+- Gateway search/fetch endpoints are implemented.
+- Brain calls Gateway through `call_gateway_proxy()` only.
+- `/v1/internet-scout/research` stores structured evidence under RLS.
+- `/v1/internet-scout/requests/{request_id}` returns RLS-visible stored evidence.
+- No crawler, browser-use runner, memory ingest, scheduler, or outbound action is
+  wired.
 
 ## Placement
 
@@ -30,8 +32,6 @@ services can depend on the contracts without depending on brand language.
 
 ## Deferred Work
 
-- P2: Gateway search/fetch endpoints.
-- P3: evidence persistence under RLS/FORCE RLS.
 - P4: extraction path with pinned dependencies.
 - P5: approval-gated browser-use path.
 - P6: consumer integrations for local LLM, Forge, Family, and Financial.

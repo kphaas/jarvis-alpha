@@ -70,12 +70,12 @@ def test_browser_use_escalates_high_risk_work_to_t5():
     assert decision.tier == "T5"
 
 
-def test_orchestrator_is_planning_only_and_does_not_execute():
+def test_orchestrator_enables_policy_allowed_gateway_execution():
     plan = InternetScoutOrchestrator().plan(
         InternetScoutRequest(query="find source-backed facts")
     )
 
-    assert plan.execution_enabled is False
+    assert plan.execution_enabled is True
     assert plan.gateway_required is True
     assert plan.decision.allowed is True
-    assert "planning-only" in " ".join(plan.notes)
+    assert "Gateway-owned endpoints" in " ".join(plan.notes)
