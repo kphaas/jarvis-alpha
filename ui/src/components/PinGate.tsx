@@ -148,7 +148,7 @@ export function PinGate({ children }: PinGateProps) {
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/95">
       <div className="w-full max-w-sm rounded-xl border border-gray-700 bg-gray-800 p-8 shadow-2xl mx-4">
         <h1 className="mb-6 text-center text-2xl font-semibold text-white">
-          JARVIS Alpha
+          AT-0 Alpha
         </h1>
         <div className="mb-5 grid grid-cols-2 gap-2" aria-label="Choose profile">
           {profilesLoading && [0, 1, 2, 3].map((i) => (
