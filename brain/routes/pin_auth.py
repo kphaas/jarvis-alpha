@@ -13,7 +13,11 @@ from pydantic import BaseModel
 from brain.db.rls import platform_admin_connection
 from brain.middleware.jwt_auth import ALPHA_SESSION_COOKIE, require_auth
 from brain.middleware.scopes import check_scopes
-from brain.services.family_pin_sync import FamilyPinSyncError, sync_family_pin_hash
+from brain.services.family_pin_sync import (
+    FamilyPinSyncError,
+    has_family_pin_target,
+    sync_family_pin_hash,
+)
 from jarvis_common.logging_config import get_logger
 from jarvis_common.secrets import get_secret
 
@@ -203,15 +207,25 @@ def _session_broker_response(request: Request) -> SessionBrokerResponse:
     )
 
 
-async def _sync_family_pin_or_409(profile_id: str, pin_hash: str) -> None:
+FamilyPinSyncStatus = Literal["ok", "failed", "not_applicable"]
+
+
+async def _sync_family_pin_status(
+    profile_id: str, pin_hash: str
+) -> FamilyPinSyncStatus:
+    if not has_family_pin_target(profile_id):
+        return "not_applicable"
+
     try:
         await sync_family_pin_hash(profile_id, pin_hash)
     except FamilyPinSyncError:
-        logger.exception("FAMILY_PIN_SYNC_FAIL profile=%s", profile_id)
-        raise HTTPException(
-            status_code=409,
-            detail="Family PIN sync failed; PIN was not changed.",
-        ) from None
+        logger.warning(
+            "FAMILY_PIN_SYNC_DEGRADED profile=%s",
+            profile_id,
+            exc_info=True,
+        )
+        return "failed"
+    return "ok"
 
 
 _PROFILE_SELECT_SQL = """
@@ -404,13 +418,19 @@ async def set_child_pin(request: Request, req: SetChildPinRequest):
             pin_hash,
             req.profile_id,
         )
-        await _sync_family_pin_or_409(req.profile_id, pin_hash)
+
+    family_sync_status = await _sync_family_pin_status(req.profile_id, pin_hash)
     logger.info(
-        "CHILD_PIN_SET profile=%s by=%s",
+        "CHILD_PIN_SET profile=%s family_sync_status=%s by=%s",
         req.profile_id,
+        family_sync_status,
         getattr(request.state, "iss", "unknown"),
     )
-    return {"status": "ok", "profile_id": req.profile_id}
+    return {
+        "status": "ok",
+        "profile_id": req.profile_id,
+        "family_sync_status": family_sync_status,
+    }
 
 
 @router.post("/set-profile-pin")
@@ -440,15 +460,20 @@ async def set_profile_pin(request: Request, req: SetProfilePinRequest):
             pin_hash,
             req.profile_id,
         )
-        await _sync_family_pin_or_409(req.profile_id, pin_hash)
 
+    family_sync_status = await _sync_family_pin_status(req.profile_id, pin_hash)
     logger.info(
-        "PROFILE_PIN_SET profile=%s role=%s by=%s",
+        "PROFILE_PIN_SET profile=%s role=%s family_sync_status=%s by=%s",
         req.profile_id,
         profile["role"],
+        family_sync_status,
         getattr(request.state, "iss", "unknown"),
     )
-    return {"status": "ok", "profile_id": req.profile_id}
+    return {
+        "status": "ok",
+        "profile_id": req.profile_id,
+        "family_sync_status": family_sync_status,
+    }
 
 
 class SetAdminPinRequest(BaseModel):
@@ -498,7 +523,14 @@ async def set_admin_pin(request: Request, req: SetAdminPinRequest):
             "UPDATE alpha_profiles SET pin_hash = $1 WHERE id = 'ken'",
             pin_hash,
         )
-        await _sync_family_pin_or_409("ken", pin_hash)
 
-    logger.info("SET_ADMIN_PIN_SUCCESS profile=ken")
-    return {"status": "ok", "profile_id": "ken"}
+    family_sync_status = await _sync_family_pin_status("ken", pin_hash)
+    logger.info(
+        "SET_ADMIN_PIN_SUCCESS profile=ken family_sync_status=%s",
+        family_sync_status,
+    )
+    return {
+        "status": "ok",
+        "profile_id": "ken",
+        "family_sync_status": family_sync_status,
+    }
