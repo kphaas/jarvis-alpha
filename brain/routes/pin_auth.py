@@ -176,6 +176,21 @@ def _has_session_scope(request: Request, required_scope: str) -> bool:
     )
 
 
+def _application_grant(
+    request: Request,
+    *,
+    required_scope: str,
+    capabilities: list[str],
+) -> SessionApplicationGrant:
+    authorized = _has_session_scope(request, required_scope)
+    return SessionApplicationGrant(
+        status="authorized" if authorized else "missing_scope",
+        required_scopes=[required_scope],
+        granted_scopes=_session_scopes(request),
+        capabilities=capabilities if authorized else [],
+    )
+
+
 def _session_broker_response(request: Request) -> SessionBrokerResponse:
     profile_id = str(
         getattr(
@@ -184,7 +199,6 @@ def _session_broker_response(request: Request) -> SessionBrokerResponse:
             getattr(request.state, "user_id", "unknown"),
         )
     )
-    helm_authorized = _has_session_scope(request, "helm.read")
 
     return SessionBrokerResponse(
         session=SessionState(expires_at=_session_expires_at(request)),
@@ -197,23 +211,29 @@ def _session_broker_response(request: Request) -> SessionBrokerResponse:
             child_age=getattr(request.state, "child_age", None),
         ),
         applications={
-            "helm": SessionApplicationGrant(
-                status="authorized" if helm_authorized else "missing_scope",
-                required_scopes=["helm.read"],
-                granted_scopes=_session_scopes(request),
+            "helm": _application_grant(
+                request,
+                required_scope="helm.read",
                 capabilities=[
                     "alpha.summary.read",
                     "family.summary.read",
                     "helm.action.propose",
-                ]
-                if helm_authorized
-                else [],
+                ],
             ),
-            "family": SessionApplicationGrant(
-                status="authorized" if helm_authorized else "missing_scope",
-                required_scopes=["helm.read"],
-                granted_scopes=_session_scopes(request),
-                capabilities=["family.summary.read"] if helm_authorized else [],
+            "family": _application_grant(
+                request,
+                required_scope="helm.read",
+                capabilities=["family.summary.read"],
+            ),
+            "privacy": _application_grant(
+                request,
+                required_scope="privacy.read",
+                capabilities=["privacy.manual_workflow.read"],
+            ),
+            "financial": _application_grant(
+                request,
+                required_scope="financial.read",
+                capabilities=["financial.summary.read"],
             ),
         },
     )

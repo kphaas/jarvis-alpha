@@ -9,7 +9,10 @@ from brain.agents.privacy_scrub.state import (
     StoredApprovedPrivacyAction,
     StoredCaseDraft,
 )
-from brain.agents.privacy_scrub.workflow import PrivacyActionWorkflowRepository
+from brain.agents.privacy_scrub.workflow import (
+    PrivacyActionWorkflowRepository,
+    PrivacyActionWorkflowTransitionError,
+)
 import brain.agents.privacy_scrub.workflow as workflow
 
 
@@ -144,3 +147,45 @@ async def test_record_verification_returns_completed_case_status(
     assert calls["completed"] == {"case_draft_id": case_id}
     assert conn.transaction_entries == 1
     assert conn.transaction_exits == 1
+
+
+@pytest.mark.asyncio
+async def test_record_manual_disposition_deferred_requires_due_date() -> None:
+    conn = FakeWorkflowConnection()
+
+    with pytest.raises(
+        PrivacyActionWorkflowTransitionError,
+        match="deferral requires a due date",
+    ):
+        await PrivacyActionWorkflowRepository(
+            conn,  # type: ignore[arg-type]
+            _crypto(),
+        ).record_manual_disposition(
+            action_id=uuid4(),
+            actor="ken",
+            disposition="deferred",
+        )
+
+    assert conn.transaction_entries == 0
+    assert conn.transaction_exits == 0
+
+
+@pytest.mark.asyncio
+async def test_record_verification_needs_followup_requires_due_date() -> None:
+    conn = FakeWorkflowConnection()
+
+    with pytest.raises(
+        PrivacyActionWorkflowTransitionError,
+        match="follow-up requires a due date",
+    ):
+        await PrivacyActionWorkflowRepository(
+            conn,  # type: ignore[arg-type]
+            _crypto(),
+        ).record_verification(
+            action_id=uuid4(),
+            actor="ken",
+            outcome="needs_followup",
+        )
+
+    assert conn.transaction_entries == 0
+    assert conn.transaction_exits == 0

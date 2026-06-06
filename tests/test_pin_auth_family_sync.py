@@ -7,6 +7,7 @@ import bcrypt
 import pytest
 
 from brain.routes import pin_auth
+from brain.services import family_pin_sync
 from brain.services.family_pin_sync import FamilyPinSyncError
 
 
@@ -68,3 +69,32 @@ async def test_set_admin_pin_succeeds_when_family_sync_degrades(monkeypatch) -> 
     assert calls.connection_count == 2
     assert calls.updated_hash is not None
     assert bcrypt.checkpw(new_pin.encode("utf-8"), calls.updated_hash.encode("utf-8"))
+
+
+@pytest.mark.asyncio
+async def test_family_pin_sync_uses_stable_member_id_for_ken(monkeypatch) -> None:
+    calls = SimpleNamespace(args=None, closed=False)
+
+    class FakeConn:
+        async def fetchrow(self, query, *args):
+            calls.args = args
+            assert "id = $3::uuid" in query
+            assert "lower(name) = lower($4)" in query
+            return {"id": args[2]}
+
+        async def close(self):
+            calls.closed = True
+
+    async def fake_connect(dsn):
+        assert dsn == "postgres://family"
+        return FakeConn()
+
+    monkeypatch.setenv("JARVIS_FAMILY_DB_DSN", "postgres://family")
+    monkeypatch.setattr(family_pin_sync.asyncpg, "connect", fake_connect)
+
+    await family_pin_sync.sync_family_pin_hash("ken", "hash")
+
+    assert calls.args is not None
+    assert str(calls.args[2]) == "abb3b4a8-8bfc-4a10-bdf6-c1c12993e493"
+    assert calls.args[3] == "Ken"
+    assert calls.closed is True

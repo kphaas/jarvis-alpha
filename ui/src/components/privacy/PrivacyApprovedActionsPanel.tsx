@@ -236,6 +236,7 @@ export function PrivacyApprovedActionsPanel({
     return (
       <article
         key={action.action_id}
+        data-testid={`privacy-action-${shortId(action.action_id)}`}
         className={`rounded-lg border p-3 transition ${
           selected ? "border-emerald-400/70 bg-emerald-500/10" : border
         }`}
@@ -492,6 +493,8 @@ function WorkflowForms({
   const area = `min-h-20 rounded-lg border px-3 py-2 text-sm outline-none ${fieldClass(isDark)}`;
   const dispositionDisabled = isSaving || action.status !== "approved";
   const verificationDisabled = isSaving || action.status !== "sent";
+  const idPrefix = `privacy-action-${shortId(action.action_id)}`;
+  const labelClass = `text-[10px] font-mono uppercase tracking-widest ${muted}`;
 
   return (
     <div className={`mt-4 grid gap-4 border-t pt-4 ${border}`}>
@@ -499,47 +502,63 @@ function WorkflowForms({
         <div className="flex items-center gap-2">
           <SendHorizontal className="h-4 w-4 text-emerald-400" />
           <p className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
-            P3-D disposition
+            Manual disposition
           </p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
-          <select
-            value={draft.disposition}
-            onChange={(event) =>
-              onDraft({ disposition: event.target.value as ManualDisposition })
-            }
-            className={input}
-            disabled={dispositionDisabled}
-          >
-            <option value="handled">Handled</option>
-            <option value="deferred">Deferred</option>
-            <option value="blocked">Blocked</option>
-          </select>
-          <input
-            type="datetime-local"
-            value={draft.dueAt}
-            onChange={(event) => onDraft({ dueAt: event.target.value })}
-            className={input}
-            disabled={dispositionDisabled}
-            required={draft.disposition === "deferred"}
-          />
+          <label className="grid gap-1" htmlFor={`${idPrefix}-disposition`}>
+            <span className={labelClass}>Disposition</span>
+            <select
+              id={`${idPrefix}-disposition`}
+              value={draft.disposition}
+              onChange={(event) =>
+                onDraft({ disposition: event.target.value as ManualDisposition })
+              }
+              className={input}
+              disabled={dispositionDisabled}
+            >
+              <option value="handled">Handled</option>
+              <option value="deferred">Deferred</option>
+              <option value="blocked">Blocked</option>
+            </select>
+          </label>
+          <label className="grid gap-1" htmlFor={`${idPrefix}-disposition-due`}>
+            <span className={labelClass}>Follow-up due</span>
+            <input
+              id={`${idPrefix}-disposition-due`}
+              type="datetime-local"
+              value={draft.dueAt}
+              onChange={(event) => onDraft({ dueAt: event.target.value })}
+              className={input}
+              disabled={dispositionDisabled}
+              required={draft.disposition === "deferred"}
+            />
+          </label>
         </div>
-        <textarea
-          value={draft.note}
-          onChange={(event) => onDraft({ note: event.target.value })}
-          className={area}
-          placeholder="Operator note"
-          disabled={dispositionDisabled}
-          maxLength={1000}
-        />
-        <input
-          value={draft.evidence}
-          onChange={(event) => onDraft({ evidence: event.target.value })}
-          className={input}
-          placeholder="Evidence reference"
-          disabled={dispositionDisabled}
-          maxLength={1000}
-        />
+        <label className="grid gap-1" htmlFor={`${idPrefix}-operator-note`}>
+          <span className={labelClass}>Operator note</span>
+          <textarea
+            id={`${idPrefix}-operator-note`}
+            value={draft.note}
+            onChange={(event) => onDraft({ note: event.target.value })}
+            className={area}
+            placeholder="Manual handling note"
+            disabled={dispositionDisabled}
+            maxLength={1000}
+          />
+        </label>
+        <label className="grid gap-1" htmlFor={`${idPrefix}-evidence`}>
+          <span className={labelClass}>Evidence reference</span>
+          <input
+            id={`${idPrefix}-evidence`}
+            value={draft.evidence}
+            onChange={(event) => onDraft({ evidence: event.target.value })}
+            className={input}
+            placeholder="smoke:// or local evidence reference"
+            disabled={dispositionDisabled}
+            maxLength={1000}
+          />
+        </label>
         <button
           type="submit"
           disabled={dispositionDisabled}
@@ -554,53 +573,69 @@ function WorkflowForms({
         <div className="flex items-center gap-2">
           <CalendarClock className="h-4 w-4 text-emerald-400" />
           <p className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
-            P3-E verification
+            Verification
           </p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
-          <select
-            value={draft.outcome}
-            onChange={(event) =>
-              onDraft({ outcome: event.target.value as VerificationOutcome })
-            }
-            className={input}
-            disabled={verificationDisabled}
-          >
-            <option value="confirmed">Confirmed</option>
-            <option value="needs_followup">Follow-up</option>
-            <option value="failed">Failed</option>
-          </select>
-          <input
-            type="datetime-local"
-            value={draft.verificationDueAt}
-            onChange={(event) =>
-              onDraft({ verificationDueAt: event.target.value })
-            }
-            className={input}
-            disabled={verificationDisabled}
-            required={draft.outcome === "needs_followup"}
-          />
+          <label className="grid gap-1" htmlFor={`${idPrefix}-verification`}>
+            <span className={labelClass}>Outcome</span>
+            <select
+              id={`${idPrefix}-verification`}
+              value={draft.outcome}
+              onChange={(event) =>
+                onDraft({ outcome: event.target.value as VerificationOutcome })
+              }
+              className={input}
+              disabled={verificationDisabled}
+            >
+              <option value="confirmed">Confirmed</option>
+              <option value="needs_followup">Follow-up</option>
+              <option value="failed">Failed</option>
+            </select>
+          </label>
+          <label className="grid gap-1" htmlFor={`${idPrefix}-verification-due`}>
+            <span className={labelClass}>Verification due</span>
+            <input
+              id={`${idPrefix}-verification-due`}
+              type="datetime-local"
+              value={draft.verificationDueAt}
+              onChange={(event) =>
+                onDraft({ verificationDueAt: event.target.value })
+              }
+              className={input}
+              disabled={verificationDisabled}
+              required={draft.outcome === "needs_followup"}
+            />
+          </label>
         </div>
-        <textarea
-          value={draft.verificationNote}
-          onChange={(event) =>
-            onDraft({ verificationNote: event.target.value })
-          }
-          className={area}
-          placeholder="Verification note"
-          disabled={verificationDisabled}
-          maxLength={1000}
-        />
-        <input
-          value={draft.verificationEvidence}
-          onChange={(event) =>
-            onDraft({ verificationEvidence: event.target.value })
-          }
-          className={input}
-          placeholder="Verification evidence"
-          disabled={verificationDisabled}
-          maxLength={1000}
-        />
+        <label className="grid gap-1" htmlFor={`${idPrefix}-verification-note`}>
+          <span className={labelClass}>Verification note</span>
+          <textarea
+            id={`${idPrefix}-verification-note`}
+            value={draft.verificationNote}
+            onChange={(event) =>
+              onDraft({ verificationNote: event.target.value })
+            }
+            className={area}
+            placeholder="Verification result note"
+            disabled={verificationDisabled}
+            maxLength={1000}
+          />
+        </label>
+        <label className="grid gap-1" htmlFor={`${idPrefix}-verification-evidence`}>
+          <span className={labelClass}>Verification evidence</span>
+          <input
+            id={`${idPrefix}-verification-evidence`}
+            value={draft.verificationEvidence}
+            onChange={(event) =>
+              onDraft({ verificationEvidence: event.target.value })
+            }
+            className={input}
+            placeholder="smoke:// or local verification reference"
+            disabled={verificationDisabled}
+            maxLength={1000}
+          />
+        </label>
         <button
           type="submit"
           disabled={verificationDisabled}
@@ -634,12 +669,13 @@ function CaseWorkflowView({
     );
   }
   if (!workflow) return null;
+  const manifest = workflow.report.evidence_manifest;
 
   return (
     <div className={`mt-4 border-t pt-4 ${border}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
-          P3-F timeline
+          Timeline
         </p>
         <span
           className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${chipClass(isDark)}`}
@@ -659,7 +695,7 @@ function CaseWorkflowView({
       </div>
       <div className={`mt-4 grid gap-3 border-t pt-4 ${border}`}>
         <p className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
-          P3-G report
+          Case report
         </p>
         <div className="grid gap-3 text-sm sm:grid-cols-2">
           <KeyValue
@@ -680,6 +716,26 @@ function CaseWorkflowView({
           <KeyValue
             label="Targets"
             value={String(workflow.report.target_count)}
+            mutedClass={muted}
+          />
+          <KeyValue
+            label="Evidence status"
+            value={manifest.status}
+            mutedClass={muted}
+          />
+          <KeyValue
+            label="Evidence hashes"
+            value={`${manifest.evidence_payload_hash_count} / ${manifest.action_count}`}
+            mutedClass={muted}
+          />
+          <KeyValue
+            label="Event hashes"
+            value={String(manifest.event_payload_hash_count)}
+            mutedClass={muted}
+          />
+          <KeyValue
+            label="Needs evidence"
+            value={String(manifest.missing_evidence_count)}
             mutedClass={muted}
           />
         </div>

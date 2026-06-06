@@ -198,6 +198,17 @@ export type PrivacyCaseTimelineResponse = {
   events: PrivacyCaseEvent[];
 };
 
+export type PrivacyEvidenceManifest = {
+  status: "complete" | "attention";
+  action_count: number;
+  terminal_action_count: number;
+  open_action_count: number;
+  manual_note_hash_count: number;
+  evidence_payload_hash_count: number;
+  event_payload_hash_count: number;
+  missing_evidence_count: number;
+};
+
 export type PrivacyCaseReportResponse = {
   case_id: string;
   subject_id: string;
@@ -208,6 +219,7 @@ export type PrivacyCaseReportResponse = {
   generated_at: string;
   actions: ApprovedPrivacyAction[];
   events: PrivacyCaseEvent[];
+  evidence_manifest: PrivacyEvidenceManifest;
 };
 
 export type ProfileFields = {

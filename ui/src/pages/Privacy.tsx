@@ -79,13 +79,14 @@ export default function Privacy() {
             >
               AT-0 Privacy Agent
             </p>
-            <h1 className={`mt-1 font-serif italic text-3xl ${strong}`}>
-              Manual Privacy Console
+            <h1 className={`mt-1 text-2xl font-semibold ${strong}`}>
+              AT-0 Privacy Console
             </h1>
             <p
               className={`mt-2 max-w-2xl text-sm leading-6 ${muted}`}
             >
-              MVP v0.1 - review packets, approval handoff, and local-only action evidence.
+              Manual MVP v0.1: encrypted intake, approval handoff, local
+              disposition, verification, and report evidence.
             </p>
           </div>
         </div>

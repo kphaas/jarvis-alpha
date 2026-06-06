@@ -943,6 +943,14 @@ async def test_privacy_case_timeline_and_report_return_hash_only_metadata(
     assert report.case_id == case_id
     assert report.action_count == 1
     assert report.actions[0].evidence_payload_hash == "sha256:" + "5" * 64
+    assert report.evidence_manifest.status == "attention"
+    assert report.evidence_manifest.action_count == 1
+    assert report.evidence_manifest.terminal_action_count == 0
+    assert report.evidence_manifest.open_action_count == 1
+    assert report.evidence_manifest.manual_note_hash_count == 1
+    assert report.evidence_manifest.evidence_payload_hash_count == 1
+    assert report.evidence_manifest.event_payload_hash_count == 1
+    assert report.evidence_manifest.missing_evidence_count == 0
     dumped = str(report.model_dump())
     assert "ciphertext" not in dumped
     assert "ken@example.com" not in dumped

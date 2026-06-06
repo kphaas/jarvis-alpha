@@ -287,6 +287,17 @@ class PrivacyCaseTimelineOut(BaseModel):
     events: list[PrivacyCaseEventOut]
 
 
+class PrivacyEvidenceManifestOut(BaseModel):
+    status: Literal["complete", "attention"]
+    action_count: int
+    terminal_action_count: int
+    open_action_count: int
+    manual_note_hash_count: int
+    evidence_payload_hash_count: int
+    event_payload_hash_count: int
+    missing_evidence_count: int
+
+
 class PrivacyCaseReportOut(BaseModel):
     case_id: UUID
     subject_id: UUID
@@ -297,6 +308,7 @@ class PrivacyCaseReportOut(BaseModel):
     generated_at: datetime
     actions: list[ApprovedPrivacyActionOut]
     events: list[PrivacyCaseEventOut]
+    evidence_manifest: PrivacyEvidenceManifestOut
 
 
 @router.post("/subjects", response_model=SubjectCreateOut)
@@ -884,6 +896,44 @@ def _privacy_case_report_out(
         generated_at=result.generated_at,
         actions=[_approved_privacy_action_out(action) for action in result.actions],
         events=[_privacy_case_event_out(event) for event in result.events],
+        evidence_manifest=_privacy_evidence_manifest_out(result),
+    )
+
+
+def _privacy_evidence_manifest_out(
+    result: PrivacyCaseReport,
+) -> PrivacyEvidenceManifestOut:
+    terminal_statuses = {"confirmed", "failed"}
+    handled_statuses = {"sent", "confirmed", "failed"}
+    terminal_action_count = sum(
+        1 for action in result.actions if action.status in terminal_statuses
+    )
+    open_action_count = len(result.actions) - terminal_action_count
+    missing_evidence_count = sum(
+        1
+        for action in result.actions
+        if action.status in handled_statuses and not action.evidence_payload_hash
+    )
+    status: Literal["complete", "attention"] = (
+        "complete"
+        if open_action_count == 0 and missing_evidence_count == 0
+        else "attention"
+    )
+    return PrivacyEvidenceManifestOut(
+        status=status,
+        action_count=len(result.actions),
+        terminal_action_count=terminal_action_count,
+        open_action_count=open_action_count,
+        manual_note_hash_count=sum(
+            1 for action in result.actions if action.manual_note_hash
+        ),
+        evidence_payload_hash_count=sum(
+            1 for action in result.actions if action.evidence_payload_hash
+        ),
+        event_payload_hash_count=sum(
+            1 for event in result.events if event.event_payload_hash
+        ),
+        missing_evidence_count=missing_evidence_count,
     )
 
 

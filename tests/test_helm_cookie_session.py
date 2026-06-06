@@ -81,7 +81,7 @@ def test_session_cookie_max_age_falls_back_to_session_hours(monkeypatch) -> None
     assert _session_cookie_max_age_seconds(request) == 7_200
 
 
-def test_session_broker_reports_helm_authorized_without_token_leak() -> None:
+def test_session_broker_reports_operator_apps_authorized_without_token_leak() -> None:
     request = SimpleNamespace(
         state=SimpleNamespace(
             user_id="ken",
@@ -102,26 +102,40 @@ def test_session_broker_reports_helm_authorized_without_token_leak() -> None:
     assert payload["authenticated"] is True
     assert payload["session"]["expires_at"] == "2027-03-02T11:00:00Z"
     assert payload["principal"]["profile_id"] == "ken"
-    assert payload["applications"]["helm"] == {
-        "status": "authorized",
-        "required_scopes": ["helm.read"],
-        "granted_scopes": ["*"],
-        "capabilities": [
-            "alpha.summary.read",
-            "family.summary.read",
-            "helm.action.propose",
-        ],
-    }
-    assert payload["applications"]["family"] == {
-        "status": "authorized",
-        "required_scopes": ["helm.read"],
-        "granted_scopes": ["*"],
-        "capabilities": ["family.summary.read"],
+    assert payload["applications"] == {
+        "helm": {
+            "status": "authorized",
+            "required_scopes": ["helm.read"],
+            "granted_scopes": ["*"],
+            "capabilities": [
+                "alpha.summary.read",
+                "family.summary.read",
+                "helm.action.propose",
+            ],
+        },
+        "family": {
+            "status": "authorized",
+            "required_scopes": ["helm.read"],
+            "granted_scopes": ["*"],
+            "capabilities": ["family.summary.read"],
+        },
+        "privacy": {
+            "status": "authorized",
+            "required_scopes": ["privacy.read"],
+            "granted_scopes": ["*"],
+            "capabilities": ["privacy.manual_workflow.read"],
+        },
+        "financial": {
+            "status": "authorized",
+            "required_scopes": ["financial.read"],
+            "granted_scopes": ["*"],
+            "capabilities": ["financial.summary.read"],
+        },
     }
     assert "secret-token" not in str(payload)
 
 
-def test_session_broker_reports_missing_helm_scope_for_non_admin() -> None:
+def test_session_broker_reports_missing_app_scopes_for_non_admin() -> None:
     request = SimpleNamespace(
         state=SimpleNamespace(
             user_id="ryleigh",
@@ -135,7 +149,6 @@ def test_session_broker_reports_missing_helm_scope_for_non_admin() -> None:
 
     payload = _session_broker_response(request).model_dump()
 
-    assert payload["applications"]["helm"]["status"] == "missing_scope"
-    assert payload["applications"]["helm"]["capabilities"] == []
-    assert payload["applications"]["family"]["status"] == "missing_scope"
-    assert payload["applications"]["family"]["capabilities"] == []
+    for application in ("helm", "privacy", "family", "financial"):
+        assert payload["applications"][application]["status"] == "missing_scope"
+        assert payload["applications"][application]["capabilities"] == []
