@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from fastapi import Response
 
-from brain.middleware.approval_classes import classify_route
+from brain.middleware.approval_classes import classify_route, determine_risk_tier
 from brain.middleware.jwt_auth import ALPHA_SESSION_COOKIE, _request_token
 from brain.routes.pin_auth import (
     _session_cookie_max_age_seconds,
@@ -46,7 +46,10 @@ def test_pin_auth_sets_secure_httponly_session_cookie() -> None:
 
 
 def test_session_cookie_refresh_route_is_classified_as_auth() -> None:
-    assert classify_route("POST", "/v1/auth/session-cookie") == ["auth"]
+    classes = classify_route("POST", "/v1/auth/session-cookie")
+
+    assert classes == ["auth"]
+    assert determine_risk_tier(classes) == "T2"
 
 
 def test_session_cookie_max_age_uses_remaining_jwt_lifetime(monkeypatch) -> None:
