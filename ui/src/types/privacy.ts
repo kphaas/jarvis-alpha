@@ -274,6 +274,30 @@ export type PrivacyRemovalControlSummaryResponse = {
   benchmarks: PrivacyRemovalBenchmark[];
 };
 
+export type PrivacyRemovalSeedCounts = {
+  authorizations_created: number;
+  authorizations_skipped: number;
+  evidence_created: number;
+  evidence_skipped: number;
+  monitor_runs_created: number;
+  monitor_runs_skipped: number;
+  search_deindex_created: number;
+  search_deindex_skipped: number;
+  public_record_triage_created: number;
+  public_record_triage_skipped: number;
+  total_created: number;
+  total_skipped: number;
+};
+
+export type PrivacyRemovalSeedResponse = {
+  subject_id: string;
+  broker_target_id: string;
+  public_record_target_id: string | null;
+  payload_key_version: string;
+  generated_at: string;
+  counts: PrivacyRemovalSeedCounts;
+};
+
 export type ProfileFields = {
   legal_name: string;
   date_of_birth: string;

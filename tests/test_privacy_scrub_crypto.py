@@ -95,6 +95,19 @@ def test_display_label_digest_is_keyed():
     assert "Ken" not in digest
 
 
+def test_digest_value_is_keyed_and_namespace_scoped():
+    crypto = _crypto()
+
+    digest = crypto.digest_value("search_result_url", "https://example.test/ken")
+    other_namespace = crypto.digest_value(
+        "evidence_reference", "https://example.test/ken"
+    )
+
+    assert digest.startswith("hmac-sha256:")
+    assert digest != other_namespace
+    assert "example" not in digest
+
+
 def test_identity_tuple_from_value_uses_digest_key_version():
     crypto = _crypto()
     subject_id = uuid4()
