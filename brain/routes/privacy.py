@@ -7,6 +7,7 @@ send opt-out actions, call public internet targets, or start runners.
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -43,9 +44,19 @@ from brain.agents.privacy_scrub.state import (
     insert_identity_tuple,
     list_targets,
     refresh_targets_cache,
+    StoredPrivacyActionEvent,
 )
 from brain.agents.privacy_scrub.subjects import Role
 from brain.agents.privacy_scrub.targets import load_all_targets
+from brain.agents.privacy_scrub.workflow import (
+    PrivacyActionWorkflowError,
+    PrivacyActionWorkflowNotFound,
+    PrivacyActionWorkflowRepository,
+    PrivacyActionWorkflowResult,
+    PrivacyCaseReport,
+    PrivacyCaseTimeline,
+    PrivacyCaseWorkflowReader,
+)
 from brain.db.rls import rls_connection
 from brain.middleware.jwt_auth import require_auth
 
@@ -211,6 +222,17 @@ class ApprovedPrivacyActionOut(BaseModel):
     status: str
     approval_queue_id: UUID | None
     case_status: str
+    manual_disposition: str | None = None
+    manual_disposition_at: datetime | None = None
+    manual_disposition_by: str | None = None
+    manual_note_hash: str | None = None
+    evidence_payload_hash: str | None = None
+    workflow_payload_key_version: str | None = None
+    sent_at: datetime | None = None
+    confirmed_at: datetime | None = None
+    verification_due_at: datetime | None = None
+    error_code: str | None = None
+    error_digest: str | None = None
     approved_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -220,6 +242,61 @@ class ApprovedPrivacyActionOut(BaseModel):
 class ApprovedPrivacyActionsOut(BaseModel):
     count: int
     actions: list[ApprovedPrivacyActionOut]
+
+
+class PrivacyActionManualDispositionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    disposition: Literal["handled", "deferred", "blocked"]
+    operator_note: str | None = Field(default=None, max_length=1000)
+    evidence_reference: str | None = Field(default=None, max_length=1000)
+    verification_due_at: datetime | None = None
+
+
+class PrivacyActionVerificationIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: Literal["confirmed", "needs_followup", "failed"]
+    operator_note: str | None = Field(default=None, max_length=1000)
+    evidence_reference: str | None = Field(default=None, max_length=1000)
+    verification_due_at: datetime | None = None
+
+
+class PrivacyActionWorkflowOut(BaseModel):
+    event_type: str
+    action: ApprovedPrivacyActionOut
+
+
+class PrivacyCaseEventOut(BaseModel):
+    event_id: UUID
+    action_id: UUID
+    case_id: UUID
+    target_id: str
+    target_name: str
+    event_type: str
+    actor: str
+    event_payload_hash: str | None = None
+    created_at: datetime | None = None
+
+
+class PrivacyCaseTimelineOut(BaseModel):
+    case_id: UUID
+    subject_id: UUID
+    status: str
+    event_count: int
+    events: list[PrivacyCaseEventOut]
+
+
+class PrivacyCaseReportOut(BaseModel):
+    case_id: UUID
+    subject_id: UUID
+    status: str
+    target_count: int
+    action_count: int
+    event_count: int
+    generated_at: datetime
+    actions: list[ApprovedPrivacyActionOut]
+    events: list[PrivacyCaseEventOut]
 
 
 @router.post("/subjects", response_model=SubjectCreateOut)
@@ -394,6 +471,132 @@ async def list_privacy_approved_actions(
         count=len(actions),
         actions=[_approved_privacy_action_out(action) for action in actions],
     )
+
+
+@router.post(
+    "/actions/{action_id}/manual-disposition",
+    response_model=PrivacyActionWorkflowOut,
+)
+async def record_privacy_action_manual_disposition(
+    request: Request,
+    action_id: UUID,
+    body: PrivacyActionManualDispositionIn,
+    user_id: str = Depends(require_auth),
+) -> PrivacyActionWorkflowOut:
+    _assert_adult_or_admin_actor(request)
+    crypto = _load_crypto_or_503()
+
+    try:
+        async with rls_connection(request) as conn:
+            result = await PrivacyActionWorkflowRepository(
+                conn,
+                crypto,
+            ).record_manual_disposition(
+                action_id=action_id,
+                actor=user_id,
+                disposition=body.disposition,
+                operator_note=body.operator_note,
+                evidence_reference=body.evidence_reference,
+                verification_due_at=body.verification_due_at,
+            )
+    except PrivacyActionWorkflowNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_action_not_found",
+        ) from exc
+    except PrivacyActionWorkflowError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="privacy_action_workflow_invalid",
+        ) from exc
+
+    return _privacy_action_workflow_out(result)
+
+
+@router.post(
+    "/actions/{action_id}/verification",
+    response_model=PrivacyActionWorkflowOut,
+)
+async def record_privacy_action_verification(
+    request: Request,
+    action_id: UUID,
+    body: PrivacyActionVerificationIn,
+    user_id: str = Depends(require_auth),
+) -> PrivacyActionWorkflowOut:
+    _assert_adult_or_admin_actor(request)
+    crypto = _load_crypto_or_503()
+
+    try:
+        async with rls_connection(request) as conn:
+            result = await PrivacyActionWorkflowRepository(
+                conn,
+                crypto,
+            ).record_verification(
+                action_id=action_id,
+                actor=user_id,
+                outcome=body.outcome,
+                operator_note=body.operator_note,
+                evidence_reference=body.evidence_reference,
+                verification_due_at=body.verification_due_at,
+            )
+    except PrivacyActionWorkflowNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_action_not_found",
+        ) from exc
+    except PrivacyActionWorkflowError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="privacy_action_workflow_invalid",
+        ) from exc
+
+    return _privacy_action_workflow_out(result)
+
+
+@router.get(
+    "/case-drafts/{case_id}/timeline",
+    response_model=PrivacyCaseTimelineOut,
+)
+async def get_privacy_case_timeline(
+    request: Request,
+    case_id: UUID,
+    _: str = Depends(require_auth),
+) -> PrivacyCaseTimelineOut:
+    _assert_adult_or_admin_actor(request)
+
+    try:
+        async with rls_connection(request) as conn:
+            result = await PrivacyCaseWorkflowReader(conn).get_timeline(case_id)
+    except PrivacyActionWorkflowNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_case_draft_not_found",
+        ) from exc
+
+    return _privacy_case_timeline_out(result)
+
+
+@router.get(
+    "/case-drafts/{case_id}/report",
+    response_model=PrivacyCaseReportOut,
+)
+async def get_privacy_case_report(
+    request: Request,
+    case_id: UUID,
+    _: str = Depends(require_auth),
+) -> PrivacyCaseReportOut:
+    _assert_adult_or_admin_actor(request)
+
+    try:
+        async with rls_connection(request) as conn:
+            result = await PrivacyCaseWorkflowReader(conn).get_report(case_id)
+    except PrivacyActionWorkflowNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_case_draft_not_found",
+        ) from exc
+
+    return _privacy_case_report_out(result)
 
 
 @router.get("/case-drafts/{case_id}", response_model=CaseDraftDetailOut)
@@ -629,10 +832,72 @@ def _approved_privacy_action_out(
         status=action.status,
         approval_queue_id=action.approval_queue_id,
         case_status=action.case_status,
+        manual_disposition=action.manual_disposition,
+        manual_disposition_at=action.manual_disposition_at,
+        manual_disposition_by=action.manual_disposition_by,
+        manual_note_hash=action.manual_note_hash,
+        evidence_payload_hash=action.evidence_payload_hash,
+        workflow_payload_key_version=action.workflow_payload_key_version,
+        sent_at=action.sent_at,
+        confirmed_at=action.confirmed_at,
+        verification_due_at=action.verification_due_at,
+        error_code=action.error_code,
+        error_digest=action.error_digest,
         approved_at=action.approved_at,
         created_at=action.created_at,
         updated_at=action.updated_at,
         avg_response_days=action.target_avg_response_days,
+    )
+
+
+def _privacy_action_workflow_out(
+    result: PrivacyActionWorkflowResult,
+) -> PrivacyActionWorkflowOut:
+    return PrivacyActionWorkflowOut(
+        event_type=result.event_type,
+        action=_approved_privacy_action_out(result.action),
+    )
+
+
+def _privacy_case_timeline_out(
+    result: PrivacyCaseTimeline,
+) -> PrivacyCaseTimelineOut:
+    return PrivacyCaseTimelineOut(
+        case_id=result.case_draft.id,
+        subject_id=result.case_draft.subject_id,
+        status=result.case_draft.status,
+        event_count=len(result.events),
+        events=[_privacy_case_event_out(event) for event in result.events],
+    )
+
+
+def _privacy_case_report_out(
+    result: PrivacyCaseReport,
+) -> PrivacyCaseReportOut:
+    return PrivacyCaseReportOut(
+        case_id=result.case_draft.id,
+        subject_id=result.case_draft.subject_id,
+        status=result.case_draft.status,
+        target_count=result.case_draft.target_count,
+        action_count=len(result.actions),
+        event_count=len(result.events),
+        generated_at=result.generated_at,
+        actions=[_approved_privacy_action_out(action) for action in result.actions],
+        events=[_privacy_case_event_out(event) for event in result.events],
+    )
+
+
+def _privacy_case_event_out(event: StoredPrivacyActionEvent) -> PrivacyCaseEventOut:
+    return PrivacyCaseEventOut(
+        event_id=event.id,
+        action_id=event.action_id,
+        case_id=event.case_draft_id,
+        target_id=event.target_id,
+        target_name=event.target_name,
+        event_type=event.event_type,
+        actor=event.actor,
+        event_payload_hash=event.event_payload_hash,
+        created_at=event.created_at,
     )
 
 

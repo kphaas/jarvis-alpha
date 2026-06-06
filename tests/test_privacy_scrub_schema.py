@@ -27,10 +27,18 @@ CASE_DRAFTS_MIGRATION_PATH = (
     / "migrations"
     / "20260605_120000_privacy_case_drafts.sql"
 )
+MANUAL_WORKFLOW_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260606_090000_privacy_manual_workflow.sql"
+)
 
 MIGRATION_SQL = MIGRATION_PATH.read_text(encoding="utf-8")
 TARGET_CACHE_RLS_SQL = TARGET_CACHE_RLS_MIGRATION_PATH.read_text(encoding="utf-8")
 CASE_DRAFTS_SQL = CASE_DRAFTS_MIGRATION_PATH.read_text(encoding="utf-8")
+MANUAL_WORKFLOW_SQL = MANUAL_WORKFLOW_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def test_migration_uses_force_rls_on_sensitive_tables():
@@ -79,6 +87,21 @@ def test_case_drafts_migration_enables_force_rls_and_action_linkage():
     assert "GRANT SELECT, INSERT, UPDATE" in CASE_DRAFTS_SQL
 
 
+def test_manual_workflow_migration_stores_only_encrypted_notes_and_hashes():
+    assert "manual_note_ciphertext BYTEA" in MANUAL_WORKFLOW_SQL
+    assert "evidence_payload_ciphertext BYTEA" in MANUAL_WORKFLOW_SQL
+    assert "manual_note_hash TEXT" in MANUAL_WORKFLOW_SQL
+    assert "evidence_payload_hash TEXT" in MANUAL_WORKFLOW_SQL
+    assert "privacy_action_manual_disposition_check" in MANUAL_WORKFLOW_SQL
+    assert "'handled', 'deferred', 'blocked'" in MANUAL_WORKFLOW_SQL
+    assert "privacy_decrypt_payload" in MANUAL_WORKFLOW_SQL
+    assert "CREATE OR REPLACE FUNCTION public.privacy_decrypt_payload" not in (
+        MANUAL_WORKFLOW_SQL
+    )
+    assert "operator_note TEXT" not in MANUAL_WORKFLOW_SQL
+    assert "evidence_reference TEXT" not in MANUAL_WORKFLOW_SQL
+
+
 def test_migration_policies_have_with_check():
     assert MIGRATION_SQL.count("WITH CHECK") >= 6
     assert CASE_DRAFTS_SQL.count("WITH CHECK") >= 1
@@ -102,6 +125,7 @@ def test_migration_avoids_plaintext_sensitive_columns():
     for token in forbidden:
         assert token not in MIGRATION_SQL
         assert token not in CASE_DRAFTS_SQL
+        assert token not in MANUAL_WORKFLOW_SQL
 
 
 def test_migration_adds_approval_and_append_only_controls():

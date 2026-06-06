@@ -7,15 +7,20 @@ import pytest
 from brain.agents.privacy_scrub.state import (
     count_targets,
     enqueue_approval_request,
+    get_case_draft,
     get_target,
     insert_case_draft,
     insert_draft_action,
     list_approved_privacy_actions,
+    list_privacy_action_events_for_case,
+    list_privacy_actions_for_case,
     list_targets,
     mark_approval_queue_actions_decided,
     mark_case_actions_awaiting_approval,
     reject_pending_case_actions,
     refresh_targets_cache,
+    update_privacy_action_manual_disposition,
+    update_privacy_action_verification,
     update_case_draft_status,
 )
 from brain.agents.privacy_scrub.targets import (
@@ -96,6 +101,36 @@ class FakeDraftWriteConnection:
                 "created_at": None,
                 "updated_at": None,
             }
+        if "FROM public.alpha_privacy_case_drafts" in query:
+            return {
+                "id": args[0],
+                "subject_id": uuid4(),
+                "created_by_user_id": "ken",
+                "target_count": 2,
+                "status": "submitted_for_approval",
+                "packet_payload_hash": "sha256:" + "3" * 64,
+                "payload_key_version": "payload-v1",
+                "created_at": None,
+                "updated_at": None,
+            }
+        if "WITH updated AS" in query and "manual_disposition_at = NOW()" in query:
+            return _approved_action_row(
+                action_id=args[0],
+                status=args[1],
+                manual_disposition=args[2],
+                manual_disposition_by=args[3],
+                manual_note_hash=args[5],
+                evidence_payload_hash=args[7],
+                workflow_payload_key_version=args[8],
+            )
+        if "WITH updated AS" in query and "manual_disposition = COALESCE" in query:
+            return _approved_action_row(
+                action_id=args[0],
+                status=args[1],
+                manual_disposition="handled",
+                evidence_payload_hash=args[4],
+                workflow_payload_key_version=args[5],
+            )
         if "INSERT INTO public.alpha_privacy_actions" in query:
             return {
                 "id": args[2],
@@ -114,31 +149,24 @@ class FakeDraftWriteConnection:
 
     async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
         self.fetches.append((query, args))
-        if "WHERE a.status = 'approved'" in query:
+        if "e.id, e.action_id" in query:
             return [
                 {
                     "id": uuid4(),
-                    "subject_id": uuid4(),
+                    "action_id": uuid4(),
+                    "case_draft_id": args[0],
                     "target_id": "spokeo",
-                    "case_draft_id": uuid4(),
-                    "action_type": "draft",
-                    "approval_tier": "T2",
-                    "status": "approved",
-                    "approval_queue_id": uuid4(),
-                    "draft_payload_hash": "sha256:" + "4" * 64,
-                    "payload_key_version": "payload-v1",
                     "target_name": "Spokeo",
-                    "target_category": "data_broker",
-                    "target_jurisdiction": "US_FEDERAL",
-                    "target_opt_out_method": "web_form",
-                    "target_avg_response_days": 5,
-                    "case_status": "submitted_for_approval",
-                    "case_created_at": None,
-                    "approved_at": None,
+                    "event_type": "sent",
+                    "actor": "ken",
+                    "event_payload_hash": "sha256:" + "5" * 64,
                     "created_at": None,
-                    "updated_at": None,
                 }
             ]
+        if "FROM public.alpha_privacy_actions AS a" in query and (
+            "approval_queue_id IS NOT NULL" in query or "a.case_draft_id = $1" in query
+        ):
+            return [_approved_action_row(status="approved")]
         if "SET status = $2" in query:
             status = str(args[1])
             case_draft_id = uuid4()
@@ -164,6 +192,51 @@ class FakeDraftWriteConnection:
     async def fetchval(self, query: str, *args: object):
         self.fetchvals.append((query, args))
         return self.queue_id
+
+
+def _approved_action_row(
+    *,
+    action_id: object | None = None,
+    status: object = "approved",
+    manual_disposition: object = None,
+    manual_disposition_by: object = None,
+    manual_note_hash: object = None,
+    evidence_payload_hash: object = None,
+    workflow_payload_key_version: object = None,
+) -> dict[str, object]:
+    return {
+        "id": action_id or uuid4(),
+        "subject_id": uuid4(),
+        "target_id": "spokeo",
+        "case_draft_id": uuid4(),
+        "action_type": "draft",
+        "approval_tier": "T2",
+        "status": status,
+        "approval_queue_id": uuid4(),
+        "draft_payload_hash": "sha256:" + "4" * 64,
+        "payload_key_version": "payload-v1",
+        "manual_disposition": manual_disposition,
+        "manual_disposition_at": None,
+        "manual_disposition_by": manual_disposition_by,
+        "manual_note_hash": manual_note_hash,
+        "evidence_payload_hash": evidence_payload_hash,
+        "workflow_payload_key_version": workflow_payload_key_version,
+        "sent_at": None,
+        "confirmed_at": None,
+        "verification_due_at": None,
+        "error_code": None,
+        "error_digest": None,
+        "target_name": "Spokeo",
+        "target_category": "data_broker",
+        "target_jurisdiction": "US_FEDERAL",
+        "target_opt_out_method": "web_form",
+        "target_avg_response_days": 5,
+        "case_status": "submitted_for_approval",
+        "case_created_at": None,
+        "approved_at": None,
+        "created_at": None,
+        "updated_at": None,
+    }
 
 
 def _target() -> Target:
@@ -400,9 +473,95 @@ async def test_list_approved_privacy_actions_filters_ready_rows() -> None:
     assert actions[0].case_status == "submitted_for_approval"
     assert "FROM public.alpha_privacy_actions AS a" in query
     assert "JOIN public.alpha_privacy_targets_cache AS t" in query
-    assert "WHERE a.status = 'approved'" in query
+    assert "a.status IN ('approved', 'sent', 'confirmed', 'failed')" in query
+    assert "approval_queue_id IS NOT NULL" in query
     assert "draft_payload_ciphertext" not in query
     assert args == (12,)
+
+
+@pytest.mark.asyncio
+async def test_update_privacy_action_manual_disposition_records_encrypted_hashes() -> (
+    None
+):
+    conn = FakeDraftWriteConnection()
+    action_id = uuid4()
+
+    action = await update_privacy_action_manual_disposition(
+        conn,  # type: ignore[arg-type]
+        action_id=action_id,
+        disposition="handled",
+        actor="ken",
+        manual_note_ciphertext=b"note-ciphertext",
+        manual_note_hash="sha256:" + "6" * 64,
+        evidence_payload_ciphertext=b"evidence-ciphertext",
+        evidence_payload_hash="sha256:" + "7" * 64,
+        workflow_payload_key_version="payload-v2",
+    )
+
+    assert action is not None
+    query, args = conn.fetchrows[0]
+    assert action.id == action_id
+    assert action.status == "sent"
+    assert action.manual_disposition == "handled"
+    assert action.manual_note_hash == "sha256:" + "6" * 64
+    assert action.evidence_payload_hash == "sha256:" + "7" * 64
+    assert "manual_note_ciphertext = $5" in query
+    assert "evidence_payload_ciphertext = $7" in query
+    assert "approval_queue_id IS NOT NULL" in query
+    assert args[0] == action_id
+    assert args[1] == "sent"
+    assert args[8] == "payload-v2"
+
+
+@pytest.mark.asyncio
+async def test_update_privacy_action_verification_sets_confirmed_status() -> None:
+    conn = FakeDraftWriteConnection()
+    action_id = uuid4()
+
+    action = await update_privacy_action_verification(
+        conn,  # type: ignore[arg-type]
+        action_id=action_id,
+        outcome="confirmed",
+        actor="ken",
+        evidence_payload_hash="sha256:" + "8" * 64,
+        workflow_payload_key_version="payload-v2",
+    )
+
+    assert action is not None
+    query, args = conn.fetchrows[0]
+    assert action.id == action_id
+    assert action.status == "confirmed"
+    assert action.manual_disposition == "handled"
+    assert "confirmed_at = CASE" in query
+    assert "verification_due_at = CASE" in query
+    assert args[0] == action_id
+    assert args[1] == "confirmed"
+    assert args[5] == "payload-v2"
+
+
+@pytest.mark.asyncio
+async def test_case_workflow_readers_exclude_ciphertexts() -> None:
+    conn = FakeDraftWriteConnection()
+    case_id = uuid4()
+
+    case = await get_case_draft(conn, case_id)  # type: ignore[arg-type]
+    actions = await list_privacy_actions_for_case(  # type: ignore[arg-type]
+        conn,
+        case_draft_id=case_id,
+    )
+    events = await list_privacy_action_events_for_case(  # type: ignore[arg-type]
+        conn,
+        case_draft_id=case_id,
+    )
+
+    assert case is not None
+    assert actions[0].target_name == "Spokeo"
+    assert events[0].event_type == "sent"
+    action_query = conn.fetches[0][0]
+    event_query = conn.fetches[1][0]
+    assert "manual_note_ciphertext" not in action_query
+    assert "evidence_payload_ciphertext" not in action_query
+    assert "event_payload_ciphertext" not in event_query
 
 
 @pytest.mark.asyncio

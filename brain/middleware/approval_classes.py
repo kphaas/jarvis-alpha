@@ -271,6 +271,19 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     ],
     "GET /v1/privacy/case-drafts": ["read", "security_read"],
     "GET /v1/privacy/actions/approved": ["read", "security_read"],
+    "POST /v1/privacy/actions/{action_id}/manual-disposition": [
+        "write",
+        "security_write",
+    ],
+    "POST /v1/privacy/actions/{action_id}/verification": [
+        "write",
+        "security_write",
+    ],
+    "GET /v1/privacy/case-drafts/{case_id}/timeline": [
+        "read",
+        "security_read",
+    ],
+    "GET /v1/privacy/case-drafts/{case_id}/report": ["read", "security_read"],
     "GET /v1/privacy/case-drafts/{case_id}": ["read", "security_read"],
     "POST /v1/privacy/case-drafts/{case_id}/submit-approval": [
         "write",
