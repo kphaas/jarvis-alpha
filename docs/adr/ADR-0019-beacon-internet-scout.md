@@ -33,9 +33,13 @@ P0/P1 was intentionally no-outbound. It created the ADR, package skeleton,
 brand asset, deterministic guards, and tests only. P2/P3 added reviewed
 Gateway-owned search/fetch egress and RLS-protected evidence persistence while
 preserving the same prompt-injection and Brain-egress boundaries. P4/P5 added
-main-text extraction and approval-queue-only browser task requests. P6/P7 add a
+main-text extraction and approval-queue-only browser task requests. P6/P7 added a
 local-LLM citation envelope and bounded same-host crawl without enabling browser
-automation, scheduling, memory ingest, or outbound actions.
+automation, scheduling, memory ingest, or outbound actions. P8/P9 added the
+approval-verified browser runner boundary and Forge/Family/Financial consumer
+routes. P10/P11 add reviewed evidence-to-memory promotion and a fail-closed
+Playwright adapter factory with screenshot storage and hourly run limits, while
+scheduled agent runtime remains deferred.
 
 ## Architecture
 
@@ -59,10 +63,19 @@ getting direct browser or search credentials.
 - Search, fetch, and extraction are read-only T2 when URL and content guards
   pass.
 - Bounded crawl is T3 with strict page and depth limits.
-- Interactive browser-use execution is disabled until a later sandboxed runner
-  phase.
-- Future browser-use is T4 by default and T5 for privacy, legal, financial, or
-  minor-related work.
+- Interactive browser-use execution requires an approved, unexpired queue row
+  matching the exact normalized Beacon browser request hash.
+- Browser execution is T4-only, same-host, screenshot-required, quota-limited,
+  and adapter-based. The default adapter fails closed.
+- The Playwright adapter can only run when explicitly configured with the
+  reviewed runtime name, screenshot directory, timeout, and expected dependency
+  version.
+- Memory promotion is a separate T4-style reviewed write path. It requires
+  stored Beacon evidence, a claim index, a source content hash, clean proposed
+  fact text, and explicit approve/reject review.
+- T5 privacy, legal, financial, and minor-related browser work remains deferred.
+- Forge, Family, and Financial consumers use policy-scoped routes; Family and
+  Financial are forced to sensitive lanes and cannot use browser/crawl.
 
 ## Prompt-Injection Boundary
 
@@ -78,10 +91,10 @@ found inside fetched content.
 
 | Lens | Review |
 |---|---|
-| Architecture | Alpha owns policy/evidence; Gateway owns egress; consumers get read-only evidence. |
-| Security | URL, redirect, content, browser-use, and prompt-injection gates exist before outbound code. |
-| Operations | P1 has no runtime blast radius; later phases add audit, rate limits, posture, and run ledger. |
-| Data Quality | Evidence contracts require source URL, host, content hash, timestamps, citations, and confidence. |
+| Architecture | Alpha owns policy/evidence; Gateway owns egress; consumers get read-only evidence through Beacon contracts. |
+| Security | URL, redirect, content, browser-use approval, sandbox policy, prompt-injection, and memory-promotion gates exist before runtime code. |
+| Operations | Browser runner defaults to unavailable unless the reviewed runtime is configured; approvals are consumed only after success; hourly quotas cap blast radius. |
+| Data Quality | Evidence contracts require source URL, host, content hash, timestamps, citations, confidence, screenshot review markers, and reviewed semantic-memory results. |
 
 ## Gap Analysis
 
@@ -89,10 +102,12 @@ found inside fetched content.
 |---|---|
 | SSRF to internal hosts | Block localhost, non-global IPs, Tailscale hosts, local/internal suffixes, credentials, odd schemes, and redirect chains. |
 | Prompt injection | Sanitize and label raw content as untrusted data; never execute web-provided instructions. |
-| Browser overreach | Browser-use execution remains disabled and must later route through Alpha approvals plus sandbox controls. |
-| Memory poisoning | No automatic memory/RAG ingest; evidence promotion is a separate reviewed phase. |
-| Supply-chain risk | Bounded crawl uses the existing guarded fetch path and no new crawler dependency; later browser-use additions must be pinned and audited. |
-| Cross-repo misuse | Consumers call Alpha for evidence; they do not import Beacon internals or hold internet credentials. |
+| Browser overreach | Browser-use execution requires exact approval-row verification, T4-only sandbox policy, same-host observation checks, and screenshots; default adapter fails closed. |
+| Memory poisoning | No automatic memory/RAG ingest; promotion requires stored evidence, clean fact text, source hash, claim binding, and explicit review. |
+| Supply-chain risk | Bounded crawl uses the existing guarded fetch path; browser runtime is opt-in and version-checked before use. |
+| Cross-repo misuse | Consumers call Alpha policy-scoped routes; they do not import Beacon internals or hold internet credentials. |
+| Sensitive consumers | Family and Financial force minor/financial sensitivity and block browser/crawl in P9. |
+| Runtime operations | P11 adds code-level adapter wiring, but production deployment still needs package installation, browser binary provisioning, screenshot retention, and alerting. |
 
 ## Consequences
 

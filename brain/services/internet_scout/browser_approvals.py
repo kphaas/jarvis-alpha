@@ -80,6 +80,47 @@ async def enqueue_browser_task_approval(
     return queue_id
 
 
+async def require_approved_browser_task(
+    conn: asyncpg.Connection,
+    *,
+    approval_queue_id: UUID,
+    actor_sub: str,
+    parameters_hash: str,
+) -> None:
+    """Verify an approved, unexpired queue row for this exact browser task."""
+
+    row = await conn.fetchrow(
+        """
+        SELECT id
+        FROM public.alpha_approval_queue
+        WHERE id = $1
+          AND actor_sub = $2
+          AND parameters_hash = $3
+          AND status = 'approved'
+          AND expires_at > NOW()
+        LIMIT 1
+        """,
+        approval_queue_id,
+        actor_sub,
+        parameters_hash,
+    )
+    if row is None:
+        raise BrowserApprovalError("browser_task_approval_not_found")
+
+
+async def consume_browser_task_approval(
+    conn: asyncpg.Connection,
+    *,
+    approval_queue_id: UUID,
+) -> None:
+    """Mark an approved browser task queue row executed after successful run."""
+
+    await conn.execute(
+        "SELECT public.consume_approved_queue_item($1::uuid)",
+        approval_queue_id,
+    )
+
+
 def browser_task_parameters_hash(
     request: InternetScoutRequest,
     decision: PolicyDecision,
