@@ -51,6 +51,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/auth/set-child-pin": ["write", "security_write"],
     "POST /v1/auth/set-profile-pin": ["write", "security_write"],
     "POST /v1/auth/set-admin-pin": ["write", "security_write"],
+    "GET /v1/auth/session": ["auth"],
     "POST /v1/auth/session-cookie": ["auth"],
     # Admin
     "POST /v1/admin": ["admin"],

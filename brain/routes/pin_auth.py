@@ -6,12 +6,12 @@ from pathlib import Path
 from typing import Literal
 
 import bcrypt
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from jose import jwt
 from pydantic import BaseModel
 
 from brain.db.rls import platform_admin_connection
-from brain.middleware.jwt_auth import ALPHA_SESSION_COOKIE
+from brain.middleware.jwt_auth import ALPHA_SESSION_COOKIE, require_auth
 from brain.middleware.scopes import check_scopes
 from brain.services.family_pin_sync import FamilyPinSyncError, sync_family_pin_hash
 from jarvis_common.logging_config import get_logger
@@ -55,6 +55,35 @@ class LoginProfileResponse(BaseModel):
     role: str
     child_age: int | None
     max_rating: str
+
+
+class SessionPrincipal(BaseModel):
+    profile_id: str
+    role: str
+    actor_type: str
+    workspace_id: str | None = None
+    max_rating: str
+    child_age: int | None = None
+
+
+class SessionState(BaseModel):
+    mode: Literal["alpha_session_cookie_or_bearer"] = "alpha_session_cookie_or_bearer"
+    expires_at: str | None = None
+
+
+class SessionApplicationGrant(BaseModel):
+    status: Literal["authorized", "missing_scope"]
+    required_scopes: list[str]
+    granted_scopes: list[str]
+    capabilities: list[str]
+
+
+class SessionBrokerResponse(BaseModel):
+    authority: Literal["jarvis-alpha"] = "jarvis-alpha"
+    authenticated: Literal[True] = True
+    session: SessionState
+    principal: SessionPrincipal
+    applications: dict[str, SessionApplicationGrant]
 
 
 def _pin_status(pin_hash: str) -> Literal["set", "placeholder"]:
@@ -112,6 +141,66 @@ def _session_cookie_max_age_seconds(request: Request) -> int:
     if isinstance(exp, (int, float)):
         return max(int(exp) - int(time.time()), 1)
     return _session_hours() * 3600
+
+
+def _session_expires_at(request: Request) -> str | None:
+    exp = getattr(request.state, "jwt_exp", None)
+    if not isinstance(exp, (int, float)):
+        return None
+    return (
+        datetime.fromtimestamp(int(exp), tz=timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _session_scopes(request: Request) -> list[str]:
+    scopes = getattr(request.state, "scopes", [])
+    if not isinstance(scopes, list):
+        return []
+    return [scope for scope in scopes if isinstance(scope, str)]
+
+
+def _has_session_scope(request: Request, required_scope: str) -> bool:
+    actor_type = str(getattr(request.state, "actor_type", "user"))
+    role = str(getattr(request.state, "role", "user"))
+    scopes = _session_scopes(request)
+    return (
+        (actor_type == "user" and role == "admin")
+        or "*" in scopes
+        or required_scope in scopes
+    )
+
+
+def _session_broker_response(request: Request) -> SessionBrokerResponse:
+    profile_id = str(
+        getattr(
+            request.state,
+            "profile_id",
+            getattr(request.state, "user_id", "unknown"),
+        )
+    )
+    helm_authorized = _has_session_scope(request, "helm.read")
+
+    return SessionBrokerResponse(
+        session=SessionState(expires_at=_session_expires_at(request)),
+        principal=SessionPrincipal(
+            profile_id=profile_id,
+            role=str(getattr(request.state, "role", "user")),
+            actor_type=str(getattr(request.state, "actor_type", "user")),
+            workspace_id=getattr(request.state, "workspace_id", None),
+            max_rating=str(getattr(request.state, "max_rating", "all_ages")),
+            child_age=getattr(request.state, "child_age", None),
+        ),
+        applications={
+            "helm": SessionApplicationGrant(
+                status="authorized" if helm_authorized else "missing_scope",
+                required_scopes=["helm.read"],
+                granted_scopes=_session_scopes(request),
+                capabilities=["alpha.summary.read"] if helm_authorized else [],
+            )
+        },
+    )
 
 
 async def _sync_family_pin_or_409(profile_id: str, pin_hash: str) -> None:
@@ -241,6 +330,15 @@ async def refresh_session_cookie(request: Request, response: Response):
         max_age_seconds=_session_cookie_max_age_seconds(request),
     )
     return {"status": "ok"}
+
+
+@router.get("/session", response_model=SessionBrokerResponse)
+async def current_session(
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> SessionBrokerResponse:
+    """Return the current Alpha session broker state without exposing tokens."""
+    return _session_broker_response(request)
 
 
 @router.get("/login-profiles", response_model=list[LoginProfileResponse])

@@ -29,6 +29,8 @@ reading or storing the bearer token.
 - Existing Alpha UI behavior remains backward compatible.
 - Cookie scope is host-wide, so Endpoint ports can share the session while the cookie remains unavailable to JavaScript.
 - Raw approval queues, writes, and unscoped Alpha APIs remain protected by existing JWT claims and scope checks.
+- ADR-0022 extends this cookie bridge into an Alpha-owned SSO broker contract
+  for Helm session/grant introspection.
 
 ## Non-Goals
 
