@@ -6,7 +6,9 @@ stored evidence; Gateway owns guarded public egress and extraction.
 
 from brain.services.internet_scout.models import (
     EvidenceClaim,
+    GatewayCrawlResponse,
     InternetScoutBrowserApprovalResponse,
+    InternetScoutLocalLLMResponse,
     InternetScoutPlan,
     InternetScoutRequest,
     InternetScoutStoredResponse,
@@ -20,8 +22,10 @@ from brain.services.internet_scout.policy import evaluate_policy, select_tool
 
 __all__ = [
     "EvidenceClaim",
+    "GatewayCrawlResponse",
     "InternetScoutExecutor",
     "InternetScoutBrowserApprovalResponse",
+    "InternetScoutLocalLLMResponse",
     "InternetScoutOrchestrator",
     "InternetScoutPlan",
     "InternetScoutRequest",

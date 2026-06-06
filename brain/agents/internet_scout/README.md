@@ -2,14 +2,15 @@
 
 Beacon is the planned Alpha agent for public internet evidence gathering.
 
-P2/P3 still keeps this package inert:
+P6/P7 still keeps this package inert:
 
 - no LaunchAgent;
 - no scheduled runner;
-- no crawl/browser execution;
+- no browser execution;
 - no memory ingest;
 - no writes outside local planning/evidence contracts.
 
 The active implementation lives in `brain.services.internet_scout`. Reviewed
-Gateway search/fetch egress and RLS evidence storage are available through the
-Brain route, but scheduled agent runtime behavior is deferred.
+Gateway search/fetch/extract/crawl egress, local-LLM citation envelopes, browser
+approval queueing, and RLS evidence storage are available through the Brain
+routes, but scheduled agent runtime behavior is deferred.

@@ -30,9 +30,12 @@ Beacon will be implemented as:
 - read-only evidence APIs for other JARVIS systems after review.
 
 P0/P1 was intentionally no-outbound. It created the ADR, package skeleton,
-brand asset, deterministic guards, and tests only. P2/P3 adds reviewed
+brand asset, deterministic guards, and tests only. P2/P3 added reviewed
 Gateway-owned search/fetch egress and RLS-protected evidence persistence while
-preserving the same prompt-injection and Brain-egress boundaries.
+preserving the same prompt-injection and Brain-egress boundaries. P4/P5 added
+main-text extraction and approval-queue-only browser task requests. P6/P7 add a
+local-LLM citation envelope and bounded same-host crawl without enabling browser
+automation, scheduling, memory ingest, or outbound actions.
 
 ## Architecture
 
@@ -56,7 +59,8 @@ getting direct browser or search credentials.
 - Search, fetch, and extraction are read-only T2 when URL and content guards
   pass.
 - Bounded crawl is T3 with strict page and depth limits.
-- Interactive browser-use is disabled in P1.
+- Interactive browser-use execution is disabled until a later sandboxed runner
+  phase.
 - Future browser-use is T4 by default and T5 for privacy, legal, financial, or
   minor-related work.
 
@@ -85,9 +89,9 @@ found inside fetched content.
 |---|---|
 | SSRF to internal hosts | Block localhost, non-global IPs, Tailscale hosts, local/internal suffixes, credentials, odd schemes, and redirect chains. |
 | Prompt injection | Sanitize and label raw content as untrusted data; never execute web-provided instructions. |
-| Browser overreach | Browser-use is disabled in P1 and must later route through Alpha approvals. |
+| Browser overreach | Browser-use execution remains disabled and must later route through Alpha approvals plus sandbox controls. |
 | Memory poisoning | No automatic memory/RAG ingest; evidence promotion is a separate reviewed phase. |
-| Supply-chain risk | P1 adds no crawler dependencies; later Crawl4AI/browser-use additions must be pinned and audited. |
+| Supply-chain risk | Bounded crawl uses the existing guarded fetch path and no new crawler dependency; later browser-use additions must be pinned and audited. |
 | Cross-repo misuse | Consumers call Alpha for evidence; they do not import Beacon internals or hold internet credentials. |
 
 ## Consequences

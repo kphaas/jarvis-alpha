@@ -6,6 +6,7 @@ from hashlib import sha256
 from html.parser import HTMLParser
 from importlib import import_module
 from typing import Any
+from urllib.parse import urldefrag, urljoin
 
 from fastapi import APIRouter, Header, HTTPException, Request
 import httpx
@@ -89,6 +90,15 @@ class InternetFetchRequest(BaseModel):
 
 class InternetExtractRequest(BaseModel):
     url: str = Field(min_length=1, max_length=4000)
+    max_bytes: int = Field(
+        default=DEFAULT_MAX_CONTENT_BYTES, ge=1, le=DEFAULT_MAX_CONTENT_BYTES
+    )
+
+
+class InternetCrawlRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=4000)
+    max_pages: int = Field(default=5, ge=1, le=10)
+    max_depth: int = Field(default=1, ge=0, le=2)
     max_bytes: int = Field(
         default=DEFAULT_MAX_CONTENT_BYTES, ge=1, le=DEFAULT_MAX_CONTENT_BYTES
     )
@@ -438,6 +448,91 @@ async def internet_extract(
     """Extract main text from one guarded public URL without trusting page content."""
     _authorize_gateway_call(authorization)
     fetched = await _fetch_public_content(url=req.url, max_bytes=req.max_bytes)
+    return _extract_payload(fetched)
+
+
+@router.post("/internet/crawl")
+async def internet_crawl(
+    req: InternetCrawlRequest,
+    authorization: str = Header(...),
+):
+    """Crawl same-host public pages with the Beacon guarded fetch/extract path."""
+    _authorize_gateway_call(authorization)
+    seed = validate_url(req.url)
+    if not seed.allowed or seed.normalized_url is None or seed.host is None:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "unsafe_url", "reasons": seed.reasons},
+        )
+
+    pages: list[dict[str, object]] = []
+    seen: set[str] = set()
+    queued: list[tuple[str, int]] = [(seed.normalized_url, 0)]
+    queued_urls = {seed.normalized_url}
+
+    while queued and len(pages) < req.max_pages:
+        current_url, depth = queued.pop(0)
+        queued_urls.discard(current_url)
+        if current_url in seen:
+            continue
+        seen.add(current_url)
+
+        safety = validate_url(current_url)
+        if (
+            not safety.allowed
+            or safety.normalized_url is None
+            or safety.host != seed.host
+        ):
+            continue
+
+        fetched = await _fetch_public_content(
+            url=safety.normalized_url,
+            max_bytes=req.max_bytes,
+        )
+        if fetched.host != seed.host:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "crawl_cross_host_redirect",
+                    "seed_host": seed.host,
+                    "final_host": fetched.host,
+                },
+            )
+
+        discovered_links = _discover_same_host_links(
+            fetched.raw_text,
+            base_url=fetched.url,
+            seed_host=seed.host,
+        )
+        pages.append(
+            _crawl_page_payload(
+                fetched=fetched,
+                depth=depth,
+                discovered_links=discovered_links,
+            )
+        )
+
+        if depth >= req.max_depth:
+            continue
+        for link in discovered_links:
+            if len(pages) + len(queued) >= req.max_pages:
+                break
+            if link in seen or link in queued_urls:
+                continue
+            queued.append((link, depth + 1))
+            queued_urls.add(link)
+
+    return {
+        "seed_url": seed.normalized_url,
+        "seed_host": seed.host,
+        "fetched_at": datetime.now(UTC).isoformat(),
+        "max_pages": req.max_pages,
+        "max_depth": req.max_depth,
+        "pages": pages,
+    }
+
+
+def _extract_payload(fetched: _FetchedInternetContent) -> dict[str, object]:
     extracted_text, extractor = _extract_main_text(fetched.raw_text)
     extraction_fallback = not extracted_text.strip()
     if extraction_fallback:
@@ -465,6 +560,18 @@ async def internet_extract(
         "risk_markers": risk_markers,
         "redirect_chain": fetched.redirect_chain,
     }
+
+
+def _crawl_page_payload(
+    *,
+    fetched: _FetchedInternetContent,
+    depth: int,
+    discovered_links: list[str],
+) -> dict[str, object]:
+    payload = _extract_payload(fetched)
+    payload["depth"] = depth
+    payload["discovered_links"] = discovered_links[:25]
+    return payload
 
 
 async def _fetch_public_content(
@@ -592,6 +699,56 @@ def _extract_main_text(raw_text: str) -> tuple[str, str]:
     if not isinstance(extracted, str) or not extracted.strip():
         return "", "trafilatura_empty"
     return extracted, "trafilatura"
+
+
+class _HTMLLinkExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: list[str] = []
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        if tag.lower() != "a":
+            return
+        for name, value in attrs:
+            if name.lower() == "href" and value:
+                self.links.append(value)
+
+
+def _discover_same_host_links(
+    raw_text: str,
+    *,
+    base_url: str,
+    seed_host: str,
+) -> list[str]:
+    parser = _HTMLLinkExtractor()
+    parser.feed(raw_text)
+    parser.close()
+
+    links: list[str] = []
+    seen: set[str] = set()
+    for raw_href in parser.links:
+        href = raw_href.strip()
+        if not href:
+            continue
+        candidate = urldefrag(urljoin(base_url, href)).url
+        safety = validate_url(candidate)
+        if (
+            not safety.allowed
+            or safety.normalized_url is None
+            or safety.host != seed_host
+        ):
+            continue
+        if safety.normalized_url in seen:
+            continue
+        links.append(safety.normalized_url)
+        seen.add(safety.normalized_url)
+        if len(links) >= 25:
+            break
+    return links
 
 
 class _HTMLTextExtractor(HTMLParser):
