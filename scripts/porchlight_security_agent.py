@@ -252,9 +252,29 @@ def ssh_args_for_probe() -> list[str]:
 
 
 def run_ssh(ssh_target: str, remote_command: str, timeout: int = 30) -> CommandResult:
-    return run_command(
+    result = run_command(
         [*ssh_args_for_probe(), ssh_target, remote_command],
         timeout=timeout,
+    )
+    if result.returncode == 0 or not _should_retry_with_probe_script(result):
+        return result
+    fallback = _explicit_probe_script_command(remote_command)
+    return run_command([*ssh_args_for_probe(), ssh_target, fallback], timeout=timeout)
+
+
+def _should_retry_with_probe_script(result: CommandResult) -> bool:
+    detail = f"{result.stderr}\n{result.stdout}".lower()
+    return (
+        "command not found: porchlight" in detail
+        or "porchlight: command not found" in detail
+    )
+
+
+def _explicit_probe_script_command(remote_command: str) -> str:
+    return (
+        "SSH_ORIGINAL_COMMAND="
+        f"{shlex.quote(remote_command)} "
+        "$HOME/jarvis-alpha/scripts/porchlight_ssh_probe.sh"
     )
 
 
@@ -2895,6 +2915,9 @@ def notify_mattermost(
     *,
     command: Callable[..., CommandResult] = run_command,
 ) -> tuple[str, dict[str, object]]:
+    gateway_token = _secret_or_env("GATEWAY_TOKEN")
+    if not gateway_token:
+        raise RuntimeError("GATEWAY_TOKEN is not configured for Mattermost alert proxy")
     payload = {
         "title": agent_event_title(report),
         "message": buddy_event_body(report),
@@ -2913,7 +2936,7 @@ def notify_mattermost(
             "-H",
             "Content-Type: application/json",
             "-H",
-            f"Authorization: Bearer {get_secret('GATEWAY_TOKEN')}",
+            f"Authorization: Bearer {gateway_token}",
             "-H",
             f"X-JARVIS-Idempotency-Key: porchlight:{report['generated_at']}",
             "-d",
