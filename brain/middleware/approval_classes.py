@@ -342,6 +342,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "write",
         "security_write",
     ],
+    "GET /v1/privacy/removal-control/summary": ["read", "security_read"],
     "GET /v1/privacy/targets": ["read", "security_read"],
     "POST /v1/privacy/targets/refresh": ["write", "security_write"],
     # --- ChatOps command ingress — read-only, token-authenticated by route ---

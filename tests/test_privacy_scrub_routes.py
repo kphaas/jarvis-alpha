@@ -21,6 +21,13 @@ from brain.agents.privacy_scrub.drafts import (
     TargetReviewPacket,
 )
 from brain.agents.privacy_scrub.identity import IdentityTuple, TupleType
+from brain.agents.privacy_scrub.removal_control import (
+    RemovalBenchmark,
+    RemovalControlCounts,
+    RemovalControlSummary,
+    RemovalLane,
+    RemovalLens,
+)
 from brain.agents.privacy_scrub.repository import CreatedSubject
 from brain.agents.privacy_scrub.state import (
     StoredApprovedPrivacyAction,
@@ -165,6 +172,7 @@ def test_privacy_target_routes_are_classified() -> None:
     for path in (
         "/v1/privacy/case-drafts",
         "/v1/privacy/actions/approved",
+        "/v1/privacy/removal-control/summary",
         f"/v1/privacy/case-drafts/{uuid4()}",
         f"/v1/privacy/case-drafts/{uuid4()}/timeline",
         f"/v1/privacy/case-drafts/{uuid4()}/report",
@@ -180,6 +188,83 @@ def test_privacy_target_routes_are_classified() -> None:
     refresh_classes = classify_route("POST", "/v1/privacy/targets/refresh")
     assert refresh_classes == ["write", "security_write"]
     assert determine_risk_tier(refresh_classes) == "T2"
+
+
+@pytest.mark.asyncio
+async def test_get_privacy_removal_control_summary_returns_hash_only_status(
+    monkeypatch,
+) -> None:
+    calls = SimpleNamespace(conn=None)
+
+    class FakeRemovalRepo:
+        def __init__(self, conn) -> None:
+            calls.conn = conn
+
+        async def summary(self):
+            return RemovalControlSummary(
+                generated_at=datetime.now(UTC),
+                mode="manual_control_plane",
+                outbound_enabled=False,
+                counts=RemovalControlCounts(
+                    targets_total=12,
+                    broker_targets=9,
+                    public_record_targets=3,
+                    authorizations_active=1,
+                    adapter_profiles=8,
+                    adapter_profiles_recurring=7,
+                    evidence_items=2,
+                    monitor_runs=1,
+                    monitor_runs_due=0,
+                    search_deindex_items=1,
+                    public_record_triage_items=1,
+                    approved_actions_open=3,
+                    approved_actions_terminal=4,
+                ),
+                lanes=(
+                    RemovalLane(
+                        code="P4-A",
+                        label="Discovery coverage",
+                        status="ready",
+                        north_star="Broad coverage",
+                        current_state="12 local targets registered",
+                        next_step="Add approved source probes",
+                        evidence_key="target_registry",
+                        metric=12,
+                    ),
+                ),
+                lenses=(
+                    RemovalLens(
+                        code="security",
+                        label="Security/privacy",
+                        status="ready",
+                        summary="Digest-only status",
+                        checkpoints=("FORCE RLS tables", "No SQL decrypt helper"),
+                    ),
+                ),
+                benchmarks=(
+                    RemovalBenchmark(
+                        provider="Incogni",
+                        capability="Coverage",
+                        alpha_gap="Live broker coverage remains local-only",
+                        control="P4-C adapter metadata",
+                    ),
+                ),
+            )
+
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "PrivacyRemovalControlRepository", FakeRemovalRepo)
+
+    response = await privacy.get_privacy_removal_control_summary(_request(), "ken")
+
+    assert response.outbound_enabled is False
+    assert response.counts.targets_total == 12
+    assert response.lanes[0].code == "P4-A"
+    assert response.lenses[0].checkpoints == [
+        "FORCE RLS tables",
+        "No SQL decrypt helper",
+    ]
+    assert response.benchmarks[0].provider == "Incogni"
+    assert calls.conn is not None
 
 
 @pytest.mark.asyncio

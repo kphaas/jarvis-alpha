@@ -48,6 +48,20 @@ CASE_COMPLETED_ROLLBACK_PATH = (
     / "rollbacks"
     / "20260606_111500_privacy_case_draft_completed_status_rollback.sql"
 )
+REMOVAL_CONTROL_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260606_173000_privacy_removal_control_plane.sql"
+)
+REMOVAL_CONTROL_ROLLBACK_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "brain"
+    / "db"
+    / "rollbacks"
+    / "20260606_173000_privacy_removal_control_plane_rollback.sql"
+)
 
 MIGRATION_SQL = MIGRATION_PATH.read_text(encoding="utf-8")
 TARGET_CACHE_RLS_SQL = TARGET_CACHE_RLS_MIGRATION_PATH.read_text(encoding="utf-8")
@@ -55,6 +69,10 @@ CASE_DRAFTS_SQL = CASE_DRAFTS_MIGRATION_PATH.read_text(encoding="utf-8")
 MANUAL_WORKFLOW_SQL = MANUAL_WORKFLOW_MIGRATION_PATH.read_text(encoding="utf-8")
 CASE_COMPLETED_SQL = CASE_COMPLETED_MIGRATION_PATH.read_text(encoding="utf-8")
 CASE_COMPLETED_ROLLBACK_SQL = CASE_COMPLETED_ROLLBACK_PATH.read_text(encoding="utf-8")
+REMOVAL_CONTROL_SQL = REMOVAL_CONTROL_MIGRATION_PATH.read_text(encoding="utf-8")
+REMOVAL_CONTROL_ROLLBACK_SQL = REMOVAL_CONTROL_ROLLBACK_PATH.read_text(
+    encoding="utf-8",
+)
 
 
 def test_migration_uses_force_rls_on_sensitive_tables():
@@ -135,9 +153,71 @@ def test_case_completed_status_migration_has_reversible_constraint_change():
     )
 
 
+def test_removal_control_migration_covers_p4_lanes_with_force_rls():
+    for table in (
+        "alpha_privacy_authorizations",
+        "alpha_privacy_adapter_profiles",
+        "alpha_privacy_evidence_items",
+        "alpha_privacy_monitor_runs",
+        "alpha_privacy_search_deindex_items",
+        "alpha_privacy_public_record_triage",
+    ):
+        assert f"CREATE TABLE IF NOT EXISTS public.{table}" in REMOVAL_CONTROL_SQL
+        assert f"ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY" in (
+            REMOVAL_CONTROL_SQL
+        )
+        assert f"ALTER TABLE public.{table} FORCE ROW LEVEL SECURITY" in (
+            REMOVAL_CONTROL_SQL
+        )
+
+    assert "privacy_authorizations_isolation" in REMOVAL_CONTROL_SQL
+    assert "privacy_evidence_items_isolation" in REMOVAL_CONTROL_SQL
+    assert "privacy_monitor_runs_isolation" in REMOVAL_CONTROL_SQL
+    assert "privacy_search_deindex_items_isolation" in REMOVAL_CONTROL_SQL
+    assert "privacy_public_record_triage_isolation" in REMOVAL_CONTROL_SQL
+    assert "privacy_adapter_profiles_read" in REMOVAL_CONTROL_SQL
+
+
+def test_removal_control_migration_keeps_sensitive_values_encrypted():
+    assert "authorization_payload_ciphertext" in REMOVAL_CONTROL_SQL
+    assert "evidence_payload_ciphertext" in REMOVAL_CONTROL_SQL
+    assert "report_payload_ciphertext" in REMOVAL_CONTROL_SQL
+    assert "item_payload_ciphertext" in REMOVAL_CONTROL_SQL
+    assert "triage_payload_ciphertext" in REMOVAL_CONTROL_SQL
+    assert "result_url_digest" in REMOVAL_CONTROL_SQL
+    assert "privacy_decrypt_payload" in REMOVAL_CONTROL_SQL
+    assert "CREATE OR REPLACE FUNCTION public.privacy_decrypt_payload" not in (
+        REMOVAL_CONTROL_SQL
+    )
+    forbidden = (
+        "display_name",
+        " dob ",
+        "match_url           TEXT",
+        "metadata JSONB",
+        "error_message",
+        "result_url TEXT",
+        "authorization_text",
+    )
+    for token in forbidden:
+        assert token not in REMOVAL_CONTROL_SQL
+
+
+def test_removal_control_migration_has_rollback_for_every_new_table():
+    for table in (
+        "alpha_privacy_public_record_triage",
+        "alpha_privacy_search_deindex_items",
+        "alpha_privacy_monitor_runs",
+        "alpha_privacy_evidence_items",
+        "alpha_privacy_adapter_profiles",
+        "alpha_privacy_authorizations",
+    ):
+        assert f"DROP TABLE IF EXISTS public.{table}" in REMOVAL_CONTROL_ROLLBACK_SQL
+
+
 def test_migration_policies_have_with_check():
     assert MIGRATION_SQL.count("WITH CHECK") >= 6
     assert CASE_DRAFTS_SQL.count("WITH CHECK") >= 1
+    assert REMOVAL_CONTROL_SQL.count("WITH CHECK") >= 6
 
 
 def test_migration_has_no_public_decrypt_helper():
@@ -145,6 +225,10 @@ def test_migration_has_no_public_decrypt_helper():
         "CREATE OR REPLACE FUNCTION public.privacy_decrypt_payload" not in MIGRATION_SQL
     )
     assert "get_privacy_payload" not in MIGRATION_SQL.split("DO $$", 1)[0]
+    assert (
+        "CREATE OR REPLACE FUNCTION public.privacy_decrypt_payload"
+        not in REMOVAL_CONTROL_SQL
+    )
 
 
 def test_migration_avoids_plaintext_sensitive_columns():
@@ -159,6 +243,7 @@ def test_migration_avoids_plaintext_sensitive_columns():
         assert token not in MIGRATION_SQL
         assert token not in CASE_DRAFTS_SQL
         assert token not in MANUAL_WORKFLOW_SQL
+        assert token not in REMOVAL_CONTROL_SQL
 
 
 def test_migration_adds_approval_and_append_only_controls():
@@ -171,6 +256,7 @@ def test_migration_adds_approval_and_append_only_controls():
 
 def test_migration_does_not_cascade_delete_privacy_records():
     assert "ON DELETE CASCADE" not in MIGRATION_SQL
+    assert "ON DELETE CASCADE" not in REMOVAL_CONTROL_SQL
 
 
 @pytest.fixture
@@ -183,6 +269,12 @@ async def db():
         await conn.execute(
             """
             DROP TABLE IF EXISTS
+                alpha_privacy_public_record_triage,
+                alpha_privacy_search_deindex_items,
+                alpha_privacy_monitor_runs,
+                alpha_privacy_evidence_items,
+                alpha_privacy_adapter_profiles,
+                alpha_privacy_authorizations,
                 alpha_privacy_action_events,
                 alpha_privacy_actions,
                 alpha_privacy_discoveries,
@@ -206,6 +298,11 @@ async def db():
 
 async def _apply_migration(conn: asyncpg.Connection) -> None:
     await conn.execute(MIGRATION_SQL)
+
+
+async def _apply_removal_control_migration(conn: asyncpg.Connection) -> None:
+    await _apply_migration(conn)
+    await conn.execute(REMOVAL_CONTROL_SQL)
 
 
 @pytest.mark.asyncio
@@ -234,6 +331,30 @@ async def test_migration_creates_all_tables(db):
 
 
 @pytest.mark.asyncio
+async def test_removal_control_migration_creates_p4_tables(db):
+    await _apply_removal_control_migration(db)
+    rows = await db.fetch(
+        """
+        SELECT tablename
+        FROM pg_tables
+        WHERE schemaname = 'public'
+          AND tablename LIKE 'alpha_privacy_%'
+        ORDER BY tablename
+        """
+    )
+    names = {row["tablename"] for row in rows}
+
+    assert {
+        "alpha_privacy_authorizations",
+        "alpha_privacy_adapter_profiles",
+        "alpha_privacy_evidence_items",
+        "alpha_privacy_monitor_runs",
+        "alpha_privacy_search_deindex_items",
+        "alpha_privacy_public_record_triage",
+    }.issubset(names)
+
+
+@pytest.mark.asyncio
 async def test_rls_forced_on_pii_tables(db):
     await _apply_migration(db)
     rows = await db.fetch(
@@ -247,6 +368,30 @@ async def test_rls_forced_on_pii_tables(db):
             'alpha_privacy_discoveries',
             'alpha_privacy_actions',
             'alpha_privacy_action_events'
+        )
+        """
+    )
+
+    assert rows
+    for row in rows:
+        assert row["relrowsecurity"] is True
+        assert row["relforcerowsecurity"] is True
+
+
+@pytest.mark.asyncio
+async def test_rls_forced_on_removal_control_tables(db):
+    await _apply_removal_control_migration(db)
+    rows = await db.fetch(
+        """
+        SELECT relname, relrowsecurity, relforcerowsecurity
+        FROM pg_class
+        WHERE relname IN (
+            'alpha_privacy_authorizations',
+            'alpha_privacy_adapter_profiles',
+            'alpha_privacy_evidence_items',
+            'alpha_privacy_monitor_runs',
+            'alpha_privacy_search_deindex_items',
+            'alpha_privacy_public_record_triage'
         )
         """
     )

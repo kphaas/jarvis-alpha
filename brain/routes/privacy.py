@@ -6,6 +6,7 @@ send opt-out actions, call public internet targets, or start runners.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
@@ -33,6 +34,13 @@ from brain.agents.privacy_scrub.drafts import (
     list_approved_privacy_actions,
 )
 from brain.agents.privacy_scrub.identity import TupleType
+from brain.agents.privacy_scrub.removal_control import (
+    PrivacyRemovalControlRepository,
+    RemovalBenchmark,
+    RemovalControlSummary,
+    RemovalLane,
+    RemovalLens,
+)
 from brain.agents.privacy_scrub.repository import (
     IdentityTupleInput,
     PrivacySubjectRepository,
@@ -309,6 +317,58 @@ class PrivacyCaseReportOut(BaseModel):
     actions: list[ApprovedPrivacyActionOut]
     events: list[PrivacyCaseEventOut]
     evidence_manifest: PrivacyEvidenceManifestOut
+
+
+class PrivacyRemovalCountsOut(BaseModel):
+    targets_total: int
+    broker_targets: int
+    public_record_targets: int
+    authorizations_active: int
+    adapter_profiles: int
+    adapter_profiles_recurring: int
+    evidence_items: int
+    monitor_runs: int
+    monitor_runs_due: int
+    search_deindex_items: int
+    public_record_triage_items: int
+    approved_actions_open: int
+    approved_actions_terminal: int
+
+
+class PrivacyRemovalLaneOut(BaseModel):
+    code: str
+    label: str
+    status: str
+    north_star: str
+    current_state: str
+    next_step: str
+    evidence_key: str
+    metric: int
+
+
+class PrivacyRemovalLensOut(BaseModel):
+    code: str
+    label: str
+    status: str
+    summary: str
+    checkpoints: list[str]
+
+
+class PrivacyRemovalBenchmarkOut(BaseModel):
+    provider: str
+    capability: str
+    alpha_gap: str
+    control: str
+
+
+class PrivacyRemovalControlSummaryOut(BaseModel):
+    generated_at: datetime
+    mode: str
+    outbound_enabled: bool
+    counts: PrivacyRemovalCountsOut
+    lanes: list[PrivacyRemovalLaneOut]
+    lenses: list[PrivacyRemovalLensOut]
+    benchmarks: list[PrivacyRemovalBenchmarkOut]
 
 
 @router.post("/subjects", response_model=SubjectCreateOut)
@@ -900,6 +960,21 @@ def _privacy_case_report_out(
     )
 
 
+@router.get(
+    "/removal-control/summary",
+    response_model=PrivacyRemovalControlSummaryOut,
+)
+async def get_privacy_removal_control_summary(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> PrivacyRemovalControlSummaryOut:
+    _assert_adult_or_admin_actor(request)
+    async with rls_connection(request) as conn:
+        summary = await PrivacyRemovalControlRepository(conn).summary()
+
+    return _privacy_removal_control_summary_out(summary)
+
+
 def _privacy_evidence_manifest_out(
     result: PrivacyCaseReport,
 ) -> PrivacyEvidenceManifestOut:
@@ -948,6 +1023,57 @@ def _privacy_case_event_out(event: StoredPrivacyActionEvent) -> PrivacyCaseEvent
         actor=event.actor,
         event_payload_hash=event.event_payload_hash,
         created_at=event.created_at,
+    )
+
+
+def _privacy_removal_control_summary_out(
+    summary: RemovalControlSummary,
+) -> PrivacyRemovalControlSummaryOut:
+    return PrivacyRemovalControlSummaryOut(
+        generated_at=summary.generated_at,
+        mode=summary.mode,
+        outbound_enabled=summary.outbound_enabled,
+        counts=PrivacyRemovalCountsOut(**asdict(summary.counts)),
+        lanes=[_privacy_removal_lane_out(lane) for lane in summary.lanes],
+        lenses=[_privacy_removal_lens_out(lens) for lens in summary.lenses],
+        benchmarks=[
+            _privacy_removal_benchmark_out(benchmark)
+            for benchmark in summary.benchmarks
+        ],
+    )
+
+
+def _privacy_removal_lane_out(lane: RemovalLane) -> PrivacyRemovalLaneOut:
+    return PrivacyRemovalLaneOut(
+        code=lane.code,
+        label=lane.label,
+        status=lane.status,
+        north_star=lane.north_star,
+        current_state=lane.current_state,
+        next_step=lane.next_step,
+        evidence_key=lane.evidence_key,
+        metric=lane.metric,
+    )
+
+
+def _privacy_removal_lens_out(lens: RemovalLens) -> PrivacyRemovalLensOut:
+    return PrivacyRemovalLensOut(
+        code=lens.code,
+        label=lens.label,
+        status=lens.status,
+        summary=lens.summary,
+        checkpoints=list(lens.checkpoints),
+    )
+
+
+def _privacy_removal_benchmark_out(
+    benchmark: RemovalBenchmark,
+) -> PrivacyRemovalBenchmarkOut:
+    return PrivacyRemovalBenchmarkOut(
+        provider=benchmark.provider,
+        capability=benchmark.capability,
+        alpha_gap=benchmark.alpha_gap,
+        control=benchmark.control,
     )
 
 
