@@ -18,6 +18,23 @@ class InternetScoutGatewayError(RuntimeError):
 class InternetScoutGatewayClient:
     """Call Gateway-owned public internet endpoints from Brain."""
 
+    async def health(self) -> dict[str, object]:
+        try:
+            payload = await call_gateway_proxy(
+                "internet/health",
+                {},
+                timeout_s=10,
+            )
+        except GatewayEgressError as exc:
+            raise InternetScoutGatewayError(
+                f"Beacon gateway health failed: {exc}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise InternetScoutGatewayError(
+                "Beacon gateway health returned invalid JSON"
+            )
+        return dict(payload)
+
     async def search(self, *, query: str, count: int = 5) -> GatewaySearchResponse:
         try:
             payload = await call_gateway_proxy(

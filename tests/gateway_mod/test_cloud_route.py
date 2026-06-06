@@ -6,6 +6,17 @@ from fastapi import HTTPException
 from gateway.routes import cloud_routes
 
 
+@pytest.fixture(autouse=True)
+def reset_search_provider_circuits():
+    for circuit in cloud_routes._SEARCH_CIRCUITS.values():
+        circuit.failures = []
+        circuit.open_until = 0.0
+    yield
+    for circuit in cloud_routes._SEARCH_CIRCUITS.values():
+        circuit.failures = []
+        circuit.open_until = 0.0
+
+
 def test_cloud_route_rejects_missing_bearer(monkeypatch):
     monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
 
@@ -230,6 +241,94 @@ async def test_internet_search_falls_back_to_perplexity_when_brave_missing(
     assert result["results"][0]["url"] == "https://public.example.test/report"
     assert "tool_call_instruction" in result["results"][0]["risk_markers"]
     assert "secret_exfiltration" in result["results"][0]["risk_markers"]
+
+
+@pytest.mark.asyncio
+async def test_internet_search_falls_back_when_brave_provider_fails(monkeypatch):
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "BRAVE_SEARCH_API_KEY":
+            return "brave-token"
+        if name == "PERPLEXITY_API_KEY":
+            return "pplx-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+    seen: dict[str, object] = {"calls": []}
+
+    class BraveFailureResponse:
+        status_code = 503
+
+        def json(self):
+            return {}
+
+    class PerplexityResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "results": [
+                    {
+                        "title": "Fallback",
+                        "url": "https://public.example.test/fallback",
+                        "snippet": "Fallback source.",
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            seen["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, *, params, headers):
+            seen["calls"].append(("get", url))
+            return BraveFailureResponse()
+
+        async def post(self, url, *, json, headers):
+            seen["calls"].append(("post", url))
+            return PerplexityResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.internet_search(
+        cloud_routes.InternetSearchRequest(query="beacon", count=5),
+        authorization="Bearer gateway-token",
+    )
+
+    assert result["provider"] == "perplexity"
+    assert seen["calls"] == [
+        ("get", "https://api.search.brave.com/res/v1/web/search"),
+        ("post", "https://api.perplexity.ai/search"),
+    ]
+    assert len(cloud_routes._SEARCH_CIRCUITS["brave"].failures) == 1
+
+
+@pytest.mark.asyncio
+async def test_internet_health_reports_provider_configuration(monkeypatch):
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "BRAVE_SEARCH_API_KEY":
+            return "brave-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+
+    result = await cloud_routes.internet_health(authorization="Bearer gateway-token")
+
+    assert result["status"] == "ok"
+    assert result["configured_provider_count"] == 1
+    assert result["usable_provider_count"] == 1
+    assert result["providers"][0]["provider"] == "brave"
+    assert result["providers"][0]["configured"] is True
+    assert result["providers"][0]["circuit_open"] is False
 
 
 @pytest.mark.asyncio

@@ -43,7 +43,11 @@ scheduled agent runtime remains deferred. The MVP production closeout adds
 Gateway-owned search provider selection: Brain requests `auto`, Gateway prefers
 Brave when configured, and otherwise uses the first-party Perplexity Search API
 when `PERPLEXITY_API_KEY` is present. Explicit provider requests still fail
-closed if that provider's key is missing.
+closed if that provider's key is missing. P13-P17 add production readiness
+surfaces: Brain health and report-only retention endpoints, Gateway provider
+health and circuit-breaker fallback, a production agent response envelope, and a
+smoke/runbook path. Retention remains inventory-only; deletion requires a
+separate reviewed change.
 
 ## Architecture
 
@@ -113,6 +117,11 @@ found inside fetched content.
 | Sensitive consumers | Family and Financial force minor/financial sensitivity and block browser/crawl in P9. |
 | Runtime operations | P11 adds code-level adapter wiring, but production deployment still needs package installation, browser binary provisioning, screenshot retention, and alerting. |
 | Search provider availability | Gateway owns provider selection. `auto` prefers Brave and falls back to Perplexity Search; no provider key still fails closed. |
+| Production visibility | P13 health reports database contract, Gateway provider state, browser runtime state, recent evidence status, and retention inventory without exposing secrets. |
+| Provider brownouts | P14 tracks per-provider failures in Gateway memory, opens a short cooldown circuit, and fails closed when no configured usable provider remains. |
+| Evidence lifecycle | P15 reports old evidence rows and screenshot files only; deletion is intentionally out of scope for MVP. |
+| Local LLM misuse | P16 returns citations, confidence, explicit untrusted-content warnings, and not-verified notes instead of raw authority. |
+| Operator readiness | P17 adds a smoke script and rollback runbook before deploy approval. |
 
 ## Consequences
 

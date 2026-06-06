@@ -256,6 +256,52 @@ class InternetScoutLocalLLMResponse(BaseModel):
     )
 
 
+class InternetScoutHealthCheck(BaseModel):
+    ok: bool
+    status: Literal["ok", "degraded", "unavailable"]
+    detail: str
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class InternetScoutRetentionReport(BaseModel):
+    mode: Literal["report_only"] = "report_only"
+    evidence_retention_days: int
+    screenshot_retention_days: int
+    old_request_count: int = 0
+    old_source_count: int = 0
+    old_evidence_count: int = 0
+    old_event_count: int = 0
+    old_memory_promotion_count: int = 0
+    screenshot_file_count: int = 0
+    screenshot_bytes: int = 0
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class InternetScoutHealthResponse(BaseModel):
+    status: Literal["ok", "degraded"]
+    checks: dict[str, InternetScoutHealthCheck]
+    retention: InternetScoutRetentionReport
+    checked_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class InternetScoutAgentResponse(BaseModel):
+    status: Literal["completed", "approval_required", "blocked"]
+    selected_tool: InternetTool
+    request_id: UUID | None = None
+    approval_required: bool = False
+    approval_tier: ApprovalTier | None = None
+    confidence: Literal["low", "medium", "high"] = "low"
+    citations: list[InternetScoutLocalLLMCitation] = Field(
+        default_factory=list,
+        max_length=25,
+    )
+    answer_context: str = Field(default="", max_length=12000)
+    untrusted_warnings: list[str] = Field(default_factory=list, max_length=20)
+    not_verified: list[str] = Field(default_factory=list, max_length=20)
+    evidence: InternetEvidencePacket | None = None
+    raw_web_content_is_untrusted: bool = True
+
+
 class BrowserSandboxPolicy(BaseModel):
     allowed_hosts: list[str] = Field(min_length=1, max_length=10)
     max_steps: int = Field(default=5, ge=1, le=10)
