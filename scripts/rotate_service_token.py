@@ -241,11 +241,24 @@ def record_rotation_ledger(
     if node in {"brain", "brain_service"}:
         result = run_brain_psql(sql, secrets_file)
     else:
+        remote_psql = (
+            "set -euo pipefail\n"
+            "PGPASSWORD=$(awk -F= '"
+            "/^(export )?POSTGRES_PASSWORD=/{v=$2; "
+            'gsub(/^"|"$/, "", v); print v; exit}\' '
+            "~/jarvis/.secrets)\n"
+            'if [ -z "${PGPASSWORD:-}" ]; then\n'
+            '  echo "POSTGRES_PASSWORD missing from ~/jarvis/.secrets" >&2\n'
+            "  exit 2\n"
+            "fi\n"
+            "export PGPASSWORD\n"
+            f"{PSQL_BIN} -d {PSQL_DB} -U {PSQL_USER} -t -f -"
+        )
         result = runner(
             [
                 "ssh",
                 BRAIN_SSH_FOR_DB,
-                f"{PSQL_BIN} -d {PSQL_DB} -U {PSQL_USER} -t -f -",
+                remote_psql,
             ],
             capture_output=True,
             input=sql,

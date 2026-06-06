@@ -150,11 +150,16 @@ def test_record_rotation_ledger_uses_brain_ssh_for_remote_node(monkeypatch):
     )
 
     assert result == "remote-row next_due_at=2026-06-12"
-    assert seen["args"] == [
-        "ssh",
-        rotator.BRAIN_SSH_FOR_DB,
-        f"{rotator.PSQL_BIN} -d {rotator.PSQL_DB} -U {rotator.PSQL_USER} -t -f -",
-    ]
+    assert seen["args"][:2] == ["ssh", rotator.BRAIN_SSH_FOR_DB]
+    remote_cmd = seen["args"][2]
+    assert "POSTGRES_PASSWORD" in remote_cmd
+    assert "PGPASSWORD" in remote_cmd
+    assert "~/jarvis/.secrets" in remote_cmd
+    assert (
+        f"{rotator.PSQL_BIN} -d {rotator.PSQL_DB} -U {rotator.PSQL_USER} -t -f -"
+        in remote_cmd
+    )
+    assert "secret-from-file" not in remote_cmd
     assert seen["kwargs"]["input"].count("ALPHA_SERVICE_TOKEN_ENDPOINT") == 1
     assert "'endpoint'" in seen["kwargs"]["input"]
     assert "hash456" in seen["kwargs"]["input"]

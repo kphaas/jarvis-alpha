@@ -79,6 +79,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/security/porchlight": ["read", "security_read"],
     "GET /v1/security/keyturner-status": ["read", "security_read"],
     "GET /v1/security/warden-status": ["read", "security_read"],
+    "GET /v1/security/agent-events": ["read", "security_read"],
     "POST /v1/security/sentinel-report": ["write", "security_write"],
     "GET /v1/security/rotatable-keys": ["read", "security_read"],
     # Keyturner owns its own T4 approval bridge inside the route. The outer
