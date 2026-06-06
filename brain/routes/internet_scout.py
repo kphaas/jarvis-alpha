@@ -23,33 +23,64 @@ from brain.services.internet_scout.browser_runner import (
     build_browser_task_runner_from_env,
     normalize_browser_request,
 )
+from brain.services.internet_scout.agent import (
+    build_agent_completed_response,
+    build_agent_policy_response,
+)
 from brain.services.internet_scout.consumers import (
     BeaconConsumerPolicyError,
     build_consumer_internet_request,
 )
 from brain.services.internet_scout.executor import InternetScoutExecutor
 from brain.services.internet_scout.local_llm import build_local_llm_response
+from brain.services.internet_scout.health import build_beacon_health
 from brain.services.internet_scout.memory_promotions import MemoryPromotionPolicyError
 from brain.services.internet_scout.models import (
+    InternetScoutAgentResponse,
     InternetScoutBrowserApprovalResponse,
     InternetScoutBrowserRunRequest,
     InternetScoutBrowserRunResponse,
     InternetScoutConsumerRequest,
+    InternetScoutHealthResponse,
     InternetScoutLocalLLMResponse,
     InternetScoutMemoryPromotionCreateRequest,
     InternetScoutMemoryPromotionCreateResponse,
     InternetScoutMemoryPromotionReviewRequest,
     InternetScoutMemoryPromotionReviewResponse,
     InternetScoutRequest,
+    InternetScoutRetentionReport,
     InternetScoutStoredResponse,
     InternetTool,
 )
 from brain.services.internet_scout.orchestrator import InternetScoutOrchestrator
 from brain.services.internet_scout.repository import InternetScoutRepository
+from brain.services.internet_scout.retention import build_retention_report
 from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
 router = APIRouter(prefix="/v1/internet-scout", tags=["internet-scout"])
+
+
+@router.get("/health", response_model=InternetScoutHealthResponse)
+async def internet_scout_health(
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> InternetScoutHealthResponse:
+    """Return Beacon production readiness without exposing provider secrets."""
+    check_scopes(request, "internet_scout.read", "admin")
+    async with rls_connection(request) as conn:
+        return await build_beacon_health(conn)
+
+
+@router.get("/retention/report", response_model=InternetScoutRetentionReport)
+async def internet_scout_retention_report(
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> InternetScoutRetentionReport:
+    """Report retention candidates only; never delete evidence."""
+    check_scopes(request, "internet_scout.read", "admin")
+    async with rls_connection(request) as conn:
+        return await build_retention_report(conn)
 
 
 @router.post("/research", response_model=InternetScoutStoredResponse)
@@ -73,6 +104,35 @@ async def internet_scout_local_llm_tool(
     check_scopes(request, "internet_scout.research", "admin")
     stored = await _execute_and_store_research(body, request)
     return build_local_llm_response(stored)
+
+
+@router.post("/agent/run", response_model=InternetScoutAgentResponse)
+async def internet_scout_agent_run(
+    body: InternetScoutRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> InternetScoutAgentResponse:
+    """Run Beacon through the production agent envelope."""
+    check_scopes(request, "internet_scout.research", "admin")
+    plan = InternetScoutOrchestrator().plan(body)
+    if not plan.decision.allowed:
+        request_id = await _record_policy_only_request(body, request)
+        return build_agent_policy_response(plan=plan, request_id=request_id)
+
+    stored = await _execute_and_store_research(body, request)
+    response = build_agent_completed_response(stored)
+    logger.info(
+        "BEACON_AGENT_RUN",
+        extra={
+            "event": "BEACON_AGENT_RUN",
+            "request_id": str(stored.request_id),
+            "tool": response.selected_tool.value,
+            "status": response.status,
+            "citation_count": len(response.citations),
+            "confidence": response.confidence,
+        },
+    )
+    return response
 
 
 @router.post(
@@ -182,6 +242,42 @@ async def _execute_and_store_research(
         plan=plan,
         evidence=packet,
     )
+
+
+async def _record_policy_only_request(
+    body: InternetScoutRequest,
+    request: Request,
+) -> UUID:
+    actor = str(getattr(request.state, "user_id", "unknown"))
+    plan = InternetScoutOrchestrator().plan(body)
+    async with rls_connection(request) as conn:
+        repo = InternetScoutRepository(conn)
+        request_id = await repo.create_request(
+            user_id=actor,
+            request=body,
+            decision=plan.decision,
+        )
+        await repo.record_tool_event(
+            request_id=request_id,
+            tool=plan.decision.tool.value,
+            event_type="policy",
+            status="blocked",
+            metadata={
+                "requires_approval": plan.decision.requires_approval,
+                "blocked_reasons": plan.decision.blocked_reasons,
+            },
+        )
+    logger.info(
+        "BEACON_AGENT_POLICY_ONLY",
+        extra={
+            "event": "BEACON_AGENT_POLICY_ONLY",
+            "request_id": str(request_id),
+            "tool": plan.decision.tool.value,
+            "requires_approval": plan.decision.requires_approval,
+            "tier": plan.decision.tier,
+        },
+    )
+    return request_id
 
 
 @router.post(
