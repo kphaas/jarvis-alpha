@@ -10,6 +10,8 @@ from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
 
+ALPHA_SESSION_COOKIE = "alpha_session"
+
 # Issuer → public key mapping
 # "user" is the default for PIN-authenticated user tokens
 _KEY_REGISTRY: dict[str, Path] = {}
@@ -83,6 +85,16 @@ def require_auth(request: Request) -> str:
     return user_id
 
 
+def _request_token(request: Request) -> str | None:
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header.removeprefix("Bearer ").strip()
+        return token or None
+
+    cookie_token = request.cookies.get(ALPHA_SESSION_COOKIE, "").strip()
+    return cookie_token or None
+
+
 class JWTAuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         super().__init__(app)
@@ -96,11 +108,10 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
         ):
             return await call_next(request)
 
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
+        token = _request_token(request)
+        if not token:
             return JSONResponse(status_code=401, content={"error": "Missing token"})
 
-        token = auth_header.removeprefix("Bearer ").strip()
         try:
             unverified = jwt.decode(token, options={"verify_signature": False})
             iss = unverified.get("iss")

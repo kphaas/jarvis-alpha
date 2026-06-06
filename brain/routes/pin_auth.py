@@ -6,11 +6,12 @@ from pathlib import Path
 from typing import Literal
 
 import bcrypt
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from jose import jwt
 from pydantic import BaseModel
 
 from brain.db.rls import platform_admin_connection
+from brain.middleware.jwt_auth import ALPHA_SESSION_COOKIE
 from brain.middleware.scopes import check_scopes
 from brain.services.family_pin_sync import FamilyPinSyncError, sync_family_pin_hash
 from jarvis_common.logging_config import get_logger
@@ -21,6 +22,7 @@ logger = get_logger("alpha_brain")
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
 _DEFAULT_KEY = "~/jarvis/pki/jwt/jwt_private.pem"
+_SESSION_COOKIE_SAMESITE: Literal["strict"] = "strict"
 
 
 class PinRequest(BaseModel):
@@ -91,6 +93,20 @@ def _profile_scopes(role: str) -> list[str]:
     return ["ask", "chat.read", "health.read", "vault.read"]
 
 
+def _set_alpha_session_cookie(
+    response: Response, token: str, max_age_seconds: int
+) -> None:
+    response.set_cookie(
+        key=ALPHA_SESSION_COOKIE,
+        value=token,
+        max_age=max_age_seconds,
+        path="/",
+        secure=True,
+        httponly=True,
+        samesite=_SESSION_COOKIE_SAMESITE,
+    )
+
+
 async def _sync_family_pin_or_409(profile_id: str, pin_hash: str) -> None:
     try:
         await sync_family_pin_hash(profile_id, pin_hash)
@@ -120,7 +136,7 @@ _PROFILE_SELECT_SQL = """
 
 
 @router.post("/pin")
-async def authenticate_pin(req: PinRequest):
+async def authenticate_pin(req: PinRequest, response: Response):
     async with platform_admin_connection(source="http", audit_actor="auth_pin") as conn:
         profile = await conn.fetchrow(
             "SELECT * FROM alpha_profiles WHERE id = $1 AND active = true",
@@ -193,6 +209,11 @@ async def authenticate_pin(req: PinRequest):
         claims["child_age"] = profile["child_age"]
 
     token = jwt.encode(claims, private_key, algorithm="RS256")
+    _set_alpha_session_cookie(
+        response,
+        token,
+        max_age_seconds=max(claims["exp"] - now, 1),
+    )
     expires_at = (
         datetime.fromtimestamp(claims["exp"], tz=timezone.utc)
         .isoformat()
