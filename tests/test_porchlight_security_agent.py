@@ -74,6 +74,36 @@ def test_remote_jwt_verify_uses_restricted_porchlight_command(monkeypatch):
     }
 
 
+def test_run_ssh_falls_back_to_explicit_probe_script_on_unrestricted_shell(monkeypatch):
+    calls = []
+
+    def fake_command(args, *, timeout=30, **_kwargs):
+        calls.append(args)
+        if len(calls) == 1:
+            return porchlight.CommandResult(
+                127, "", "zsh:1: command not found: porchlight"
+            )
+        return porchlight.CommandResult(0, '{"status":"passed","detail":"ok"}', "")
+
+    monkeypatch.setattr(porchlight, "run_command", fake_command)
+    monkeypatch.setattr(porchlight, "ssh_args_for_probe", lambda: ["ssh"])
+
+    result = porchlight.run_ssh(
+        "node@example", "porchlight jwt-exp ALPHA_SERVICE_TOKEN 24"
+    )
+
+    assert result.returncode == 0
+    assert calls == [
+        ["ssh", "node@example", "porchlight jwt-exp ALPHA_SERVICE_TOKEN 24"],
+        [
+            "ssh",
+            "node@example",
+            "SSH_ORIGINAL_COMMAND='porchlight jwt-exp ALPHA_SERVICE_TOKEN 24' "
+            "$HOME/jarvis-alpha/scripts/porchlight_ssh_probe.sh",
+        ],
+    ]
+
+
 def test_remote_jwt_verify_uses_configured_threshold(monkeypatch):
     monkeypatch.setenv("PORCHLIGHT_REMOTE_SSH_ENABLED", "true")
     seen = {}
