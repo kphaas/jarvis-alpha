@@ -100,6 +100,8 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["tripwire"].display_name == "Tripwire"
     assert agents["ledger"].enabled is True
     assert agents["ledger"].display_name == "Ledger"
+    assert agents["sentry"].enabled is True
+    assert agents["sentry"].display_name == "Sentry"
     assert agents["approval_canary"].enabled is False
     assert agents["approval_canary"].risk_tier == "T4"
     assert "approval.canary_t4" in agents["approval_canary"].allowed_skills
@@ -121,6 +123,7 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
         "sweep",
         "tripwire",
         "ledger",
+        "sentry",
     ]
     assert (
         agents["warden"].metadata["active_network_hardening"]
@@ -149,6 +152,11 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["ledger"].metadata["mattermost_channel_key"] == "security_alerts"
     assert "evidence.package_report" in agents["ledger"].allowed_skills
     assert "security_event_packaging" in agents["ledger"].metadata["capabilities"]
+    assert agents["sentry"].metadata["warden_role"] == "data_boundary_monitor"
+    assert agents["sentry"].metadata["mattermost_channel_key"] == "security_alerts"
+    assert "financial" in agents["sentry"].metadata["protected_domains"]
+    assert "pii_log_boundary" in agents["sentry"].metadata["monitors"]
+    assert "sentry.boundary_inventory" in agents["sentry"].allowed_skills
     assert "evidence.package_report" in skills
     assert skills["evidence.package_report"].status == "planned"
     assert skills["evidence.package_report"].metadata["owner_agent"] == "ledger"
@@ -167,6 +175,9 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
         "warden.weekly_brief": "warden",
         "warden.auto_ticket": "warden",
         "warden.owner_routing": "warden",
+        "sentry.boundary_inventory": "sentry",
+        "sentry.cross_system_flow_review": "sentry",
+        "sentry.pii_log_boundary_scan": "sentry",
     }
     for skill_name, owner_agent in saved_skills.items():
         assert skills[skill_name].status == "planned"
