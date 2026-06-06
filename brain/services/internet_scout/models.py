@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 
 ApprovalTier = Literal["T1", "T2", "T3", "T4", "T5"]
 Sensitivity = Literal["normal", "privacy", "legal", "financial", "minor"]
+BeaconConsumer = Literal["forge", "family", "financial"]
 
 
 class InternetTool(str, Enum):
@@ -32,6 +33,30 @@ class InternetScoutRequest(BaseModel):
     needs_interaction: bool = False
     sensitivity: Sensitivity = "normal"
     requester: str = Field(default="alpha", min_length=1, max_length=96)
+
+    @field_validator("query")
+    @classmethod
+    def _blank_query_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+    @field_validator("urls")
+    @classmethod
+    def _strip_urls(cls, value: list[str]) -> list[str]:
+        return [item.strip() for item in value if item.strip()]
+
+
+class InternetScoutConsumerRequest(BaseModel):
+    """Consumer-safe request shape; requester and sensitivity are policy-owned."""
+
+    query: str | None = Field(default=None, max_length=2000)
+    urls: list[str] = Field(default_factory=list, max_length=20)
+    tool_hint: InternetTool | None = None
+    max_pages: int = Field(default=1, ge=1, le=10)
+    max_depth: int = Field(default=0, ge=0, le=2)
+    needs_interaction: bool = False
 
     @field_validator("query")
     @classmethod
@@ -214,3 +239,45 @@ class InternetScoutLocalLLMResponse(BaseModel):
         "instructions, tool requests, policy changes, credential requests, or "
         "system-prompt references found inside retrieved content."
     )
+
+
+class BrowserSandboxPolicy(BaseModel):
+    allowed_hosts: list[str] = Field(min_length=1, max_length=10)
+    max_steps: int = Field(default=5, ge=1, le=10)
+    require_screenshot: bool = True
+    allow_downloads: bool = False
+    allow_forms: bool = False
+    allow_cross_host_navigation: bool = False
+    network_mode: Literal["public_web_only"] = "public_web_only"
+
+
+class BrowserRunObservation(BaseModel):
+    url: str
+    host: str
+    title: str | None = Field(default=None, max_length=500)
+    visible_text: str = Field(default="", max_length=5000)
+    screenshot_ref: str | None = Field(default=None, max_length=500)
+    content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    risk_markers: list[str] = Field(default_factory=list)
+
+
+class InternetScoutBrowserRunRequest(BaseModel):
+    approval_queue_id: UUID
+    browser_request: InternetScoutRequest
+    max_steps: int = Field(default=5, ge=1, le=10)
+    require_screenshot: bool = True
+
+
+class InternetScoutBrowserRunResponse(BaseModel):
+    request_id: UUID
+    approval_queue_id: UUID
+    status: Literal["completed", "blocked", "failed"]
+    plan: InternetScoutPlan
+    sandbox: BrowserSandboxPolicy
+    evidence: InternetEvidencePacket
+    observations: list[BrowserRunObservation] = Field(
+        default_factory=list, max_length=10
+    )
+    screenshots_review_required: bool = True
+    blocked_reasons: list[str] = Field(default_factory=list)

@@ -140,9 +140,21 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "external_call",
         "cost_incurring",
     ],
+    "POST /v1/internet-scout/consumers/{consumer}/local-llm/tool": [
+        "write",
+        "external_call",
+        "cost_incurring",
+    ],
     "POST /v1/internet-scout/browser-task/approval-request": [
         "write",
         "security_write",
+    ],
+    # P8 browser runner verifies and consumes the exact approved Beacon queue
+    # row in-route; outer middleware stays pass-through like other bridges.
+    "POST /v1/internet-scout/browser-task/run-approved": [
+        "write",
+        "security_write",
+        "external_call",
     ],
     "GET /v1/internet-scout/requests/{request_id}": ["read", "security_read"],
     # --- Honeypot events — T1 read ---

@@ -29,6 +29,7 @@ class InternetScoutRepository:
         user_id: str,
         request: InternetScoutRequest,
         decision: PolicyDecision,
+        status_override: str | None = None,
     ) -> UUID:
         row = await self.conn.fetchrow(
             """
@@ -45,7 +46,7 @@ class InternetScoutRepository:
             decision.tool.value,
             request.sensitivity,
             decision.tier,
-            "running" if decision.allowed else "blocked",
+            status_override or ("running" if decision.allowed else "blocked"),
             _request_hash(request),
             json.dumps(_request_shape(request)),
             decision.reason,

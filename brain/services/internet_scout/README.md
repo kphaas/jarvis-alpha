@@ -6,7 +6,7 @@ tools, memory, approvals, or secrets.
 
 ## Status
 
-P6/P7:
+P8/P9:
 
 - ADR and service contracts exist.
 - Policy, URL/content safety, sanitizer, evidence, and planning helpers exist.
@@ -15,8 +15,13 @@ P6/P7:
 - `/v1/internet-scout/research` stores structured evidence under RLS.
 - `/v1/internet-scout/local-llm/tool` returns a citation envelope for local
   model answer synthesis.
+- `/v1/internet-scout/consumers/{consumer}/local-llm/tool` applies Forge,
+  Family, and Financial consumer policy before returning a local-LLM envelope.
 - `/v1/internet-scout/requests/{request_id}` returns RLS-visible stored evidence.
-- Browser-use approval requests can be queued, but no browser runner is wired.
+- Browser-use approval requests can be queued and an approved-runner route can
+  verify and consume the exact approval row.
+- The browser runner is adapter-based and fails closed unless a reviewed
+  browser runtime is injected.
 - No memory ingest, scheduler, or outbound action is wired.
 
 ## Placement
@@ -34,6 +39,6 @@ services can depend on the contracts without depending on brand language.
 
 ## Deferred Work
 
-- P8: browser-use runner with sandbox controls, screenshots, and review gates.
-- P9: consumer integrations for Forge, Family, and Financial.
 - P10: reviewed evidence promotion into memory/RAG, if approved.
+- P11: production browser runtime adapter with dependency pinning, host
+  sandboxing, screenshot storage, and operational run limits.
