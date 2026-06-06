@@ -85,6 +85,45 @@ function actionStateText(action: ApprovedPrivacyAction) {
   return "Ready";
 }
 
+function workflowStatus(action: ApprovedPrivacyAction) {
+  if (action.status === "confirmed") {
+    return {
+      className: "ok" as const,
+      text: "Verification recorded. Case report is ready.",
+    };
+  }
+  if (action.status === "failed") {
+    return {
+      className: "error" as const,
+      text: action.error_code
+        ? `Action stopped: ${action.error_code}`
+        : "Action stopped. Review the case report.",
+    };
+  }
+  if (action.manual_disposition === "blocked") {
+    return {
+      className: "error" as const,
+      text: "Manual handling is blocked. Review evidence before retrying.",
+    };
+  }
+  if (action.manual_disposition === "deferred") {
+    return {
+      className: "warn" as const,
+      text: "Manual handling is deferred until the due date.",
+    };
+  }
+  if (action.status === "sent") {
+    return {
+      className: "warn" as const,
+      text: "Manual handling recorded. Verification can be added when evidence is ready.",
+    };
+  }
+  return {
+    className: "ok" as const,
+    text: "Ready for manual operator handling",
+  };
+}
+
 export function PrivacyApprovedActionsPanel({
   actionsState,
   border,
@@ -197,7 +236,16 @@ export function PrivacyApprovedActionsPanel({
               text="No approved actions ready"
             />
           )}
-        {actionsState.actions.map((action) => (
+        {actionsState.actions.map((action) => {
+          const status = workflowStatus(action);
+          const statusClass =
+            status.className === "error"
+              ? errorClass
+              : status.className === "warn"
+                ? warnClass
+                : okClass;
+
+          return (
           <article key={action.action_id} className={`rounded-lg border p-3 ${border}`}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
@@ -255,8 +303,8 @@ export function PrivacyApprovedActionsPanel({
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
               <StatusLine
                 icon="ok"
-                className={okClass}
-                text="Ready for manual operator handling"
+                className={statusClass}
+                text={status.text}
               />
               <button
                 type="button"
@@ -289,11 +337,12 @@ export function PrivacyApprovedActionsPanel({
               />
             )}
           </article>
-        ))}
+          );
+        })}
         {!actionsState.isLoading && !actionsState.error && actionsState.count > 0 && (
           <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest">
             <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-            <span className={muted}>{actionsState.count} approved</span>
+            <span className={muted}>{actionsState.count} tracked actions</span>
           </div>
         )}
       </div>
@@ -324,7 +373,8 @@ function WorkflowForms({
 }) {
   const input = `min-h-11 rounded-lg border px-3 text-sm outline-none ${fieldClass(isDark)}`;
   const area = `min-h-20 rounded-lg border px-3 py-2 text-sm outline-none ${fieldClass(isDark)}`;
-  const disabled = isSaving || action.status === "confirmed";
+  const dispositionDisabled = isSaving || action.status !== "approved";
+  const verificationDisabled = isSaving || action.status !== "sent";
 
   return (
     <div className={`mt-4 grid gap-4 border-t pt-4 ${border}`}>
@@ -342,7 +392,7 @@ function WorkflowForms({
               onDraft({ disposition: event.target.value as ManualDisposition })
             }
             className={input}
-            disabled={disabled}
+            disabled={dispositionDisabled}
           >
             <option value="handled">Handled</option>
             <option value="deferred">Deferred</option>
@@ -353,7 +403,7 @@ function WorkflowForms({
             value={draft.dueAt}
             onChange={(event) => onDraft({ dueAt: event.target.value })}
             className={input}
-            disabled={disabled}
+            disabled={dispositionDisabled}
             required={draft.disposition === "deferred"}
           />
         </div>
@@ -362,7 +412,7 @@ function WorkflowForms({
           onChange={(event) => onDraft({ note: event.target.value })}
           className={area}
           placeholder="Operator note"
-          disabled={disabled}
+          disabled={dispositionDisabled}
           maxLength={1000}
         />
         <input
@@ -370,12 +420,12 @@ function WorkflowForms({
           onChange={(event) => onDraft({ evidence: event.target.value })}
           className={input}
           placeholder="Evidence reference"
-          disabled={disabled}
+          disabled={dispositionDisabled}
           maxLength={1000}
         />
         <button
           type="submit"
-          disabled={disabled}
+          disabled={dispositionDisabled}
           className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm transition ${border} disabled:opacity-50`}
         >
           <ShieldCheck className="h-4 w-4" />
@@ -397,7 +447,7 @@ function WorkflowForms({
               onDraft({ outcome: event.target.value as VerificationOutcome })
             }
             className={input}
-            disabled={disabled}
+            disabled={verificationDisabled}
           >
             <option value="confirmed">Confirmed</option>
             <option value="needs_followup">Follow-up</option>
@@ -410,7 +460,7 @@ function WorkflowForms({
               onDraft({ verificationDueAt: event.target.value })
             }
             className={input}
-            disabled={disabled}
+            disabled={verificationDisabled}
             required={draft.outcome === "needs_followup"}
           />
         </div>
@@ -421,7 +471,7 @@ function WorkflowForms({
           }
           className={area}
           placeholder="Verification note"
-          disabled={disabled}
+          disabled={verificationDisabled}
           maxLength={1000}
         />
         <input
@@ -431,12 +481,12 @@ function WorkflowForms({
           }
           className={input}
           placeholder="Verification evidence"
-          disabled={disabled}
+          disabled={verificationDisabled}
           maxLength={1000}
         />
         <button
           type="submit"
-          disabled={disabled}
+          disabled={verificationDisabled}
           className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm transition ${border} disabled:opacity-50`}
         >
           <CheckCircle2 className="h-4 w-4" />
