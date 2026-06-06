@@ -1,4 +1,9 @@
-from brain.routes.security import _warden_hardening_state
+from brain.agents.warden import DEFAULT_MANAGED_AGENTS
+from brain.routes.security import SECURITY_MANAGED_AGENT_IDS, _warden_hardening_state
+
+
+def test_security_warden_status_managed_ids_match_warden_defaults():
+    assert SECURITY_MANAGED_AGENT_IDS == ("warden", *DEFAULT_MANAGED_AGENTS)
 
 
 def test_warden_hardening_state_uses_registry_metadata():

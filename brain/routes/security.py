@@ -64,6 +64,16 @@ _LEGACY_CHILD_POLICIES = (
     "child_message_isolation",
     "child_thread_isolation",
 )
+SECURITY_MANAGED_AGENT_IDS = (
+    "warden",
+    "porchlight",
+    "keyturner",
+    "sweep",
+    "tripwire",
+    "ledger",
+    "sentry",
+    "trade_guard",
+)
 
 
 class SentinelReportFinding(BaseModel):
@@ -958,15 +968,7 @@ async def warden_status(request: Request):
     from brain.services import unifi_client
 
     check_scopes(request, "security.read", "security_read")
-    managed_ids = [
-        "warden",
-        "porchlight",
-        "keyturner",
-        "sweep",
-        "tripwire",
-        "ledger",
-        "sentry",
-    ]
+    managed_ids = list(SECURITY_MANAGED_AGENT_IDS)
     pool = get_pool()
     async with platform_admin_connection(
         source="http", audit_actor="security_warden_status", pool=pool
