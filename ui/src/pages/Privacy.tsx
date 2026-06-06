@@ -69,7 +69,7 @@ export default function Privacy() {
             <p
               className={`mt-1 text-[10px] font-mono uppercase tracking-widest ${muted}`}
             >
-              P3-G - manual action workflow
+              MVP v0.1 - manual privacy workflow
             </p>
           </div>
         </div>
