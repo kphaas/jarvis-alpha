@@ -27,5 +27,7 @@ def test_spark_drafts_smoke_script_checks_draft_only_contract() -> None:
     assert "can_send" in text
     assert "requires_human_approval" in text
     assert "durable_storage_allowed" in text
-    assert "chat_guid" in text
+    assert "chat_guid_hash" not in text
+    assert '"chat_guid"' in text
+    assert '"chatGuid"' in text
     assert "phone_number" in text

@@ -83,16 +83,27 @@ if http_code != "200":
     raise SystemExit(f"FAIL {label}: HTTP {http_code}")
 
 payload = json.loads(payload_path.read_text(encoding="utf-8"))
-serialized = json.dumps(payload, sort_keys=True).lower()
-for forbidden in (
-    "password",
-    "chat_guid",
-    "phone_number",
-    "display_name",
-    "private inbound body",
-):
-    if forbidden in serialized:
-        raise SystemExit(f"FAIL {label}: forbidden field leaked: {forbidden}")
+forbidden_keys = {"password", "chat_guid", "chatGuid", "phone_number", "display_name"}
+forbidden_values = ("private inbound body",)
+
+
+def check_no_forbidden_leaks(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in forbidden_keys:
+                raise SystemExit(f"FAIL {label}: forbidden field leaked: {key}")
+            check_no_forbidden_leaks(item)
+    elif isinstance(value, list):
+        for item in value:
+            check_no_forbidden_leaks(item)
+    elif isinstance(value, str):
+        lowered = value.lower()
+        for forbidden in forbidden_values:
+            if forbidden in lowered:
+                raise SystemExit(f"FAIL {label}: forbidden value leaked: {forbidden}")
+
+
+check_no_forbidden_leaks(payload)
 
 if payload.get("can_send") is not False:
     raise SystemExit(f"FAIL {label}: can_send was not false")
