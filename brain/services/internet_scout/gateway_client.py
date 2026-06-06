@@ -22,7 +22,7 @@ class InternetScoutGatewayClient:
         try:
             payload = await call_gateway_proxy(
                 "internet/search",
-                {"query": query, "count": count, "provider": "brave"},
+                {"query": query, "count": count, "provider": "auto"},
                 timeout_s=25,
             )
         except GatewayEgressError as exc:

@@ -78,7 +78,7 @@ class GoogleBillingRequest(BaseModel):
 class InternetSearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=2000)
     count: int = Field(default=5, ge=1, le=10)
-    provider: str = "brave"
+    provider: str = "auto"
 
 
 class InternetFetchRequest(BaseModel):
@@ -116,6 +116,12 @@ class _FetchedInternetContent:
     truncated: bool
     risk_markers: list[str]
     redirect_chain: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _SearchProviderCredential:
+    provider: str
+    api_key: str
 
 
 def _accepted_gateway_tokens() -> list[str]:
@@ -360,40 +366,151 @@ async def internet_search(
 ):
     """Run a provider-backed public web search through Gateway-owned egress."""
     _authorize_gateway_call(authorization)
-    if req.provider != "brave":
+    if req.provider not in {"auto", "brave", "perplexity"}:
         raise HTTPException(status_code=400, detail="unsupported search provider")
 
-    api_key = _secret_or_none("BRAVE_SEARCH_API_KEY") or _secret_or_none(
+    count = min(max(req.count, 1), 10)
+    credential = _select_search_provider(req.provider)
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        if credential.provider == "brave":
+            raw_results = await _search_brave(
+                client=client,
+                query=req.query,
+                count=count,
+                api_key=credential.api_key,
+            )
+            results = _normalize_search_results(
+                raw_results,
+                count=count,
+                description_keys=("description",),
+            )
+        else:
+            raw_results = await _search_perplexity(
+                client=client,
+                query=req.query,
+                count=count,
+                api_key=credential.api_key,
+            )
+            results = _normalize_search_results(
+                raw_results,
+                count=count,
+                description_keys=("snippet",),
+            )
+
+    logger.info(
+        "beacon_search_completed provider=%s result_count=%d",
+        credential.provider,
+        len(results),
+    )
+
+    return {
+        "provider": credential.provider,
+        "query_hash": _hash_text(req.query),
+        "fetched_at": datetime.now(UTC).isoformat(),
+        "results": results,
+    }
+
+
+def _select_search_provider(requested_provider: str) -> _SearchProviderCredential:
+    brave_key = _secret_or_none("BRAVE_SEARCH_API_KEY") or _secret_or_none(
         "BRAVE_API_KEY"
     )
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="Brave Search API key not configured",
+    perplexity_key = _secret_or_none("PERPLEXITY_API_KEY")
+
+    if requested_provider == "brave":
+        if not brave_key:
+            raise HTTPException(
+                status_code=503,
+                detail="Brave Search API key not configured",
+            )
+        return _SearchProviderCredential(provider="brave", api_key=brave_key)
+
+    if requested_provider == "perplexity":
+        if not perplexity_key:
+            raise HTTPException(
+                status_code=503,
+                detail="Perplexity Search API key not configured",
+            )
+        return _SearchProviderCredential(
+            provider="perplexity",
+            api_key=perplexity_key,
         )
 
-    count = min(max(req.count, 1), 10)
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.get(
-            "https://api.search.brave.com/res/v1/web/search",
-            params={"q": req.query, "count": count},
-            headers={
-                "X-Subscription-Token": api_key,
-                "User-Agent": "jarvis-alpha-beacon/1.0",
-            },
+    if brave_key:
+        return _SearchProviderCredential(provider="brave", api_key=brave_key)
+    if perplexity_key:
+        return _SearchProviderCredential(
+            provider="perplexity",
+            api_key=perplexity_key,
         )
+    raise HTTPException(
+        status_code=503,
+        detail="Search provider key not configured",
+    )
 
+
+async def _search_brave(
+    *,
+    client: httpx.AsyncClient,
+    query: str,
+    count: int,
+    api_key: str,
+) -> object:
+    response = await client.get(
+        "https://api.search.brave.com/res/v1/web/search",
+        params={"q": query, "count": count},
+        headers={
+            "X-Subscription-Token": api_key,
+            "User-Agent": "jarvis-alpha-beacon/1.0",
+        },
+    )
     if response.status_code >= 400:
         raise HTTPException(
             status_code=502,
             detail=f"Brave Search API error: HTTP {response.status_code}",
         )
-
     payload: object = response.json()
     web = payload.get("web") if isinstance(payload, dict) else None
-    raw_results = web.get("results") if isinstance(web, dict) else None
+    return web.get("results") if isinstance(web, dict) else None
+
+
+async def _search_perplexity(
+    *,
+    client: httpx.AsyncClient,
+    query: str,
+    count: int,
+    api_key: str,
+) -> object:
+    response = await client.post(
+        "https://api.perplexity.ai/search",
+        json={
+            "query": query,
+            "max_results": count,
+            "search_context_size": "low",
+        },
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "jarvis-alpha-beacon/1.0",
+        },
+    )
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Perplexity Search API error: HTTP {response.status_code}",
+        )
+    payload: object = response.json()
+    return payload.get("results") if isinstance(payload, dict) else None
+
+
+def _normalize_search_results(
+    raw_results: object,
+    *,
+    count: int,
+    description_keys: tuple[str, ...],
+) -> list[dict[str, object]]:
     if not isinstance(raw_results, list):
-        raw_results = []
+        return []
 
     results: list[dict[str, object]] = []
     for item in raw_results[:count]:
@@ -401,16 +518,13 @@ async def internet_search(
             continue
         url = item.get("url")
         title = item.get("title")
-        description = item.get("description")
+        description = _first_string(item, description_keys)
         if not isinstance(url, str):
             continue
         safety = validate_url(url)
         if not safety.allowed or not safety.normalized_url or not safety.host:
             continue
-        sanitized = sanitize_untrusted_text(
-            description if isinstance(description, str) else "",
-            max_chars=1000,
-        )
+        sanitized = sanitize_untrusted_text(description or "", max_chars=1000)
         results.append(
             {
                 "title": title if isinstance(title, str) else None,
@@ -420,13 +534,15 @@ async def internet_search(
                 "risk_markers": sanitized.risk_markers,
             }
         )
+    return results
 
-    return {
-        "provider": "brave",
-        "query_hash": _hash_text(req.query),
-        "fetched_at": datetime.now(UTC).isoformat(),
-        "results": results,
-    }
+
+def _first_string(item: dict[object, object], keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, str):
+            return value
+    return None
 
 
 @router.post("/internet/fetch")

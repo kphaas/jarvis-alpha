@@ -39,7 +39,11 @@ automation, scheduling, memory ingest, or outbound actions. P8/P9 added the
 approval-verified browser runner boundary and Forge/Family/Financial consumer
 routes. P10/P11 add reviewed evidence-to-memory promotion and a fail-closed
 Playwright adapter factory with screenshot storage and hourly run limits, while
-scheduled agent runtime remains deferred.
+scheduled agent runtime remains deferred. The MVP production closeout adds
+Gateway-owned search provider selection: Brain requests `auto`, Gateway prefers
+Brave when configured, and otherwise uses the first-party Perplexity Search API
+when `PERPLEXITY_API_KEY` is present. Explicit provider requests still fail
+closed if that provider's key is missing.
 
 ## Architecture
 
@@ -108,6 +112,7 @@ found inside fetched content.
 | Cross-repo misuse | Consumers call Alpha policy-scoped routes; they do not import Beacon internals or hold internet credentials. |
 | Sensitive consumers | Family and Financial force minor/financial sensitivity and block browser/crawl in P9. |
 | Runtime operations | P11 adds code-level adapter wiring, but production deployment still needs package installation, browser binary provisioning, screenshot retention, and alerting. |
+| Search provider availability | Gateway owns provider selection. `auto` prefers Brave and falls back to Perplexity Search; no provider key still fails closed. |
 
 ## Consequences
 

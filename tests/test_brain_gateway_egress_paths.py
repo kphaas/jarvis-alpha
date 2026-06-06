@@ -231,7 +231,7 @@ async def test_internet_scout_client_uses_gateway_search_fetch_extract_and_crawl
     assert extract.extracted_text == "Beacon extracted body."
     assert crawl.pages[0].extracted_text == "Beacon crawled body."
     assert calls == [
-        ("internet/search", {"query": "beacon", "count": 5, "provider": "brave"}),
+        ("internet/search", {"query": "beacon", "count": 5, "provider": "auto"}),
         (
             "internet/fetch",
             {"url": "https://public.example.test/report", "max_bytes": 1000},
