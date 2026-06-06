@@ -18,6 +18,11 @@ Alpha JWT middleware will accept:
 - `Authorization: Bearer <jwt>` first, preserving existing clients.
 - `alpha_session=<jwt>` cookie when no bearer header is present.
 
+Alpha UI will refresh the cookie through the same-origin Endpoint `/v1/auth/session-cookie`
+proxy when an existing `localStorage` session is still valid. That proxy response sets
+the host-scoped Endpoint cookie, which Helm can send to its `/alpha` proxy without
+reading or storing the bearer token.
+
 ## Consequences
 
 - Helm can read scoped Alpha endpoints such as `/v1/helm/summary` through the Endpoint `/alpha` proxy without storing a JavaScript-readable token.
