@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   Shield, Key, Globe, Radio, AlertTriangle,
-  RotateCw, Bug, Plug, ShieldCheck, Archive, ShieldAlert,
+  RotateCw, Bug, Plug, ShieldCheck, Archive, ShieldAlert, Activity,
 } from "lucide-react";
 import { apiJson } from "../lib/apiFetch";
 import { useAppStore } from "../store";
@@ -15,11 +15,11 @@ import type {
 } from "../types/security";
 import {
   OverviewTab, IdentityTab, NetworkTab, SweepTab,
-  KeysTab, WardenTab, LedgerTab, SentryTab, PorchlightTab, HoneypotTab, McpTab, EventsTab,
+  KeysTab, WardenTab, LedgerTab, SentryTab, TradeGuardTab, PorchlightTab, HoneypotTab, McpTab, EventsTab,
   computePostureScore, scoreColor, C_SCORE,
 } from "../components/security";
 
-const TABS = ["Overview", "Identity", "Network", "Sweep", "Warden", "Sentry", "Ledger", "Keyturner", "Porchlight", "Tripwire", "MCP", "Events"] as const;
+const TABS = ["Overview", "Identity", "Network", "Sweep", "Warden", "Sentry", "Trade Guard", "Ledger", "Keyturner", "Porchlight", "Tripwire", "MCP", "Events"] as const;
 type TabId = (typeof TABS)[number];
 
 const TAB_ICONS: Record<string, typeof Shield> = {
@@ -29,6 +29,7 @@ const TAB_ICONS: Record<string, typeof Shield> = {
   Sweep: Radio,
   Warden: ShieldCheck,
   Sentry: ShieldAlert,
+  "Trade Guard": Activity,
   Ledger: Archive,
   Keyturner: RotateCw,
   Porchlight: Shield,
@@ -355,6 +356,18 @@ export default function Security() {
 
       {activeTab === "Sentry" && (
         <SentryTab
+          {...theme_props}
+          wardenStatus={wardenStatus}
+          loadWarden={loadWarden}
+          errWarden={errWarden}
+          agentEvents={agentEvents}
+          loadAgentEvents={loadAgentEvents}
+          errAgentEvents={errAgentEvents}
+        />
+      )}
+
+      {activeTab === "Trade Guard" && (
+        <TradeGuardTab
           {...theme_props}
           wardenStatus={wardenStatus}
           loadWarden={loadWarden}

@@ -24,6 +24,7 @@ DEFAULT_MANAGED_AGENTS = (
     "tripwire",
     "ledger",
     "sentry",
+    "trade_guard",
 )
 STALE_SCHEDULED_RUN_SECONDS = 5 * 60
 STALE_POSTURE_SWEEP_SECONDS = 30 * 60 * 60
