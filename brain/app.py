@@ -49,6 +49,7 @@ from brain.routes.spark_imessage import router as spark_imessage_router
 from brain.routes.spark_persona import router as spark_persona_router
 from brain.routes.privacy import router as privacy_router
 from brain.routes.helm import router as helm_router
+from brain.routes.internet_scout import router as internet_scout_router
 from brain.middleware.jwt_auth import JWTAuthMiddleware
 
 logger = get_logger("alpha_brain")
@@ -132,5 +133,6 @@ app.include_router(spark_imessage_router)
 app.include_router(spark_persona_router)
 app.include_router(privacy_router)
 app.include_router(helm_router)
+app.include_router(internet_scout_router)
 
 # TD-107 test 2 — validating restart-path fires on brain/*.py changes (Apr 18)
