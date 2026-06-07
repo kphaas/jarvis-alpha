@@ -8,6 +8,7 @@ import {
   FileText, Settings, Moon, Sun,
   User, ChevronRight, Lock, Unlock, RefreshCw,
   FolderOpen, Wrench, Fingerprint, Sparkles,
+  Inbox,
 } from 'lucide-react'
 import type { Theme } from '../types'
 import { useAppStore } from '../store'
@@ -25,6 +26,7 @@ const NAV = [
     { to: '/agents',    label: 'Agents',       icon: Bot           },
     { to: '/skills',    label: 'Skills',       icon: Wrench        },
     { to: '/spark',     label: 'Spark',        icon: Sparkles      },
+    { to: '/herald',    label: 'Herald',       icon: Inbox         },
     { to: '/ops',       label: 'Ops',          icon: Terminal      },
   ]},
   { group: 'SECURE', items: [

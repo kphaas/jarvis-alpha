@@ -94,6 +94,111 @@ async def test_github_issues_uses_fixed_github_endpoint(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_msgraph_token_uses_tenant_token_endpoint(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"access_token": "token"}
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            seen["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, data):
+            seen["url"] = url
+            seen["data"] = data
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.msgraph_token(
+        cloud_routes.MicrosoftGraphTokenRequest(
+            tenant_id="tenant-id",
+            client_id="client-id",
+            client_assertion="assertion",
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert seen["url"] == (
+        "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token"
+    )
+    assert seen["data"]["grant_type"] == "client_credentials"
+    assert seen["data"]["client_assertion"] == "assertion"
+    assert result == {"status_code": 200, "payload": {"access_token": "token"}}
+
+
+@pytest.mark.asyncio
+async def test_msgraph_mailbox_messages_allows_only_herald_mailboxes(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"value": []}
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            seen["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, *, headers, params):
+            seen["url"] = url
+            seen["headers"] = headers
+            seen["params"] = params
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.msgraph_mailbox_messages(
+        cloud_routes.MicrosoftGraphMailboxMessagesRequest(
+            access_token="token",
+            mailbox="hello@at-0.com",
+            max_results=5,
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert seen["url"] == (
+        "https://graph.microsoft.com/v1.0/users/hello%40at-0.com/mailFolders/Inbox/messages"
+    )
+    assert seen["headers"]["Authorization"] == "Bearer token"
+    assert seen["params"]["$top"] == 5
+    assert "bodyPreview" in seen["params"]["$select"]
+    assert result == {"status_code": 200, "payload": {"value": []}}
+
+    with pytest.raises(HTTPException) as exc:
+        await cloud_routes.msgraph_mailbox_messages(
+            cloud_routes.MicrosoftGraphMailboxMessagesRequest(
+                access_token="token",
+                mailbox="admin@at-0.com",
+            ),
+            authorization="Bearer gateway-token",
+        )
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_anthropic_admin_rejects_unsupported_path(monkeypatch):
     monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
 
