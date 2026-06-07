@@ -92,6 +92,18 @@ function isTerminalAction(action: ApprovedPrivacyAction) {
   return action.status === "confirmed" || action.status === "failed";
 }
 
+function focusedFirst(
+  actions: ApprovedPrivacyAction[],
+  selectedActionId: string | null,
+) {
+  if (!selectedActionId) return actions;
+  return [...actions].sort((left, right) => {
+    if (left.action_id === selectedActionId) return -1;
+    if (right.action_id === selectedActionId) return 1;
+    return 0;
+  });
+}
+
 function workflowStatus(action: ApprovedPrivacyAction) {
   if (action.status === "confirmed") {
     return {
@@ -156,6 +168,7 @@ export function PrivacyApprovedActionsPanel({
     (action) => !isTerminalAction(action),
   );
   const completedActions = actionsState.actions.filter(isTerminalAction);
+  const focusedOpenActions = focusedFirst(openActions, actionsState.selectedActionId);
   const selectedCompletedAction =
     actionsState.selectedAction &&
     isTerminalAction(actionsState.selectedAction) &&
@@ -432,7 +445,7 @@ export function PrivacyApprovedActionsPanel({
                 />
               ) : (
                 <div className="space-y-3">
-                  {openActions.map((action) => renderActionCard(action))}
+                  {focusedOpenActions.map((action) => renderActionCard(action))}
                 </div>
               )}
             </div>
