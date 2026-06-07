@@ -260,10 +260,16 @@ def test_privacy_approval_handoff_ui_links_to_review_packet() -> None:
     assert "Open next step" in privacy_source
     assert "focusedGuidedStep" in privacy_source
     assert "focusedCaseSummary" in privacy_source
-    assert 'const [privacyViewMode, setPrivacyViewMode] = useState<"guided" | "advanced">(' in privacy_source
+    assert (
+        'const [privacyViewMode, setPrivacyViewMode] = useState<"guided" | "advanced">('
+        in privacy_source
+    )
     assert '"guided",' in privacy_source
     assert "selectedAction: approvedActions.selectedAction" in privacy_source
-    assert "focusedFirst(openActions, actionsState.selectedActionId)" in actions_panel_source
+    assert (
+        "focusedFirst(openActions, actionsState.selectedActionId)"
+        in actions_panel_source
+    )
 
 
 def test_privacy_intake_ui_keeps_phase_boundary_local_only() -> None:
