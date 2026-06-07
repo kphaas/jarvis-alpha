@@ -46,9 +46,11 @@ class FakeBodyClient:
 @pytest.mark.asyncio
 async def test_imessage_draft_uses_runtime_context_without_exposing_thread_text(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     vault_root = _write_vault(tmp_path)
     fake_client = FakeBodyClient()
+    monkeypatch.setenv(drafts.SPARK_DRAFT_LLM_ENABLED_ENV, "false")
 
     proposal = await drafts.create_imessage_draft_proposal(
         vault_root=vault_root,
