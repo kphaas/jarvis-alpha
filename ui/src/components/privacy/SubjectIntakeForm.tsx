@@ -26,7 +26,7 @@ export function SubjectIntakeForm({
   const successIcon = isDark ? 'text-emerald-300' : 'text-emerald-800'
 
   return (
-    <form onSubmit={intake.createSubject} className={`rounded-xl border ${border} ${panel}`}>
+    <form id="privacy-subject-intake" onSubmit={intake.createSubject} className={`rounded-xl border ${border} ${panel}`}>
       <div className={`flex flex-col gap-3 border-b p-5 ${border} sm:flex-row sm:items-center sm:justify-between`}>
         <div className="flex items-start gap-3">
           <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${border}`}>
@@ -123,12 +123,12 @@ export function SubjectIntakeForm({
 	        {intake.error && <StatusLine icon="error" className={errorClass} text={intake.error} />}
 	        <div className={`flex flex-col gap-3 border-t pt-5 sm:flex-row sm:items-center sm:justify-between ${border}`}>
 	          <div className={`text-sm ${muted}`}>
-	            {intake.validTupleCount} tuple{intake.validTupleCount === 1 ? '' : 's'} ready
+	            {intake.validTupleCount} identity {intake.validTupleCount === 1 ? 'value' : 'values'} ready
 	          </div>
           <button
             type="submit"
             disabled={!intake.canSubmit}
-            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 text-sm font-bold text-[#0A0A0A] transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 text-sm font-bold text-[#0A0A0A] transition hover:bg-emerald-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-700 disabled:cursor-not-allowed disabled:opacity-40 dark:focus-visible:outline-emerald-300"
           >
             {intake.loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UserRound className="h-4 w-4" />}
             Create subject

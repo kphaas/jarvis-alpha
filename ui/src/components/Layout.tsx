@@ -209,7 +209,11 @@ export function Layout({ theme, children, monthSpend = 0, budget = 500, onRefres
         {/* TopBar */}
         <header className={`min-h-16 border-b flex flex-wrap items-center justify-between gap-3 px-4 py-3 backdrop-blur-sm sticky top-0 z-10 sm:px-6 lg:px-8 ${border} ${isDark ? 'bg-[#0A0A0A]/80' : 'bg-[#E4E3E0]/80'}`}>
           <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-            <h2 className="font-serif italic text-lg capitalize">{activeTab || 'Dashboard'}</h2>
+            <div className="flex shrink-0 items-center gap-2 lg:hidden">
+              <Zap className={`h-4 w-4 fill-current ${isDark ? 'text-emerald-400' : 'text-[#141414]'}`} />
+              <span className="text-sm font-bold tracking-tight">AT-0 Alpha</span>
+            </div>
+            <h2 className="truncate text-lg font-semibold tracking-tight capitalize">{activeTab || 'Dashboard'}</h2>
             <div className={`h-4 w-px ${isDark ? 'bg-white/20' : 'bg-[#141414]/20'}`} />
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-500" />

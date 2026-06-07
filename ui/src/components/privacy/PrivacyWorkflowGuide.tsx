@@ -1,4 +1,5 @@
 import {
+  ArrowRight,
   CheckCircle2,
   Circle,
   ClipboardCheck,
@@ -37,6 +38,63 @@ function statusCopy(status: StepStatus) {
   if (status === "done") return "Done";
   if (status === "current") return "Now";
   return "Waiting";
+}
+
+function nextActionFor({
+  subjectReady,
+  hasTargets,
+  hasDraft,
+  selectedTargetCount,
+  openActionCount,
+  completedCaseCount,
+}: {
+  subjectReady: boolean;
+  hasTargets: boolean;
+  hasDraft: boolean;
+  selectedTargetCount: number;
+  openActionCount: number;
+  completedCaseCount: number;
+}) {
+  if (!subjectReady) {
+    return {
+      text: "Create the subject profile first. Only enter the minimum details needed for the removal work.",
+      href: "#privacy-subject-intake",
+      label: "Go to intake",
+    };
+  }
+  if (!hasTargets) {
+    return {
+      text: "Pick the targets to include. Start with the highest-risk brokers or public-record sources.",
+      href: "#privacy-target-registry",
+      label: "Choose targets",
+    };
+  }
+  if (selectedTargetCount > 0 && !hasDraft) {
+    return {
+      text: "Create the review packet so each target has a local draft action.",
+      href: "#privacy-review-packet",
+      label: "Create packet",
+    };
+  }
+  if (hasDraft && openActionCount === 0 && completedCaseCount === 0) {
+    return {
+      text: "Submit the draft for approval from the draft review panel.",
+      href: "#privacy-draft-inbox",
+      label: "Review drafts",
+    };
+  }
+  if (openActionCount > 0) {
+    return {
+      text: "Record the manual handling result for each approved action.",
+      href: "#privacy-approved-actions",
+      label: "Handle actions",
+    };
+  }
+  return {
+    text: "Review the evidence report and keep verification current.",
+    href: "#privacy-removal-readiness",
+    label: "Review readiness",
+  };
 }
 
 export function PrivacyWorkflowGuide({
@@ -107,35 +165,46 @@ export function PrivacyWorkflowGuide({
     },
   ];
 
-  const nextAction =
-    !subjectReady
-      ? "Create the subject profile first. Only enter the minimum details needed for the removal work."
-      : !hasTargets
-        ? "Pick the targets to include. Start with the highest-risk brokers or public-record sources."
-        : selectedTargetCount > 0 && !hasDraft
-          ? "Create the review packet so each target has a local draft action."
-          : hasDraft && openActionCount === 0 && completedCaseCount === 0
-            ? "Submit the draft for approval from the Draft Inbox."
-            : openActionCount > 0
-              ? "Record the manual handling result for each approved action."
-              : "Review the evidence report and keep verification current.";
+  const nextAction = nextActionFor({
+    subjectReady,
+    hasTargets,
+    hasDraft,
+    selectedTargetCount,
+    openActionCount,
+    completedCaseCount,
+  });
+  const completedStepCount = steps.filter((step) => step.status === "done").length;
 
   return (
-    <section className={`rounded-xl border ${border} ${panel} p-5`}>
+    <section id="privacy-workflow-guide" className={`rounded-xl border ${border} ${panel} p-5`}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h2 className="text-base font-semibold">Next step</h2>
-          <p className={`mt-1 max-w-3xl text-sm leading-6 ${muted}`}>{nextAction}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-base font-semibold">Next step</h2>
+            <span className={`rounded-md border px-2 py-1 text-xs font-medium ${border} ${muted}`}>
+              {completedStepCount} of {steps.length} complete
+            </span>
+          </div>
+          <p className={`mt-1 max-w-3xl text-sm leading-6 ${muted}`}>{nextAction.text}</p>
         </div>
-        <div
-          className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm font-medium ${
-            isDark
-              ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-              : "border-emerald-900/20 bg-emerald-50 text-emerald-900"
-          }`}
-        >
-          <ShieldCheck className="h-4 w-4" />
-          Manual approval stays on
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <a
+            href={nextAction.href}
+            className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-semibold transition hover:border-emerald-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-700 dark:hover:border-emerald-300/50 dark:focus-visible:outline-emerald-300 ${border}`}
+          >
+            <span className="whitespace-nowrap">{nextAction.label}</span>
+            <ArrowRight className="h-4 w-4" />
+          </a>
+          <div
+            className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium ${
+              isDark
+                ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
+                : "border-emerald-900/20 bg-emerald-50 text-emerald-900"
+            }`}
+          >
+            <ShieldCheck className="h-4 w-4" />
+            <span className="whitespace-nowrap">Manual approval stays on</span>
+          </div>
         </div>
       </div>
 

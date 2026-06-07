@@ -54,7 +54,9 @@ def test_privacy_review_packet_panel_is_mounted_on_privacy_page() -> None:
     assert "targets.clearSelection();" in page_source
     assert "draftInbox.refreshDrafts();" in page_source
     assert "/case-drafts" in source
-    assert "Review Packet" in source
+    assert "Review packet" in source
+    assert 'id="privacy-review-packet"' in source
+    assert "No outbound action happens here" in source
 
 
 def test_privacy_draft_inbox_is_mounted_on_privacy_page() -> None:
@@ -67,7 +69,8 @@ def test_privacy_draft_inbox_is_mounted_on_privacy_page() -> None:
     assert "<PrivacyDraftInboxPanel" in page_source
     assert "AT-0 Privacy Agent" in page_source
     assert "AT-0 Privacy Console" in page_source
-    assert "Manual MVP v0.1: encrypted intake" in page_source
+    assert "Guided private intake" in page_source
+    assert "Outbound removal" in page_source
     assert "font-serif italic" not in page_source
     assert "P2-F - draft review inbox" not in page_source
     assert "/v1/privacy/case-drafts" in source
@@ -75,7 +78,9 @@ def test_privacy_draft_inbox_is_mounted_on_privacy_page() -> None:
     assert "archive" in source
     assert "Submit for approval" in source
     assert "Archive" in source
-    assert "Draft Inbox" in source
+    assert "Draft review" in source
+    assert "Draft inbox stores saved packets" in source
+    assert 'id="privacy-draft-inbox"' in source
     assert "No targets match this search" in source
     assert "Search targets" in source
     assert "matches" in source
@@ -92,7 +97,9 @@ def test_privacy_approved_actions_panel_is_mounted_on_privacy_page() -> None:
     assert "/verification" in source
     assert "/timeline" in source
     assert "/report" in source
-    assert "Approved Actions" in source
+    assert "Approved actions" in source
+    assert 'id="privacy-approved-actions"' in source
+    assert "This panel does not send anything" in source
     assert "Ready for manual operator handling" in source
     assert "Manual handling recorded. Verification can be added" in source
     assert "Verification recorded. Case report is ready." in source
@@ -129,6 +136,7 @@ def test_privacy_removal_control_panel_is_mounted_on_privacy_page() -> None:
     assert "P4 Removal Control Plane" in source
     assert "Incogni and DeleteMe are the benchmark" in source
     assert "outbound disabled" in source
+    assert 'id="privacy-removal-readiness"' in source
     assert "Show operating plan" in source
     assert "North-star gaps" in source
     assert "P4-A" in source
@@ -142,9 +150,19 @@ def test_privacy_page_has_guided_workflow_for_new_operators() -> None:
 
     assert "<PrivacyWorkflowGuide" in page_source
     assert "Next step" in source
+    assert "Go to intake" in source
+    assert "Create packet" in source
     assert "Subject intake" in source
     assert "Target registry" in source
     assert "Manual approval stays on" in source
+    assert 'id="privacy-workflow-guide"' in source
+    assert 'id="privacy-subject-intake"' in source
+    assert 'id="privacy-target-registry"' in source
+    assert "Subject status" in source
+    assert "Add identity value" in source
+    assert "AT-0 Alpha" in (
+        REPO_ROOT / "ui" / "src" / "components" / "Layout.tsx"
+    ).read_text(encoding="utf-8")
 
 
 def test_alpha_pin_gate_supports_longer_pins_and_session_cookie_refresh() -> None:
