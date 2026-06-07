@@ -1,5 +1,11 @@
 import { motion } from "framer-motion";
-import { CheckCircle2, Fingerprint, LockKeyhole, ShieldCheck } from "lucide-react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Fingerprint,
+  LockKeyhole,
+  ShieldCheck,
+} from "lucide-react";
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { PrivacyCaseDraftPanel } from "../components/privacy/PrivacyCaseDraftPanel";
@@ -23,6 +29,7 @@ import { usePrivacyIntake } from "../hooks/usePrivacyIntake";
 import { usePrivacyRemovalControl } from "../hooks/usePrivacyRemovalControl";
 import { usePrivacyTargets } from "../hooks/usePrivacyTargets";
 import { useAppStore } from "../store";
+import type { ApprovedPrivacyAction, CaseDraftDetailResponse } from "../types/privacy";
 
 function tone(isDark: boolean, variant: "ok" | "warn" | "error") {
   if (variant === "ok") {
@@ -68,6 +75,101 @@ function suggestedGuidedStep({
   return "targets";
 }
 
+function shortId(value: string | null) {
+  return value ? value.slice(0, 8) : "pending";
+}
+
+function isTerminalAction(action: ApprovedPrivacyAction | null) {
+  return action?.status === "confirmed" || action?.status === "failed";
+}
+
+function focusedGuidedStep({
+  hasDeepLink,
+  selectedAction,
+  selectedDraft,
+}: {
+  hasDeepLink: boolean;
+  selectedAction: ApprovedPrivacyAction | null;
+  selectedDraft: CaseDraftDetailResponse | null;
+}): PrivacyGuidedStepId | null {
+  if (!hasDeepLink) return null;
+  if (selectedAction) return isTerminalAction(selectedAction) ? "report" : "actions";
+  if (selectedDraft?.status === "draft" || selectedDraft?.status === "submitted_for_approval") {
+    return "review";
+  }
+  return "actions";
+}
+
+function focusedCaseSummary({
+  approvalQueueId,
+  caseId,
+  actionId,
+  selectedAction,
+  selectedDraft,
+}: {
+  approvalQueueId: string | null;
+  caseId: string | null;
+  actionId: string | null;
+  selectedAction: ApprovedPrivacyAction | null;
+  selectedDraft: CaseDraftDetailResponse | null;
+}) {
+  if (!approvalQueueId && !caseId && !actionId) return null;
+  if (selectedAction) {
+    if (selectedAction.status === "confirmed") {
+      return {
+        status: "Verified",
+        next: "Review the case report and evidence hashes.",
+        step: "report" as PrivacyGuidedStepId,
+      };
+    }
+    if (selectedAction.status === "sent") {
+      return {
+        status: "Handled",
+        next: "Record verification evidence for this action.",
+        step: "actions" as PrivacyGuidedStepId,
+      };
+    }
+    if (selectedAction.status === "failed") {
+      return {
+        status: "Needs review",
+        next: "Open the report and inspect the failed action.",
+        step: "report" as PrivacyGuidedStepId,
+      };
+    }
+    return {
+      status: "Approved",
+      next: "Record manual handling for this target.",
+      step: "actions" as PrivacyGuidedStepId,
+    };
+  }
+  if (selectedDraft?.status === "draft") {
+    return {
+      status: "Draft",
+      next: "Submit this packet for approval.",
+      step: "review" as PrivacyGuidedStepId,
+    };
+  }
+  if (selectedDraft?.status === "submitted_for_approval") {
+    return {
+      status: "Awaiting approval",
+      next: "Finish the approval decision, then return here for handling.",
+      step: "review" as PrivacyGuidedStepId,
+    };
+  }
+  if (selectedDraft?.status === "completed") {
+    return {
+      status: "Completed",
+      next: "Review the case report and evidence hashes.",
+      step: "report" as PrivacyGuidedStepId,
+    };
+  }
+  return {
+    status: "Loading case",
+    next: "AT-0 is locating the case workflow.",
+    step: "actions" as PrivacyGuidedStepId,
+  };
+}
+
 export default function Privacy() {
   const { theme } = useAppStore();
   const [searchParams] = useSearchParams();
@@ -75,7 +177,7 @@ export default function Privacy() {
   const caseId = searchParams.get("case");
   const actionId = searchParams.get("action");
   const [privacyViewMode, setPrivacyViewMode] = useState<"guided" | "advanced">(
-    () => (caseId || actionId ? "advanced" : "guided"),
+    "guided",
   );
   const [manualGuidedStep, setManualGuidedStep] = useState<PrivacyGuidedStepId | null>(
     null,
@@ -112,6 +214,12 @@ export default function Privacy() {
     (draft) => draft.status === "submitted_for_approval",
   ).length;
   const workflowDraftCount = draftState.draft ? Math.max(1, activeDraftCount) : activeDraftCount;
+  const hasFocusedCase = Boolean(caseId || actionId || approvalQueueId);
+  const focusedStep = focusedGuidedStep({
+    hasDeepLink: hasFocusedCase,
+    selectedAction: approvedActions.selectedAction,
+    selectedDraft: draftInbox.selectedDraft,
+  });
   const guidedSuggestion = suggestedGuidedStep({
     subjectReady: Boolean(subjectId),
     selectedTargetCount: targets.selectedCount,
@@ -121,7 +229,14 @@ export default function Privacy() {
     openActionCount,
     completedCaseCount,
   });
-  const activeGuidedStep = manualGuidedStep ?? guidedSuggestion;
+  const activeGuidedStep = manualGuidedStep ?? focusedStep ?? guidedSuggestion;
+  const focusedSummary = focusedCaseSummary({
+    approvalQueueId,
+    caseId,
+    actionId,
+    selectedAction: approvedActions.selectedAction,
+    selectedDraft: draftInbox.selectedDraft,
+  });
   const guidedSteps: PrivacyGuidedStep[] = [
     {
       id: "subject",
@@ -360,6 +475,44 @@ export default function Privacy() {
         muted={muted}
         isDark={isDark}
       />
+
+      {focusedSummary && (
+        <section
+          id="privacy-current-case"
+          className={`rounded-xl border ${border} ${panel} p-4`}
+          aria-label="Current privacy case"
+        >
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-start gap-3">
+              <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${border}`}>
+                <ShieldCheck className={`h-5 w-5 ${successIcon}`} />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-semibold">Current case</p>
+                  <span className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${border} ${muted}`}>
+                    {shortId(caseId ?? approvedActions.selectedAction?.case_id ?? null)}
+                  </span>
+                  <span className={tone(isDark, focusedSummary.status === "Loading case" ? "warn" : "ok") + " rounded-md border px-2 py-1 text-xs font-semibold"}>
+                    {focusedSummary.status}
+                  </span>
+                </div>
+                <p className={`mt-1 max-w-3xl text-sm leading-6 ${muted}`}>
+                  {focusedSummary.next}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => selectGuidedStep(focusedSummary.step)}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 text-sm font-bold text-[#0A0A0A] transition hover:bg-emerald-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-700 dark:focus-visible:outline-emerald-300"
+            >
+              Open next step
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+        </section>
+      )}
 
       {privacyViewMode === "guided" ? (
         <PrivacyGuidedSetupPanel
