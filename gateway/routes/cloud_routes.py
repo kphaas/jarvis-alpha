@@ -8,7 +8,7 @@ from hashlib import sha256
 from html.parser import HTMLParser
 from importlib import import_module
 from typing import Any
-from urllib.parse import urldefrag, urljoin
+from urllib.parse import quote, urldefrag, urljoin
 
 from fastapi import APIRouter, Header, HTTPException, Request
 import httpx
@@ -66,6 +66,19 @@ class GmailMessageRequest(BaseModel):
     user_id: str = "me"
     message_id: str
     format: str = "full"
+
+
+class MicrosoftGraphTokenRequest(BaseModel):
+    tenant_id: str
+    client_id: str
+    client_assertion: str
+    scope: str = "https://graph.microsoft.com/.default"
+
+
+class MicrosoftGraphMailboxMessagesRequest(BaseModel):
+    access_token: str
+    mailbox: str
+    max_results: int = Field(default=25, ge=1, le=50)
 
 
 class AnthropicAdminRequest(BaseModel):
@@ -167,6 +180,18 @@ def _secret_or_none(name: str) -> str | None:
     except KeyError:
         return None
     return value or None
+
+
+def _allowed_msgraph_mailboxes() -> set[str]:
+    raw = os.getenv("AT0_HERALD_MAILBOXES", "hello@at-0.com,support@at-0.com")
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
+def _require_allowed_msgraph_mailbox(mailbox: str) -> str:
+    normalized = mailbox.strip().lower()
+    if normalized not in _allowed_msgraph_mailboxes():
+        raise HTTPException(status_code=403, detail="Mailbox is not allowed")
+    return normalized
 
 
 @router.post("/call")
@@ -281,6 +306,70 @@ async def gmail_message(
             f"https://gmail.googleapis.com/gmail/v1/users/{req.user_id}/messages/{req.message_id}",
             headers={"Authorization": f"Bearer {req.access_token}"},
             params={"format": req.format},
+        )
+    payload: Any
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {"raw": response.text}
+    return {"status_code": response.status_code, "payload": payload}
+
+
+@router.post("/msgraph/token")
+async def msgraph_token(
+    req: MicrosoftGraphTokenRequest,
+    authorization: str = Header(...),
+):
+    _authorize_gateway_call(authorization)
+    token_url = f"https://login.microsoftonline.com/{req.tenant_id}/oauth2/v2.0/token"
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(
+            token_url,
+            data={
+                "client_id": req.client_id,
+                "scope": req.scope,
+                "grant_type": "client_credentials",
+                "client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                "client_assertion": req.client_assertion,
+            },
+        )
+    payload: Any
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {"raw": response.text}
+    return {"status_code": response.status_code, "payload": payload}
+
+
+@router.post("/msgraph/mailbox_messages")
+async def msgraph_mailbox_messages(
+    req: MicrosoftGraphMailboxMessagesRequest,
+    authorization: str = Header(...),
+):
+    _authorize_gateway_call(authorization)
+    mailbox = _require_allowed_msgraph_mailbox(req.mailbox)
+    encoded_mailbox = quote(mailbox, safe="")
+    select = ",".join(
+        [
+            "id",
+            "internetMessageId",
+            "conversationId",
+            "from",
+            "subject",
+            "receivedDateTime",
+            "bodyPreview",
+            "webLink",
+        ]
+    )
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"https://graph.microsoft.com/v1.0/users/{encoded_mailbox}/mailFolders/Inbox/messages",
+            headers={"Authorization": f"Bearer {req.access_token}"},
+            params={
+                "$top": req.max_results,
+                "$select": select,
+                "$orderby": "receivedDateTime desc",
+            },
         )
     payload: Any
     try:
