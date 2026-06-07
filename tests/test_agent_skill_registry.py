@@ -57,6 +57,15 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert skills["internet_scout.deep_research"].approval_tier == "T3"
     assert skills["internet_scout.browser_task"].approval_tier == "T4"
     assert skills["internet_scout.browser_task"].mutates_state is True
+    assert skills["internet_scout.search"].metadata["execution_path"] == (
+        "fastapi_route"
+    )
+    assert skills["internet_scout.deep_research"].metadata["execution_path"] == (
+        "fastapi_route"
+    )
+    assert skills["internet_scout.browser_task"].metadata["execution_path"] == (
+        "fastapi_route"
+    )
     assert (
         skills["internet_scout.browser_task"].metadata["manifest"]["egress"]["provider"]
         == "beacon_browser_runtime"

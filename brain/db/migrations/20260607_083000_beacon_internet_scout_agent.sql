@@ -13,6 +13,7 @@ VALUES
      jsonb_build_object(
        'owner_agent', 'internet_scout',
        'chat_mode', 'web_search',
+       'execution_path', 'fastapi_route',
        'manifest', jsonb_build_object(
          'manifest_version', 1,
          'data_classification', 'message_body',
@@ -50,6 +51,7 @@ VALUES
        'owner_agent', 'internet_scout',
        'chat_mode', 'deep_research',
        'browser_use', 'approval_queue_only',
+       'execution_path', 'fastapi_route',
        'manifest', jsonb_build_object(
          'manifest_version', 1,
          'data_classification', 'message_body',
@@ -87,6 +89,7 @@ VALUES
        'owner_agent', 'internet_scout',
        'approval_required', true,
        'browser_use', 'exact_approval_hash_required',
+       'execution_path', 'fastapi_route',
        'manifest', jsonb_build_object(
          'manifest_version', 1,
          'data_classification', 'message_body',

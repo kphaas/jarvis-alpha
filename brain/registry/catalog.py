@@ -1104,7 +1104,11 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             provider="beacon",
             test_ref="tests/test_internet_scout_chat_adapter.py",
             runbook_ref="docs/adr/ADR-0019-beacon-internet-scout.md",
-            extra={"owner_agent": "internet_scout", "chat_mode": "web_search"},
+            extra={
+                "owner_agent": "internet_scout",
+                "chat_mode": "web_search",
+                "execution_path": "fastapi_route",
+            },
         ),
     ),
     SkillSpec(
@@ -1132,6 +1136,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
                 "owner_agent": "internet_scout",
                 "chat_mode": "deep_research",
                 "browser_use": "approval_queue_only",
+                "execution_path": "fastapi_route",
             },
         ),
     ),
@@ -1164,6 +1169,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
                 "owner_agent": "internet_scout",
                 "approval_required": True,
                 "browser_use": "exact_approval_hash_required",
+                "execution_path": "fastapi_route",
             },
         ),
     ),
