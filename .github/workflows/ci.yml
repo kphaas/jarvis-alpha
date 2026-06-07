@@ -1,8 +1,10 @@
-# GitHub-hosted guardrails only.
+# JARVIS GitHub-hosted guardrails workflow.
 #
-# Expensive trusted checks moved to Forge native CI on Sandbox and report as
-# `forge/native-ci-shadow`. Keep this workflow small so private-repo PRs do not
-# spend hosted minutes on duplicate lint/typecheck/test jobs.
+# Source of truth: jarvis-standards/scripts/_templates/workflows/ci.yml.
+#
+# Expensive trusted checks belong to Forge native CI on Sandbox and report as
+# `forge/native-ci-shadow`. Keep this as one small hosted job so GitHub rounds
+# one guardrail job per PR instead of separate secret-scan and staleness jobs.
 
 name: ci
 
@@ -14,14 +16,15 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  secret-scan:
-    name: secret-scan
+  guardrails:
+    name: github/guardrails
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,3 +62,86 @@ jobs:
           fi
 
           detect-secrets scan --baseline .secrets.baseline
+
+      - name: Compute PR base age
+        id: age
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${BASE_REF}" --depth=200 || \
+            git fetch --no-tags origin "${BASE_REF}"
+
+          base_sha="$(git merge-base "${HEAD_SHA}" "origin/${BASE_REF}")"
+          base_tip="$(git rev-parse "origin/${BASE_REF}")"
+          base_ts="$(git show -s --format=%ct "${base_sha}")"
+          now_ts="$(date -u +%s)"
+          age_days=$(( (now_ts - base_ts) / 86400 ))
+          if [ "${base_sha}" = "${base_tip}" ]; then
+            echo "Merge-base is current ${BASE_REF}; treating base as fresh."
+            age_days=0
+          fi
+
+          echo "base_sha=${base_sha}" >> "${GITHUB_OUTPUT}"
+          echo "base_ts=${base_ts}" >> "${GITHUB_OUTPUT}"
+          echo "age_days=${age_days}" >> "${GITHUB_OUTPUT}"
+          echo "Base ${base_sha} is ${age_days} days old."
+
+      - name: Find existing staleness comment
+        id: find
+        if: github.event_name == 'pull_request' && steps.age.outputs.age_days != ''
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: '<!-- jarvis:pr-base-staleness -->'
+
+      - name: Post or update staleness warning
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.age.outputs.age_days != '' &&
+          fromJSON(steps.age.outputs.age_days) >= 14
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            <!-- jarvis:pr-base-staleness -->
+            **PR base is stale**: merge-base `${{ steps.age.outputs.base_sha }}`
+            is ${{ steps.age.outputs.age_days }} days old.
+
+            Rebase before merge to avoid silent conflicts:
+
+            ```
+            git fetch origin ${{ github.event.pull_request.base.ref }}
+            git rebase origin/${{ github.event.pull_request.base.ref }}
+            git push --force-with-lease
+            ```
+
+            Warns at 14 days; fails at 30 days.
+
+      - name: Mark staleness warning resolved
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.age.outputs.age_days != '' &&
+          fromJSON(steps.age.outputs.age_days) < 14 &&
+          steps.find.outputs.comment-id != ''
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find.outputs.comment-id }}
+          edit-mode: replace
+          body: |
+            <!-- jarvis:pr-base-staleness -->
+            Base is fresh again (${{ steps.age.outputs.age_days }} days).
+
+      - name: Fail if PR base is too stale
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.age.outputs.age_days != '' &&
+          fromJSON(steps.age.outputs.age_days) >= 30
+        run: |
+          echo "::error::PR base is ${{ steps.age.outputs.age_days }} days old (>=30). Rebase required before this PR can merge."
+          exit 1
