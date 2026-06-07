@@ -17,12 +17,12 @@ export function TextInput({
 }) {
   return (
     <label className="space-y-2">
-      <span className={`text-[10px] font-mono uppercase tracking-widest ${mutedClass}`}>{label}</span>
+      <span className={`text-xs font-medium ${mutedClass}`}>{label}</span>
       <input
         value={value}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className={`min-h-11 w-full rounded-lg border px-3 text-sm outline-none focus:border-emerald-400 ${inputClass}`}
+        className={`min-h-11 w-full rounded-lg border px-3 text-sm outline-none transition focus:border-emerald-600 focus-visible:ring-2 focus-visible:ring-emerald-700/25 dark:focus:border-emerald-400 dark:focus-visible:ring-emerald-300/25 ${inputClass}`}
       />
     </label>
   )
@@ -43,11 +43,11 @@ export function TextArea({
 }) {
   return (
     <label className="space-y-2">
-      <span className={`text-[10px] font-mono uppercase tracking-widest ${mutedClass}`}>{label}</span>
+      <span className={`text-xs font-medium ${mutedClass}`}>{label}</span>
       <textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className={`min-h-24 w-full resize-y rounded-lg border px-3 py-2 text-sm outline-none focus:border-emerald-400 ${inputClass}`}
+        className={`min-h-24 w-full resize-y rounded-lg border px-3 py-2 text-sm outline-none transition focus:border-emerald-600 focus-visible:ring-2 focus-visible:ring-emerald-700/25 dark:focus:border-emerald-400 dark:focus-visible:ring-emerald-300/25 ${inputClass}`}
       />
     </label>
   )
