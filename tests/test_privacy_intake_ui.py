@@ -76,8 +76,9 @@ def test_privacy_draft_inbox_is_mounted_on_privacy_page() -> None:
     assert "Submit for approval" in source
     assert "Archive" in source
     assert "Draft Inbox" in source
-    assert "No targets in this filter" in source
-    assert "shown /" in source
+    assert "No targets match this search" in source
+    assert "Search targets" in source
+    assert "matches" in source
 
 
 def test_privacy_approved_actions_panel_is_mounted_on_privacy_page() -> None:
@@ -108,6 +109,7 @@ def test_privacy_approved_actions_panel_is_mounted_on_privacy_page() -> None:
     assert "Evidence status" in source
     assert "Evidence hashes" in source
     assert "Needs evidence" in source
+    assert "Audit details" in source
     assert "data-testid={`privacy-action-${shortId(action.action_id)}`}" in source
     assert "htmlFor={`${idPrefix}-disposition`}" in source
     assert "htmlFor={`${idPrefix}-verification`}" in source
@@ -127,10 +129,22 @@ def test_privacy_removal_control_panel_is_mounted_on_privacy_page() -> None:
     assert "P4 Removal Control Plane" in source
     assert "Incogni and DeleteMe are the benchmark" in source
     assert "outbound disabled" in source
+    assert "Show operating plan" in source
     assert "North-star gaps" in source
     assert "P4-A" in source
     assert "P4-G" in source
     assert "PrivacyRemovalControlSummaryResponse" in source
+
+
+def test_privacy_page_has_guided_workflow_for_new_operators() -> None:
+    page_source = PRIVACY_PAGE.read_text(encoding="utf-8")
+    source = "\n".join(path.read_text(encoding="utf-8") for path in PRIVACY_UI_SOURCES)
+
+    assert "<PrivacyWorkflowGuide" in page_source
+    assert "Next step" in source
+    assert "Subject intake" in source
+    assert "Target registry" in source
+    assert "Manual approval stays on" in source
 
 
 def test_alpha_pin_gate_supports_longer_pins_and_session_cookie_refresh() -> None:

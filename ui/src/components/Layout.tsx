@@ -82,7 +82,7 @@ export function Layout({ theme, children, monthSpend = 0, budget = 500, onRefres
     <div className={`flex h-screen overflow-hidden font-sans transition-colors duration-300 ${isDark ? 'bg-[#0A0A0A] text-[#E4E3E0]' : 'bg-[#E4E3E0] text-[#141414]'}`}>
 
       {/* Sidebar */}
-      <aside className={`w-64 flex-shrink-0 border-r flex flex-col h-screen sticky top-0 ${border} ${sidebarBg}`}>
+      <aside className={`hidden w-64 flex-shrink-0 border-r flex-col h-screen sticky top-0 lg:flex ${border} ${sidebarBg}`}>
 
         {/* Logo + user */}
         <div className={`p-6 border-b flex-shrink-0 ${border}`}>
@@ -204,11 +204,11 @@ export function Layout({ theme, children, monthSpend = 0, budget = 500, onRefres
       </aside>
 
       {/* Main */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
 
         {/* TopBar */}
-        <header className={`h-16 border-b flex items-center justify-between px-8 backdrop-blur-sm sticky top-0 z-10 ${border} ${isDark ? 'bg-[#0A0A0A]/80' : 'bg-[#E4E3E0]/80'}`}>
-          <div className="flex items-center gap-4">
+        <header className={`min-h-16 border-b flex flex-wrap items-center justify-between gap-3 px-4 py-3 backdrop-blur-sm sticky top-0 z-10 sm:px-6 lg:px-8 ${border} ${isDark ? 'bg-[#0A0A0A]/80' : 'bg-[#E4E3E0]/80'}`}>
+          <div className="flex min-w-0 items-center gap-3 sm:gap-4">
             <h2 className="font-serif italic text-lg capitalize">{activeTab || 'Dashboard'}</h2>
             <div className={`h-4 w-px ${isDark ? 'bg-white/20' : 'bg-[#141414]/20'}`} />
             <div className="flex items-center gap-2">
@@ -216,7 +216,7 @@ export function Layout({ theme, children, monthSpend = 0, budget = 500, onRefres
               <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">System Nominal</span>
             </div>
           </div>
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3 sm:gap-6">
             {onRefresh && (
               <button onClick={onRefresh} disabled={loading} className={`p-1.5 rounded-lg ${subtle} disabled:opacity-30`}>
                 <RefreshCw className={`w-3.5 h-3.5 opacity-40 ${loading ? 'animate-spin' : ''}`} />
@@ -236,7 +236,7 @@ export function Layout({ theme, children, monthSpend = 0, budget = 500, onRefres
         <main className={`flex-1 ${location.pathname === '/ask' ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'}`}>
           {location.pathname === '/ask'
             ? <AnimatePresence mode="wait">{children}</AnimatePresence>
-            : <div className="p-8"><AnimatePresence mode="wait">{children}</AnimatePresence></div>
+            : <div className="p-4 sm:p-6 lg:p-8"><AnimatePresence mode="wait">{children}</AnimatePresence></div>
           }
         </main>
       </div>

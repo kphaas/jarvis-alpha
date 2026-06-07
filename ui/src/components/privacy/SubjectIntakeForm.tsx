@@ -21,10 +21,26 @@ export function SubjectIntakeForm({
   panel: string
   input: string
   muted: string
-  errorClass: string
+	errorClass: string
 }) {
+  const successIcon = isDark ? 'text-emerald-300' : 'text-emerald-800'
+
   return (
     <form onSubmit={intake.createSubject} className={`rounded-xl border ${border} ${panel}`}>
+      <div className={`flex flex-col gap-3 border-b p-5 ${border} sm:flex-row sm:items-center sm:justify-between`}>
+        <div className="flex items-start gap-3">
+          <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${border}`}>
+            <UserRound className={`h-5 w-5 ${successIcon}`} />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold">Subject intake</h2>
+            <p className={`mt-1 max-w-2xl text-sm leading-6 ${muted}`}>
+              Add the person once. Sensitive values are stored encrypted or as keyed
+              digests before any draft is created.
+            </p>
+          </div>
+        </div>
+      </div>
       <div className={`grid gap-5 border-b p-5 ${border} md:grid-cols-[1fr_220px_160px]`}>
         <TextInput
           label="Display label"
@@ -35,7 +51,7 @@ export function SubjectIntakeForm({
           placeholder="Operator label"
         />
         <div className="space-y-2">
-          <span className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>Role</span>
+          <span className={`text-xs font-medium ${muted}`}>Role</span>
           <div className={`grid min-h-11 grid-cols-2 overflow-hidden rounded-lg border ${border}`}>
             {(['adult', 'minor'] as const).map((role) => (
               <button
@@ -74,11 +90,16 @@ export function SubjectIntakeForm({
         <TextArea label="Notes" value={intake.form.profile.notes} onChange={(value) => intake.updateProfile('notes', value)} inputClass={input} mutedClass={muted} />
       </div>
 
-      <div className="space-y-4 p-5">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>Identity tuples</h2>
-          <button
-            type="button"
+	      <div className="space-y-4 p-5">
+	        <div className="flex items-center justify-between gap-3">
+	          <div>
+	            <h3 className="text-sm font-semibold">Identity values</h3>
+	            <p className={`mt-1 text-sm ${muted}`}>
+	              Use only the values needed to match broker records.
+	            </p>
+	          </div>
+	          <button
+	            type="button"
             onClick={() => intake.setTuples((current) => [...current, newTuple()])}
             className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm transition ${border} ${isDark ? 'hover:bg-white/5' : 'hover:bg-[#141414]/5'}`}
           >
@@ -99,11 +120,11 @@ export function SubjectIntakeForm({
             />
           ))}
         </div>
-        {intake.error && <StatusLine icon="error" className={errorClass} text={intake.error} />}
-        <div className={`flex flex-col gap-3 border-t pt-5 sm:flex-row sm:items-center sm:justify-between ${border}`}>
-          <div className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
-            {intake.validTupleCount} tuple{intake.validTupleCount === 1 ? '' : 's'} ready
-          </div>
+	        {intake.error && <StatusLine icon="error" className={errorClass} text={intake.error} />}
+	        <div className={`flex flex-col gap-3 border-t pt-5 sm:flex-row sm:items-center sm:justify-between ${border}`}>
+	          <div className={`text-sm ${muted}`}>
+	            {intake.validTupleCount} tuple{intake.validTupleCount === 1 ? '' : 's'} ready
+	          </div>
           <button
             type="submit"
             disabled={!intake.canSubmit}

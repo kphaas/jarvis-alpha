@@ -21,7 +21,7 @@ export function IdentityTupleRow({
       <select
         value={tuple.tuple_type}
         onChange={(event) => onChange({ tuple_type: event.target.value as TupleType })}
-        className={`min-h-11 rounded-lg border px-3 text-sm outline-none focus:border-emerald-400 ${inputClass}`}
+        className={`min-h-11 rounded-lg border px-3 text-sm outline-none transition focus:border-emerald-600 focus-visible:ring-2 focus-visible:ring-emerald-700/25 dark:focus:border-emerald-400 dark:focus-visible:ring-emerald-300/25 ${inputClass}`}
         aria-label="Tuple type"
       >
         {TUPLE_TYPES.map((item) => (
@@ -31,14 +31,14 @@ export function IdentityTupleRow({
       <input
         value={tuple.value}
         onChange={(event) => onChange({ value: event.target.value })}
-        className={`min-h-11 rounded-lg border px-3 text-sm outline-none focus:border-emerald-400 ${inputClass}`}
+        className={`min-h-11 rounded-lg border px-3 text-sm outline-none transition focus:border-emerald-600 focus-visible:ring-2 focus-visible:ring-emerald-700/25 dark:focus:border-emerald-400 dark:focus-visible:ring-emerald-300/25 ${inputClass}`}
         placeholder="Value"
         aria-label="Tuple value"
       />
       <input
         value={tuple.label}
         onChange={(event) => onChange({ label: event.target.value })}
-        className={`min-h-11 rounded-lg border px-3 text-sm outline-none focus:border-emerald-400 ${inputClass}`}
+        className={`min-h-11 rounded-lg border px-3 text-sm outline-none transition focus:border-emerald-600 focus-visible:ring-2 focus-visible:ring-emerald-700/25 dark:focus:border-emerald-400 dark:focus-visible:ring-emerald-300/25 ${inputClass}`}
         placeholder="Label"
         aria-label="Tuple label"
       />
