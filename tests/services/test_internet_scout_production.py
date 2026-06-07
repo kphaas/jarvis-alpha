@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 import os
+from uuid import uuid4
 
 import pytest
 
@@ -14,6 +15,7 @@ class FakeConn:
         self,
         counts: dict[str, int] | None = None,
         recent_row: dict[str, int] | None = None,
+        last_request_row: dict[str, object] | None = None,
     ) -> None:
         self.counts = counts or {}
         self.recent_row = recent_row or {
@@ -21,6 +23,15 @@ class FakeConn:
             "succeeded": 2,
             "failed": 0,
             "blocked": 1,
+        }
+        now = datetime.now(UTC)
+        self.last_request_row = last_request_row or {
+            "id": uuid4(),
+            "requester": "production_smoke",
+            "selected_tool": "search",
+            "status": "succeeded",
+            "created_at": now,
+            "updated_at": now,
         }
 
     async def fetchval(self, query: str, *args):
@@ -34,6 +45,8 @@ class FakeConn:
         return 0
 
     async def fetchrow(self, query: str, *args):
+        if "ORDER BY created_at DESC" in query:
+            return self.last_request_row
         return self.recent_row
 
 
@@ -117,6 +130,11 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
     assert response.checks["gateway"].metadata["usable_provider_count"] == 2
     assert response.checks["browser_runtime"].ok is True
     assert response.checks["recent_evidence"].metadata["blocked"] == 1
+    last_request = response.checks["recent_evidence"].metadata["last_request"]
+    assert isinstance(last_request, dict)
+    assert last_request["requester"] == "production_smoke"
+    assert last_request["selected_tool"] == "search"
+    assert last_request["status"] == "succeeded"
     assert response.retention.mode == "report_only"
 
 
