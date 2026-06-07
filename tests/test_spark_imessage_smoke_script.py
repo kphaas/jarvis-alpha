@@ -23,6 +23,7 @@ def test_spark_imessage_smoke_script_checks_read_only_contract() -> None:
     assert "/v1/spark/imessage/health" in text
     assert "/v1/spark/imessage/counts" in text
     assert "/v1/spark/imessage/recent-chats/metadata" in text
+    assert "/v1/spark/imessage/readiness" in text
     assert "body_access" in text
     assert "raw data array was returned" in text
     assert "chat_guid" in text

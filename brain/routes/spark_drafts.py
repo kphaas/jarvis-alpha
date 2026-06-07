@@ -60,6 +60,9 @@ class SparkIMessageDraftOut(BaseModel):
     source_reference_hash: str
     chat_guid_hash: str
     warnings: list[str]
+    detected_sensitivity: list[str]
+    blocked_sensitivity: list[str]
+    draft_engine: str
 
 
 class SparkIMessageDraftApprovalOut(SparkIMessageDraftOut):
@@ -128,6 +131,9 @@ def _log_success(request: Request, proposal: SparkDraftProposal) -> None:
             "approval_ref_hash": payload["approval_ref_hash"],
             "source_reference_hash": payload["source_reference_hash"],
             "chat_guid_hash": payload["chat_guid_hash"],
+            "draft_engine": payload["draft_engine"],
+            "detected_sensitivity": payload["detected_sensitivity"],
+            "blocked_sensitivity_count": len(payload["blocked_sensitivity"]),
             **_safe_actor_fields(request),
         },
     )
@@ -157,6 +163,9 @@ def _log_approval_success(
             "approval_ref_hash": payload["approval_ref_hash"],
             "source_reference_hash": payload["source_reference_hash"],
             "chat_guid_hash": payload["chat_guid_hash"],
+            "draft_engine": payload["draft_engine"],
+            "detected_sensitivity": payload["detected_sensitivity"],
+            "blocked_sensitivity_count": len(payload["blocked_sensitivity"]),
             **_safe_actor_fields(request),
         },
     )
