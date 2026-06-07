@@ -68,9 +68,7 @@ _PATTERNS: dict[SparkSensitivity, tuple[re.Pattern[str], ...]] = {
         re.compile(r"\b(minor|child|children|kid|kids|daughter|son)\b", re.I),
         re.compile(r"\b(school|teacher|daycare|pickup|drop-?off)\b", re.I),
     ),
-    "family": (
-        re.compile(r"\b(mother|father|mom|dad|sibling|family)\b", re.I),
-    ),
+    "family": (re.compile(r"\b(mother|father|mom|dad|sibling|family)\b", re.I),),
     "relationship": (
         re.compile(r"\b(girlfriend|boyfriend|partner|relationship)\b", re.I),
     ),
@@ -109,7 +107,9 @@ def scan_spark_draft_sensitivity(
             blocked.add(topic)
 
     warnings = tuple(
-        f"sensitivity_detected_{topic}" for topic in sorted(detected) if topic not in blocked
+        f"sensitivity_detected_{topic}"
+        for topic in sorted(detected)
+        if topic not in blocked
     )
     return SparkSensitivityScan(
         detected_topics=tuple(sorted(detected)),

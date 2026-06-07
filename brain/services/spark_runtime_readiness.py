@@ -206,7 +206,11 @@ def _check_approved_imessage_source(
 def _check_llm_gateway_token(checks: list[SparkRuntimeCheck]) -> None:
     token_present = any(
         os.environ.get(name, "").strip()
-        for name in ("GATEWAY_TOKEN", "ALPHA_BRAIN_SERVICE_TOKEN", "ALPHA_SERVICE_TOKEN")
+        for name in (
+            "GATEWAY_TOKEN",
+            "ALPHA_BRAIN_SERVICE_TOKEN",
+            "ALPHA_SERVICE_TOKEN",
+        )
     )
     checks.append(
         SparkRuntimeCheck(
