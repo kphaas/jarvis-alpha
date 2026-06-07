@@ -22,6 +22,10 @@ from brain.services.bluebubbles_client import (
     BlueBubblesReadOnlyClient,
     BlueBubblesRecentChatMetadata,
 )
+from brain.services.spark_runtime_readiness import (
+    SparkRuntimeReadiness,
+    check_spark_runtime_readiness,
+)
 from jarvis_common.logging_config import get_logger
 
 router = APIRouter(prefix="/v1/spark/imessage", tags=["spark-imessage"])
@@ -232,6 +236,39 @@ async def spark_imessage_recent_chat_metadata(
         },
     )
     return response
+
+
+@router.get("/readiness", response_model=SparkRuntimeReadiness)
+async def spark_imessage_readiness(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> SparkRuntimeReadiness:
+    _check_read_scope(request)
+    try:
+        readiness = await check_spark_runtime_readiness()
+    except Exception as exc:
+        route_error = _route_error(exc)
+        _log_failure(
+            request,
+            action="readiness",
+            exc=exc,
+            status_code=route_error.status_code,
+        )
+        raise route_error from exc
+    _log_success(
+        request,
+        action="readiness",
+        fields={
+            "ready": readiness.ready,
+            "passed_checks": sum(
+                1 for check in readiness.checks if check.status == "passed"
+            ),
+            "failed_checks": sum(
+                1 for check in readiness.checks if check.status == "failed"
+            ),
+        },
+    )
+    return readiness
 
 
 def _health_out(health: BlueBubblesHealth) -> SparkIMessageHealthOut:
