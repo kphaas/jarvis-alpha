@@ -54,6 +54,14 @@ function deriveNextAction({
   verificationCount: number;
   completedCaseCount: number;
 }): NextAction {
+  if (draftReviewCount > 0) {
+    return {
+      label: "Review draft",
+      text: "Submit the saved packet to AT-0 approval or archive it.",
+      href: "#privacy-draft-inbox",
+      tone: "review",
+    };
+  }
   if (!subjectReady) {
     return {
       label: "Start setup",
@@ -62,7 +70,7 @@ function deriveNextAction({
       tone: "primary",
     };
   }
-  if (selectedTargetCount === 0 && draftReviewCount === 0 && approvalReviewCount === 0) {
+  if (selectedTargetCount === 0) {
     return {
       label: "Choose targets",
       text: "Pick the broker or record sites to include in the first removal packet.",
@@ -70,20 +78,12 @@ function deriveNextAction({
       tone: "primary",
     };
   }
-  if (selectedTargetCount > 0 && draftReviewCount === 0) {
+  if (selectedTargetCount > 0) {
     return {
       label: "Create packet",
       text: "Turn selected targets into a local review packet. No outbound send happens.",
       href: "#privacy-review-packet",
       tone: "primary",
-    };
-  }
-  if (draftReviewCount > 0) {
-    return {
-      label: "Review draft",
-      text: "Submit the saved packet to AT-0 approval or archive it.",
-      href: "#privacy-draft-inbox",
-      tone: "review",
     };
   }
   if (approvalReviewCount > 0) {
@@ -135,8 +135,8 @@ function stateLabel({
   attentionCount: number;
   completedCaseCount: number;
 }) {
-  if (!subjectReady) return "Setup incomplete";
   if (attentionCount > 0) return "Needs review";
+  if (!subjectReady) return "Setup incomplete";
   if (completedCaseCount > 0) return "Protected";
   return "Ready to start";
 }
