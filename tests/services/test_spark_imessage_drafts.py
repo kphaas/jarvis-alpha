@@ -11,8 +11,9 @@ from brain.services import spark_imessage_drafts as drafts
 
 
 class FakeBodyClient:
-    def __init__(self) -> None:
+    def __init__(self, *, sensitive: bool = False) -> None:
         self.calls: list[tuple[str, int]] = []
+        self.sensitive = sensitive
 
     async def approved_messages_for_chat(
         self,
@@ -23,11 +24,16 @@ class FakeBodyClient:
     ) -> tuple[BlueBubblesMessageBody, ...]:
         assert offset == 0
         self.calls.append((chat_guid, limit))
+        inbound = (
+            "We need to talk to the lawyer about court custody."
+            if self.sensitive
+            else "private inbound body with sensitive details"
+        )
         return (
             BlueBubblesMessageBody(
                 message_ref_hash=hashlib.sha256(b"inbound-1").hexdigest(),
                 is_from_me=False,
-                body_text="private inbound body with sensitive details",
+                body_text=inbound,
             ),
             BlueBubblesMessageBody(
                 message_ref_hash=hashlib.sha256(b"sent-1").hexdigest(),
@@ -72,6 +78,66 @@ async def test_imessage_draft_uses_runtime_context_without_exposing_thread_text(
         "relationship-thread-label",
     ):
         assert forbidden not in serialized
+
+
+@pytest.mark.asyncio
+async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
+    tmp_path: Path,
+) -> None:
+    vault_root = _write_vault(tmp_path)
+    fake_client = FakeBodyClient()
+    calls: list[dict[str, object]] = []
+
+    async def fake_llm_call(**kwargs):
+        calls.append(kwargs)
+        return "Fair enough, I am on it and will come back with a clear answer."
+
+    proposal = await drafts.create_imessage_draft_proposal(
+        vault_root=vault_root,
+        principal_id="ken",
+        reply_goal="Tell her I am on it",
+        max_context_messages=10,
+        bluebubbles_client=fake_client,
+        approved_chat_guid="approved-chat-guid",
+        llm_call=fake_llm_call,
+    )
+
+    payload = proposal.to_payload()
+    assert payload["draft_engine"] == "gateway_llm"
+    assert payload["draft_text"].startswith("Fair enough")
+    assert "llm_generated" in payload["warnings"]
+    assert "private inbound body" not in json.dumps(payload).lower()
+    assert len(calls) == 1
+    llm_message = str(calls[0]["user_message"])
+    assert "private inbound body" in llm_message
+    assert "approved-chat-guid" not in json.dumps(calls).lower()
+
+
+@pytest.mark.asyncio
+async def test_imessage_draft_blocks_detected_sensitive_topics_before_llm(
+    tmp_path: Path,
+) -> None:
+    vault_root = _write_vault(tmp_path)
+    fake_client = FakeBodyClient(sensitive=True)
+    called = False
+
+    async def fake_llm_call(**kwargs):
+        nonlocal called
+        called = True
+        return "Should not run"
+
+    with pytest.raises(drafts.SparkDraftPolicyError, match="sensitivity_blocked"):
+        await drafts.create_imessage_draft_proposal(
+            vault_root=vault_root,
+            principal_id="ken",
+            max_context_messages=10,
+            bluebubbles_client=fake_client,
+            approved_chat_guid="approved-chat-guid",
+            llm_call=fake_llm_call,
+        )
+
+    assert fake_client.calls == [("approved-chat-guid", 10)]
+    assert called is False
 
 
 @pytest.mark.asyncio
