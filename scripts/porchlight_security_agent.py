@@ -1724,19 +1724,20 @@ def _cloudflare_expected_actors() -> set[str]:
     return set(DEFAULT_CLOUDFLARE_EXPECTED_ACTORS)
 
 
-def _csv_env_set(name: str) -> set[str]:
-    configured = os.getenv(name, "").strip()
+def _csv_config_set(name: str) -> set[str]:
+    configured = _secret_or_env(name) or ""
+    configured = configured.strip()
     if not configured:
         return set()
     return {item.strip().lower() for item in configured.split(",") if item.strip()}
 
 
 def _cloudflare_expected_policy_emails() -> set[str]:
-    return _csv_env_set("PORCHLIGHT_CLOUDFLARE_EXPECTED_POLICY_EMAILS")
+    return _csv_config_set("PORCHLIGHT_CLOUDFLARE_EXPECTED_POLICY_EMAILS")
 
 
 def _cloudflare_allowed_public_hosts() -> set[str]:
-    return _csv_env_set("PORCHLIGHT_CLOUDFLARE_ALLOWED_PUBLIC_HOSTS")
+    return _csv_config_set("PORCHLIGHT_CLOUDFLARE_ALLOWED_PUBLIC_HOSTS")
 
 
 def _cloudflare_forbidden_host_patterns() -> tuple[str, ...]:

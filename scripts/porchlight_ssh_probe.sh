@@ -66,8 +66,9 @@ payload = {
 print(json.dumps(payload, sort_keys=True))
 PY
     ;;
-  porchlight\ jwt-exp\ ALPHA_SERVICE_TOKEN\ *)
+  porchlight\ jwt-exp\ ALPHA_SERVICE_TOKEN\ *|porchlight\ jwt-exp\ ALPHA_SENTINEL_SERVICE_TOKEN\ *)
     set -- ${SSH_ORIGINAL_COMMAND}
+    secret_name="${3:-}"
     min_hours="${4:-24}"
     case "$min_hours" in
       ''|*[!0-9.]*)
@@ -75,14 +76,15 @@ PY
         exit 64
         ;;
     esac
-    exec python3 - "$min_hours" <<'PY'
+    exec python3 - "$secret_name" "$min_hours" <<'PY'
 import base64
 import json
 import pathlib
 import sys
 from datetime import datetime, timezone
 
-min_hours = float(sys.argv[1])
+secret_name = sys.argv[1]
+min_hours = float(sys.argv[2])
 secret_paths = [
     pathlib.Path.home() / "jarvis" / ".secrets",
     pathlib.Path.home() / ".secrets",
@@ -92,7 +94,7 @@ for path in secret_paths:
     if not path.exists():
         continue
     for line in path.read_text().splitlines():
-        if line.startswith("ALPHA_SERVICE_TOKEN="):
+        if line.startswith(f"{secret_name}="):
             token = line.split("=", 1)[1].strip()
             break
     if token:

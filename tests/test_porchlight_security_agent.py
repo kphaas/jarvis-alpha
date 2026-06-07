@@ -1085,6 +1085,68 @@ def test_cloudflare_policy_drift_enforces_exact_expected_membership(monkeypatch)
     assert result.metadata["matched_policy_emails_count"] == 2
 
 
+def test_cloudflare_policy_drift_loads_expected_membership_from_secret(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "token-abc")
+    monkeypatch.setenv("PORCHLIGHT_CLOUDFLARE_EXPECTED_HOSTS", "family.at-0.com")
+    monkeypatch.delenv("PORCHLIGHT_CLOUDFLARE_EXPECTED_POLICY_EMAILS", raising=False)
+
+    def fake_secret(name: str) -> str:
+        if name == "PORCHLIGHT_CLOUDFLARE_EXPECTED_POLICY_EMAILS":
+            return "ken@example.com, meagan@example.com"
+        raise KeyError(name)
+
+    monkeypatch.setattr(porchlight, "get_secret", fake_secret)
+
+    def fake_command(args, timeout=30, input_text=None):
+        url = args[-1]
+        if url.endswith("/accounts/acct-123/access/apps"):
+            return porchlight.CommandResult(
+                0,
+                porchlight.json.dumps(
+                    {
+                        "success": True,
+                        "result": [
+                            {
+                                "id": "app-1",
+                                "name": "JARVIS Family",
+                                "domain": "family.at-0.com",
+                            }
+                        ],
+                    }
+                ),
+                "",
+            )
+        if url.endswith("/accounts/acct-123/access/apps/app-1/policies"):
+            return porchlight.CommandResult(
+                0,
+                porchlight.json.dumps(
+                    {
+                        "success": True,
+                        "result": [
+                            {
+                                "id": "pol-1",
+                                "name": "Allowed family users",
+                                "decision": "allow",
+                                "include": [
+                                    {"email": {"email": "ken@example.com"}},
+                                    {"email": {"email": "meagan@example.com"}},
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                "",
+            )
+        raise AssertionError(url)
+
+    result = porchlight.check_cloudflare_access_policy_drift(command=fake_command)
+
+    assert result.status == "pass"
+    assert result.metadata["expected_policy_emails_count"] == 2
+    assert result.metadata["matched_policy_emails_count"] == 2
+
+
 def test_cloudflare_policy_drift_fails_for_unexpected_family_member(monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
     monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "token-abc")
