@@ -188,6 +188,31 @@ def test_privacy_page_has_home_and_action_inbox_first() -> None:
     )
 
 
+def test_privacy_page_has_guided_setup_mode_before_advanced_details() -> None:
+    page_source = PRIVACY_PAGE.read_text(encoding="utf-8")
+    source = "\n".join(path.read_text(encoding="utf-8") for path in PRIVACY_UI_SOURCES)
+
+    assert "PrivacyGuidedSetupPanel" in source
+    assert "const [privacyViewMode" in page_source
+    assert '"guided" | "advanced"' in page_source
+    assert "suggestedGuidedStep" in page_source
+    assert "renderGuidedPanel" in page_source
+    assert "Guided setup" in source
+    assert "One panel at a time" in source
+    assert "Show all details" in source
+    assert "Show guided setup" in page_source
+    assert 'id="privacy-guided-setup"' in source
+    assert 'onShowAdvanced={() => setPrivacyViewMode("advanced")}' in page_source
+    assert page_source.index(
+        'if (openActionCount > 0) return "actions"'
+    ) < page_source.index(
+        'if (hasLocalPacket || draftReviewCount > 0 || approvalReviewCount > 0) return "review"'
+    )
+    assert page_source.index("<PrivacyGuidedSetupPanel") < page_source.index(
+        'id="privacy-advanced-workflow"'
+    )
+
+
 def test_alpha_pin_gate_supports_longer_pins_and_session_cookie_refresh() -> None:
     source = PIN_GATE.read_text(encoding="utf-8")
 
