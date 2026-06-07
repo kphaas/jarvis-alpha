@@ -23,6 +23,7 @@ _REQUIRED_TABLES = (
     "alpha_internet_memory_promotions",
 )
 _REQUIRED_FUNCTIONS = ("public.save_beacon_semantic_memory(uuid,text,text,text,text)",)
+_READINESS_CHECKS = ("database", "gateway", "browser_runtime", "retention")
 
 
 async def build_beacon_health(
@@ -49,8 +50,9 @@ async def build_beacon_health(
             "screenshot_file_count": retention.screenshot_file_count,
         },
     )
+    readiness_ok = all(checks[name].ok for name in _READINESS_CHECKS)
     return InternetScoutHealthResponse(
-        status="ok" if all(check.ok for check in checks.values()) else "degraded",
+        status="ok" if readiness_ok else "degraded",
         checks=checks,
         retention=retention,
         checked_at=datetime.now(UTC),
