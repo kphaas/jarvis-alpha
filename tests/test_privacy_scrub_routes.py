@@ -28,6 +28,11 @@ from brain.agents.privacy_scrub.removal_control import (
     RemovalLane,
     RemovalLens,
 )
+from brain.agents.privacy_scrub.removal_seed import (
+    PrivacyRemovalSeedSubjectNotFound,
+    RemovalControlSeedCounts,
+    RemovalControlSeedResult,
+)
 from brain.agents.privacy_scrub.repository import CreatedSubject
 from brain.agents.privacy_scrub.state import (
     StoredApprovedPrivacyAction,
@@ -162,6 +167,7 @@ def test_privacy_intake_routes_are_classified_t2_security_writes() -> None:
         f"/v1/privacy/actions/{uuid4()}/verification",
         f"/v1/privacy/case-drafts/{uuid4()}/submit-approval",
         f"/v1/privacy/case-drafts/{uuid4()}/archive",
+        f"/v1/privacy/subjects/{uuid4()}/removal-control/seed",
     ):
         classes = classify_route("POST", path)
         assert classes == ["write", "security_write"]
@@ -268,6 +274,106 @@ async def test_get_privacy_removal_control_summary_returns_hash_only_status(
 
 
 @pytest.mark.asyncio
+async def test_seed_privacy_removal_control_returns_created_counts(
+    monkeypatch,
+) -> None:
+    subject_id = uuid4()
+    calls = SimpleNamespace(conn=None, crypto=None, actor=None, subject_id=None)
+
+    class FakeSeedRepo:
+        def __init__(self, conn, crypto) -> None:
+            calls.conn = conn
+            calls.crypto = crypto
+
+        async def seed_subject(
+            self,
+            *,
+            subject_id: UUID,
+            actor: str,
+            confirmed_authorization: bool,
+        ):
+            calls.subject_id = subject_id
+            calls.actor = actor
+            assert confirmed_authorization is True
+            return RemovalControlSeedResult(
+                subject_id=subject_id,
+                broker_target_id="spokeo",
+                public_record_target_id="ga-courts",
+                payload_key_version="payload-v1",
+                generated_at=datetime.now(UTC),
+                counts=RemovalControlSeedCounts(
+                    authorizations_created=1,
+                    authorizations_skipped=0,
+                    evidence_created=1,
+                    evidence_skipped=0,
+                    monitor_runs_created=1,
+                    monitor_runs_skipped=0,
+                    search_deindex_created=1,
+                    search_deindex_skipped=0,
+                    public_record_triage_created=1,
+                    public_record_triage_skipped=0,
+                ),
+            )
+
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(
+        privacy,
+        "PrivacyRemovalControlSeedRepository",
+        FakeSeedRepo,
+    )
+    monkeypatch.setattr(
+        privacy,
+        "_load_crypto_or_503",
+        lambda: SimpleNamespace(payload_key_version="payload-v1"),
+    )
+
+    response = await privacy.seed_privacy_removal_control(
+        _request(),
+        subject_id,
+        privacy.PrivacyRemovalSeedIn(),
+        "ken",
+    )
+
+    assert response.subject_id == subject_id
+    assert response.counts.total_created == 5
+    assert response.counts.total_skipped == 0
+    assert calls.conn is not None
+    assert calls.actor == "ken"
+    assert calls.subject_id == subject_id
+
+
+@pytest.mark.asyncio
+async def test_seed_privacy_removal_control_maps_missing_subject(
+    monkeypatch,
+) -> None:
+    class FakeSeedRepo:
+        def __init__(self, conn, crypto) -> None:
+            pass
+
+        async def seed_subject(self, **kwargs):
+            raise PrivacyRemovalSeedSubjectNotFound("not found")
+
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(
+        privacy,
+        "PrivacyRemovalControlSeedRepository",
+        FakeSeedRepo,
+    )
+    monkeypatch.setattr(privacy, "_load_crypto_or_503", lambda: SimpleNamespace())
+
+    with pytest.raises(HTTPException) as exc:
+        await privacy.seed_privacy_removal_control(
+            _request(),
+            uuid4(),
+            privacy.PrivacyRemovalSeedIn(),
+            "ken",
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "privacy_subject_not_found"
+
+
+@pytest.mark.asyncio
 async def test_create_privacy_subject_rejects_child_before_config_load(
     monkeypatch,
 ) -> None:
@@ -289,6 +395,27 @@ async def test_create_privacy_subject_rejects_child_before_config_load(
                     )
                 ],
             ),
+            "child-user",
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "privacy_intake_forbidden"
+
+
+@pytest.mark.asyncio
+async def test_seed_privacy_removal_control_rejects_child_before_config_load(
+    monkeypatch,
+) -> None:
+    def load_crypto():
+        raise AssertionError("child actor must fail before crypto loads")
+
+    monkeypatch.setattr(privacy, "load_privacy_crypto", load_crypto)
+
+    with pytest.raises(HTTPException) as exc:
+        await privacy.seed_privacy_removal_control(
+            _request(role="child"),
+            uuid4(),
+            privacy.PrivacyRemovalSeedIn(),
             "child-user",
         )
 

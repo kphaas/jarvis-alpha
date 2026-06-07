@@ -41,6 +41,13 @@ from brain.agents.privacy_scrub.removal_control import (
     RemovalLane,
     RemovalLens,
 )
+from brain.agents.privacy_scrub.removal_seed import (
+    PrivacyRemovalControlSeedRepository,
+    PrivacyRemovalSeedError,
+    PrivacyRemovalSeedSubjectNotFound,
+    PrivacyRemovalSeedTargetMissing,
+    RemovalControlSeedResult,
+)
 from brain.agents.privacy_scrub.repository import (
     IdentityTupleInput,
     PrivacySubjectRepository,
@@ -369,6 +376,36 @@ class PrivacyRemovalControlSummaryOut(BaseModel):
     lanes: list[PrivacyRemovalLaneOut]
     lenses: list[PrivacyRemovalLensOut]
     benchmarks: list[PrivacyRemovalBenchmarkOut]
+
+
+class PrivacyRemovalSeedIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirmed_authorization: Literal[True] = True
+
+
+class PrivacyRemovalSeedCountsOut(BaseModel):
+    authorizations_created: int
+    authorizations_skipped: int
+    evidence_created: int
+    evidence_skipped: int
+    monitor_runs_created: int
+    monitor_runs_skipped: int
+    search_deindex_created: int
+    search_deindex_skipped: int
+    public_record_triage_created: int
+    public_record_triage_skipped: int
+    total_created: int
+    total_skipped: int
+
+
+class PrivacyRemovalSeedOut(BaseModel):
+    subject_id: UUID
+    broker_target_id: str
+    public_record_target_id: str | None
+    payload_key_version: str
+    generated_at: datetime
+    counts: PrivacyRemovalSeedCountsOut
 
 
 @router.post("/subjects", response_model=SubjectCreateOut)
@@ -975,6 +1012,48 @@ async def get_privacy_removal_control_summary(
     return _privacy_removal_control_summary_out(summary)
 
 
+@router.post(
+    "/subjects/{subject_id}/removal-control/seed",
+    response_model=PrivacyRemovalSeedOut,
+)
+async def seed_privacy_removal_control(
+    request: Request,
+    subject_id: UUID,
+    body: PrivacyRemovalSeedIn,
+    user_id: str = Depends(require_auth),
+) -> PrivacyRemovalSeedOut:
+    _assert_adult_or_admin_actor(request)
+    crypto = _load_crypto_or_503()
+
+    try:
+        async with rls_connection(request) as conn:
+            result = await PrivacyRemovalControlSeedRepository(
+                conn,
+                crypto,
+            ).seed_subject(
+                subject_id=subject_id,
+                actor=user_id,
+                confirmed_authorization=body.confirmed_authorization,
+            )
+    except PrivacyRemovalSeedSubjectNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_subject_not_found",
+        ) from exc
+    except PrivacyRemovalSeedTargetMissing as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="privacy_targets_cache_empty",
+        ) from exc
+    except PrivacyRemovalSeedError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy_removal_seed_invalid",
+        ) from exc
+
+    return _privacy_removal_seed_out(result)
+
+
 def _privacy_evidence_manifest_out(
     result: PrivacyCaseReport,
 ) -> PrivacyEvidenceManifestOut:
@@ -1040,6 +1119,33 @@ def _privacy_removal_control_summary_out(
             _privacy_removal_benchmark_out(benchmark)
             for benchmark in summary.benchmarks
         ],
+    )
+
+
+def _privacy_removal_seed_out(
+    result: RemovalControlSeedResult,
+) -> PrivacyRemovalSeedOut:
+    counts = result.counts
+    return PrivacyRemovalSeedOut(
+        subject_id=result.subject_id,
+        broker_target_id=result.broker_target_id,
+        public_record_target_id=result.public_record_target_id,
+        payload_key_version=result.payload_key_version,
+        generated_at=result.generated_at,
+        counts=PrivacyRemovalSeedCountsOut(
+            authorizations_created=counts.authorizations_created,
+            authorizations_skipped=counts.authorizations_skipped,
+            evidence_created=counts.evidence_created,
+            evidence_skipped=counts.evidence_skipped,
+            monitor_runs_created=counts.monitor_runs_created,
+            monitor_runs_skipped=counts.monitor_runs_skipped,
+            search_deindex_created=counts.search_deindex_created,
+            search_deindex_skipped=counts.search_deindex_skipped,
+            public_record_triage_created=counts.public_record_triage_created,
+            public_record_triage_skipped=counts.public_record_triage_skipped,
+            total_created=counts.total_created,
+            total_skipped=counts.total_skipped,
+        ),
     )
 
 

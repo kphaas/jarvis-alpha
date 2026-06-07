@@ -46,6 +46,12 @@ send email, perform public search automation, file court records, or schedule
 public-internet work. Those behaviors require a later executor ADR, explicit
 target allowlists, approval-gateway rules, legal review, and egress controls.
 
+Add a guarded operator seed action for an existing subject. The seed action is
+an authenticated local write that creates one encrypted/digest-only starter row
+for authorization, evidence, recurring monitor, search deindex, and
+public-record triage. The operator must confirm that authorization exists; the
+seed action records that attestation but still does not contact any target.
+
 ## Consequences
 
 - Alpha can show an Incogni/DeleteMe-style operating map without pretending
@@ -56,3 +62,4 @@ target allowlists, approval-gateway rules, legal review, and egress controls.
   encrypted or digest-only.
 - P4 creates the data contracts required for a later low-touch executor phase.
 - MVP hardening remains testable without sending personal data to third parties.
+- Repeated smoke tests can seed the same subject without duplicating rows.

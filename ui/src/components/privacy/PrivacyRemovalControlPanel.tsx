@@ -5,12 +5,14 @@ import {
   ChevronDown,
   FileCheck2,
   Gavel,
+  PlusCircle,
   Radar,
   RefreshCw,
   SearchCheck,
   ShieldCheck,
 } from "lucide-react";
 import type { PrivacyRemovalControlState } from "../../hooks/usePrivacyRemovalControl";
+import type { PrivacyRemovalSeedState } from "../../hooks/usePrivacyRemovalSeed";
 import type { PrivacyRemovalLane } from "../../types/privacy";
 import { StatusLine } from "./PrivacyFields";
 
@@ -26,6 +28,7 @@ const laneIcons: Record<string, typeof Radar> = {
 
 export function PrivacyRemovalControlPanel({
   control,
+  seed,
   border,
   panel,
   muted,
@@ -35,6 +38,7 @@ export function PrivacyRemovalControlPanel({
   errorClass,
 }: {
   control: PrivacyRemovalControlState;
+  seed: PrivacyRemovalSeedState;
   border: string;
   panel: string;
   muted: string;
@@ -67,15 +71,30 @@ export function PrivacyRemovalControlPanel({
             keeps outbound disabled until a separate go-live approval.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => control.refreshSummary()}
-          disabled={control.isFetching}
-          className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm transition hover:border-emerald-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-700 disabled:opacity-40 dark:hover:border-emerald-300/50 dark:focus-visible:outline-emerald-300 ${border}`}
-        >
-          <RefreshCw className={`h-4 w-4 ${control.isFetching ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => control.refreshSummary()}
+            disabled={control.isFetching}
+            className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm transition hover:border-emerald-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-700 disabled:opacity-40 dark:hover:border-emerald-300/50 dark:focus-visible:outline-emerald-300 ${border}`}
+          >
+            <RefreshCw className={`h-4 w-4 ${control.isFetching ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void seed.seedSubject().catch(() => undefined);
+            }}
+            disabled={!seed.canSeed}
+            className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm transition disabled:opacity-40 ${
+              seed.canSeed ? okClass : border
+            }`}
+          >
+            <PlusCircle className={`h-4 w-4 ${seed.isSeeding ? "animate-spin" : ""}`} />
+            Seed records
+          </button>
+        </div>
       </div>
 
       <div className="mt-4 space-y-3">
@@ -84,6 +103,27 @@ export function PrivacyRemovalControlPanel({
             icon="error"
             className={errorClass}
             text="Removal control summary unavailable"
+          />
+        )}
+        {seed.error && (
+          <StatusLine
+            icon="error"
+            className={errorClass}
+            text="Removal seed action unavailable"
+          />
+        )}
+        {!seed.canSeed && !seed.result && !seed.isSeeding && (
+          <StatusLine
+            icon="error"
+            className={warnClass}
+            text="Create a subject before seeding local P4 records."
+          />
+        )}
+        {seed.result && (
+          <StatusLine
+            icon="ok"
+            className={okClass}
+            text={`Seeded ${seed.result.counts.total_created} records, skipped ${seed.result.counts.total_skipped} existing records.`}
           />
         )}
         {summary && !summary.outbound_enabled && (

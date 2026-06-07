@@ -27,6 +27,7 @@ import { usePrivacyCaseDraft } from "../hooks/usePrivacyCaseDraft";
 import { usePrivacyDraftInbox } from "../hooks/usePrivacyDraftInbox";
 import { usePrivacyIntake } from "../hooks/usePrivacyIntake";
 import { usePrivacyRemovalControl } from "../hooks/usePrivacyRemovalControl";
+import { usePrivacyRemovalSeed } from "../hooks/usePrivacyRemovalSeed";
 import { usePrivacyTargets } from "../hooks/usePrivacyTargets";
 import { useAppStore } from "../store";
 import type { ApprovedPrivacyAction, CaseDraftDetailResponse } from "../types/privacy";
@@ -189,6 +190,9 @@ export default function Privacy() {
   const draftInbox = usePrivacyDraftInbox(caseId);
   const approvedActions = usePrivacyApprovedActions(actionId, caseId);
   const removalControl = usePrivacyRemovalControl();
+  const removalSeed = usePrivacyRemovalSeed(subjectId, () => {
+    void removalControl.refreshSummary();
+  });
   const isDark = theme === "dark";
   const border = isDark ? "border-white/10" : "border-[#141414]/12";
   const panel = isDark ? "bg-white/[0.045]" : "bg-white/60";
@@ -396,6 +400,7 @@ export default function Privacy() {
     return (
       <PrivacyRemovalControlPanel
         control={removalControl}
+        seed={removalSeed}
         border={border}
         panel={panel}
         muted={muted}
@@ -637,6 +642,7 @@ export default function Privacy() {
 
           <PrivacyRemovalControlPanel
             control={removalControl}
+            seed={removalSeed}
             border={border}
             panel={panel}
             muted={muted}

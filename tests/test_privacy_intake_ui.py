@@ -14,6 +14,7 @@ PRIVACY_UI_SOURCES = (
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyCaseDraft.ts",
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyDraftInbox.ts",
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyRemovalControl.ts",
+    REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyRemovalSeed.ts",
     REPO_ROOT / "ui" / "src" / "hooks" / "usePrivacyTargets.ts",
     REPO_ROOT / "ui" / "src" / "lib" / "privacyIntake.ts",
     REPO_ROOT / "ui" / "src" / "types" / "privacy.ts",
@@ -131,9 +132,12 @@ def test_privacy_removal_control_panel_is_mounted_on_privacy_page() -> None:
     source = "\n".join(path.read_text(encoding="utf-8") for path in PRIVACY_UI_SOURCES)
 
     assert "usePrivacyRemovalControl()" in page_source
+    assert "usePrivacyRemovalSeed(subjectId" in page_source
     assert "<PrivacyRemovalControlPanel" in page_source
+    assert "/removal-control/seed" in source
     assert "/v1/privacy/removal-control/summary" in source
     assert "P4 Removal Control Plane" in source
+    assert "Seed records" in source
     assert "Incogni and DeleteMe are the benchmark" in source
     assert "outbound disabled" in source
     assert 'id="privacy-removal-readiness"' in source

@@ -71,6 +71,14 @@ class PrivacyCrypto:
             digest_key=self._digest_key,
         )
 
+    def digest_value(self, namespace: str, value: str) -> str:
+        """Create a keyed digest for non-identity privacy control values."""
+        return privacy_digest(
+            _require_non_empty(namespace.strip(), "namespace"),
+            _require_non_empty(value.strip(), "value"),
+            digest_key=self._digest_key,
+        )
+
     def identity_tuple_from_value(
         self,
         subject_id: UUID,
