@@ -59,6 +59,9 @@ KNOWN_NON_EGRESS: tuple[tuple[str, str], ...] = (
     ("brain/routes/honeypot.py", "github.com"),
     # honeypot fake debug API response body
     ("brain/routes/honeypot.py", "internal.fake.local"),
+    # Microsoft Graph OAuth scope/audience identifiers; egress is via Gateway.
+    ("brain/services/at0_mail_graph_client.py", "graph.microsoft.com"),
+    ("brain/services/at0_mail_graph_client.py", "login.microsoftonline.com"),
 )
 
 
