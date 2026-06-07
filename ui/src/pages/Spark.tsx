@@ -89,8 +89,14 @@ function DraftMetadata({
       <MetricRow label="Context read" value={draft.context_messages_read} muted={muted} />
       <MetricRow label="Sent examples" value={draft.principal_sent_messages} muted={muted} />
       <MetricRow label="Runtime context" value={draft.runtime_context_messages} muted={muted} />
+      <MetricRow label="Draft engine" value={draft.draft_engine.replace(/_/g, " ")} muted={muted} />
       <MetricRow label="Approval hash" value={shortHash(draft.approval_ref_hash)} muted={muted} />
       <MetricRow label="Thread hash" value={shortHash(draft.chat_guid_hash)} muted={muted} />
+      <MetricRow
+        label="Sensitivity"
+        value={draft.detected_sensitivity.length ? draft.detected_sensitivity.join(", ") : "clear"}
+        muted={muted}
+      />
     </div>
   )
 }

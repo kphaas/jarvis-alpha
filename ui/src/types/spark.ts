@@ -24,6 +24,9 @@ export interface SparkIMessageDraftResponse {
   source_reference_hash: string
   chat_guid_hash: string
   warnings: string[]
+  detected_sensitivity: string[]
+  blocked_sensitivity: string[]
+  draft_engine: string
 }
 
 export interface SparkIMessageDraftApprovalResponse extends SparkIMessageDraftResponse {
