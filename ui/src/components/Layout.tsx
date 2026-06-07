@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Zap, Home, Newspaper, MessageSquare, Network,
+  Zap, Home, Newspaper, Network,
   Activity, Bug, Bot, Terminal,
   ShieldAlert, ShieldCheck, DollarSign,
   FileText, Settings, Moon, Sun,
@@ -17,7 +17,6 @@ const NAV = [
   { group: 'OBSERVE', items: [
     { to: '/',          label: 'Home',         icon: Home          },
     { to: '/briefing',  label: 'Briefing',     icon: Newspaper     },
-    { to: '/ask',       label: 'Ask',          icon: MessageSquare },
   ]},
   { group: 'OPERATE', items: [
     { to: '/health',    label: 'Health',       icon: Activity      },
@@ -237,11 +236,8 @@ export function Layout({ theme, children, monthSpend = 0, budget = 500, onRefres
         </header>
 
         {/* Page content */}
-        <main className={`flex-1 ${location.pathname === '/ask' ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'}`}>
-          {location.pathname === '/ask'
-            ? <AnimatePresence mode="wait">{children}</AnimatePresence>
-            : <div className="p-4 sm:p-6 lg:p-8"><AnimatePresence mode="wait">{children}</AnimatePresence></div>
-          }
+        <main className="flex-1 overflow-y-auto">
+          <div className="p-4 sm:p-6 lg:p-8"><AnimatePresence mode="wait">{children}</AnimatePresence></div>
         </main>
       </div>
 
