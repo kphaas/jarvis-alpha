@@ -165,6 +165,29 @@ def test_privacy_page_has_guided_workflow_for_new_operators() -> None:
     ).read_text(encoding="utf-8")
 
 
+def test_privacy_page_has_home_and_action_inbox_first() -> None:
+    page_source = PRIVACY_PAGE.read_text(encoding="utf-8")
+    source = "\n".join(path.read_text(encoding="utf-8") for path in PRIVACY_UI_SOURCES)
+
+    assert "<PrivacyCommandCenter" in page_source
+    assert "PrivacyCommandCenter" in source
+    assert "Privacy Home" in source
+    assert "Action inbox" in source
+    assert "Start here" in source
+    assert "One thing at a time" in source
+    assert "Needs approval" in source
+    assert "Ready to handle" in source
+    assert "Needs verification" in source
+    assert "Blocked" in source
+    assert "Advanced workflow" in page_source
+    assert 'id="privacy-home"' in source
+    assert 'id="privacy-action-inbox"' in source
+    assert 'id="privacy-advanced-workflow"' in page_source
+    assert page_source.index("<PrivacyCommandCenter") < page_source.index(
+        "<PrivacyWorkflowGuide"
+    )
+
+
 def test_alpha_pin_gate_supports_longer_pins_and_session_cookie_refresh() -> None:
     source = PIN_GATE.read_text(encoding="utf-8")
 

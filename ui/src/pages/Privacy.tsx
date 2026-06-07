@@ -9,6 +9,7 @@ import { PrivacyTargetRegistry } from "../components/privacy/PrivacyTargetRegist
 import { PrivacyResultPanel } from "../components/privacy/PrivacyResultPanel";
 import { SubjectIntakeForm } from "../components/privacy/SubjectIntakeForm";
 import { PrivacyWorkflowGuide } from "../components/privacy/PrivacyWorkflowGuide";
+import { PrivacyCommandCenter } from "../components/privacy/PrivacyCommandCenter";
 import { usePrivacyApprovedActions } from "../hooks/usePrivacyApprovedActions";
 import { usePrivacyCaseDraft } from "../hooks/usePrivacyCaseDraft";
 import { usePrivacyDraftInbox } from "../hooks/usePrivacyDraftInbox";
@@ -122,6 +123,19 @@ export default function Privacy() {
         </div>
       </div>
 
+      <PrivacyCommandCenter
+        subjectReady={Boolean(subjectId)}
+        selectedTargetCount={targets.selectedCount}
+        targetCount={targets.targets.length}
+        drafts={draftInbox.drafts}
+        actions={approvedActions.actions}
+        completedCaseCount={completedCaseCount}
+        border={border}
+        panel={panel}
+        muted={muted}
+        isDark={isDark}
+      />
+
       <PrivacyWorkflowGuide
         subjectReady={Boolean(subjectId)}
         selectedTargetCount={targets.selectedCount}
@@ -133,6 +147,14 @@ export default function Privacy() {
         muted={muted}
         isDark={isDark}
       />
+
+      <div id="privacy-advanced-workflow" className="flex flex-col gap-2">
+        <h2 className={`text-base font-semibold ${strong}`}>Advanced workflow</h2>
+        <p className={`max-w-3xl text-sm leading-6 ${muted}`}>
+          Detailed intake, packet, approval, handling, and evidence tools stay here for audit
+          and troubleshooting.
+        </p>
+      </div>
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
         <div className="space-y-5">
