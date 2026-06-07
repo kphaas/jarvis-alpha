@@ -58,7 +58,7 @@ export function PrivacyTargetRegistry({
   const hiddenTargetCount = Math.max(0, filteredTargets.length - visibleTargets.length);
   const statusText = subjectId
     ? `${targets.selectedCount} selected, ${filteredTargets.length} matches`
-    : `${filteredTargets.length} matches, create a subject before drafting`;
+    : `Create a subject first. ${filteredTargets.length} matching targets are ready.`;
 
   function chooseCategory(nextCategory: CategoryFilter) {
     setCategory(nextCategory);
@@ -66,7 +66,7 @@ export function PrivacyTargetRegistry({
   }
 
   return (
-    <section className={`rounded-xl border ${border} ${panel} p-5`}>
+    <section id="privacy-target-registry" className={`rounded-xl border ${border} ${panel} p-5`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-start gap-3">
           <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${border}`}>
@@ -75,7 +75,8 @@ export function PrivacyTargetRegistry({
           <div>
             <h2 className="text-base font-semibold">Target registry</h2>
             <p className={`mt-1 max-w-2xl text-sm leading-6 ${muted}`}>
-              Find the brokers, public records, social sites, or breach records to include in the draft.
+              Select one or more brokers, public-record sources, social sites,
+              or breach records to include in the next packet.
             </p>
           </div>
         </div>
@@ -222,6 +223,7 @@ export function PrivacyTargetRegistry({
       </div>
 
       <div
+        aria-live="polite"
         className={`mt-4 rounded-lg border px-3 py-2 text-sm font-medium ${targets.selectedCount > 0 ? okClass : warnClass}`}
       >
         {statusText}

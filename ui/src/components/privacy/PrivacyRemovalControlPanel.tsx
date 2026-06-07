@@ -53,7 +53,7 @@ export function PrivacyRemovalControlPanel({
   const successIcon = isDark ? "text-emerald-300" : "text-emerald-800";
 
   return (
-    <section className={`rounded-xl border ${border} ${panel} p-5`}>
+    <section id="privacy-removal-readiness" className={`rounded-xl border ${border} ${panel} p-5`}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -61,9 +61,9 @@ export function PrivacyRemovalControlPanel({
             <h2 className="text-base font-semibold">Removal readiness</h2>
           </div>
           <p className={`mt-2 max-w-3xl text-sm leading-6 ${muted}`}>
-            P4 Removal Control Plane. Incogni and DeleteMe are the benchmark:
-            broad coverage, authorization, recurring checks, status proof,
-            custom handling, search deindex, and public-record triage. Alpha
+            P4 Removal Control Plane. Incogni and DeleteMe are the benchmark
+            for broker coverage, authorization, recurring checks, status proof,
+            custom handling, search deindexing, and public-record triage. Alpha
             keeps outbound disabled until a separate go-live approval.
           </p>
         </div>

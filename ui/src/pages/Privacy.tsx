@@ -83,37 +83,40 @@ export default function Privacy() {
               <Fingerprint className={`h-5 w-5 ${successIcon}`} />
             </div>
             <div>
-              <p
-                className={`text-xs font-medium ${muted}`}
-              >
-                AT-0 Privacy Agent
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className={`text-xs font-semibold tracking-tight ${strong}`}>
+                  AT-0 Privacy Agent
+                </p>
+                <span className={`rounded-md border px-2 py-1 text-xs font-medium ${border} ${muted}`}>
+                  Manual MVP
+                </span>
+              </div>
               <h1 className={`mt-1 text-2xl font-semibold tracking-tight ${strong}`}>
                 AT-0 Privacy Console
               </h1>
               <p
                 className={`mt-2 max-w-2xl text-sm leading-6 ${muted}`}
               >
-                Manual MVP v0.1: encrypted intake, approval handoff, local
-                disposition, verification, report evidence, and removal
-                readiness.
+                Guided private intake, target selection, review packets,
+                approvals, manual handling, and evidence. Outbound removal
+                work stays disabled until explicit go-live approval.
               </p>
             </div>
           </div>
           <div
-            className={`grid min-w-72 grid-cols-3 overflow-hidden rounded-lg border text-center text-xs font-medium ${border}`}
+            className={`grid w-full grid-cols-3 overflow-hidden rounded-lg border text-center text-xs font-medium sm:w-auto sm:min-w-[22rem] ${border}`}
           >
             <div className={`px-3 py-3 ${isDark ? "bg-white/[0.03]" : "bg-white/45"}`}>
               <LockKeyhole className={`mx-auto mb-1 h-4 w-4 ${successIcon}`} />
-              Local only
+              <span className="whitespace-nowrap">Local review</span>
             </div>
             <div className={`border-x px-3 py-3 ${border}`}>
               <ShieldCheck className={`mx-auto mb-1 h-4 w-4 ${successIcon}`} />
-              {openActionCount} open
+              <span className="whitespace-nowrap">{openActionCount} open</span>
             </div>
             <div className={`px-3 py-3 ${isDark ? "bg-white/[0.03]" : "bg-white/45"}`}>
               <CheckCircle2 className={`mx-auto mb-1 h-4 w-4 ${successIcon}`} />
-              {completedCaseCount} complete
+              <span className="whitespace-nowrap">{completedCaseCount} verified</span>
             </div>
           </div>
         </div>
