@@ -233,11 +233,135 @@ async def test_helm_financial_summary_returns_alpha_queue_status(monkeypatch) ->
     assert response["pending_approvals"] == 1
     assert response["paper"] == {"status": "read_only", "readiness": "brokered"}
     assert response["net_worth"] == {"status": "brokered"}
+    assert response["plaid"] == {"status": "unknown", "coverage": "unknown"}
+    assert response["kill_switch"] == {"status": "unknown"}
+    assert response["freshness"] == {
+        "status": "unknown",
+        "stale_flags": 0,
+        "counts": {},
+    }
     assert response["approvals"]["items"][0]["connector_id"] == "financial"
     assert (
         response["approvals"]["items"][0]["action_id"] == "financial-pending-approvals"
     )
     assert "actor_sub" not in str(response)
+
+
+@pytest.mark.asyncio
+async def test_helm_financial_summary_brokers_safe_optional_fields(monkeypatch) -> None:
+    conn = FakeHelmActionConn()
+
+    @asynccontextmanager
+    async def fake_platform_admin_connection(*, source: str, audit_actor: str):
+        assert source == "http"
+        assert audit_actor == "helm_financial_summary:ken"
+        yield conn
+
+    async def fake_optional_financial_payload() -> dict[str, object]:
+        return {
+            "paper": {"status": "read_only", "readiness": "ready"},
+            "net_worth": {"status": "covered", "sources": 4, "included_sources": 3},
+            "plaid": {
+                "status": "connected",
+                "coverage": "2/3",
+                "connected_sources": 2,
+                "planned_sources": 3,
+                "included_sources": 2,
+                "active_accounts": 3,
+                "included_accounts": 2,
+                "connected_items": 2,
+                "access_token_secret_ref": "must-not-leak",
+            },
+            "kill_switch": {
+                "status": "clear",
+                "state": "open",
+                "restriction_level": 0,
+                "deciding_source": "alpha_operator",
+            },
+            "freshness": {
+                "status": "stale",
+                "stale_flags": 1,
+                "counts": {"fresh": 2, "stale": 1},
+            },
+        }
+
+    monkeypatch.setattr(
+        helm, "platform_admin_connection", fake_platform_admin_connection
+    )
+    monkeypatch.setattr(
+        helm, "_optional_financial_payload", fake_optional_financial_payload
+    )
+
+    response = await helm.helm_financial_summary(
+        _request(scopes=["helm.read"]),
+        _user_id="ken",
+    )
+
+    assert response["paper"] == {"status": "read_only", "readiness": "ready"}
+    assert response["net_worth"] == {
+        "status": "covered",
+        "sources": 4,
+        "included_sources": 3,
+    }
+    assert response["plaid"] == {
+        "status": "connected",
+        "coverage": "2/3",
+        "connected_sources": 2,
+        "planned_sources": 3,
+        "included_sources": 2,
+        "active_accounts": 3,
+        "included_accounts": 2,
+        "connected_items": 2,
+    }
+    assert response["kill_switch"] == {
+        "status": "clear",
+        "state": "open",
+        "restriction_level": 0,
+        "deciding_source": "alpha_operator",
+    }
+    assert response["freshness"] == {
+        "status": "stale",
+        "stale_flags": 1,
+        "counts": {"fresh": 2, "stale": 1},
+    }
+    assert "must-not-leak" not in str(response)
+
+
+@pytest.mark.asyncio
+async def test_optional_financial_payload_sends_monitor_token(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"status": "brokered"}
+
+    class FakeClient:
+        def __init__(self, *, timeout: float, verify: bool):
+            calls["timeout"] = timeout
+            calls["verify"] = verify
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url: str, headers: dict[str, str]):
+            calls["url"] = url
+            calls["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setenv("JARVIS_FINANCIAL_API_URL", "https://financial.invalid")
+    monkeypatch.setenv("JARVIS_FIN_SECURITY_POSTURE_TOKEN", "monitor-token")
+    monkeypatch.setattr(helm.httpx, "AsyncClient", FakeClient)
+
+    payload = await helm._optional_financial_payload()
+
+    assert payload == {"status": "brokered"}
+    assert calls["url"] == "https://financial.invalid/monitor/helm-summary"
+    assert calls["headers"] == {"Authorization": "Bearer monitor-token"}
 
 
 @pytest.mark.asyncio
