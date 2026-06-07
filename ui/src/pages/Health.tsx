@@ -59,6 +59,45 @@ interface TemporalStoragePayload {
   errors: string[];
 }
 
+interface BeaconHealthCheck {
+  ok: boolean;
+  status: "ok" | "degraded" | "unavailable";
+  detail: string;
+  metadata: Record<string, unknown>;
+}
+
+interface BeaconRetentionReport {
+  mode: string;
+  evidence_retention_days: number;
+  screenshot_retention_days: number;
+  old_request_count: number;
+  screenshot_file_count: number;
+  screenshot_bytes: number;
+  generated_at: string;
+}
+
+interface BeaconHealthPayload {
+  status: "ok" | "degraded";
+  checks: Record<string, BeaconHealthCheck>;
+  retention: BeaconRetentionReport;
+  checked_at: string;
+}
+
+interface PendingApprovalItem {
+  id: string;
+  action_class: string[];
+  risk_tier: string;
+  description: string;
+  status: string;
+  requested_at: string;
+  expires_at: string;
+}
+
+interface PendingApprovalsPayload {
+  pending: PendingApprovalItem[];
+  count: number;
+}
+
 function agentShortLabel(label: string): string {
   return label.replace(/^com\.jarvis\./, "");
 }
@@ -125,6 +164,59 @@ function temporalStatusColor(status: string): string {
   return "#ef4444";
 }
 
+function beaconStatusColor(status: string): string {
+  if (status === "ok") return "#22c55e";
+  if (status === "degraded") return "#f59e0b";
+  return "#ef4444";
+}
+
+function metadataNumber(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+): number | null {
+  const value = metadata?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function metadataString(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+): string | null {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function metadataStringList(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+): string[] {
+  const value = metadata?.[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function metadataRecord(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+): Record<string, unknown> | null {
+  const value = metadata?.[key];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function isBeaconBrowserApproval(item: PendingApprovalItem): boolean {
+  return (
+    item.action_class.includes("beacon_browser_use") ||
+    item.description.toLowerCase().includes("beacon browser")
+  );
+}
+
 export default function Health({ theme }: { theme: "dark" | "light" }) {
   const isDark = theme === "dark";
   const bg = isDark ? "#0f1117" : "#f8fafc";
@@ -144,6 +236,10 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
   const [temporalStorage, setTemporalStorage] = useState<TemporalStoragePayload | null>(null);
   const [temporalStorageLoading, setTemporalStorageLoading] = useState(true);
   const [temporalStorageErr, setTemporalStorageErr] = useState(false);
+  const [beaconHealth, setBeaconHealth] = useState<BeaconHealthPayload | null>(null);
+  const [beaconApprovals, setBeaconApprovals] = useState<PendingApprovalItem[]>([]);
+  const [beaconLoading, setBeaconLoading] = useState(true);
+  const [beaconErr, setBeaconErr] = useState(false);
 
   const fetchSummary = useCallback(async () => {
     try {
@@ -207,17 +303,40 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
     }
   }, []);
 
+  const fetchBeacon = useCallback(async () => {
+    setBeaconLoading(true);
+    setBeaconErr(false);
+    try {
+      const health = await apiJson<BeaconHealthPayload>("/v1/internet-scout/health");
+      setBeaconHealth(health);
+      try {
+        const approvals = await apiJson<PendingApprovalsPayload>("/v1/approvals/pending");
+        setBeaconApprovals((approvals.pending ?? []).filter(isBeaconBrowserApproval));
+      } catch {
+        setBeaconApprovals([]);
+      }
+    } catch {
+      setBeaconHealth(null);
+      setBeaconApprovals([]);
+      setBeaconErr(true);
+    } finally {
+      setBeaconLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchSummary();
     fetchAgents();
     fetchTemporalStorage();
+    fetchBeacon();
     const t = setInterval(() => {
       fetchSummary();
       fetchAgents();
       fetchTemporalStorage();
+      fetchBeacon();
     }, REFRESH_MS);
     return () => clearInterval(t);
-  }, [fetchSummary, fetchAgents, fetchTemporalStorage]);
+  }, [fetchSummary, fetchAgents, fetchTemporalStorage, fetchBeacon]);
 
   const sectionStyle = {
     background: card,
@@ -267,6 +386,7 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
               fetchSummary();
               fetchAgents();
               fetchTemporalStorage();
+              fetchBeacon();
             }}
             style={{ fontSize: 12, padding: "6px 12px", borderRadius: 6, border: `1px solid ${border}`, background: "transparent", color: text, cursor: "pointer" }}
           >
@@ -334,6 +454,123 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
               );
             })
           )}
+        </div>
+      </div>
+
+      {/* Beacon Internet Scout */}
+      <div style={sectionStyle}>
+        <div style={sectionHeader}>
+          <span style={labelStyle}>Beacon Internet Scout</span>
+          {beaconHealth && (
+            <span style={{ fontSize: 11, color: beaconStatusColor(beaconHealth.status), fontWeight: 700, textTransform: "uppercase" }}>
+              {beaconHealth.status}
+            </span>
+          )}
+        </div>
+        <div style={{ padding: "14px 16px" }}>
+          {beaconLoading && (
+            <span style={{ fontSize: 12, color: muted }}>Loading…</span>
+          )}
+          {!beaconLoading && beaconErr && (
+            <span style={{ fontSize: 12, color: "#f59e0b" }}>Beacon health unavailable</span>
+          )}
+          {!beaconLoading && !beaconErr && beaconHealth && (() => {
+            const gatewayCheck = beaconHealth.checks.gateway;
+            const browserCheck = beaconHealth.checks.browser_runtime;
+            const evidenceCheck = beaconHealth.checks.recent_evidence;
+            const providerOrder = metadataStringList(gatewayCheck?.metadata, "provider_order");
+            const configuredProviders = metadataNumber(gatewayCheck?.metadata, "configured_provider_count");
+            const usableProviders = metadataNumber(gatewayCheck?.metadata, "usable_provider_count");
+            const runtime = metadataString(browserCheck?.metadata, "runtime") ?? "disabled";
+            const playwrightVersion = metadataString(browserCheck?.metadata, "installed_playwright_version");
+            const recentTotal = metadataNumber(evidenceCheck?.metadata, "total") ?? 0;
+            const recentSucceeded = metadataNumber(evidenceCheck?.metadata, "succeeded") ?? 0;
+            const recentFailed = metadataNumber(evidenceCheck?.metadata, "failed") ?? 0;
+            const recentBlocked = metadataNumber(evidenceCheck?.metadata, "blocked") ?? 0;
+            const lastRequest = metadataRecord(evidenceCheck?.metadata, "last_request");
+            const lastRequestId = metadataString(lastRequest ?? undefined, "id");
+            const lastRequestTool = metadataString(lastRequest ?? undefined, "selected_tool") ?? "—";
+            const lastRequestStatus = metadataString(lastRequest ?? undefined, "status") ?? "—";
+            const lastRequestCreated = metadataString(lastRequest ?? undefined, "created_at");
+            const nextApproval = beaconApprovals[0];
+            return (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 14 }}>
+                  <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Provider Order</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, fontFamily: "ui-monospace, monospace" }}>
+                      {providerOrder.length > 0 ? providerOrder.join(" > ") : "—"}
+                    </div>
+                    <div style={{ fontSize: 11, color: gatewayCheck?.ok ? "#22c55e" : "#f59e0b", marginTop: 4 }}>
+                      {usableProviders ?? 0}/{configuredProviders ?? 0} usable
+                    </div>
+                  </div>
+                  <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Browser Runtime</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: browserCheck?.ok ? text : "#f59e0b" }}>
+                      {runtime}
+                    </div>
+                    <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
+                      Playwright {playwrightVersion ?? "—"}
+                    </div>
+                  </div>
+                  <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Recent Evidence</div>
+                    <div style={{ fontSize: 18, fontWeight: 700 }}>{recentTotal}</div>
+                    <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
+                      {recentSucceeded} succeeded · {recentFailed} failed · {recentBlocked} blocked
+                    </div>
+                  </div>
+                  <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Pending Browser Approvals</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: beaconApprovals.length > 0 ? "#f59e0b" : text }}>
+                      {beaconApprovals.length}
+                    </div>
+                    <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
+                      {nextApproval ? `Next expires ${new Date(nextApproval.expires_at).toLocaleTimeString()}` : "No pending Beacon browser queue"}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+                  <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}`, background: isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)" }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Last Request</div>
+                    {lastRequest ? (
+                      <>
+                        <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "ui-monospace, monospace" }}>
+                          {lastRequestId ? lastRequestId.slice(0, 8) : "—"}
+                        </div>
+                        <div style={{ fontSize: 11, color: muted, marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                          <span>Tool: <span style={{ color: text }}>{lastRequestTool}</span></span>
+                          <span>Status: <span style={{ color: lastRequestStatus === "succeeded" ? "#22c55e" : muted }}>{lastRequestStatus}</span></span>
+                          {lastRequestCreated && (
+                            <span>{new Date(lastRequestCreated).toLocaleString()}</span>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ fontSize: 12, color: muted }}>No Beacon requests yet</div>
+                    )}
+                  </div>
+                  <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}`, background: isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)" }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Retention</div>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>
+                      {beaconHealth.retention.mode.replace("_", " ")}
+                    </div>
+                    <div style={{ fontSize: 11, color: muted, marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <span>Evidence: <span style={{ color: text }}>{beaconHealth.retention.evidence_retention_days}d</span></span>
+                      <span>Screenshots: <span style={{ color: text }}>{beaconHealth.retention.screenshot_retention_days}d</span></span>
+                      <span>Old requests: <span style={{ color: text }}>{beaconHealth.retention.old_request_count}</span></span>
+                      <span>Files: <span style={{ color: text }}>{beaconHealth.retention.screenshot_file_count}</span></span>
+                      <span>{formatBytes(beaconHealth.retention.screenshot_bytes)}</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: muted, marginTop: 10 }}>
+                  Checked {new Date(beaconHealth.checked_at).toLocaleTimeString()} · raw web content remains untrusted evidence only
+                </div>
+              </>
+            );
+          })()}
         </div>
       </div>
 

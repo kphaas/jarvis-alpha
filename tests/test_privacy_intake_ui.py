@@ -55,7 +55,9 @@ def test_privacy_review_packet_panel_is_mounted_on_privacy_page() -> None:
     assert "targets.clearSelection();" in page_source
     assert "draftInbox.refreshDrafts();" in page_source
     assert "/case-drafts" in source
-    assert "Review Packet" in source
+    assert "Review packet" in source
+    assert 'id="privacy-review-packet"' in source
+    assert "No outbound action happens here" in source
 
 
 def test_privacy_draft_inbox_is_mounted_on_privacy_page() -> None:
@@ -68,7 +70,8 @@ def test_privacy_draft_inbox_is_mounted_on_privacy_page() -> None:
     assert "<PrivacyDraftInboxPanel" in page_source
     assert "AT-0 Privacy Agent" in page_source
     assert "AT-0 Privacy Console" in page_source
-    assert "Manual MVP v0.1: encrypted intake" in page_source
+    assert "Guided private intake" in page_source
+    assert "Outbound removal" in page_source
     assert "font-serif italic" not in page_source
     assert "P2-F - draft review inbox" not in page_source
     assert "/v1/privacy/case-drafts" in source
@@ -76,9 +79,12 @@ def test_privacy_draft_inbox_is_mounted_on_privacy_page() -> None:
     assert "archive" in source
     assert "Submit for approval" in source
     assert "Archive" in source
-    assert "Draft Inbox" in source
-    assert "No targets in this filter" in source
-    assert "shown /" in source
+    assert "Draft review" in source
+    assert "Draft inbox stores saved packets" in source
+    assert 'id="privacy-draft-inbox"' in source
+    assert "No targets match this search" in source
+    assert "Search targets" in source
+    assert "matches" in source
 
 
 def test_privacy_approved_actions_panel_is_mounted_on_privacy_page() -> None:
@@ -92,7 +98,9 @@ def test_privacy_approved_actions_panel_is_mounted_on_privacy_page() -> None:
     assert "/verification" in source
     assert "/timeline" in source
     assert "/report" in source
-    assert "Approved Actions" in source
+    assert "Approved actions" in source
+    assert 'id="privacy-approved-actions"' in source
+    assert "This panel does not send anything" in source
     assert "Ready for manual operator handling" in source
     assert "Manual handling recorded. Verification can be added" in source
     assert "Verification recorded. Case report is ready." in source
@@ -109,6 +117,7 @@ def test_privacy_approved_actions_panel_is_mounted_on_privacy_page() -> None:
     assert "Evidence status" in source
     assert "Evidence hashes" in source
     assert "Needs evidence" in source
+    assert "Audit details" in source
     assert "data-testid={`privacy-action-${shortId(action.action_id)}`}" in source
     assert "htmlFor={`${idPrefix}-disposition`}" in source
     assert "htmlFor={`${idPrefix}-verification`}" in source
@@ -131,10 +140,81 @@ def test_privacy_removal_control_panel_is_mounted_on_privacy_page() -> None:
     assert "Seed records" in source
     assert "Incogni and DeleteMe are the benchmark" in source
     assert "outbound disabled" in source
+    assert 'id="privacy-removal-readiness"' in source
+    assert "Show operating plan" in source
     assert "North-star gaps" in source
     assert "P4-A" in source
     assert "P4-G" in source
     assert "PrivacyRemovalControlSummaryResponse" in source
+
+
+def test_privacy_page_has_guided_workflow_for_new_operators() -> None:
+    page_source = PRIVACY_PAGE.read_text(encoding="utf-8")
+    source = "\n".join(path.read_text(encoding="utf-8") for path in PRIVACY_UI_SOURCES)
+
+    assert "<PrivacyWorkflowGuide" in page_source
+    assert "Next step" in source
+    assert "Go to intake" in source
+    assert "Create packet" in source
+    assert "Subject intake" in source
+    assert "Target registry" in source
+    assert "Manual approval stays on" in source
+    assert 'id="privacy-workflow-guide"' in source
+    assert 'id="privacy-subject-intake"' in source
+    assert 'id="privacy-target-registry"' in source
+    assert "Subject status" in source
+    assert "Add identity value" in source
+    assert "AT-0 Alpha" in (
+        REPO_ROOT / "ui" / "src" / "components" / "Layout.tsx"
+    ).read_text(encoding="utf-8")
+
+
+def test_privacy_page_has_home_and_action_inbox_first() -> None:
+    page_source = PRIVACY_PAGE.read_text(encoding="utf-8")
+    source = "\n".join(path.read_text(encoding="utf-8") for path in PRIVACY_UI_SOURCES)
+
+    assert "<PrivacyCommandCenter" in page_source
+    assert "PrivacyCommandCenter" in source
+    assert "Privacy Home" in source
+    assert "Action inbox" in source
+    assert "Start here" in source
+    assert "One thing at a time" in source
+    assert "Needs approval" in source
+    assert "Ready to handle" in source
+    assert "Needs verification" in source
+    assert "Blocked" in source
+    assert "Advanced workflow" in page_source
+    assert 'id="privacy-home"' in source
+    assert 'id="privacy-action-inbox"' in source
+    assert 'id="privacy-advanced-workflow"' in page_source
+    assert page_source.index("<PrivacyCommandCenter") < page_source.index(
+        "<PrivacyWorkflowGuide"
+    )
+
+
+def test_privacy_page_has_guided_setup_mode_before_advanced_details() -> None:
+    page_source = PRIVACY_PAGE.read_text(encoding="utf-8")
+    source = "\n".join(path.read_text(encoding="utf-8") for path in PRIVACY_UI_SOURCES)
+
+    assert "PrivacyGuidedSetupPanel" in source
+    assert "const [privacyViewMode" in page_source
+    assert '"guided" | "advanced"' in page_source
+    assert "suggestedGuidedStep" in page_source
+    assert "renderGuidedPanel" in page_source
+    assert "Guided setup" in source
+    assert "One panel at a time" in source
+    assert "Show all details" in source
+    assert "Show guided setup" in page_source
+    assert 'id="privacy-guided-setup"' in source
+    assert 'onShowAdvanced={() => setPrivacyViewMode("advanced")}' in page_source
+    assert page_source.index(
+        'if (openActionCount > 0) return "actions"'
+    ) < page_source.index(
+        'if (hasLocalPacket || draftReviewCount > 0 || approvalReviewCount > 0) return "review"'
+    )
+    assert page_source.index("<PrivacyGuidedSetupPanel") < page_source.index(
+        'id="privacy-advanced-workflow"'
+    )
 
 
 def test_alpha_pin_gate_supports_longer_pins_and_session_cookie_refresh() -> None:

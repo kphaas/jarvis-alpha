@@ -93,3 +93,57 @@ def test_run_remote_node_changes_directory_before_python(monkeypatch):
 
     assert result.status == "ok"
     assert seen["args"][-1].startswith("cd ~/jarvis-alpha && python3")
+
+
+def test_run_node_uses_local_path_for_current_node(monkeypatch):
+    called = []
+
+    def fake_local(spec, **kwargs):
+        called.append(("local", spec.node, kwargs))
+        return sweep.NodeResult(
+            node=spec.node,
+            fqdn=spec.fqdn,
+            status="ok",
+            days_remaining=42,
+            cert_issued_at="2026-04-01T00:00:00+00:00",
+            cert_expires_at="2026-07-01T00:00:00+00:00",
+            source_cert="/tmp/brain.crt",
+        )
+
+    def fake_remote(node, **kwargs):
+        called.append(("remote", node, kwargs))
+        return sweep.NodeResult(
+            node=node,
+            fqdn=sweep.NODE_SPECS[node].fqdn,
+            status="ok",
+            days_remaining=42,
+            cert_issued_at="2026-04-01T00:00:00+00:00",
+            cert_expires_at="2026-07-01T00:00:00+00:00",
+            source_cert="remote",
+        )
+
+    monkeypatch.setattr(sweep, "renew_local_node", fake_local)
+    monkeypatch.setattr(sweep, "run_remote_node", fake_remote)
+
+    result = sweep.run_node(
+        "brain",
+        threshold_days=30,
+        force=False,
+        dry_run=True,
+        no_restart=True,
+        current_node="brain",
+    )
+
+    assert result.status == "ok"
+    assert called == [
+        (
+            "local",
+            "brain",
+            {
+                "threshold_days": 30,
+                "force": False,
+                "dry_run": True,
+                "no_restart": True,
+            },
+        )
+    ]

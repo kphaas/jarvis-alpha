@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Protocol
 
 from brain.services.internet_scout.browser_runner import browser_runtime_health
 from brain.services.internet_scout.gateway_client import (
@@ -23,6 +24,11 @@ _REQUIRED_TABLES = (
     "alpha_internet_memory_promotions",
 )
 _REQUIRED_FUNCTIONS = ("public.save_beacon_semantic_memory(uuid,text,text,text,text)",)
+_READINESS_CHECKS = ("database", "gateway", "browser_runtime", "retention")
+
+
+class _RequestRow(Protocol):
+    def __getitem__(self, key: str) -> object: ...
 
 
 async def build_beacon_health(
@@ -49,8 +55,9 @@ async def build_beacon_health(
             "screenshot_file_count": retention.screenshot_file_count,
         },
     )
+    readiness_ok = all(checks[name].ok for name in _READINESS_CHECKS)
     return InternetScoutHealthResponse(
-        status="ok" if all(check.ok for check in checks.values()) else "degraded",
+        status="ok" if readiness_ok else "degraded",
         checks=checks,
         retention=retention,
         checked_at=datetime.now(UTC),
@@ -148,6 +155,14 @@ async def _recent_evidence_check(conn) -> InternetScoutHealthCheck:
         WHERE created_at >= NOW() - INTERVAL '24 hours'
         """
     )
+    last_request = await conn.fetchrow(
+        """
+        SELECT id, requester, selected_tool, status, created_at, updated_at
+        FROM public.alpha_internet_requests
+        ORDER BY created_at DESC
+        LIMIT 1
+        """
+    )
     total = int(row["total"] or 0) if row else 0
     failed = int(row["failed"] or 0) if row else 0
     ok = failed == 0
@@ -163,6 +178,7 @@ async def _recent_evidence_check(conn) -> InternetScoutHealthCheck:
             "succeeded": int(row["succeeded"] or 0) if row else 0,
             "failed": failed,
             "blocked": int(row["blocked"] or 0) if row else 0,
+            "last_request": _last_request_metadata(last_request),
         },
     )
 
@@ -182,3 +198,22 @@ def _int_payload(value: object) -> int:
     if isinstance(value, str) and value.isdecimal():
         return int(value)
     return 0
+
+
+def _last_request_metadata(row: _RequestRow | None) -> dict[str, object] | None:
+    if row is None:
+        return None
+    return {
+        "id": str(row["id"]),
+        "requester": str(row["requester"]),
+        "selected_tool": str(row["selected_tool"]),
+        "status": str(row["status"]),
+        "created_at": _datetime_metadata(row["created_at"]),
+        "updated_at": _datetime_metadata(row["updated_at"]),
+    }
+
+
+def _datetime_metadata(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)

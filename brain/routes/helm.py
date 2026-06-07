@@ -17,6 +17,7 @@ import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from brain.config.secrets import get_secret
 from brain.db.rls import platform_admin_connection
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
@@ -331,7 +332,24 @@ def _financial_verify_tls() -> bool:
 
 def _financial_summary_path() -> str:
     value = os.environ.get("JARVIS_FINANCIAL_HELM_SUMMARY_PATH", "").strip()
-    return value or "/health/detailed"
+    return value or "/monitor/helm-summary"
+
+
+def _secret_or_env(name: str) -> str | None:
+    value = os.environ.get(name, "").strip()
+    if value:
+        return value
+    try:
+        secret = get_secret(name)
+    except Exception:
+        return None
+    return str(secret).strip() or None
+
+
+def _financial_monitor_token() -> str | None:
+    return _secret_or_env("JARVIS_FIN_SECURITY_POSTURE_TOKEN") or _secret_or_env(
+        "FINANCIAL_SECURITY_POSTURE_TOKEN"
+    )
 
 
 def _iso_value(value: object | None) -> str | None:
@@ -410,12 +428,17 @@ async def _optional_financial_payload() -> dict[str, Any]:
     base_url = _financial_base_url()
     if not base_url:
         return {}
+    token = _financial_monitor_token()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         async with httpx.AsyncClient(
             timeout=5.0,
             verify=_financial_verify_tls(),
         ) as client:
-            response = await client.get(f"{base_url}{_financial_summary_path()}")
+            response = await client.get(
+                f"{base_url}{_financial_summary_path()}",
+                headers=headers,
+            )
     except (OSError, httpx.HTTPError):
         return {"status": "unavailable"}
 
@@ -444,6 +467,72 @@ def _financial_net_worth(payload: dict[str, Any]) -> str:
     if isinstance(net_worth.get("status"), str):
         return str(net_worth["status"])
     return "brokered"
+
+
+def _count_map(value: object) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, int] = {}
+    for key, count in value.items():
+        if isinstance(key, str) and isinstance(count, int):
+            out[key] = count
+    return out
+
+
+def _safe_public_fields(
+    payload: dict[str, Any],
+    key: str,
+    fields: tuple[str, ...],
+) -> dict[str, Any]:
+    source = _json_object(payload.get(key))
+    out: dict[str, Any] = {}
+    for field in fields:
+        if field not in source:
+            continue
+        value = source.get(field)
+        if isinstance(value, str | int) or value is None:
+            out[field] = value
+        elif field == "counts":
+            out[field] = _count_map(value)
+    return out
+
+
+def _financial_net_worth_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    out = _safe_public_fields(payload, "net_worth", ("sources", "included_sources"))
+    out["status"] = _financial_net_worth(payload)
+    return out
+
+
+def _financial_plaid_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    out = _safe_public_fields(
+        payload,
+        "plaid",
+        (
+            "status",
+            "coverage",
+            "connected_sources",
+            "planned_sources",
+            "included_sources",
+            "active_accounts",
+            "included_accounts",
+            "connected_items",
+        ),
+    )
+    return out or {"status": "unknown", "coverage": "unknown"}
+
+
+def _financial_kill_switch_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    out = _safe_public_fields(
+        payload,
+        "kill_switch",
+        ("status", "state", "restriction_level", "deciding_source"),
+    )
+    return out or {"status": "unknown"}
+
+
+def _financial_freshness_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    out = _safe_public_fields(payload, "freshness", ("status", "stale_flags", "counts"))
+    return out or {"status": "unknown", "stale_flags": 0, "counts": {}}
 
 
 async def _family_service_json(path: str) -> dict[str, Any]:
@@ -625,9 +714,10 @@ async def helm_financial_summary(
             "status": "read_only",
             "readiness": _financial_readiness(downstream),
         },
-        "net_worth": {
-            "status": _financial_net_worth(downstream),
-        },
+        "net_worth": _financial_net_worth_payload(downstream),
+        "plaid": _financial_plaid_payload(downstream),
+        "kill_switch": _financial_kill_switch_payload(downstream),
+        "freshness": _financial_freshness_payload(downstream),
         "pending_approvals": pending,
         "approvals": {
             "pending": pending,

@@ -5,8 +5,8 @@ import { KeyValue, StatusLine } from "./PrivacyFields";
 
 function chipClass(isDark: boolean) {
   return isDark
-    ? "border-white/10 bg-white/5 text-white/65"
-    : "border-[#141414]/10 bg-[#141414]/5 text-[#141414]/65";
+    ? "border-white/10 bg-white/5 text-white/70"
+    : "border-[#141414]/10 bg-[#141414]/5 text-[#4A4741]";
 }
 
 export function PrivacyCaseDraftPanel({
@@ -38,24 +38,26 @@ export function PrivacyCaseDraftPanel({
     const result = await draftState.createDraft();
     if (result) onDraftCreated();
   }
+  const successIcon = isDark ? "text-emerald-300" : "text-emerald-800";
 
   return (
-    <section className={`rounded-xl border ${border} ${panel} p-5`}>
+    <section id="privacy-review-packet" className={`rounded-xl border ${border} ${panel} p-5`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <FileText className="h-4 w-4 text-emerald-400" />
-          <h2
-            className={`text-xs font-mono uppercase tracking-widest ${muted}`}
-          >
-            Review Packet
-          </h2>
+          <FileText className={`h-4 w-4 ${successIcon}`} />
+          <div>
+            <h2 className="text-base font-semibold">Review packet</h2>
+            <p className={`mt-1 text-sm leading-6 ${muted}`}>
+              Create a local packet for selected targets. No outbound action happens here.
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {draftState.draft && (
             <button
               type="button"
               onClick={draftState.clearDraft}
-              className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border ${border}`}
+              className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border transition hover:border-emerald-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-700 dark:hover:border-emerald-300/50 dark:focus-visible:outline-emerald-300 ${border}`}
               aria-label="Clear review packet"
             >
               <X className="h-4 w-4" />
@@ -65,7 +67,7 @@ export function PrivacyCaseDraftPanel({
             type="button"
             onClick={createDraft}
             disabled={!draftState.canCreate}
-            className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm transition disabled:opacity-40 ${border}`}
+            className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm transition hover:border-emerald-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-700 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:border-emerald-300/50 dark:focus-visible:outline-emerald-300 ${border}`}
           >
             <FileText className="h-4 w-4" />
             Create draft
@@ -78,14 +80,14 @@ export function PrivacyCaseDraftPanel({
           <StatusLine
             icon="error"
             className={warnClass}
-            text="Create a subject before drafting"
+            text="Create a subject to unlock draft creation."
           />
         )}
         {!draftState.draft && subjectId && selectedCount === 0 && (
           <StatusLine
             icon="error"
             className={warnClass}
-            text="Select at least one target"
+            text="Select at least one target to create a packet."
           />
         )}
         {draftState.error && (
@@ -107,30 +109,40 @@ export function PrivacyCaseDraftPanel({
               className={okClass}
               text={`${draftState.draft.action_count} draft actions stored`}
             />
-            <div
-              className={`grid gap-3 rounded-lg border p-3 sm:grid-cols-2 ${border}`}
-            >
-              <KeyValue
-                label="Case ID"
-                value={draftState.draft.case_id}
-                mutedClass={muted}
-              />
-              <KeyValue
-                label="Payload key"
-                value={draftState.draft.payload_key_version}
-                mutedClass={muted}
-              />
-              <KeyValue
-                label="Status"
-                value={draftState.draft.status}
-                mutedClass={muted}
-              />
+            <div className={`grid gap-3 rounded-lg border p-3 sm:grid-cols-2 ${border}`}>
               <KeyValue
                 label="Targets"
                 value={String(draftState.draft.target_count)}
                 mutedClass={muted}
               />
+              <KeyValue
+                label="Actions"
+                value={String(draftState.draft.action_count)}
+                mutedClass={muted}
+              />
             </div>
+            <details className={`rounded-lg border ${border}`}>
+              <summary className={`cursor-pointer px-3 py-2 text-sm font-medium ${muted}`}>
+                Audit details
+              </summary>
+              <div className={`grid gap-3 border-t p-3 sm:grid-cols-2 ${border}`}>
+                <KeyValue
+                  label="Case ID"
+                  value={draftState.draft.case_id}
+                  mutedClass={muted}
+                />
+                <KeyValue
+                  label="Payload key"
+                  value={draftState.draft.payload_key_version}
+                  mutedClass={muted}
+                />
+                <KeyValue
+                  label="Status"
+                  value={draftState.draft.status}
+                  mutedClass={muted}
+                />
+              </div>
+            </details>
             <div className="space-y-3">
               {draftState.draft.review_packets.map((packet) => (
                 <article
@@ -143,9 +155,9 @@ export function PrivacyCaseDraftPanel({
                         {packet.target_name}
                       </p>
                       <p
-                        className={`truncate text-[10px] font-mono uppercase tracking-widest ${muted}`}
+                        className={`truncate text-sm ${muted}`}
                       >
-                        {packet.target_id}
+                        {TARGET_METHOD_LABEL[packet.opt_out_method]} · {packet.jurisdiction}
                       </p>
                     </div>
                     <span

@@ -34,14 +34,14 @@ type WorkflowDraft = {
 
 function chipClass(isDark: boolean) {
   return isDark
-    ? "border-white/10 bg-white/5 text-white/65"
-    : "border-[#141414]/10 bg-[#141414]/5 text-[#141414]/65";
+    ? "border-white/10 bg-white/5 text-white/70"
+    : "border-[#141414]/10 bg-[#141414]/5 text-[#4A4741]";
 }
 
 function fieldClass(isDark: boolean) {
   return isDark
-    ? "border-white/10 bg-[#0A0A0A] text-white placeholder:text-white/30"
-    : "border-[#141414]/15 bg-[#E4E3E0] text-[#141414] placeholder:text-[#141414]/35";
+    ? "border-white/10 bg-[#0A0A0A] text-white placeholder:text-white/55"
+    : "border-[#141414]/18 bg-[#F7F6F3] text-[#141414] placeholder:text-[#4A4741]";
 }
 
 function shortId(id: string) {
@@ -173,6 +173,7 @@ export function PrivacyApprovedActionsPanel({
   const hiddenCompletedCount = completedActions.filter(
     (action) => !completedActionIds.has(action.action_id),
   ).length;
+  const successIcon = isDark ? "text-emerald-300" : "text-emerald-800";
 
   function draftFor(actionId: string) {
     return drafts[actionId] ?? defaultDraft();
@@ -259,45 +260,57 @@ export function PrivacyApprovedActionsPanel({
           </span>
         </div>
 
-        <div className={`mt-3 grid gap-3 rounded-lg border p-3 text-sm ${border}`}>
-          <KeyValue label="Action ID" value={action.action_id} mutedClass={muted} />
-          <KeyValue label="Target ID" value={action.target_id} mutedClass={muted} />
-          <KeyValue label="Status" value={action.status} mutedClass={muted} />
-          <KeyValue
-            label="Case status"
-            value={action.case_status}
-            mutedClass={muted}
-          />
-          <KeyValue
+        <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+          <SummaryItem
             label="Method"
             value={TARGET_METHOD_LABEL[action.opt_out_method]}
-            mutedClass={muted}
+            muted={muted}
+            border={border}
           />
-          <KeyValue
-            label="Jurisdiction"
-            value={action.jurisdiction}
-            mutedClass={muted}
-          />
-          <KeyValue
-            label="Response window"
-            value={
-              action.avg_response_days === null
-                ? "unknown"
-                : `${action.avg_response_days} days`
-            }
-            mutedClass={muted}
-          />
-          <KeyValue
+          <SummaryItem
             label="Due"
             value={formatDate(action.verification_due_at)}
-            mutedClass={muted}
+            muted={muted}
+            border={border}
           />
-          <KeyValue
-            label="Evidence hash"
-            value={action.evidence_payload_hash ?? "none"}
-            mutedClass={muted}
+          <SummaryItem
+            label="Jurisdiction"
+            value={action.jurisdiction}
+            muted={muted}
+            border={border}
+          />
+          <SummaryItem
+            label="Response"
+            value={
+              action.avg_response_days === null
+                ? "Unknown"
+                : `${action.avg_response_days} days`
+            }
+            muted={muted}
+            border={border}
           />
         </div>
+
+        <details className={`mt-3 rounded-lg border ${border}`}>
+          <summary className={`cursor-pointer px-3 py-2 text-sm font-medium ${muted}`}>
+            Audit details
+          </summary>
+          <div className={`grid gap-3 border-t p-3 text-sm ${border}`}>
+            <KeyValue label="Action ID" value={action.action_id} mutedClass={muted} />
+            <KeyValue label="Target ID" value={action.target_id} mutedClass={muted} />
+            <KeyValue label="Status" value={action.status} mutedClass={muted} />
+            <KeyValue
+              label="Case status"
+              value={action.case_status}
+              mutedClass={muted}
+            />
+            <KeyValue
+              label="Evidence hash"
+              value={action.evidence_payload_hash ?? "none"}
+              mutedClass={muted}
+            />
+          </div>
+        </details>
 
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <StatusLine
@@ -342,18 +355,23 @@ export function PrivacyApprovedActionsPanel({
   }
 
   return (
-    <section className={`rounded-xl border ${border} ${panel} p-5`}>
+    <section id="privacy-approved-actions" className={`rounded-xl border ${border} ${panel} p-5`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <ClipboardList className="h-4 w-4 text-emerald-400" />
-          <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>
-            Approved Actions
-          </h2>
+          <ClipboardList className={`h-4 w-4 ${successIcon}`} />
+          <div>
+            <h2 className="text-base font-semibold">
+              Approved actions
+            </h2>
+            <p className={`mt-1 text-sm leading-6 ${muted}`}>
+              Record manual work after approval. This panel does not send anything.
+            </p>
+          </div>
         </div>
         <button
           type="button"
           onClick={actionsState.refreshActions}
-          className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm transition ${border}`}
+          className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm transition hover:border-emerald-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-700 dark:hover:border-emerald-300/50 dark:focus-visible:outline-emerald-300 ${border}`}
         >
           <RefreshCw className="h-4 w-4" />
           Refresh
@@ -386,7 +404,7 @@ export function PrivacyApprovedActionsPanel({
             <StatusLine
               icon="error"
               className={warnClass}
-              text="No approved actions ready"
+              text="Approved actions appear here after a draft is approved."
             />
           )}
         {!actionsState.isLoading &&
@@ -395,10 +413,8 @@ export function PrivacyApprovedActionsPanel({
             <div className={`grid gap-2 rounded-lg border p-3 ${border}`}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <ListChecks className="h-4 w-4 text-emerald-400" />
-                  <p
-                    className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
-                  >
+                  <ListChecks className={`h-4 w-4 ${successIcon}`} />
+                  <p className="text-sm font-semibold">
                     Needs handling
                   </p>
                 </div>
@@ -425,10 +441,8 @@ export function PrivacyApprovedActionsPanel({
           <div className={`grid gap-3 rounded-lg border p-3 ${border}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <History className="h-4 w-4 text-emerald-400" />
-                <p
-                  className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
-                >
+                <History className={`h-4 w-4 ${successIcon}`} />
+                <p className="text-sm font-semibold">
                   Completed actions
                 </p>
               </div>
@@ -456,8 +470,8 @@ export function PrivacyApprovedActionsPanel({
           </button>
         )}
         {!actionsState.isLoading && !actionsState.error && actionsState.count > 0 && (
-          <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest">
-            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+          <div className="flex items-center gap-2 text-sm">
+            <CheckCircle2 className={`h-4 w-4 ${successIcon}`} />
             <span className={muted}>
               {openActions.length} open / {completedActions.length} completed
             </span>
@@ -465,6 +479,25 @@ export function PrivacyApprovedActionsPanel({
         )}
       </div>
     </section>
+  );
+}
+
+function SummaryItem({
+  label,
+  value,
+  muted,
+  border,
+}: {
+  label: string;
+  value: string;
+  muted: string;
+  border: string;
+}) {
+  return (
+    <div className={`rounded-lg border px-3 py-2 ${border}`}>
+      <p className={`text-xs font-medium ${muted}`}>{label}</p>
+      <p className="mt-1 break-words text-sm font-semibold">{value}</p>
+    </div>
   );
 }
 
@@ -489,19 +522,19 @@ function WorkflowForms({
   onDisposition: (event: FormEvent<HTMLFormElement>) => void;
   onVerification: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  const input = `min-h-11 rounded-lg border px-3 text-sm outline-none ${fieldClass(isDark)}`;
-  const area = `min-h-20 rounded-lg border px-3 py-2 text-sm outline-none ${fieldClass(isDark)}`;
+  const input = `min-h-11 rounded-lg border px-3 text-sm outline-none transition focus:border-emerald-600 focus-visible:ring-2 focus-visible:ring-emerald-700/25 dark:focus:border-emerald-400 dark:focus-visible:ring-emerald-300/25 ${fieldClass(isDark)}`;
+  const area = `min-h-20 rounded-lg border px-3 py-2 text-sm outline-none transition focus:border-emerald-600 focus-visible:ring-2 focus-visible:ring-emerald-700/25 dark:focus:border-emerald-400 dark:focus-visible:ring-emerald-300/25 ${fieldClass(isDark)}`;
   const dispositionDisabled = isSaving || action.status !== "approved";
   const verificationDisabled = isSaving || action.status !== "sent";
   const idPrefix = `privacy-action-${shortId(action.action_id)}`;
-  const labelClass = `text-[10px] font-mono uppercase tracking-widest ${muted}`;
+  const labelClass = `text-xs font-medium ${muted}`;
 
   return (
     <div className={`mt-4 grid gap-4 border-t pt-4 ${border}`}>
       <form className="grid gap-3" onSubmit={onDisposition}>
         <div className="flex items-center gap-2">
           <SendHorizontal className="h-4 w-4 text-emerald-400" />
-          <p className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+          <p className="text-sm font-semibold">
             Manual disposition
           </p>
         </div>
@@ -572,7 +605,7 @@ function WorkflowForms({
       <form className="grid gap-3" onSubmit={onVerification}>
         <div className="flex items-center gap-2">
           <CalendarClock className="h-4 w-4 text-emerald-400" />
-          <p className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+          <p className="text-sm font-semibold">
             Verification
           </p>
         </div>

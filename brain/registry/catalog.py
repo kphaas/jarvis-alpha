@@ -1276,6 +1276,15 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
                 "T1": "delegate_low_risk_checks",
                 "T4_T5": "route_to_owner_with_approval",
             },
+            "authority_model": {
+                "observe_only": ["porchlight", "ledger", "sentry", "trade_guard"],
+                "approval_required": ["keyturner", "sweep"],
+                "notification_only": ["tripwire"],
+                "no_autonomous_trade_execution": True,
+                "financial_remediation": "route_to_trade_guard_then_operator_approval",
+                "credential_remediation": "route_to_keyturner_then_operator_approval",
+                "data_boundary_remediation": "route_to_sentry_then_operator_approval",
+            },
             "capabilities": [
                 "weekly_security_brief",
                 "owner_routing",
@@ -1432,6 +1441,15 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
                 "no_broker_mutation",
                 "warden_approval_required_for_remediation",
             ],
+            "enforcement_gates": [
+                "paper_mode_only_until_promoted",
+                "live_mode_blocked",
+                "kill_switch_must_be_open",
+                "approval_bridge_must_be_healthy",
+                "pre_trade_limits_must_exist",
+                "no_mock_approvals_in_paper_or_live",
+                "broker_order_boundary_observed",
+            ],
             "capabilities": [
                 "mode_boundary_review",
                 "kill_switch_review",
@@ -1446,6 +1464,12 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
             ],
             "remediation": "approval_only",
             "enforcement": "planned_not_active",
+            "promotion_blockers": [
+                "six_month_paper_window",
+                "restore_drill_and_chaos_gates",
+                "operator_live_money_approval",
+                "warden_authority_review",
+            ],
         },
     ),
     AgentSpec(

@@ -133,6 +133,34 @@ def test_remote_jwt_verify_uses_configured_threshold(monkeypatch):
     }
 
 
+def test_remote_jwt_verify_allows_sentinel_service_token(monkeypatch):
+    monkeypatch.setenv("PORCHLIGHT_REMOTE_SSH_ENABLED", "true")
+    seen = {}
+
+    def fake_ssh(target, command):
+        seen["target"] = target
+        seen["command"] = command
+        return porchlight.CommandResult(
+            0,
+            json.dumps({"status": "passed", "detail": "JWT expires in 30.0 hours"}),
+            "",
+        )
+
+    status, detail = porchlight._remote_jwt_verify(
+        "sandbox",
+        "ALPHA_SENTINEL_SERVICE_TOKEN",
+        {"sandbox": {"ssh_target": "sandbox@example", "secrets_path": "/ignored"}},
+        ssh=fake_ssh,
+    )
+
+    assert status == "passed"
+    assert detail == "JWT expires in 30.0 hours"
+    assert seen == {
+        "target": "sandbox@example",
+        "command": "porchlight jwt-exp ALPHA_SENTINEL_SERVICE_TOKEN 24",
+    }
+
+
 def test_family_smoke_live_verification_authenticates_synthetic_parent(
     tmp_path, monkeypatch
 ):
@@ -860,7 +888,7 @@ def test_cloudflare_policy_drift_warns_without_api_credentials(monkeypatch):
     assert result.severity == "medium"
 
 
-def test_cloudflare_policy_drift_passes_for_email_policy(monkeypatch):
+def test_cloudflare_policy_drift_warns_when_exact_membership_unconfigured(monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
     monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "token-abc")
     monkeypatch.setenv("PORCHLIGHT_CLOUDFLARE_EXPECTED_HOSTS", "family.at-0.com")
@@ -907,9 +935,13 @@ def test_cloudflare_policy_drift_passes_for_email_policy(monkeypatch):
 
     result = porchlight.check_cloudflare_access_policy_drift(command=fake_command)
 
-    assert result.status == "pass"
+    assert result.status == "warn"
+    assert result.severity == "medium"
+    assert "exact policy membership" in result.summary
     assert result.metadata["expected_hosts"] == ["family.at-0.com"]
     assert result.metadata["matched"][0]["name"] == "JARVIS Family"
+    assert result.metadata["expected_policy_emails_count"] == 0
+    assert result.metadata["matched_policy_emails_count"] == 1
 
 
 def test_cloudflare_policy_drift_fails_for_bypass(monkeypatch):
@@ -1003,6 +1035,68 @@ def test_cloudflare_policy_drift_enforces_exact_expected_membership(monkeypatch)
         "PORCHLIGHT_CLOUDFLARE_EXPECTED_POLICY_EMAILS",
         "ken@example.com, meagan@example.com",
     )
+
+    def fake_command(args, timeout=30, input_text=None):
+        url = args[-1]
+        if url.endswith("/accounts/acct-123/access/apps"):
+            return porchlight.CommandResult(
+                0,
+                porchlight.json.dumps(
+                    {
+                        "success": True,
+                        "result": [
+                            {
+                                "id": "app-1",
+                                "name": "JARVIS Family",
+                                "domain": "family.at-0.com",
+                            }
+                        ],
+                    }
+                ),
+                "",
+            )
+        if url.endswith("/accounts/acct-123/access/apps/app-1/policies"):
+            return porchlight.CommandResult(
+                0,
+                porchlight.json.dumps(
+                    {
+                        "success": True,
+                        "result": [
+                            {
+                                "id": "pol-1",
+                                "name": "Allowed family users",
+                                "decision": "allow",
+                                "include": [
+                                    {"email": {"email": "ken@example.com"}},
+                                    {"email": {"email": "meagan@example.com"}},
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                "",
+            )
+        raise AssertionError(url)
+
+    result = porchlight.check_cloudflare_access_policy_drift(command=fake_command)
+
+    assert result.status == "pass"
+    assert result.metadata["expected_policy_emails_count"] == 2
+    assert result.metadata["matched_policy_emails_count"] == 2
+
+
+def test_cloudflare_policy_drift_loads_expected_membership_from_secret(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct-123")
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "token-abc")
+    monkeypatch.setenv("PORCHLIGHT_CLOUDFLARE_EXPECTED_HOSTS", "family.at-0.com")
+    monkeypatch.delenv("PORCHLIGHT_CLOUDFLARE_EXPECTED_POLICY_EMAILS", raising=False)
+
+    def fake_secret(name: str) -> str:
+        if name == "PORCHLIGHT_CLOUDFLARE_EXPECTED_POLICY_EMAILS":
+            return "ken@example.com, meagan@example.com"
+        raise KeyError(name)
+
+    monkeypatch.setattr(porchlight, "get_secret", fake_secret)
 
     def fake_command(args, timeout=30, input_text=None):
         url = args[-1]
@@ -1443,9 +1537,11 @@ def test_github_branch_protection_drift_passes(monkeypatch):
             porchlight.json.dumps(
                 {
                     "required_pull_request_reviews": {
-                        "required_approving_review_count": 1
+                        "required_approving_review_count": 1,
+                        "dismiss_stale_reviews": True,
+                        "require_last_push_approval": True,
                     },
-                    "required_status_checks": {"contexts": ["tests"]},
+                    "required_status_checks": {"strict": True, "contexts": ["tests"]},
                 }
             ),
             "",
@@ -1465,7 +1561,9 @@ def test_github_branch_protection_drift_fails_without_pr_reviews(monkeypatch):
     def fake_command(args, **kwargs):
         return porchlight.CommandResult(
             0,
-            porchlight.json.dumps({"required_status_checks": {"contexts": ["tests"]}}),
+            porchlight.json.dumps(
+                {"required_status_checks": {"strict": True, "contexts": ["tests"]}}
+            ),
             "",
         )
 
@@ -1473,6 +1571,77 @@ def test_github_branch_protection_drift_fails_without_pr_reviews(monkeypatch):
 
     assert result.status == "fail"
     assert "missing PR-review" in result.detail
+
+
+def test_github_branch_protection_default_repos_and_checks_are_strict(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "gh-token")
+    monkeypatch.delenv("PORCHLIGHT_GITHUB_BRANCH_PROTECTION_REPOS", raising=False)
+    monkeypatch.delenv("PORCHLIGHT_GITHUB_REQUIRED_CHECKS", raising=False)
+    seen_urls = []
+
+    def fake_command(args, **kwargs):
+        seen_urls.append(args[-1])
+        return porchlight.CommandResult(
+            0,
+            porchlight.json.dumps(
+                {
+                    "required_pull_request_reviews": {
+                        "required_approving_review_count": 1,
+                        "dismiss_stale_reviews": True,
+                        "require_last_push_approval": True,
+                    },
+                    "required_status_checks": {
+                        "strict": True,
+                        "contexts": sorted(porchlight.DEFAULT_GITHUB_REQUIRED_CHECKS),
+                    },
+                }
+            ),
+            "",
+        )
+
+    result = porchlight.check_github_branch_protection_drift(command=fake_command)
+
+    assert result.status == "pass"
+    assert result.metadata["required_checks"] == sorted(
+        porchlight.DEFAULT_GITHUB_REQUIRED_CHECKS
+    )
+    assert seen_urls == [
+        "https://api.github.com/repos/kphaas/jarvis-alpha/branches/main/protection",
+        "https://api.github.com/repos/kphaas/jarvis-financial/branches/main/protection",
+        "https://api.github.com/repos/kphaas/jarvis-forge/branches/main/protection",
+    ]
+
+
+def test_github_branch_protection_drift_fails_when_reviews_are_weak(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "gh-token")
+    monkeypatch.setenv(
+        "PORCHLIGHT_GITHUB_BRANCH_PROTECTION_REPOS", "kphaas/jarvis-alpha"
+    )
+    monkeypatch.setenv("PORCHLIGHT_GITHUB_REQUIRED_CHECKS", "tests")
+
+    def fake_command(args, **kwargs):
+        return porchlight.CommandResult(
+            0,
+            porchlight.json.dumps(
+                {
+                    "required_pull_request_reviews": {
+                        "required_approving_review_count": 0,
+                        "dismiss_stale_reviews": False,
+                        "require_last_push_approval": False,
+                    },
+                    "required_status_checks": {"strict": False, "contexts": ["tests"]},
+                }
+            ),
+            "",
+        )
+
+    result = porchlight.check_github_branch_protection_drift(command=fake_command)
+
+    assert result.status == "fail"
+    assert "requires no approving review" in result.detail
+    assert "does not dismiss stale reviews" in result.detail
+    assert "does not require last-push approval" in result.detail
+    assert "does not require up-to-date branches" in result.detail
 
 
 def test_notification_filter_suppresses_routine_rotation_warning():
