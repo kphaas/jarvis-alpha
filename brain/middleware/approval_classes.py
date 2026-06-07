@@ -101,14 +101,16 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/tasks/{graph_id}/cancel": ["write"],
     "POST /v1/tasks/steps/{step_id}/approve": ["admin"],
     "POST /v1/tasks/steps/{step_id}/deny": ["admin"],
-    # --- Threads — reads T1, writes T2, delete T5 ---
+    # --- Threads — reads T1, writes T2. Thread delete is a self-owned soft
+    # archive guarded in-route for child profiles, so it stays T2 instead of
+    # approval-gated T5.
     "GET /v1/threads": ["read"],
     "GET /v1/threads/{thread_id}": ["read"],
     "GET /v1/threads/{thread_id}/messages": ["read"],
     "POST /v1/threads": ["write"],
     "POST /v1/threads/{thread_id}/messages": ["write"],
     "POST /v1/threads/{thread_id}/escalate": ["write"],
-    "DELETE /v1/threads/{thread_id}": ["destructive"],
+    "DELETE /v1/threads/{thread_id}": ["write"],
     # --- Memory reads — T1 ---
     "GET /v1/memory": ["read"],
     "GET /v1/memory/search": ["read"],
