@@ -429,6 +429,32 @@ def run_remote_node(
     )
 
 
+def run_node(
+    node: str,
+    *,
+    threshold_days: int,
+    force: bool,
+    dry_run: bool,
+    no_restart: bool,
+    current_node: str | None = None,
+) -> NodeResult:
+    if node == (current_node or current_node_guess()):
+        return renew_local_node(
+            NODE_SPECS[node],
+            threshold_days=threshold_days,
+            force=force,
+            dry_run=dry_run,
+            no_restart=no_restart,
+        )
+    return run_remote_node(
+        node,
+        threshold_days=threshold_days,
+        force=force,
+        dry_run=dry_run,
+        no_restart=no_restart,
+    )
+
+
 def build_registry_update_sql(results: list[NodeResult]) -> str:
     statements: list[str] = []
     for result in results:
@@ -514,13 +540,15 @@ def main() -> int:
         return 1 if result.status == "error" else 0
 
     nodes = sorted(NODE_SPECS) if args.node == "all" else [args.node]
+    current_node = current_node_guess()
     results = [
-        run_remote_node(
+        run_node(
             node,
             threshold_days=args.threshold_days,
             force=args.force,
             dry_run=args.dry_run,
             no_restart=args.no_restart,
+            current_node=current_node,
         )
         for node in nodes
     ]

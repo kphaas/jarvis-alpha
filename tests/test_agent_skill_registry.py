@@ -139,6 +139,13 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
         agents["warden"].metadata["remediation_policy"]["T4_T5"]
         == "route_to_owner_with_approval"
     )
+    authority = agents["warden"].metadata["authority_model"]
+    assert authority["no_autonomous_trade_execution"] is True
+    assert "trade_guard" in authority["observe_only"]
+    assert "keyturner" in authority["approval_required"]
+    assert authority["financial_remediation"] == (
+        "route_to_trade_guard_then_operator_approval"
+    )
     assert agents["sweep"].metadata["active_hardening"] == "service_tls_cert_renewal"
     assert (
         agents["sweep"].metadata["cert_renewal"]["launch_label"]
@@ -166,6 +173,18 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["trade_guard"].approval_policy["trade_execution"] == "blocked"
     assert "financial" in agents["trade_guard"].metadata["protected_domains"]
     assert "kill_switch_health" in agents["trade_guard"].metadata["monitors"]
+    assert (
+        "pre_trade_limits_must_exist"
+        in agents["trade_guard"].metadata["enforcement_gates"]
+    )
+    assert (
+        "no_mock_approvals_in_paper_or_live"
+        in agents["trade_guard"].metadata["enforcement_gates"]
+    )
+    assert (
+        "operator_live_money_approval"
+        in agents["trade_guard"].metadata["promotion_blockers"]
+    )
     assert "trade_guard.kill_switch_review" in agents["trade_guard"].allowed_skills
     assert "evidence.package_report" in skills
     assert skills["evidence.package_report"].status == "planned"
