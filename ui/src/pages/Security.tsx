@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import {
   Shield, Key, Globe, Radio, AlertTriangle,
   RotateCw, Bug, Plug, ShieldCheck, Archive, ShieldAlert, Activity,
+  ChevronRight, Clock, Gauge, Play, RefreshCw, Search, Siren,
 } from "lucide-react";
 import { apiJson } from "../lib/apiFetch";
 import { useAppStore } from "../store";
@@ -12,6 +13,7 @@ import type {
   SecretsAuditResponse, HoneypotData, McpRegistry, LogsQueryResponse,
   PorchlightResponse, PorchlightReport, AgentManualRunResponse, KeyturnerStatus,
   WardenStatus, SecurityAgentEvent, SecurityAgentEventsResponse,
+  WardenAgent,
 } from "../types/security";
 import {
   OverviewTab, IdentityTab, NetworkTab, SweepTab,
@@ -39,6 +41,81 @@ const TAB_ICONS: Record<string, typeof Shield> = {
 };
 
 const REFRESH_MS = 30_000;
+const AT0_MARK = new URL("../assets/logo/at0-symbol-color.svg", import.meta.url).href;
+
+type SeverityLevel = "critical" | "high" | "medium" | "low" | "info";
+
+interface CommandAction {
+  id: string;
+  title: string;
+  detail: string;
+  severity: SeverityLevel;
+  owner: string;
+  tab: TabId;
+  cta?: string;
+}
+
+function normalizeSeverity(value: string | null | undefined): SeverityLevel {
+  const normalized = (value ?? "info").toLowerCase();
+  if (normalized === "critical" || normalized === "error" || normalized === "fail") return "critical";
+  if (normalized === "high") return "high";
+  if (normalized === "medium" || normalized === "warn" || normalized === "warning" || normalized === "needs_input") return "medium";
+  if (normalized === "low") return "low";
+  return "info";
+}
+
+function severityRank(value: SeverityLevel): number {
+  if (value === "critical") return 5;
+  if (value === "high") return 4;
+  if (value === "medium") return 3;
+  if (value === "low") return 2;
+  return 1;
+}
+
+function severityClass(value: SeverityLevel, isDark: boolean): string {
+  if (value === "critical" || value === "high") {
+    return isDark
+      ? "border-rose-400/35 bg-rose-500/15 text-rose-200"
+      : "border-rose-500/35 bg-rose-50 text-rose-700";
+  }
+  if (value === "medium") {
+    return isDark
+      ? "border-amber-400/35 bg-amber-500/15 text-amber-200"
+      : "border-amber-500/35 bg-amber-50 text-amber-800";
+  }
+  if (value === "low") {
+    return isDark
+      ? "border-sky-400/30 bg-sky-500/12 text-sky-200"
+      : "border-sky-500/30 bg-sky-50 text-sky-800";
+  }
+  return isDark
+    ? "border-emerald-400/30 bg-emerald-500/12 text-emerald-200"
+    : "border-emerald-500/30 bg-emerald-50 text-emerald-800";
+}
+
+function tabForOwner(owner: string): TabId {
+  const normalized = owner.toLowerCase();
+  if (normalized.includes("porchlight")) return "Porchlight";
+  if (normalized.includes("keyturner")) return "Keyturner";
+  if (normalized.includes("sweep") || normalized.includes("network_watchdog")) return "Sweep";
+  if (normalized.includes("tripwire") || normalized.includes("honeypot")) return "Tripwire";
+  if (normalized.includes("sentry")) return "Sentry";
+  if (normalized.includes("trade")) return "Trade Guard";
+  if (normalized.includes("ledger")) return "Ledger";
+  if (normalized.includes("warden")) return "Warden";
+  return "Events";
+}
+
+function formatLabel(value: string | null | undefined): string {
+  if (!value) return "unknown";
+  return value.replaceAll("_", " ");
+}
+
+function agentHealthClass(agent: WardenAgent, isDark: boolean): string {
+  if (!agent.enabled) return isDark ? "border-white/10 bg-white/5 text-white/45" : "border-[#141414]/10 bg-[#141414]/5 text-[#141414]/50";
+  if (agent.needs_attention) return severityClass("medium", isDark);
+  return severityClass("info", isDark);
+}
 
 export default function Security() {
   const { theme } = useAppStore();
@@ -258,37 +335,332 @@ export default function Security() {
   const portsByNode = perimeter
     ? [...perimeter.ports].sort((a, b) => nodeOrder.indexOf(a.node) - nodeOrder.indexOf(b.node) || a.port - b.port)
     : [];
+  const topPostureGaps = postureScore?.top_gaps ?? [];
+  const ownerRoutes = wardenStatus?.owner_routes ?? [];
+  const attentionAgents = wardenStatus?.agents.filter((agent) => agent.needs_attention) ?? [];
+  const failingPorchlightChecks = porchlightReport?.checks
+    .filter((check) => check.status !== "pass")
+    .sort((a, b) => severityRank(normalizeSeverity(b.severity)) - severityRank(normalizeSeverity(a.severity))) ?? [];
+  const severeEvents = agentEvents
+    .filter((event) => severityRank(normalizeSeverity(event.severity)) >= severityRank("medium"))
+    .slice(0, 4);
+  const certsInsideWindow = sortedCerts.filter((cert) => cert.days_remaining <= 30);
+  const keyturnerAttention = keyturnerStatus?.counts.attention ?? 0;
+  const tradeGuardEvidence = wardenStatus?.trade_guard_financial_evidence;
+  const tradeGuardNeedsAttention = tradeGuardEvidence?.status === "warn" || tradeGuardEvidence?.status === "fail";
+
+  const commandActions: CommandAction[] = [
+    ...ownerRoutes.slice(0, 4).map((route) => ({
+      id: `route-${route.ticket_key}`,
+      title: route.title,
+      detail: route.detail || formatLabel(route.recommended_action),
+      severity: normalizeSeverity(route.severity),
+      owner: formatLabel(route.owner_agent),
+      tab: tabForOwner(route.owner_agent),
+      cta: route.approval_required ? "Review approval path" : "Open owner route",
+    })),
+    ...topPostureGaps.slice(0, 3).map((gap) => ({
+      id: `gap-${gap.id}`,
+      title: gap.title,
+      detail: gap.summary,
+      severity: normalizeSeverity(gap.status),
+      owner: formatLabel(gap.owner_agent),
+      tab: tabForOwner(gap.owner_agent),
+      cta: "Open control gap",
+    })),
+    ...failingPorchlightChecks.slice(0, 3).map((check) => ({
+      id: `porchlight-${check.name}`,
+      title: check.summary,
+      detail: check.detail || formatLabel(check.name),
+      severity: normalizeSeverity(check.severity),
+      owner: "Porchlight",
+      tab: "Porchlight" as TabId,
+      cta: "Open check",
+    })),
+    ...severeEvents.map((event) => ({
+      id: `event-${event.id}`,
+      title: event.title,
+      detail: event.message,
+      severity: normalizeSeverity(event.severity),
+      owner: formatLabel(event.agent_id),
+      tab: tabForOwner(event.agent_id),
+      cta: "Open event context",
+    })),
+    ...(keyturnerAttention > 0 ? [{
+      id: "keyturner-attention",
+      title: "Key rotation attention",
+      detail: `${keyturnerAttention} managed secret${keyturnerAttention === 1 ? "" : "s"} need review.`,
+      severity: "medium" as SeverityLevel,
+      owner: "Keyturner",
+      tab: "Keyturner" as TabId,
+      cta: "Open rotation ledger",
+    }] : []),
+    ...(certsInsideWindow.length > 0 ? [{
+      id: "sweep-cert-window",
+      title: "TLS renewal window",
+      detail: `${certsInsideWindow.length} node certificate${certsInsideWindow.length === 1 ? "" : "s"} inside 30 days.`,
+      severity: certsInsideWindow.some((cert) => cert.days_remaining <= 14) ? "medium" as SeverityLevel : "low" as SeverityLevel,
+      owner: "Sweep",
+      tab: "Sweep" as TabId,
+      cta: "Open TLS evidence",
+    }] : []),
+    ...(tradeGuardNeedsAttention ? [{
+      id: "trade-guard-financial-evidence",
+      title: "Trade Guard evidence",
+      detail: tradeGuardEvidence?.summary ?? "Financial posture requires review.",
+      severity: normalizeSeverity(tradeGuardEvidence?.status),
+      owner: "Trade Guard",
+      tab: "Trade Guard" as TabId,
+      cta: "Open money-path controls",
+    }] : []),
+  ]
+    .sort((a, b) => severityRank(b.severity) - severityRank(a.severity))
+    .filter((action, index, actions) => actions.findIndex((candidate) => candidate.id === action.id) === index)
+    .slice(0, 6);
+
+  const tabAlerts: Partial<Record<TabId, number>> = {
+    Identity: (jwt?.failing ?? 0) + unprotectedTables.length + (child?.overall && child.overall !== "pass" ? 1 : 0),
+    Network: perimeter?.ports.filter((port) => port.reachable !== port.expected).length ?? 0,
+    Sweep: certsInsideWindow.length,
+    Warden: wardenStatus?.counts.attention ?? topPostureGaps.length,
+    Sentry: attentionAgents.filter((agent) => agent.agent_id === "sentry").length,
+    "Trade Guard": tradeGuardNeedsAttention ? 1 : 0,
+    Ledger: attentionAgents.filter((agent) => agent.agent_id === "ledger").length,
+    Keyturner: keyturnerAttention,
+    Porchlight: failingPorchlightChecks.length,
+    Tripwire: honeypotData?.hits_24h ?? honeypotData?.total ?? 0,
+    MCP: mcpRegistry ? mcpRegistry.total - mcpRegistry.active : 0,
+    Events: severeEvents.length,
+  };
+  const commandSeverity = commandActions[0]?.severity ?? "info";
+  const commandStatus = commandActions.length > 0 ? "Attention needed" : "No immediate action";
+  const liveAgentCount = wardenStatus?.counts.enabled ?? 0;
 
   const theme_props = { isDark, border, subtle, fg, muted };
 
   return (
-    <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 max-w-5xl">
-      <div>
-        <h1 className="font-serif italic text-3xl">Security</h1>
-        <p className="text-[10px] font-mono uppercase opacity-50 mt-1">
-          Posture, identity, network perimeter, TLS, events
-        </p>
-      </div>
+    <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="max-w-7xl space-y-6">
+      <section className={`relative overflow-hidden rounded-2xl border ${border} ${isDark ? "bg-[#080808]" : "bg-[#f8f6f0]"} p-5 shadow-sm`}>
+        <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#ff6a00] via-[#f5c542] to-[#00c2a8]" />
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-3">
+              <div className={`flex h-11 w-11 items-center justify-center rounded-xl border ${border} ${isDark ? "bg-white/10" : "bg-white/80"}`}>
+                <img src={AT0_MARK} alt="AT0" className="h-6 w-6" />
+              </div>
+              <div>
+                <p className={`text-[10px] font-mono uppercase tracking-[0.24em] ${muted}`}>AT0 security command</p>
+                <h1 className={`mt-1 text-3xl font-semibold tracking-tight ${fg}`}>Security</h1>
+              </div>
+            </div>
+            <p className={`mt-4 max-w-3xl text-sm leading-6 ${muted}`}>
+              Warden-owned posture, agent events, identity, perimeter, TLS, and money-path guardrails in one operating surface.
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-mono ${severityClass(commandSeverity, isDark)}`}>
+                <Siren className="h-3.5 w-3.5" />
+                {commandStatus}
+              </span>
+              <span className={`inline-flex items-center gap-2 rounded-full border ${border} px-3 py-1.5 text-xs font-mono ${muted}`}>
+                <Clock className="h-3.5 w-3.5" />
+                Auto refresh 30s
+              </span>
+              <span className={`inline-flex items-center gap-2 rounded-full border ${border} px-3 py-1.5 text-xs font-mono ${muted}`}>
+                <Search className="h-3.5 w-3.5" />
+                Drill down by owner
+              </span>
+            </div>
+          </div>
+
+          <div className="grid min-w-0 grid-cols-2 gap-3 sm:min-w-[390px]">
+            <button
+              type="button"
+              onClick={() => setActiveTab("Warden")}
+              className={`col-span-2 rounded-xl border ${border} ${isDark ? "bg-white/5 hover:bg-white/10" : "bg-white/80 hover:bg-white"} p-4 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-orange-400/40`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>Posture score</p>
+                  <p className="mt-2 flex items-end gap-2 font-mono">
+                    <span className="text-4xl font-bold tabular-nums" style={{ color: strokeColor }}>{displayScore}</span>
+                    <span className={`pb-1 text-xs ${muted}`}>/100</span>
+                  </p>
+                </div>
+                <Gauge className="h-5 w-5" style={{ color: strokeColor }} />
+              </div>
+              <p className={`mt-2 text-xs font-mono ${muted}`}>
+                {checksTotal > 0 ? `${checksPassing}/${checksTotal} controls passing` : "Collecting posture data"}
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handleRunPorchlight()}
+              disabled={runPorchlightLoading}
+              className={`rounded-xl border ${border} ${isDark ? "bg-white/5 hover:bg-white/10" : "bg-white/80 hover:bg-white"} p-4 text-left transition-colors disabled:cursor-wait disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-orange-400/40`}
+            >
+              <Play className="h-4 w-4 text-orange-400" />
+              <p className={`mt-3 text-sm font-bold ${fg}`}>{runPorchlightLoading ? "Running" : "Run Porchlight"}</p>
+              <p className={`mt-1 text-[10px] font-mono uppercase ${muted}`}>posture sweep</p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handleRunSweep()}
+              disabled={runSweepLoading}
+              className={`rounded-xl border ${border} ${isDark ? "bg-white/5 hover:bg-white/10" : "bg-white/80 hover:bg-white"} p-4 text-left transition-colors disabled:cursor-wait disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-orange-400/40`}
+            >
+              <Radio className="h-4 w-4 text-sky-400" />
+              <p className={`mt-3 text-sm font-bold ${fg}`}>{runSweepLoading ? "Running" : "Run Sweep"}</p>
+              <p className={`mt-1 text-[10px] font-mono uppercase ${muted}`}>network and TLS</p>
+            </button>
+          </div>
+        </div>
+
+        {(runPorchlightError || runSweepError) && (
+          <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2">
+            {runPorchlightError && (
+              <div className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                Porchlight: {runPorchlightError}
+              </div>
+            )}
+            {runSweepError && (
+              <div className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                Sweep: {runSweepError}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className={`rounded-2xl border ${border} ${subtle} p-4`}>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>Action queue</p>
+              <p className={`mt-1 text-sm ${muted}`}>Highest-signal issues with owner routing and direct drill-down.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void fetchAll(false)}
+              className={`inline-flex h-10 items-center gap-2 rounded-lg border ${border} px-3 text-xs font-mono ${muted} transition-colors hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-orange-400/40`}
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Refresh
+            </button>
+          </div>
+          {commandActions.length > 0 ? (
+            <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+              {commandActions.map((action) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  onClick={() => setActiveTab(action.tab)}
+                  className={`group rounded-xl border ${border} ${isDark ? "bg-white/5 hover:bg-white/10" : "bg-white/70 hover:bg-white"} p-4 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-orange-400/40`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <span className={`inline-flex rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${severityClass(action.severity, isDark)}`}>
+                        {action.severity}
+                      </span>
+                      <p className={`mt-3 text-sm font-bold ${fg}`}>{action.title}</p>
+                      <p className={`mt-1 line-clamp-2 text-xs leading-5 ${muted}`}>{action.detail}</p>
+                    </div>
+                    <ChevronRight className={`mt-1 h-4 w-4 shrink-0 ${muted} transition-transform group-hover:translate-x-0.5`} />
+                  </div>
+                  <div className={`mt-4 flex items-center justify-between gap-3 text-[10px] font-mono uppercase ${muted}`}>
+                    <span>Owner: {action.owner}</span>
+                    <span>{action.cta ?? "Open"}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setActiveTab("Overview")}
+              className={`mt-4 w-full rounded-xl border p-5 text-left transition-opacity hover:opacity-90 ${
+                isDark
+                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                  : "border-emerald-500/35 bg-emerald-50 text-emerald-900"
+              }`}
+            >
+              <ShieldCheck className="h-5 w-5" />
+              <p className="mt-3 text-sm font-bold">No active security actions.</p>
+              <p className="mt-1 text-xs opacity-80">Use the tabs below for posture evidence and historical events.</p>
+            </button>
+          )}
+        </div>
+
+        <div className={`rounded-2xl border ${border} ${subtle} p-4`}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>Warden crew</p>
+              <p className={`mt-1 text-sm ${muted}`}>{liveAgentCount} enabled agents</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab("Warden")}
+              className={`rounded-lg border ${border} px-3 py-2 text-xs font-mono ${muted} hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-orange-400/40`}
+            >
+              Open Warden
+            </button>
+          </div>
+          <div className="mt-4 space-y-2">
+            {(wardenStatus?.agents ?? []).slice(0, 7).map((agent) => (
+              <button
+                key={agent.agent_id}
+                type="button"
+                onClick={() => setActiveTab(tabForOwner(agent.agent_id))}
+                className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-orange-400/40 ${agentHealthClass(agent, isDark)}`}
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-bold">{agent.display_name}</p>
+                  <p className="mt-0.5 truncate text-[10px] font-mono opacity-70">
+                    {agent.last_event_title ?? agent.status}
+                  </p>
+                </div>
+                <span className="shrink-0 text-[10px] font-mono uppercase">
+                  {agent.needs_attention ? "attention" : agent.enabled ? "active" : "off"}
+                </span>
+              </button>
+            ))}
+            {!wardenStatus?.agents?.length && (
+              <div className={`rounded-xl border ${border} px-3 py-4 text-xs font-mono ${muted}`}>
+                Warden agent inventory unavailable.
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* sub-tab pills */}
-      <div className="flex flex-wrap gap-2">
+      <div className={`sticky top-0 z-10 -mx-2 overflow-x-auto border-y ${border} ${isDark ? "bg-[#080808]/90" : "bg-[#f8f6f0]/90"} px-2 py-3 backdrop-blur`}>
+        <div className="flex min-w-max gap-2">
         {TABS.map((tab) => {
           const Icon = TAB_ICONS[tab];
           const active = activeTab === tab;
+          const alertCount = tabAlerts[tab] ?? 0;
           return (
             <button
               key={tab} type="button" onClick={() => setActiveTab(tab)}
-              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-mono transition-colors ${border} ${
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-mono transition-colors focus:outline-none focus:ring-2 focus:ring-orange-400/40 ${border} ${
                 active
-                  ? isDark ? "bg-white/10 font-bold text-white" : "bg-black/10 font-bold text-[#141414]"
+                  ? isDark ? "bg-white/10 font-bold text-white" : "bg-[#141414]/10 font-bold text-[#141414]"
                   : `${subtle} opacity-60 hover:opacity-90`
               }`}
             >
               <Icon className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
               {tab}
+              {alertCount > 0 && (
+                <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${active ? "bg-orange-500 text-black" : "bg-orange-500/20 text-orange-400"}`}>
+                  {alertCount > 99 ? "99+" : alertCount}
+                </span>
+              )}
             </button>
           );
         })}
+        </div>
       </div>
 
       {activeTab === "Overview" && (
