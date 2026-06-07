@@ -173,6 +173,7 @@ export function PrivacyApprovedActionsPanel({
   const hiddenCompletedCount = completedActions.filter(
     (action) => !completedActionIds.has(action.action_id),
   ).length;
+  const successIcon = isDark ? "text-emerald-300" : "text-emerald-800";
 
   function draftFor(actionId: string) {
     return drafts[actionId] ?? defaultDraft();
@@ -354,18 +355,23 @@ export function PrivacyApprovedActionsPanel({
   }
 
   return (
-    <section className={`rounded-xl border ${border} ${panel} p-5`}>
+    <section id="privacy-approved-actions" className={`rounded-xl border ${border} ${panel} p-5`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <ClipboardList className="h-4 w-4 text-emerald-400" />
-          <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>
-            Approved Actions
-          </h2>
+          <ClipboardList className={`h-4 w-4 ${successIcon}`} />
+          <div>
+            <h2 className="text-base font-semibold">
+              Approved actions
+            </h2>
+            <p className={`mt-1 text-sm leading-6 ${muted}`}>
+              Record manual work after approval. This panel does not send anything.
+            </p>
+          </div>
         </div>
         <button
           type="button"
           onClick={actionsState.refreshActions}
-          className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm transition ${border}`}
+          className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm transition hover:border-emerald-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-700 dark:hover:border-emerald-300/50 dark:focus-visible:outline-emerald-300 ${border}`}
         >
           <RefreshCw className="h-4 w-4" />
           Refresh
@@ -398,7 +404,7 @@ export function PrivacyApprovedActionsPanel({
             <StatusLine
               icon="error"
               className={warnClass}
-              text="No approved actions ready"
+              text="Approved actions appear here after a draft is approved."
             />
           )}
         {!actionsState.isLoading &&
@@ -407,10 +413,8 @@ export function PrivacyApprovedActionsPanel({
             <div className={`grid gap-2 rounded-lg border p-3 ${border}`}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <ListChecks className="h-4 w-4 text-emerald-400" />
-                  <p
-                    className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
-                  >
+                  <ListChecks className={`h-4 w-4 ${successIcon}`} />
+                  <p className="text-sm font-semibold">
                     Needs handling
                   </p>
                 </div>
@@ -437,10 +441,8 @@ export function PrivacyApprovedActionsPanel({
           <div className={`grid gap-3 rounded-lg border p-3 ${border}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <History className="h-4 w-4 text-emerald-400" />
-                <p
-                  className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
-                >
+                <History className={`h-4 w-4 ${successIcon}`} />
+                <p className="text-sm font-semibold">
                   Completed actions
                 </p>
               </div>
@@ -468,8 +470,8 @@ export function PrivacyApprovedActionsPanel({
           </button>
         )}
         {!actionsState.isLoading && !actionsState.error && actionsState.count > 0 && (
-          <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest">
-            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+          <div className="flex items-center gap-2 text-sm">
+            <CheckCircle2 className={`h-4 w-4 ${successIcon}`} />
             <span className={muted}>
               {openActions.length} open / {completedActions.length} completed
             </span>
