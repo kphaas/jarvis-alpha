@@ -14,6 +14,10 @@ from brain.services.bluebubbles_client import (
     BlueBubblesHealth,
     BlueBubblesRecentChatMetadata,
 )
+from brain.services.spark_runtime_readiness import (
+    SparkRuntimeCheck,
+    SparkRuntimeReadiness,
+)
 
 
 def _request(scopes: list[str] | None = None):
@@ -49,6 +53,7 @@ def test_spark_imessage_routes_are_classified_t2_security_reads() -> None:
         "/v1/spark/imessage/health",
         "/v1/spark/imessage/counts",
         "/v1/spark/imessage/recent-chats/metadata",
+        "/v1/spark/imessage/readiness",
     ):
         classes = classify_route("GET", path)
         assert classes == ["read", "security_read"]
@@ -80,6 +85,35 @@ async def test_spark_imessage_route_returns_health_without_body_access(
     assert response.status == "Success"
     assert response.body_access is False
     assert response.detected_imessage is True
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_readiness_returns_safe_metadata(monkeypatch) -> None:
+    fake_logger = _FakeLogger()
+
+    async def fake_readiness():
+        return SparkRuntimeReadiness(
+            principal_id="ken",
+            ready=False,
+            checks=[
+                SparkRuntimeCheck(
+                    name="approved_chat_guid",
+                    status="failed",
+                    detail="Approved chat GUID secret is missing",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(spark_imessage, "check_spark_runtime_readiness", fake_readiness)
+    monkeypatch.setattr(spark_imessage, "logger", fake_logger)
+
+    response = await spark_imessage.spark_imessage_readiness(_request(), "user")
+
+    assert response.ready is False
+    assert response.checks[0].name == "approved_chat_guid"
+    logs = json.dumps(fake_logger.infos).lower()
+    assert "password" not in logs
+    assert "chat_guid" not in logs
 
 
 @pytest.mark.asyncio

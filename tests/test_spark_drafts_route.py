@@ -135,6 +135,9 @@ async def test_spark_imessage_draft_returns_review_payload_and_safe_logs(
                 "approval_ref_hash": "approval-hash",
                 "source_reference_hash": "source-hash",
                 "chat_guid_hash": "chat-hash",
+                "draft_engine": "deterministic_v0",
+                "detected_sensitivity": [],
+                "blocked_sensitivity_count": 0,
                 "actor_sub": "spark-service",
                 "actor_type": "service",
                 "actor_iss": "spark",
@@ -215,6 +218,7 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
             draft_text="Edited draft",
             context=proposal.context,
             warnings=proposal.warnings,
+            draft_engine=proposal.draft_engine,
         )
 
     async def fake_enqueue(conn, **kwargs):

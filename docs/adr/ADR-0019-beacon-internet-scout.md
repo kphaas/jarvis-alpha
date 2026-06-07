@@ -68,6 +68,11 @@ Brain remains the policy/evidence owner. Gateway remains the public egress
 owner. Other JARVIS repos consume read-only evidence through Alpha instead of
 getting direct browser or search credentials.
 
+Beacon is also registered as Alpha managed agent `internet_scout`. Helm Ask can
+request `web_search` or `deep_research`, but Alpha still routes both through
+Beacon's citation envelope. The chat surface never invokes browser automation;
+browser work stays on the separate exact-match approval queue.
+
 ## Approval Policy
 
 - Search, fetch, and extraction are read-only T2 when URL and content guards

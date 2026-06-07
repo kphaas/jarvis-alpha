@@ -114,6 +114,21 @@ elif label == "metadata":
         f"body_access=false data_count={payload['data_count']} "
         f"total={payload['total']}"
     )
+elif label == "readiness":
+    if not isinstance(payload.get("ready"), bool):
+        raise SystemExit("FAIL readiness: ready is not a bool")
+    checks = payload.get("checks")
+    if not isinstance(checks, list) or not checks:
+        raise SystemExit("FAIL readiness: checks missing")
+    serialized_checks = json.dumps(checks, sort_keys=True).lower()
+    for forbidden in ("password", "chat_guid", "phone_number", "display_name"):
+        if forbidden in serialized_checks:
+            raise SystemExit(f"FAIL readiness: forbidden field leaked: {forbidden}")
+    failed = sum(1 for check in checks if check.get("status") == "failed")
+    print(
+        "PASS readiness: "
+        f"ready={payload['ready']} checks={len(checks)} failed={failed}"
+    )
 else:
     raise SystemExit(f"FAIL unknown label: {label}")
 PY
@@ -122,5 +137,6 @@ PY
 curl_json "health" "/v1/spark/imessage/health"
 curl_json "counts" "/v1/spark/imessage/counts"
 curl_json "metadata" "/v1/spark/imessage/recent-chats/metadata?limit=5&offset=0"
+curl_json "readiness" "/v1/spark/imessage/readiness"
 
 echo "PASS spark-imessage smoke: read-only facade is reachable"

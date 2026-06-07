@@ -243,6 +243,14 @@ def test_privacy_approval_handoff_ui_links_to_review_packet() -> None:
         / "privacy"
         / "PrivacyDraftInboxPanel.tsx"
     ).read_text(encoding="utf-8")
+    actions_panel_source = (
+        REPO_ROOT
+        / "ui"
+        / "src"
+        / "components"
+        / "privacy"
+        / "PrivacyApprovedActionsPanel.tsx"
+    ).read_text(encoding="utf-8")
 
     assert "privacy_draft_handoff" in approvals_source
     assert "/privacy?case=" in approvals_source
@@ -251,6 +259,21 @@ def test_privacy_approval_handoff_ui_links_to_review_packet() -> None:
     assert "usePrivacyDraftInbox(caseId)" in privacy_source
     assert "initialCaseId" in hook_source
     assert "Approval queue" in panel_source
+    assert 'id="privacy-current-case"' in privacy_source
+    assert "Current case" in privacy_source
+    assert "Open next step" in privacy_source
+    assert "focusedGuidedStep" in privacy_source
+    assert "focusedCaseSummary" in privacy_source
+    assert (
+        'const [privacyViewMode, setPrivacyViewMode] = useState<"guided" | "advanced">('
+        in privacy_source
+    )
+    assert '"guided",' in privacy_source
+    assert "selectedAction: approvedActions.selectedAction" in privacy_source
+    assert (
+        "focusedFirst(openActions, actionsState.selectedActionId)"
+        in actions_panel_source
+    )
 
 
 def test_privacy_intake_ui_keeps_phase_boundary_local_only() -> None:

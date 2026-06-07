@@ -11,9 +11,11 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
+from brain.core.models import CLAUDE_FAST
 from brain.config.secrets import get_secret
+from brain.services.llm_transport import call_gateway_cloud
 from brain.services.bluebubbles_client import (
     BlueBubblesClientError,
     BlueBubblesConfigError,
@@ -31,11 +33,19 @@ from brain.services.spark_voice_ingest import (
     load_approved_voice_sources,
     load_spark_voice_guidance,
 )
+from brain.services.spark_persona_guardrails import load_spark_guardrails
+from brain.services.spark_sensitivity import scan_spark_draft_sensitivity
 
-DRAFT_VERSION = "spark-imessage-draft/v0.1"
+DRAFT_VERSION = "spark-imessage-draft/v0.2"
 DEFAULT_MAX_CONTEXT_MESSAGES = 20
 MAX_CONTEXT_MESSAGES = 50
 APPROVED_CHAT_GUID_ENV = "SPARK_IMESSAGE_APPROVED_CHAT_GUID"
+SPARK_DRAFT_LLM_PROVIDER_ENV = "SPARK_DRAFT_LLM_PROVIDER"
+SPARK_DRAFT_LLM_MODEL_ENV = "SPARK_DRAFT_LLM_MODEL"
+SPARK_DRAFT_LLM_ENABLED_ENV = "SPARK_DRAFT_LLM_ENABLED"
+SPARK_DRAFT_LLM_REQUIRED_ENV = "SPARK_DRAFT_LLM_REQUIRED"
+SPARK_DRAFT_LLM_TIMEOUT_ENV = "SPARK_DRAFT_LLM_TIMEOUT_SEC"
+SparkLLMCall = Callable[..., Awaitable[str]]
 
 
 class SparkDraftPolicyError(RuntimeError):
@@ -92,6 +102,9 @@ class SparkDraftProposal:
     draft_text: str
     context: SparkDraftContext
     warnings: tuple[str, ...]
+    detected_sensitivity: tuple[str, ...] = ()
+    blocked_sensitivity: tuple[str, ...] = ()
+    draft_engine: str = "deterministic_v0"
     draft_version: str = DRAFT_VERSION
     can_send: bool = False
     requires_human_approval: bool = True
@@ -112,6 +125,9 @@ class SparkDraftProposal:
             "source_reference_hash": self.context.source_reference_hash,
             "chat_guid_hash": self.context.chat_guid_hash,
             "warnings": list(self.warnings),
+            "detected_sensitivity": list(self.detected_sensitivity),
+            "blocked_sensitivity": list(self.blocked_sensitivity),
+            "draft_engine": self.draft_engine,
         }
 
 
@@ -125,6 +141,7 @@ async def create_imessage_draft_proposal(
     bluebubbles_client: SparkIMessageBodyClient | None = None,
     approved_chat_guid: str | None = None,
     draft_text_override: str | None = None,
+    llm_call: SparkLLMCall | None = None,
 ) -> SparkDraftProposal:
     """Create a human-reviewable draft from approved iMessage runtime context."""
 
@@ -138,10 +155,30 @@ async def create_imessage_draft_proposal(
         bluebubbles_client=bluebubbles_client,
         approved_chat_guid=approved_chat_guid,
     )
-    draft_text = _draft_text_override(draft_text_override) or _draft_from_goal(
+    sensitivity = _scan_context_sensitivity(
+        context=context,
+        record=record,
         reply_goal=reply_goal,
-        guidance=guidance,
     )
+    if sensitivity.blocked:
+        raise SparkDraftPolicyError(
+            "sensitivity_blocked:" + ",".join(sensitivity.blocked_topics)
+        )
+
+    override = _draft_text_override(draft_text_override)
+    if override:
+        draft_text = override
+        draft_engine = "human_override"
+        engine_warnings: tuple[str, ...] = ("review_ui_override",)
+    else:
+        draft_text, draft_engine, engine_warnings = await _draft_from_context(
+            reply_goal=reply_goal,
+            guidance=guidance,
+            context=context,
+            sensitivity_warnings=sensitivity.warnings,
+            llm_call=llm_call,
+        )
+
     return SparkDraftProposal(
         principal_id=principal_id,
         draft_text=draft_text,
@@ -150,8 +187,12 @@ async def create_imessage_draft_proposal(
             "draft_only_no_send",
             "human_approval_required",
             "runtime_context_not_stored",
-            "deterministic_v0_no_llm",
+            *sensitivity.warnings,
+            *engine_warnings,
         ),
+        detected_sensitivity=tuple(sensitivity.detected_topics),
+        blocked_sensitivity=tuple(sensitivity.blocked_topics),
+        draft_engine=draft_engine,
     )
 
 
@@ -252,10 +293,170 @@ def _draft_from_goal(
     return "Thank you. I will review this and follow up with a clear answer."
 
 
+async def _draft_from_context(
+    *,
+    reply_goal: str | None,
+    guidance: SparkVoiceGuidance,
+    context: SparkDraftContext,
+    sensitivity_warnings: tuple[str, ...],
+    llm_call: SparkLLMCall | None,
+) -> tuple[str, str, tuple[str, ...]]:
+    if not _env_bool(SPARK_DRAFT_LLM_ENABLED_ENV, default=True):
+        return (
+            _draft_from_goal(reply_goal=reply_goal, guidance=guidance),
+            "deterministic_v0",
+            ("deterministic_v0_no_llm",),
+        )
+
+    try:
+        raw = await _call_spark_llm(
+            reply_goal=reply_goal,
+            guidance=guidance,
+            context=context,
+            sensitivity_warnings=sensitivity_warnings,
+            llm_call=llm_call,
+        )
+        draft = _clean_llm_draft(raw)
+        if not draft:
+            raise SparkDraftContextError("spark_llm_empty_draft")
+        return draft, "gateway_llm", ("llm_generated",)
+    except Exception as exc:
+        if _env_bool(SPARK_DRAFT_LLM_REQUIRED_ENV, default=False):
+            raise SparkDraftContextError("spark_llm_draft_failed") from exc
+        return (
+            _draft_from_goal(reply_goal=reply_goal, guidance=guidance),
+            "deterministic_v0",
+            ("llm_unavailable_deterministic_fallback",),
+        )
+
+
+async def _call_spark_llm(
+    *,
+    reply_goal: str | None,
+    guidance: SparkVoiceGuidance,
+    context: SparkDraftContext,
+    sensitivity_warnings: tuple[str, ...],
+    llm_call: SparkLLMCall | None,
+) -> str:
+    provider = os.environ.get(SPARK_DRAFT_LLM_PROVIDER_ENV, "anthropic").strip()
+    model = os.environ.get(SPARK_DRAFT_LLM_MODEL_ENV, CLAUDE_FAST).strip()
+    timeout_s = _env_int(SPARK_DRAFT_LLM_TIMEOUT_ENV, default=45)
+    call = llm_call or call_gateway_cloud
+    return await call(
+        provider=provider,
+        model=model,
+        system_prompt=_spark_draft_system_prompt(guidance),
+        user_message=_spark_draft_user_message(
+            reply_goal=reply_goal,
+            context=context,
+            sensitivity_warnings=sensitivity_warnings,
+        ),
+        max_tokens=700,
+        temperature=0.35,
+        timeout_s=timeout_s,
+        idempotency_key=_draft_idempotency_key(context, reply_goal),
+    )
+
+
+def _spark_draft_system_prompt(guidance: SparkVoiceGuidance) -> str:
+    return "\n".join(
+        [
+            "You draft iMessage replies for Ken.",
+            "Return only the draft text. Do not wrap it in JSON or markdown.",
+            "Do not claim the message was sent.",
+            "Do not quote the other person's private text unless Ken explicitly asks.",
+            "Keep it short or medium length.",
+            "Sound like Ken's best edited self.",
+            f"Target voice: {', '.join(guidance.voice_markers)}.",
+            f"Avoid: {', '.join(guidance.avoid_markers)}.",
+            f"Recurring phrases, used sparingly: {', '.join(guidance.recurring_phrases)}.",
+            "If uncertain, be clear that Ken needs to confirm.",
+        ]
+    )
+
+
+def _spark_draft_user_message(
+    *,
+    reply_goal: str | None,
+    context: SparkDraftContext,
+    sensitivity_warnings: tuple[str, ...],
+) -> str:
+    lines = [
+        f"Principal: {context.principal_id}",
+        f"Reply goal: {_clean_reply_goal(reply_goal) or 'Draft the next useful reply.'}",
+        "Channel: iMessage text",
+        "Context order: newest first",
+        f"Sensitivity labels: {', '.join(sensitivity_warnings) or 'none'}",
+        "",
+        "Runtime thread context:",
+    ]
+    for index, message in enumerate(context.messages, start=1):
+        speaker = "Ken" if message.is_from_me else "Other"
+        body = _clip_context_message(message.body_text)
+        lines.append(f"{index}. {speaker}: {body}")
+    lines.extend(
+        [
+            "",
+            "Write one draft reply Ken can review.",
+            "No send action. No metadata. Draft text only.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _scan_context_sensitivity(
+    *,
+    context: SparkDraftContext,
+    record: SparkApprovedSourceRecord,
+    reply_goal: str | None,
+):
+    try:
+        guardrails = load_spark_guardrails()
+        protected_topics = guardrails.protected_topics
+    except Exception:
+        protected_topics = [
+            "legal",
+            "medical",
+            "custody",
+            "minor",
+            "relationship",
+            "financial",
+            "security",
+        ]
+    return scan_spark_draft_sensitivity(
+        texts=[
+            _clean_reply_goal(reply_goal),
+            *(message.body_text for message in context.messages),
+        ],
+        protected_topics=protected_topics,
+        relationship_marked=record.relationship_marked,
+        relationship_approved=record.relationship_approved,
+    )
+
+
 def _draft_text_override(value: str | None) -> str:
     if value is None:
         return ""
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _clean_llm_draft(value: str) -> str:
+    text = value.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    text = re.sub(r"(?i)^draft\s*:\s*", "", text).strip()
+    return text[:4000].strip()
+
+
+def _clip_context_message(value: str, limit: int = 1200) -> str:
+    clean = re.sub(r"\s+", " ", value).strip()
+    if len(clean) <= limit:
+        return clean
+    return clean[: limit - 3].rstrip() + "..."
 
 
 def _approved_chat_guid(record: SparkApprovedSourceRecord) -> str:
@@ -308,6 +509,36 @@ def _ensure_sentence(value: str) -> str:
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.strip().encode("utf-8")).hexdigest()
+
+
+def _draft_idempotency_key(context: SparkDraftContext, reply_goal: str | None) -> str:
+    raw = "|".join(
+        [
+            "spark-draft-v0.2",
+            context.approval_ref_hash,
+            context.source_reference_hash,
+            context.chat_guid_hash,
+            _sha256_text(_clean_reply_goal(reply_goal)),
+        ]
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _env_bool(name: str, *, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, *, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
 
 
 def _vault_root(vault_root: str | Path | None) -> Path:

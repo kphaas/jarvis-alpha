@@ -14,7 +14,7 @@ import time
 import asyncio
 import httpx
 from uuid import UUID, uuid4, uuid5, NAMESPACE_DNS
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Literal
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -24,11 +24,17 @@ from brain.db.pool import get_pool
 from brain.db.rls import rls_connection
 from brain.memory.memory import MemoryService
 from brain.routing.router import route
+from brain.services.internet_scout.chat_adapter import (
+    InternetChatContext,
+    build_chat_internet_context,
+)
+from brain.services.internet_scout.models import Sensitivity
 
 router = APIRouter(tags=["chat"])
 
 MAX_PERSONAL_THREADS = 20
 MAX_PROJECT_THREADS = 10
+InternetMode = Literal["none", "web_search", "deep_research"]
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -46,6 +52,9 @@ class CompletionRequest(BaseModel):
     project_id: int | None = None
     stream: bool = True
     show_council: bool = False
+    internet_mode: InternetMode = Field(
+        default="none", description="none|web_search|deep_research"
+    )
 
 
 class ThreadPatch(BaseModel):
@@ -67,6 +76,47 @@ def _is_child_actor(request: Request) -> bool:
     role = str(getattr(request.state, "role", "") or "").lower()
     child_age = getattr(request.state, "child_age", None)
     return role in {"child", "minor"} or child_age is not None
+
+
+def _internet_sensitivity(request: Request) -> Sensitivity:
+    return "minor" if _is_child_actor(request) else "normal"
+
+
+def _build_enriched_prompt(
+    *,
+    memory_context: str,
+    internet_context: str | None,
+    user_msg: str,
+) -> str:
+    if not memory_context and not internet_context:
+        return user_msg
+
+    parts: list[str] = []
+    if memory_context:
+        parts.append(f"Context from memory:\n{memory_context}")
+    if internet_context:
+        parts.append(f"Internet context from Alpha Beacon:\n{internet_context}")
+    parts.append(f"User: {user_msg}")
+    return "\n\n".join(parts)
+
+
+def _internet_sse_metadata(
+    *,
+    context: InternetChatContext,
+    thread_id: str,
+) -> dict[str, object]:
+    return {
+        "internet_mode": context.mode,
+        "internet_request_id": str(context.request_id),
+        "internet_selected_tool": context.selected_tool.value,
+        "internet_citation_count": context.citation_count,
+        "raw_web_content_is_untrusted": context.raw_web_content_is_untrusted,
+        "citations": [
+            citation.model_dump(mode="json") for citation in context.citations[:10]
+        ],
+        "thread_id": thread_id,
+        "done": False,
+    }
 
 
 async def _embed(text: str) -> list[float]:
@@ -329,8 +379,18 @@ async def chat_completions(body: CompletionRequest, request: Request):
             embedding=embedding,
         )
     memory_injected = bool(context)
-    enriched = (
-        f"Context from memory:\n{context}\n\nUser: {user_msg}" if context else user_msg
+    internet_context: InternetChatContext | None = None
+    if body.internet_mode != "none":
+        internet_context = await build_chat_internet_context(
+            request=request,
+            query=user_msg,
+            mode=body.internet_mode,
+            sensitivity=_internet_sensitivity(request),
+        )
+    enriched = _build_enriched_prompt(
+        memory_context=context,
+        internet_context=internet_context.prompt_context if internet_context else None,
+        user_msg=user_msg,
     )
 
     await _save_message(request, thread_id, user_id, "user", user_msg)
@@ -342,6 +402,13 @@ async def chat_completions(body: CompletionRequest, request: Request):
     delta_parts: list[str] = []
 
     async def _generator():
+        if internet_context:
+            payload = _internet_sse_metadata(
+                context=internet_context,
+                thread_id=thread_id,
+            )
+            yield f"data: {json.dumps(payload)}\n\n"
+
         is_council = body.model == "council" or len(body.council_models) >= 2
         models = body.council_models if body.council_models else [body.model]
 

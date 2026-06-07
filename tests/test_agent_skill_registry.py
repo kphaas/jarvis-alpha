@@ -28,6 +28,9 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert "smarthome.run_trusted_scene" in names
     assert "smarthome.unlock" in names
     assert "smarthome.alarm_disarm" in names
+    assert "internet_scout.search" in names
+    assert "internet_scout.deep_research" in names
+    assert "internet_scout.browser_task" in names
     skills = {skill.name: skill for skill in INITIAL_SKILLS}
     assert skills["notify.send"].status == "active"
     assert skills["notify.send"].metadata["primary"] == "mattermost"
@@ -48,6 +51,25 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
         skills["weather.current"].metadata["manifest"]["egress"]["provider"]
         == "open_meteo"
     )
+    assert skills["internet_scout.search"].status == "active"
+    assert skills["internet_scout.search"].body_access is True
+    assert skills["internet_scout.search"].approval_tier == "T2"
+    assert skills["internet_scout.deep_research"].approval_tier == "T3"
+    assert skills["internet_scout.browser_task"].approval_tier == "T4"
+    assert skills["internet_scout.browser_task"].mutates_state is True
+    assert skills["internet_scout.search"].metadata["execution_path"] == (
+        "fastapi_route"
+    )
+    assert skills["internet_scout.deep_research"].metadata["execution_path"] == (
+        "fastapi_route"
+    )
+    assert skills["internet_scout.browser_task"].metadata["execution_path"] == (
+        "fastapi_route"
+    )
+    assert (
+        skills["internet_scout.browser_task"].metadata["manifest"]["egress"]["provider"]
+        == "beacon_browser_runtime"
+    )
 
 
 def test_initial_skill_catalog_has_complete_manifest_v1_contracts():
@@ -60,7 +82,10 @@ def test_initial_skill_catalog_has_complete_manifest_v1_contracts():
         assert manifest.runtime.timeout_s > 0
         assert manifest.audit.event_name == "skill.invoke"
         assert manifest.test_ref
-        assert manifest.runbook_ref == "docs/JARVIS_Alpha_Skills_Agents_Catalog_v0_9.md"
+        assert manifest.runbook_ref in {
+            "docs/JARVIS_Alpha_Skills_Agents_Catalog_v0_9.md",
+            "docs/adr/ADR-0019-beacon-internet-scout.md",
+        }
         if skill.body_access:
             assert manifest.data_classification == "message_body"
         if skill.mutates_state:
@@ -107,6 +132,19 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     assert agents["approval_canary"].enabled is False
     assert agents["approval_canary"].risk_tier == "T4"
     assert "approval.canary_t4" in agents["approval_canary"].allowed_skills
+    assert agents["internet_scout"].enabled is True
+    assert agents["internet_scout"].risk_tier == "T4"
+    assert agents["internet_scout"].cadence == "on_demand"
+    assert "internet_scout.search" in agents["internet_scout"].allowed_skills
+    assert "internet_scout.deep_research" in agents["internet_scout"].allowed_skills
+    assert "internet_scout.browser_task" in agents["internet_scout"].allowed_skills
+    assert "internet_scout.research" in agents["internet_scout"].allowed_scopes
+    assert "approval.request" in agents["internet_scout"].allowed_scopes
+    assert (
+        agents["internet_scout"].approval_policy["raw_web_content"]
+        == "untrusted_data_only"
+    )
+    assert "helm_ask" in agents["internet_scout"].metadata["operator_surfaces"]
     assert "notify.send" in agents["dream_mode"].allowed_skills
     assert "notify.send" in agents["approval_triage"].allowed_skills
     assert agents["porchlight"].launch_label == "com.jarvis.alpha.porchlight"
