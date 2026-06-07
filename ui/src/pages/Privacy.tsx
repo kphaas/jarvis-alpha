@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { CheckCircle2, Fingerprint, LockKeyhole, ShieldCheck } from "lucide-react";
+import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { PrivacyCaseDraftPanel } from "../components/privacy/PrivacyCaseDraftPanel";
 import { PrivacyApprovedActionsPanel } from "../components/privacy/PrivacyApprovedActionsPanel";
@@ -10,6 +11,11 @@ import { PrivacyResultPanel } from "../components/privacy/PrivacyResultPanel";
 import { SubjectIntakeForm } from "../components/privacy/SubjectIntakeForm";
 import { PrivacyWorkflowGuide } from "../components/privacy/PrivacyWorkflowGuide";
 import { PrivacyCommandCenter } from "../components/privacy/PrivacyCommandCenter";
+import {
+  PrivacyGuidedSetupPanel,
+  type PrivacyGuidedStep,
+  type PrivacyGuidedStepId,
+} from "../components/privacy/PrivacyGuidedSetupPanel";
 import { usePrivacyApprovedActions } from "../hooks/usePrivacyApprovedActions";
 import { usePrivacyCaseDraft } from "../hooks/usePrivacyCaseDraft";
 import { usePrivacyDraftInbox } from "../hooks/usePrivacyDraftInbox";
@@ -34,12 +40,46 @@ function tone(isDark: boolean, variant: "ok" | "warn" | "error") {
     : "border-rose-700/30 bg-rose-50 text-rose-800";
 }
 
+function suggestedGuidedStep({
+  subjectReady,
+  selectedTargetCount,
+  hasLocalPacket,
+  draftReviewCount,
+  approvalReviewCount,
+  openActionCount,
+  completedCaseCount,
+}: {
+  subjectReady: boolean;
+  selectedTargetCount: number;
+  hasLocalPacket: boolean;
+  draftReviewCount: number;
+  approvalReviewCount: number;
+  openActionCount: number;
+  completedCaseCount: number;
+}): PrivacyGuidedStepId {
+  if (openActionCount > 0) return "actions";
+  if (completedCaseCount > 0) return "report";
+  if (!subjectReady) return "subject";
+  if (selectedTargetCount === 0 && !hasLocalPacket && draftReviewCount === 0 && approvalReviewCount === 0) {
+    return "targets";
+  }
+  if (selectedTargetCount > 0 && !hasLocalPacket && draftReviewCount === 0) return "packet";
+  if (hasLocalPacket || draftReviewCount > 0 || approvalReviewCount > 0) return "review";
+  return "targets";
+}
+
 export default function Privacy() {
   const { theme } = useAppStore();
   const [searchParams] = useSearchParams();
   const approvalQueueId = searchParams.get("approval");
   const caseId = searchParams.get("case");
   const actionId = searchParams.get("action");
+  const [privacyViewMode, setPrivacyViewMode] = useState<"guided" | "advanced">(
+    () => (caseId || actionId ? "advanced" : "guided"),
+  );
+  const [manualGuidedStep, setManualGuidedStep] = useState<PrivacyGuidedStepId | null>(
+    null,
+  );
   const intake = usePrivacyIntake();
   const targets = usePrivacyTargets();
   const subjectId = intake.createdSubject?.subject_id ?? null;
@@ -65,7 +105,192 @@ export default function Privacy() {
   const activeDraftCount = draftInbox.drafts.filter(
     (draft) => draft.status === "draft" || draft.status === "submitted_for_approval",
   ).length;
+  const draftReviewCount = draftInbox.drafts.filter(
+    (draft) => draft.status === "draft",
+  ).length;
+  const approvalReviewCount = draftInbox.drafts.filter(
+    (draft) => draft.status === "submitted_for_approval",
+  ).length;
   const workflowDraftCount = draftState.draft ? Math.max(1, activeDraftCount) : activeDraftCount;
+  const guidedSuggestion = suggestedGuidedStep({
+    subjectReady: Boolean(subjectId),
+    selectedTargetCount: targets.selectedCount,
+    hasLocalPacket: Boolean(draftState.draft),
+    draftReviewCount,
+    approvalReviewCount,
+    openActionCount,
+    completedCaseCount,
+  });
+  const activeGuidedStep = manualGuidedStep ?? guidedSuggestion;
+  const guidedSteps: PrivacyGuidedStep[] = [
+    {
+      id: "subject",
+      label: "Subject",
+      detail: "Add the encrypted profile and identity values.",
+      status: subjectId ? "done" : activeGuidedStep === "subject" ? "current" : "waiting",
+    },
+    {
+      id: "targets",
+      label: "Targets",
+      detail: "Choose broker and record sites.",
+      status:
+        targets.selectedCount > 0 || workflowDraftCount > 0 || openActionCount > 0
+          ? "done"
+          : activeGuidedStep === "targets"
+            ? "current"
+            : "waiting",
+    },
+    {
+      id: "packet",
+      label: "Packet",
+      detail: "Create the local review packet.",
+      status:
+        Boolean(draftState.draft) || workflowDraftCount > 0
+          ? "done"
+          : activeGuidedStep === "packet"
+            ? "current"
+            : "waiting",
+    },
+    {
+      id: "review",
+      label: "Approval",
+      detail: "Submit or inspect the draft packet.",
+      status:
+        openActionCount > 0 || completedCaseCount > 0
+          ? "done"
+          : activeGuidedStep === "review"
+            ? "current"
+            : "waiting",
+    },
+    {
+      id: "actions",
+      label: "Handling",
+      detail: "Record manual handling and verification.",
+      status:
+        completedCaseCount > 0
+          ? "done"
+          : activeGuidedStep === "actions"
+            ? "current"
+            : "waiting",
+    },
+    {
+      id: "report",
+      label: "Report",
+      detail: "Review readiness and evidence coverage.",
+      status: completedCaseCount > 0 || activeGuidedStep === "report" ? "current" : "waiting",
+    },
+  ];
+
+  function selectGuidedStep(step: PrivacyGuidedStepId) {
+    setManualGuidedStep(step);
+    setPrivacyViewMode("guided");
+  }
+
+  function renderGuidedPanel(step: PrivacyGuidedStepId) {
+    if (step === "subject") {
+      return (
+        <div className="space-y-5">
+          <SubjectIntakeForm
+            intake={intake}
+            isDark={isDark}
+            border={border}
+            panel={panel}
+            input={input}
+            muted={muted}
+            errorClass={tone(isDark, "error")}
+          />
+          <PrivacyResultPanel
+            intake={intake}
+            border={border}
+            panel={panel}
+            input={input}
+            muted={muted}
+            isDark={isDark}
+            okClass={tone(isDark, "ok")}
+            warnClass={tone(isDark, "warn")}
+            errorClass={tone(isDark, "error")}
+          />
+        </div>
+      );
+    }
+    if (step === "targets") {
+      return (
+        <PrivacyTargetRegistry
+          targets={targets}
+          subjectId={subjectId}
+          border={border}
+          panel={panel}
+          muted={muted}
+          isDark={isDark}
+          okClass={tone(isDark, "ok")}
+          warnClass={tone(isDark, "warn")}
+          errorClass={tone(isDark, "error")}
+        />
+      );
+    }
+    if (step === "packet") {
+      return (
+        <PrivacyCaseDraftPanel
+          draftState={draftState}
+          subjectId={subjectId}
+          selectedCount={targets.selectedCount}
+          onDraftCreated={() => {
+            targets.clearSelection();
+            draftInbox.refreshDrafts();
+            setManualGuidedStep("review");
+          }}
+          border={border}
+          panel={panel}
+          muted={muted}
+          isDark={isDark}
+          okClass={tone(isDark, "ok")}
+          warnClass={tone(isDark, "warn")}
+          errorClass={tone(isDark, "error")}
+        />
+      );
+    }
+    if (step === "review") {
+      return (
+        <PrivacyDraftInboxPanel
+          inbox={draftInbox}
+          approvalQueueId={approvalQueueId}
+          border={border}
+          panel={panel}
+          muted={muted}
+          isDark={isDark}
+          okClass={tone(isDark, "ok")}
+          warnClass={tone(isDark, "warn")}
+          errorClass={tone(isDark, "error")}
+        />
+      );
+    }
+    if (step === "actions") {
+      return (
+        <PrivacyApprovedActionsPanel
+          actionsState={approvedActions}
+          border={border}
+          panel={panel}
+          muted={muted}
+          isDark={isDark}
+          okClass={tone(isDark, "ok")}
+          warnClass={tone(isDark, "warn")}
+          errorClass={tone(isDark, "error")}
+        />
+      );
+    }
+    return (
+      <PrivacyRemovalControlPanel
+        control={removalControl}
+        border={border}
+        panel={panel}
+        muted={muted}
+        isDark={isDark}
+        okClass={tone(isDark, "ok")}
+        warnClass={tone(isDark, "warn")}
+        errorClass={tone(isDark, "error")}
+      />
+    );
+  }
 
   return (
     <motion.div
@@ -136,111 +361,139 @@ export default function Privacy() {
         isDark={isDark}
       />
 
-      <PrivacyWorkflowGuide
-        subjectReady={Boolean(subjectId)}
-        selectedTargetCount={targets.selectedCount}
-        activeDraftCount={workflowDraftCount}
-        openActionCount={openActionCount}
-        completedCaseCount={completedCaseCount}
-        border={border}
-        panel={panel}
-        muted={muted}
-        isDark={isDark}
-      />
+      {privacyViewMode === "guided" ? (
+        <PrivacyGuidedSetupPanel
+          steps={guidedSteps}
+          activeStep={activeGuidedStep}
+          border={border}
+          panel={panel}
+          muted={muted}
+          isDark={isDark}
+          onStepChange={selectGuidedStep}
+          onShowAdvanced={() => setPrivacyViewMode("advanced")}
+        >
+          {renderGuidedPanel(activeGuidedStep)}
+        </PrivacyGuidedSetupPanel>
+      ) : (
+        <>
+          <PrivacyWorkflowGuide
+            subjectReady={Boolean(subjectId)}
+            selectedTargetCount={targets.selectedCount}
+            activeDraftCount={workflowDraftCount}
+            openActionCount={openActionCount}
+            completedCaseCount={completedCaseCount}
+            border={border}
+            panel={panel}
+            muted={muted}
+            isDark={isDark}
+          />
 
-      <div id="privacy-advanced-workflow" className="flex flex-col gap-2">
-        <h2 className={`text-base font-semibold ${strong}`}>Advanced workflow</h2>
-        <p className={`max-w-3xl text-sm leading-6 ${muted}`}>
-          Detailed intake, packet, approval, handling, and evidence tools stay here for audit
-          and troubleshooting.
-        </p>
-      </div>
+          <div id="privacy-advanced-workflow" className="flex flex-col gap-2">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className={`text-base font-semibold ${strong}`}>Advanced workflow</h2>
+                <p className={`max-w-3xl text-sm leading-6 ${muted}`}>
+                  Detailed intake, packet, approval, handling, and evidence tools stay here for audit
+                  and troubleshooting.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPrivacyViewMode("guided")}
+                className={`inline-flex min-h-11 items-center justify-center rounded-lg border px-3 text-sm font-semibold transition hover:border-emerald-700/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-700 dark:hover:border-emerald-300/50 dark:focus-visible:outline-emerald-300 ${border}`}
+              >
+                Show guided setup
+              </button>
+            </div>
+          </div>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
-        <div className="space-y-5">
-          <SubjectIntakeForm
-            intake={intake}
-            isDark={isDark}
-            border={border}
-            panel={panel}
-            input={input}
-            muted={muted}
-            errorClass={tone(isDark, "error")}
-          />
-          <PrivacyTargetRegistry
-            targets={targets}
-            subjectId={subjectId}
-            border={border}
-            panel={panel}
-            muted={muted}
-            isDark={isDark}
-            okClass={tone(isDark, "ok")}
-            warnClass={tone(isDark, "warn")}
-            errorClass={tone(isDark, "error")}
-          />
-        </div>
-        <div className="space-y-5">
-          <PrivacyResultPanel
-            intake={intake}
-            border={border}
-            panel={panel}
-            input={input}
-            muted={muted}
-            isDark={isDark}
-            okClass={tone(isDark, "ok")}
-            warnClass={tone(isDark, "warn")}
-            errorClass={tone(isDark, "error")}
-          />
-          <PrivacyCaseDraftPanel
-            draftState={draftState}
-            subjectId={subjectId}
-            selectedCount={targets.selectedCount}
-            onDraftCreated={() => {
-              targets.clearSelection();
-              draftInbox.refreshDrafts();
-            }}
-            border={border}
-            panel={panel}
-            muted={muted}
-            isDark={isDark}
-            okClass={tone(isDark, "ok")}
-            warnClass={tone(isDark, "warn")}
-            errorClass={tone(isDark, "error")}
-          />
-          <PrivacyDraftInboxPanel
-            inbox={draftInbox}
-            approvalQueueId={approvalQueueId}
-            border={border}
-            panel={panel}
-            muted={muted}
-            isDark={isDark}
-            okClass={tone(isDark, "ok")}
-            warnClass={tone(isDark, "warn")}
-            errorClass={tone(isDark, "error")}
-          />
-          <PrivacyApprovedActionsPanel
-            actionsState={approvedActions}
-            border={border}
-            panel={panel}
-            muted={muted}
-            isDark={isDark}
-            okClass={tone(isDark, "ok")}
-            warnClass={tone(isDark, "warn")}
-            errorClass={tone(isDark, "error")}
-          />
-        </div>
-      </div>
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
+            <div className="space-y-5">
+              <SubjectIntakeForm
+                intake={intake}
+                isDark={isDark}
+                border={border}
+                panel={panel}
+                input={input}
+                muted={muted}
+                errorClass={tone(isDark, "error")}
+              />
+              <PrivacyTargetRegistry
+                targets={targets}
+                subjectId={subjectId}
+                border={border}
+                panel={panel}
+                muted={muted}
+                isDark={isDark}
+                okClass={tone(isDark, "ok")}
+                warnClass={tone(isDark, "warn")}
+                errorClass={tone(isDark, "error")}
+              />
+            </div>
+            <div className="space-y-5">
+              <PrivacyResultPanel
+                intake={intake}
+                border={border}
+                panel={panel}
+                input={input}
+                muted={muted}
+                isDark={isDark}
+                okClass={tone(isDark, "ok")}
+                warnClass={tone(isDark, "warn")}
+                errorClass={tone(isDark, "error")}
+              />
+              <PrivacyCaseDraftPanel
+                draftState={draftState}
+                subjectId={subjectId}
+                selectedCount={targets.selectedCount}
+                onDraftCreated={() => {
+                  targets.clearSelection();
+                  draftInbox.refreshDrafts();
+                }}
+                border={border}
+                panel={panel}
+                muted={muted}
+                isDark={isDark}
+                okClass={tone(isDark, "ok")}
+                warnClass={tone(isDark, "warn")}
+                errorClass={tone(isDark, "error")}
+              />
+              <PrivacyDraftInboxPanel
+                inbox={draftInbox}
+                approvalQueueId={approvalQueueId}
+                border={border}
+                panel={panel}
+                muted={muted}
+                isDark={isDark}
+                okClass={tone(isDark, "ok")}
+                warnClass={tone(isDark, "warn")}
+                errorClass={tone(isDark, "error")}
+              />
+              <PrivacyApprovedActionsPanel
+                actionsState={approvedActions}
+                border={border}
+                panel={panel}
+                muted={muted}
+                isDark={isDark}
+                okClass={tone(isDark, "ok")}
+                warnClass={tone(isDark, "warn")}
+                errorClass={tone(isDark, "error")}
+              />
+            </div>
+          </div>
 
-      <PrivacyRemovalControlPanel
-        control={removalControl}
-        border={border}
-        panel={panel}
-        muted={muted}
-        isDark={isDark}
-        okClass={tone(isDark, "ok")}
-        warnClass={tone(isDark, "warn")}
-        errorClass={tone(isDark, "error")}
-      />
+          <PrivacyRemovalControlPanel
+            control={removalControl}
+            border={border}
+            panel={panel}
+            muted={muted}
+            isDark={isDark}
+            okClass={tone(isDark, "ok")}
+            warnClass={tone(isDark, "warn")}
+            errorClass={tone(isDark, "error")}
+          />
+        </>
+      )}
     </motion.div>
   );
 }
