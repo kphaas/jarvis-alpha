@@ -63,6 +63,12 @@ def _user_id(request: Request) -> str:
     return getattr(request.state, "user_id", "anon")
 
 
+def _is_child_actor(request: Request) -> bool:
+    role = str(getattr(request.state, "role", "") or "").lower()
+    child_age = getattr(request.state, "child_age", None)
+    return role in {"child", "minor"} or child_age is not None
+
+
 async def _embed(text: str) -> list[float]:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -419,6 +425,9 @@ async def rename_thread(thread_id: str, body: ThreadPatch, request: Request):
 
 @router.delete("/v1/threads/{thread_id}")
 async def archive_thread(thread_id: str, request: Request):
+    if _is_child_actor(request):
+        raise HTTPException(403, "child_thread_delete_denied")
+
     user_id = _user_id(request)
     result = ""
     async with rls_connection(request) as conn:
