@@ -75,6 +75,33 @@ export interface CertRow {
   source: string
 }
 
+export interface SweepTlsReport {
+  node: string
+  fqdn?: string | null
+  status: string
+  days_remaining?: number | null
+  cert_expires_at?: string | null
+  health_ok?: boolean | null
+  threshold_days?: number | null
+  severity: string
+  title?: string | null
+  message: string
+  reported_at?: string | null
+  received_at?: string | null
+  age_seconds?: number | null
+  is_stale: boolean
+  notification_status: string
+}
+
+export interface SweepTlsReportsSummary {
+  source: string
+  expected_nodes: string[]
+  stale_after_seconds: number
+  received: number
+  attention: number
+  reports: SweepTlsReport[]
+}
+
 export interface LogEntry {
   ts: string
   level: string
@@ -416,6 +443,7 @@ export interface WardenStatus {
   next_hardening: string
   posture_score?: WardenPostureScore
   trade_guard_financial_evidence?: TradeGuardFinancialEvidence
+  sweep_tls_reports?: SweepTlsReportsSummary
   owner_routes?: WardenOwnerRoute[]
   weekly_brief?: WardenWeeklyBrief
   auto_ticket_candidates?: WardenTicketCandidate[]

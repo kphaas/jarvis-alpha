@@ -9,6 +9,11 @@ from fastapi import HTTPException
 
 from brain.middleware.approval_classes import classify_route
 from brain.routes import helm
+from brain.services.internet_scout.models import (
+    InternetScoutHealthCheck,
+    InternetScoutHealthResponse,
+    InternetScoutRetentionReport,
+)
 
 
 def _request(*, scopes: list[str] | None = None, role: str = "user"):
@@ -108,6 +113,57 @@ class FakeHelmActionConn:
         ]
 
 
+def _fake_beacon_summary() -> helm.HelmBeaconSummary:
+    return helm.HelmBeaconSummary(
+        status="ok",
+        checked_at=datetime(2026, 6, 12, 19, 0, tzinfo=UTC).isoformat(),
+        provider=helm.HelmBeaconProviderSummary(
+            status="ok",
+            provider_order=["brave", "perplexity"],
+            configured_provider_count=2,
+            usable_provider_count=1,
+        ),
+        browser=helm.HelmBeaconBrowserSummary(
+            status="ok",
+            runtime="playwright",
+            runtime_enabled=True,
+            playwright_version="1.49.1",
+            expected_playwright_version="1.49.1",
+            playwright_version_ok=True,
+            screenshot_store_ready=True,
+            timeout_ms=20000,
+            max_runs_per_hour=3,
+        ),
+        evidence=helm.HelmBeaconEvidenceSummary(
+            status="ok",
+            total=4,
+            succeeded=4,
+            failed=0,
+            blocked=0,
+            last_request=helm.HelmBeaconLastRequest(
+                id="request-1",
+                requester="helm_ask",
+                selected_tool="search",
+                status="succeeded",
+                created_at=datetime(2026, 6, 12, 18, 59, tzinfo=UTC).isoformat(),
+                updated_at=datetime(2026, 6, 12, 19, 0, tzinfo=UTC).isoformat(),
+            ),
+        ),
+        retention=helm.HelmBeaconRetentionSummary(
+            mode="report_only",
+            evidence_retention_days=30,
+            screenshot_retention_days=7,
+            old_request_count=0,
+            screenshot_file_count=0,
+            screenshot_bytes=0,
+        ),
+        approvals=helm.HelmBeaconApprovalSummary(
+            pending_browser_approvals=0,
+            next_expires_at=None,
+        ),
+    )
+
+
 @pytest.mark.asyncio
 async def test_helm_summary_requires_helm_read_scope() -> None:
     with pytest.raises(HTTPException) as exc:
@@ -132,6 +188,11 @@ async def test_helm_summary_returns_redacted_counts(monkeypatch) -> None:
         helm, "platform_admin_connection", fake_platform_admin_connection
     )
 
+    async def fake_beacon_summary(_conn) -> helm.HelmBeaconSummary:
+        return _fake_beacon_summary()
+
+    monkeypatch.setattr(helm, "_beacon_summary", fake_beacon_summary)
+
     response = await helm.helm_summary(_request(scopes=["helm.read"]), _user_id="ken")
     payload = response.model_dump()
 
@@ -149,8 +210,131 @@ async def test_helm_summary_returns_redacted_counts(monkeypatch) -> None:
         "enabled": 2,
         "by_status": {"active": 2, "planned": 1},
     }
+    assert payload["beacon"]["provider"] == {
+        "status": "ok",
+        "provider_order": ["brave", "perplexity"],
+        "configured_provider_count": 2,
+        "usable_provider_count": 1,
+    }
+    assert payload["beacon"]["raw_web_content_is_untrusted"] is True
     assert "description" not in str(payload)
     assert "actor_sub" not in str(payload)
+
+
+@pytest.mark.asyncio
+async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
+    expires_at = datetime(2026, 6, 12, 19, 15, tzinfo=UTC)
+
+    class FakeBeaconConn:
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
+            assert "beacon_browser_use" in query
+            return {
+                "pending_browser_approvals": 2,
+                "next_expires_at": expires_at,
+            }
+
+    async def fake_build_beacon_health(_conn) -> InternetScoutHealthResponse:
+        checked_at = datetime(2026, 6, 12, 19, 0, tzinfo=UTC)
+        return InternetScoutHealthResponse(
+            status="ok",
+            checked_at=checked_at,
+            checks={
+                "gateway": InternetScoutHealthCheck(
+                    ok=True,
+                    status="ok",
+                    detail="Gateway has a usable search provider.",
+                    metadata={
+                        "provider_order": ["brave", "perplexity"],
+                        "configured_provider_count": 2,
+                        "usable_provider_count": 1,
+                        "providers": [{"provider": "brave", "api_key": "secret"}],
+                    },
+                ),
+                "browser_runtime": InternetScoutHealthCheck(
+                    ok=True,
+                    status="ok",
+                    detail="Browser runtime is ready.",
+                    metadata={
+                        "runtime": "playwright",
+                        "runtime_enabled": True,
+                        "installed_playwright_version": "1.49.1",
+                        "expected_playwright_version": "1.49.1",
+                        "playwright_version_ok": True,
+                        "screenshot_dir_configured": True,
+                        "screenshot_dir_exists": True,
+                        "screenshot_dir_writable": True,
+                        "screenshot_dir": "/private/beacon/screenshots",
+                        "timeout_ms": 20000,
+                        "max_runs_per_hour": 3,
+                    },
+                ),
+                "recent_evidence": InternetScoutHealthCheck(
+                    ok=True,
+                    status="ok",
+                    detail="No recent Beacon request failures.",
+                    metadata={
+                        "window_hours": 24,
+                        "total": 5,
+                        "succeeded": 4,
+                        "failed": 1,
+                        "blocked": 0,
+                        "last_request": {
+                            "id": "request-1",
+                            "requester": "helm_ask",
+                            "selected_tool": "search",
+                            "status": "succeeded",
+                            "created_at": checked_at.isoformat(),
+                            "updated_at": checked_at.isoformat(),
+                        },
+                    },
+                ),
+            },
+            retention=InternetScoutRetentionReport(
+                evidence_retention_days=30,
+                screenshot_retention_days=7,
+                old_request_count=1,
+                screenshot_file_count=2,
+                screenshot_bytes=4096,
+            ),
+        )
+
+    monkeypatch.setattr(helm, "build_beacon_health", fake_build_beacon_health)
+
+    summary = await helm._beacon_summary(FakeBeaconConn())
+    payload = summary.model_dump()
+
+    assert payload["provider"] == {
+        "status": "ok",
+        "provider_order": ["brave", "perplexity"],
+        "configured_provider_count": 2,
+        "usable_provider_count": 1,
+    }
+    assert payload["browser"]["screenshot_store_ready"] is True
+    assert payload["evidence"]["last_request"]["id"] == "request-1"
+    assert payload["approvals"] == {
+        "pending_browser_approvals": 2,
+        "next_expires_at": expires_at.isoformat(),
+    }
+    assert "secret" not in str(payload)
+    assert "/private/beacon/screenshots" not in str(payload)
+
+
+@pytest.mark.asyncio
+async def test_beacon_summary_degrades_when_health_unavailable(monkeypatch) -> None:
+    async def fake_build_beacon_health(_conn) -> InternetScoutHealthResponse:
+        raise RuntimeError("gateway secret should not leak")
+
+    monkeypatch.setattr(helm, "build_beacon_health", fake_build_beacon_health)
+
+    summary = await helm._beacon_summary(object())
+    payload = summary.model_dump()
+
+    assert payload["status"] == "degraded"
+    assert payload["provider"]["status"] == "unavailable"
+    assert payload["browser"]["runtime"] == "disabled"
+    assert payload["evidence"]["status"] == "unavailable"
+    assert payload["raw_web_content_is_untrusted"] is True
+    assert "gateway secret should not leak" not in str(payload)
 
 
 def test_helm_summary_route_is_read_classified() -> None:

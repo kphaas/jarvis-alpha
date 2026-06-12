@@ -21,8 +21,11 @@ from brain.config.secrets import get_secret
 from brain.db.rls import platform_admin_connection
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
+from brain.services.internet_scout.health import build_beacon_health
+from jarvis_common.logging_config import get_logger
 
 router = APIRouter(prefix="/v1/helm", tags=["helm"])
+logger = get_logger("alpha_brain")
 
 _SECURITY_AGENT_IDS = (
     "warden",
@@ -94,6 +97,69 @@ class HelmPostureSummary(BaseModel):
     security_agents: HelmSecurityAgentSummary
 
 
+class HelmBeaconLastRequest(BaseModel):
+    id: str | None = None
+    requester: str | None = None
+    selected_tool: str | None = None
+    status: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class HelmBeaconProviderSummary(BaseModel):
+    status: str
+    provider_order: list[str] = Field(default_factory=list)
+    configured_provider_count: int = 0
+    usable_provider_count: int = 0
+
+
+class HelmBeaconBrowserSummary(BaseModel):
+    status: str
+    runtime: str
+    runtime_enabled: bool = False
+    playwright_version: str | None = None
+    expected_playwright_version: str | None = None
+    playwright_version_ok: bool = False
+    screenshot_store_ready: bool = False
+    timeout_ms: int = 0
+    max_runs_per_hour: int = 0
+
+
+class HelmBeaconEvidenceSummary(BaseModel):
+    status: str
+    window_hours: int = 24
+    total: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    blocked: int = 0
+    last_request: HelmBeaconLastRequest | None = None
+
+
+class HelmBeaconRetentionSummary(BaseModel):
+    mode: str
+    evidence_retention_days: int
+    screenshot_retention_days: int
+    old_request_count: int
+    screenshot_file_count: int
+    screenshot_bytes: int
+
+
+class HelmBeaconApprovalSummary(BaseModel):
+    pending_browser_approvals: int = 0
+    next_expires_at: str | None = None
+
+
+class HelmBeaconSummary(BaseModel):
+    status: str
+    checked_at: str
+    provider: HelmBeaconProviderSummary
+    browser: HelmBeaconBrowserSummary
+    evidence: HelmBeaconEvidenceSummary
+    retention: HelmBeaconRetentionSummary
+    approvals: HelmBeaconApprovalSummary
+    raw_web_content_is_untrusted: bool = True
+
+
 class HelmControlSummary(BaseModel):
     mode: str = "read_only"
     alpha_authority: str = "required"
@@ -106,6 +172,7 @@ class HelmSummaryOut(BaseModel):
     approvals: HelmApprovalSummary
     registry: HelmRegistrySummary
     posture: HelmPostureSummary
+    beacon: HelmBeaconSummary
     controls: HelmControlSummary = Field(default_factory=HelmControlSummary)
 
 
@@ -172,6 +239,48 @@ def _int_value(row: object, key: str) -> int:
 
 def _bool_value(row: object, key: str) -> bool:
     return bool(_row_value(row, key, False))
+
+
+def _mapping_value(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _metadata_value(metadata: Mapping[str, object], key: str) -> object | None:
+    return metadata.get(key)
+
+
+def _metadata_str(
+    metadata: Mapping[str, object],
+    key: str,
+    default: str | None = None,
+) -> str | None:
+    value = _metadata_value(metadata, key)
+    if value is None:
+        return default
+    return str(value)
+
+
+def _metadata_int(metadata: Mapping[str, object], key: str) -> int:
+    value = _metadata_value(metadata, key)
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int | float | str | bytes | bytearray):
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def _metadata_bool(metadata: Mapping[str, object], key: str) -> bool:
+    return bool(_metadata_value(metadata, key))
+
+
+def _metadata_str_list(metadata: Mapping[str, object], key: str) -> list[str]:
+    value = _metadata_value(metadata, key)
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item)]
 
 
 def _risk_rank(tier: str) -> int:
@@ -262,6 +371,161 @@ def _security_agent_summary(rows: list[object]) -> HelmSecurityAgentSummary:
         total=len(rows),
         enabled=enabled,
         by_status=by_status,
+    )
+
+
+def _beacon_last_request(
+    metadata: Mapping[str, object],
+) -> HelmBeaconLastRequest | None:
+    last_request = _mapping_value(metadata.get("last_request"))
+    if not last_request:
+        return None
+    return HelmBeaconLastRequest(
+        id=_metadata_str(last_request, "id"),
+        requester=_metadata_str(last_request, "requester"),
+        selected_tool=_metadata_str(last_request, "selected_tool"),
+        status=_metadata_str(last_request, "status"),
+        created_at=_metadata_str(last_request, "created_at"),
+        updated_at=_metadata_str(last_request, "updated_at"),
+    )
+
+
+def _datetime_or_none(value: object | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+async def _beacon_pending_browser_approvals(conn) -> HelmBeaconApprovalSummary:
+    row = await conn.fetchrow(
+        """
+        SELECT COUNT(*)::INTEGER AS pending_browser_approvals,
+               MIN(expires_at) AS next_expires_at
+        FROM public.alpha_approval_queue
+        WHERE status = 'pending'
+          AND (expires_at IS NULL OR expires_at > NOW())
+          AND action_class && ARRAY['beacon_browser_use']::TEXT[]
+        """
+    )
+    return HelmBeaconApprovalSummary(
+        pending_browser_approvals=_int_value(row, "pending_browser_approvals"),
+        next_expires_at=_datetime_or_none(_row_value(row, "next_expires_at")),
+    )
+
+
+def _unavailable_beacon_summary() -> HelmBeaconSummary:
+    return HelmBeaconSummary(
+        status="degraded",
+        checked_at=datetime.now(UTC).isoformat(),
+        provider=HelmBeaconProviderSummary(
+            status="unavailable",
+            provider_order=[],
+            configured_provider_count=0,
+            usable_provider_count=0,
+        ),
+        browser=HelmBeaconBrowserSummary(
+            status="unavailable",
+            runtime="disabled",
+        ),
+        evidence=HelmBeaconEvidenceSummary(
+            status="unavailable",
+        ),
+        retention=HelmBeaconRetentionSummary(
+            mode="report_only",
+            evidence_retention_days=0,
+            screenshot_retention_days=0,
+            old_request_count=0,
+            screenshot_file_count=0,
+            screenshot_bytes=0,
+        ),
+        approvals=HelmBeaconApprovalSummary(),
+    )
+
+
+async def _beacon_summary(conn) -> HelmBeaconSummary:
+    try:
+        health = await build_beacon_health(conn)
+    except Exception as exc:
+        logger.warning("helm beacon summary unavailable: %s", exc)
+        return _unavailable_beacon_summary()
+
+    gateway_check = health.checks.get("gateway")
+    browser_check = health.checks.get("browser_runtime")
+    evidence_check = health.checks.get("recent_evidence")
+
+    gateway_metadata = (
+        _mapping_value(gateway_check.metadata) if gateway_check is not None else {}
+    )
+    browser_metadata = (
+        _mapping_value(browser_check.metadata) if browser_check is not None else {}
+    )
+    evidence_metadata = (
+        _mapping_value(evidence_check.metadata) if evidence_check is not None else {}
+    )
+    approvals = await _beacon_pending_browser_approvals(conn)
+
+    return HelmBeaconSummary(
+        status=health.status,
+        checked_at=health.checked_at.isoformat(),
+        provider=HelmBeaconProviderSummary(
+            status=gateway_check.status if gateway_check is not None else "unavailable",
+            provider_order=_metadata_str_list(gateway_metadata, "provider_order"),
+            configured_provider_count=_metadata_int(
+                gateway_metadata,
+                "configured_provider_count",
+            ),
+            usable_provider_count=_metadata_int(
+                gateway_metadata,
+                "usable_provider_count",
+            ),
+        ),
+        browser=HelmBeaconBrowserSummary(
+            status=browser_check.status if browser_check is not None else "unavailable",
+            runtime=_metadata_str(browser_metadata, "runtime", "disabled")
+            or "disabled",
+            runtime_enabled=_metadata_bool(browser_metadata, "runtime_enabled"),
+            playwright_version=_metadata_str(
+                browser_metadata,
+                "installed_playwright_version",
+            ),
+            expected_playwright_version=_metadata_str(
+                browser_metadata,
+                "expected_playwright_version",
+            ),
+            playwright_version_ok=_metadata_bool(
+                browser_metadata,
+                "playwright_version_ok",
+            ),
+            screenshot_store_ready=(
+                _metadata_bool(browser_metadata, "screenshot_dir_configured")
+                and _metadata_bool(browser_metadata, "screenshot_dir_exists")
+                and _metadata_bool(browser_metadata, "screenshot_dir_writable")
+            ),
+            timeout_ms=_metadata_int(browser_metadata, "timeout_ms"),
+            max_runs_per_hour=_metadata_int(browser_metadata, "max_runs_per_hour"),
+        ),
+        evidence=HelmBeaconEvidenceSummary(
+            status=evidence_check.status
+            if evidence_check is not None
+            else "unavailable",
+            window_hours=_metadata_int(evidence_metadata, "window_hours") or 24,
+            total=_metadata_int(evidence_metadata, "total"),
+            succeeded=_metadata_int(evidence_metadata, "succeeded"),
+            failed=_metadata_int(evidence_metadata, "failed"),
+            blocked=_metadata_int(evidence_metadata, "blocked"),
+            last_request=_beacon_last_request(evidence_metadata),
+        ),
+        retention=HelmBeaconRetentionSummary(
+            mode=health.retention.mode,
+            evidence_retention_days=health.retention.evidence_retention_days,
+            screenshot_retention_days=health.retention.screenshot_retention_days,
+            old_request_count=health.retention.old_request_count,
+            screenshot_file_count=health.retention.screenshot_file_count,
+            screenshot_bytes=health.retention.screenshot_bytes,
+        ),
+        approvals=approvals,
     )
 
 
@@ -651,6 +915,7 @@ async def helm_summary(
             """,
             list(_SECURITY_AGENT_IDS),
         )
+        beacon_summary = await _beacon_summary(conn)
 
     return HelmSummaryOut(
         generated_at=datetime.now(UTC).isoformat(),
@@ -663,6 +928,7 @@ async def helm_summary(
             gateway=_gateway_posture(gateway_row),
             security_agents=_security_agent_summary(list(security_agent_rows)),
         ),
+        beacon=beacon_summary,
     )
 
 

@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import os
 import subprocess
-from datetime import UTC, datetime
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from jarvis_common.secrets import get_secret
 from jarvis_common.logging_config import get_logger
@@ -77,6 +80,10 @@ SECURITY_MANAGED_AGENT_IDS = (
     "sentry",
     "trade_guard",
 )
+SWEEP_REPORT_SECRET_NAME = "ALPHA_SWEEP_REPORT_SECRET"
+SWEEP_REPORT_MAX_SKEW_SECONDS = 300
+SWEEP_REPORT_STALE_AFTER = timedelta(hours=24)
+SWEEP_REPORT_EXPECTED_NODES = ("brain", "endpoint", "gateway", "sandbox")
 
 
 class SentinelReportFinding(BaseModel):
@@ -105,6 +112,29 @@ class SentinelReportResponse(BaseModel):
     accepted: bool
     event_id: str
     notification_status: str
+
+
+class SweepReportIn(BaseModel):
+    node: Literal["brain", "endpoint", "gateway", "sandbox"]
+    fqdn: str = Field(min_length=1, max_length=160)
+    status: str = Field(min_length=1, max_length=48)
+    days_remaining: int | None = None
+    cert_issued_at: str | None = Field(default=None, max_length=80)
+    cert_expires_at: str | None = Field(default=None, max_length=80)
+    source_cert: str = Field(min_length=1, max_length=500)
+    renewed: bool = False
+    restarted: bool = False
+    health_ok: bool | None = None
+    error: str | None = Field(default=None, max_length=500)
+    threshold_days: int = Field(default=30, ge=1, le=365)
+    reported_at: str | None = Field(default=None, max_length=80)
+
+
+class SweepReportResponse(BaseModel):
+    accepted: bool
+    event_id: str
+    notification_status: str
+    severity: str
 
 
 class SecurityAgentEventOut(BaseModel):
@@ -185,6 +215,154 @@ def _sentinel_event_message(report: SentinelReportIn) -> str:
         f"{int(counts.get('high', 0))} high, "
         f"{int(counts.get('medium', 0))} medium."
     )
+
+
+def _sweep_report_signature(secret: str, timestamp: str, body: bytes) -> str:
+    message = timestamp.encode("utf-8") + b"." + body
+    return hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+
+def _verify_sweep_report_signature(request: Request, body: bytes) -> str:
+    timestamp = request.headers.get("X-Jarvis-Timestamp", "").strip()
+    signature = request.headers.get("X-Jarvis-Signature", "").strip()
+    node = request.headers.get("X-Jarvis-Node", "").strip().lower()
+    if not timestamp or not signature or not node:
+        raise HTTPException(status_code=401, detail="missing_sweep_report_signature")
+    try:
+        timestamp_value = int(timestamp)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=401, detail="invalid_sweep_report_timestamp"
+        ) from exc
+    if abs(int(time.time()) - timestamp_value) > SWEEP_REPORT_MAX_SKEW_SECONDS:
+        raise HTTPException(status_code=401, detail="stale_sweep_report_signature")
+    try:
+        secret = get_secret(SWEEP_REPORT_SECRET_NAME).strip()
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=503, detail="sweep_report_secret_missing"
+        ) from exc
+    expected = _sweep_report_signature(secret, timestamp, body)
+    if not hmac.compare_digest(expected, signature):
+        raise HTTPException(status_code=401, detail="invalid_sweep_report_signature")
+    return node
+
+
+def _sweep_report_severity(report: SweepReportIn) -> str:
+    if report.status == "error" or report.health_ok is False:
+        return "error"
+    if (
+        report.days_remaining is not None
+        and report.days_remaining <= report.threshold_days
+        and report.status not in {"renewed", "renewal_pending"}
+    ):
+        return "warning"
+    return "info"
+
+
+def _sweep_report_message(report: SweepReportIn) -> str:
+    days = (
+        f"{report.days_remaining} day(s) remaining"
+        if report.days_remaining is not None
+        else "days remaining unavailable"
+    )
+    health = (
+        "health ok"
+        if report.health_ok is True
+        else "health failed"
+        if report.health_ok is False
+        else "health not checked"
+    )
+    detail = f"Sweep reported `{report.node}` certificate status `{report.status}`: {days}; {health}."
+    if report.error:
+        detail += f" Detail: {report.error[:240]}"
+    return detail
+
+
+def _sweep_report_event_payload(report: SweepReportIn) -> dict:
+    return {
+        "source": "node_local_sweep",
+        "node": report.node,
+        "fqdn": report.fqdn,
+        "status": report.status,
+        "days_remaining": report.days_remaining,
+        "cert_issued_at": report.cert_issued_at,
+        "cert_expires_at": report.cert_expires_at,
+        "renewed": report.renewed,
+        "restarted": report.restarted,
+        "health_ok": report.health_ok,
+        "threshold_days": report.threshold_days,
+        "reported_at": report.reported_at,
+        "error": report.error,
+    }
+
+
+def _sweep_latest_report_from_row(row, *, now: datetime) -> dict:
+    payload = _jsonb(row["payload"])
+    created_at = row["created_at"]
+    age_seconds = (
+        int((now - created_at).total_seconds())
+        if hasattr(created_at, "tzinfo")
+        else None
+    )
+    is_stale = age_seconds is None or age_seconds > int(
+        SWEEP_REPORT_STALE_AFTER.total_seconds()
+    )
+    return {
+        "node": payload.get("node"),
+        "fqdn": payload.get("fqdn"),
+        "status": payload.get("status"),
+        "days_remaining": payload.get("days_remaining"),
+        "cert_expires_at": payload.get("cert_expires_at"),
+        "health_ok": payload.get("health_ok"),
+        "threshold_days": payload.get("threshold_days"),
+        "severity": row["severity"],
+        "title": row["title"],
+        "message": row["message"],
+        "reported_at": payload.get("reported_at"),
+        "received_at": _iso(created_at),
+        "age_seconds": age_seconds,
+        "is_stale": is_stale,
+        "notification_status": row["notification_status"],
+    }
+
+
+def _sweep_report_summary(rows, *, now: datetime) -> dict:
+    reports_by_node = {
+        str(row["node"]): _sweep_latest_report_from_row(row, now=now) for row in rows
+    }
+    reports = []
+    for node in SWEEP_REPORT_EXPECTED_NODES:
+        reports.append(
+            reports_by_node.get(
+                node,
+                {
+                    "node": node,
+                    "status": "missing",
+                    "severity": "warning",
+                    "message": "No node-local Sweep report has been received.",
+                    "received_at": None,
+                    "age_seconds": None,
+                    "is_stale": True,
+                    "notification_status": "not_sent",
+                },
+            )
+        )
+    attention = sum(
+        1
+        for report in reports
+        if report["is_stale"]
+        or report.get("severity") in {"warning", "error", "critical"}
+        or report.get("health_ok") is False
+    )
+    return {
+        "source": "alpha_agent_events",
+        "expected_nodes": list(SWEEP_REPORT_EXPECTED_NODES),
+        "stale_after_seconds": int(SWEEP_REPORT_STALE_AFTER.total_seconds()),
+        "received": sum(1 for report in reports if report.get("received_at")),
+        "attention": attention,
+        "reports": reports,
+    }
 
 
 def _curl_http_code(
@@ -1017,6 +1195,23 @@ async def warden_status(request: Request):
             )
             or 0
         )
+        sweep_report_rows = await conn.fetch(
+            """
+            SELECT DISTINCT ON (payload->>'node')
+                   payload->>'node' AS node,
+                   severity,
+                   title,
+                   message,
+                   payload,
+                   notification_status,
+                   created_at
+            FROM public.alpha_agent_events
+            WHERE agent_id = 'sweep'
+              AND event_type = 'sweep.tls_report'
+              AND payload ? 'node'
+            ORDER BY payload->>'node', created_at DESC
+            """
+        )
 
     agents = []
     for row in rows:
@@ -1108,6 +1303,7 @@ async def warden_status(request: Request):
         checked_at=checked_at,
     )
     hardening_state = _warden_hardening_state(warden, crew)
+    sweep_tls_reports = _sweep_report_summary(sweep_report_rows, now=checked_at)
     return {
         "supervisor": warden,
         "agents": crew,
@@ -1120,6 +1316,7 @@ async def warden_status(request: Request):
         **hardening_state,
         "posture_score": posture_score,
         "trade_guard_financial_evidence": trade_guard_financial_evidence,
+        "sweep_tls_reports": sweep_tls_reports,
         "owner_routes": routed_controls,
         "weekly_brief": weekly_brief,
         "auto_ticket_candidates": ticket_candidates,
@@ -1169,6 +1366,45 @@ async def sentinel_report(
     )
 
 
+@security_router.post(
+    "/sweep-report", response_model=SweepReportResponse, status_code=202
+)
+async def sweep_report(request: Request) -> SweepReportResponse:
+    """Accept a signed node-local Sweep TLS report."""
+    raw_body = await request.body()
+    header_node = _verify_sweep_report_signature(request, raw_body)
+    try:
+        report = SweepReportIn.model_validate_json(raw_body)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=400, detail="invalid_sweep_report_body"
+        ) from exc
+    if header_node != report.node:
+        raise HTTPException(status_code=400, detail="sweep_report_node_mismatch")
+
+    severity = _sweep_report_severity(report)
+    result = await emit_agent_event(
+        AgentEvent(
+            agent_id="sweep",
+            event_type="sweep.tls_report",
+            title=f"Sweep TLS report: {report.node}",
+            message=_sweep_report_message(report),
+            severity=severity,
+            channel_key="security_alerts",
+            notify=severity in {"warning", "error", "critical"},
+            payload=_sweep_report_event_payload(report),
+            correlation_id=f"sweep:tls:{report.node}:{report.reported_at or report.cert_expires_at or 'unknown'}",
+        ),
+        pool=get_pool(),
+    )
+    return SweepReportResponse(
+        accepted=True,
+        event_id=result.event_id,
+        notification_status=result.notification_status,
+        severity=severity,
+    )
+
+
 @security_router.get("/agent-events", response_model=SecurityAgentEventsResponse)
 async def security_agent_events(
     request: Request,
@@ -1183,15 +1419,7 @@ async def security_agent_events(
     from brain.middleware.scopes import check_scopes
 
     check_scopes(request, "security.read", "security_read")
-    managed_ids = [
-        "warden",
-        "porchlight",
-        "keyturner",
-        "sweep",
-        "tripwire",
-        "ledger",
-        "sentry",
-    ]
+    managed_ids = list(SECURITY_MANAGED_AGENT_IDS)
     filters = ["agent_id = ANY($1::text[])"]
     params: list = [managed_ids]
     if severity != "all":

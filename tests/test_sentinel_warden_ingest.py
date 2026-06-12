@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
+import time
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
+from brain.middleware import jwt_auth
 from brain.db import pool as db_pool
 from brain.db import rls as db_rls
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
@@ -35,11 +39,70 @@ def test_security_agent_events_route_is_t2_security_read() -> None:
     assert determine_risk_tier(classes) == "T2"
 
 
+def test_sweep_report_route_is_t2_route_token_authenticated() -> None:
+    classes = classify_route("POST", "/v1/security/sweep-report")
+
+    assert classes == ["write", "security_write"]
+    assert determine_risk_tier(classes) == "T2"
+    assert "/v1/security/sweep-report" in jwt_auth.ROUTE_TOKEN_AUTH_PATHS
+    assert "/v1/security/sweep-report" in jwt_auth.SKIP_PATHS
+
+
 def test_sentinel_event_severity_from_counts() -> None:
     assert security._sentinel_event_severity({"critical": 1}) == "critical"
     assert security._sentinel_event_severity({"high": 1}) == "error"
     assert security._sentinel_event_severity({"medium": 1}) == "warning"
     assert security._sentinel_event_severity({"low": 4}) == "info"
+
+
+def test_sweep_report_severity_warns_inside_window_without_pending_status() -> None:
+    report = security.SweepReportIn(
+        node="endpoint",
+        fqdn="jarvis-endpoint.tail40ed36.ts.net",
+        status="ok",
+        days_remaining=14,
+        cert_issued_at="2026-06-01T00:00:00+00:00",
+        cert_expires_at="2026-06-26T00:00:00+00:00",
+        source_cert="/certs/endpoint.crt",
+        threshold_days=30,
+        health_ok=True,
+    )
+
+    assert security._sweep_report_severity(report) == "warning"
+
+
+def test_sweep_report_severity_allows_active_pending_order() -> None:
+    report = security.SweepReportIn(
+        node="brain",
+        fqdn="jarvis-brain.tail40ed36.ts.net",
+        status="renewal_pending",
+        days_remaining=14,
+        cert_issued_at="2026-06-01T00:00:00+00:00",
+        cert_expires_at="2026-06-26T00:00:00+00:00",
+        source_cert="/certs/brain.crt",
+        threshold_days=30,
+        health_ok=True,
+    )
+
+    assert security._sweep_report_severity(report) == "info"
+
+
+def _signed_sweep_request(payload: dict, *, secret: str = "secret"):
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    timestamp = str(int(time.time()))
+    signature = security._sweep_report_signature(secret, timestamp, body)
+
+    async def body_fn():
+        return body
+
+    return SimpleNamespace(
+        headers={
+            "X-Jarvis-Node": payload["node"],
+            "X-Jarvis-Timestamp": timestamp,
+            "X-Jarvis-Signature": signature,
+        },
+        body=body_fn,
+    )
 
 
 @pytest.mark.asyncio
@@ -85,6 +148,68 @@ async def test_sentinel_report_emits_warden_event(monkeypatch) -> None:
     assert event.payload["source"] == "forge_sentinel"
     assert event.payload["finding_ids"] == ["sec-1", "sec-2"]
     assert "Unsafe auth fallback" in event.payload["top_findings"][0]["title"]
+
+
+@pytest.mark.asyncio
+async def test_sweep_report_rejects_bad_signature(monkeypatch) -> None:
+    payload = {
+        "node": "sandbox",
+        "fqdn": "jarvis-sandbox.tail40ed36.ts.net",
+        "status": "ok",
+        "days_remaining": 44,
+        "cert_issued_at": "2026-06-01T00:00:00+00:00",
+        "cert_expires_at": "2026-07-27T00:00:00+00:00",
+        "source_cert": "/certs/sandbox.crt",
+        "health_ok": True,
+        "threshold_days": 30,
+        "reported_at": "2026-06-12T12:00:00+00:00",
+    }
+    request = _signed_sweep_request(payload, secret="wrong")
+    monkeypatch.setattr(security, "get_secret", lambda name: "secret")
+
+    with pytest.raises(HTTPException) as exc:
+        await security.sweep_report(request)
+
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "invalid_sweep_report_signature"
+
+
+@pytest.mark.asyncio
+async def test_sweep_report_emits_sweep_event(monkeypatch) -> None:
+    captured = {}
+
+    async def fake_emit(event, *, pool=None):
+        captured["event"] = event
+        captured["pool"] = pool
+        return SimpleNamespace(event_id="evt-sweep", notification_status="skipped")
+
+    monkeypatch.setattr(security, "emit_agent_event", fake_emit)
+    monkeypatch.setattr(security, "get_pool", lambda: "pool")
+    monkeypatch.setattr(security, "get_secret", lambda name: "secret")
+    payload = {
+        "node": "brain",
+        "fqdn": "jarvis-brain.tail40ed36.ts.net",
+        "status": "renewal_pending",
+        "days_remaining": 14,
+        "cert_issued_at": "2026-06-01T00:00:00+00:00",
+        "cert_expires_at": "2026-06-26T00:00:00+00:00",
+        "source_cert": "/certs/brain.crt",
+        "health_ok": True,
+        "threshold_days": 30,
+        "reported_at": "2026-06-12T12:00:00+00:00",
+    }
+
+    response = await security.sweep_report(_signed_sweep_request(payload))
+
+    assert response.accepted is True
+    assert response.severity == "info"
+    event = captured["event"]
+    assert event.agent_id == "sweep"
+    assert event.event_type == "sweep.tls_report"
+    assert event.notify is False
+    assert event.payload["source"] == "node_local_sweep"
+    assert event.payload["node"] == "brain"
+    assert event.channel_key == "security_alerts"
 
 
 @pytest.mark.asyncio
@@ -139,12 +264,4 @@ async def test_security_agent_events_surfaces_warden_events(monkeypatch) -> None
     assert event.event_type == "warden.sentinel_report"
     assert event.payload["source"] == "forge_sentinel"
     assert captured["context"]["audit_actor"] == "security_agent_events"
-    assert captured["params"][0] == [
-        "warden",
-        "porchlight",
-        "keyturner",
-        "sweep",
-        "tripwire",
-        "ledger",
-        "sentry",
-    ]
+    assert captured["params"][0] == list(security.SECURITY_MANAGED_AGENT_IDS)
