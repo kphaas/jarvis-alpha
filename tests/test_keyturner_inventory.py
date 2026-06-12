@@ -33,6 +33,7 @@ def test_keyturner_inventory_covers_security_operational_keys():
         "ALPHA_SERVICE_TOKEN_SANDBOX",
         "ALPHA_GMAIL_REFRESH_TOKEN",
         "ALPHA_GMAIL_CLIENT_SECRET",
+        "ALPHA_SWEEP_REPORT_SECRET",
         "CLOUDFLARE_API_TOKEN",
         "CLOUDFLARE_TUNNEL_TOKEN",
         "MATTERMOST_BOT_TOKEN",

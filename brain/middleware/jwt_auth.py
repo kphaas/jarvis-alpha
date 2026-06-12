@@ -56,7 +56,9 @@ PUBLIC_AUTH_PATHS = frozenset({"/v1/auth/login-profiles", "/v1/auth/pin"})
 
 # These endpoints intentionally skip JWT because the route verifies its own
 # shared secret or incoming platform token before doing any work.
-ROUTE_TOKEN_AUTH_PATHS = frozenset({"/v1/chatops/mattermost/command"})
+ROUTE_TOKEN_AUTH_PATHS = frozenset(
+    {"/v1/chatops/mattermost/command", "/v1/security/sweep-report"}
+)
 ROUTE_TOKEN_AUTH_PREFIXES = frozenset({"/v1/bridge/"})
 
 # Honeypot traps must be reachable without JWT so scanner traffic can be

@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
 """Sweep-managed Tailscale certificate renewal for Alpha service nodes.
 
-This script is designed to run centrally from Brain. It SSHes to each service
-node, asks that node to check or renew its own Tailscale certificate, restarts
-the local service when renewal happens, and syncs alpha_node_registry so the
-security dashboard reflects live cert state.
+The scheduled path is node-local: each node checks or renews its own
+certificate, then posts a signed result to Brain for Warden/Porchlight
+visibility. The central ``--node all`` path remains a manual operator helper.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import shlex
 import socket
 import subprocess
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 NODE_MAP_PATH = REPO_ROOT / "scripts" / "node_ssh_map.json"
@@ -26,6 +30,10 @@ PSQL_BIN = "/opt/homebrew/Cellar/postgresql@16/16.13/bin/psql"
 PSQL_DB = "jarvis_alpha"
 PSQL_USER = "jarvisbrain"
 BRAIN_SSH_TARGET = "jarvisbrain@jarvis-brain.tail40ed36.ts.net"
+DEFAULT_REPORT_URL = (
+    "https://jarvis-brain.tail40ed36.ts.net:8186/v1/security/sweep-report"
+)
+REPORT_SECRET_NAME = "ALPHA_SWEEP_REPORT_SECRET"
 
 
 @dataclass(frozen=True)
@@ -124,6 +132,83 @@ def run_command(
         check=False,
         env=env,
     )
+
+
+def load_secret(name: str, *, secrets_file: Path | None = None) -> str | None:
+    env_value = os.getenv(name, "").strip()
+    if env_value:
+        return env_value
+    path = secrets_file or Path(os.getenv("SECRETS_FILE", "~/.secrets")).expanduser()
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            raw = line.strip()
+            if not raw or raw.startswith("#") or "=" not in raw:
+                continue
+            key, value = raw.split("=", 1)
+            if key.strip() != name:
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                value = value[1:-1]
+            return value or None
+    except FileNotFoundError:
+        return None
+    return None
+
+
+def sweep_report_body(
+    result: NodeResult,
+    *,
+    threshold_days: int,
+    reported_at: datetime | None = None,
+) -> bytes:
+    payload = {
+        **asdict(result),
+        "threshold_days": threshold_days,
+        "reported_at": (reported_at or datetime.now(timezone.utc)).isoformat(),
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def sign_report_body(secret: str, *, timestamp: str, body: bytes) -> str:
+    message = timestamp.encode("utf-8") + b"." + body
+    return hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+
+def post_sweep_report(
+    result: NodeResult,
+    *,
+    threshold_days: int,
+    report_url: str | None,
+    secret: str | None,
+    timeout: int = 12,
+) -> dict[str, Any]:
+    if not report_url:
+        return {"posted": False, "reason": "missing_report_url"}
+    if not secret:
+        return {"posted": False, "reason": "missing_report_secret"}
+    body = sweep_report_body(result, threshold_days=threshold_days)
+    timestamp = str(int(time.time()))
+    signature = sign_report_body(secret, timestamp=timestamp, body=body)
+    request = Request(
+        report_url,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Jarvis-Node": result.node,
+            "X-Jarvis-Timestamp": timestamp,
+            "X-Jarvis-Signature": signature,
+        },
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            status = int(getattr(response, "status", 0) or 0)
+            return {"posted": 200 <= status < 300, "status": status}
+    except HTTPError as exc:
+        return {"posted": False, "status": exc.code, "reason": "http_error"}
+    except (OSError, URLError, TimeoutError) as exc:
+        return {"posted": False, "reason": exc.__class__.__name__}
 
 
 def load_node_map() -> dict[str, dict[str, str]]:
@@ -527,6 +612,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-registry", action="store_true")
+    parser.add_argument("--skip-report", action="store_true")
+    parser.add_argument(
+        "--report-url",
+        default=os.getenv("ALPHA_SWEEP_REPORT_URL", DEFAULT_REPORT_URL),
+    )
     parser.add_argument("--no-restart", action="store_true")
     return parser.parse_args()
 
@@ -545,6 +635,13 @@ def main() -> int:
             dry_run=args.dry_run,
             no_restart=args.no_restart,
         )
+        if not args.skip_report and not args.dry_run:
+            post_sweep_report(
+                result,
+                threshold_days=args.threshold_days,
+                report_url=args.report_url,
+                secret=load_secret(REPORT_SECRET_NAME),
+            )
         print_json(asdict(result))
         return 1 if result.status == "error" else 0
 

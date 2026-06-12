@@ -11,6 +11,7 @@ from brain.agents.warden import (
     supervision_findings,
     supervision_signature,
     supervision_snapshot,
+    sweep_tls_report_findings,
     weekly_security_brief,
 )
 
@@ -160,3 +161,60 @@ def test_warden_owner_routes_support_posture_controls():
     assert routes[0]["severity"] == "error"
     assert tickets[0]["severity"] == "critical"
     assert brief["owner_counts"] == {"sweep": 1}
+
+
+def test_warden_flags_missing_stale_and_failed_sweep_tls_reports():
+    now = datetime(2026, 6, 12, 18, 0, tzinfo=timezone.utc)
+    rows = [
+        {
+            "node": "brain",
+            "payload": {
+                "node": "brain",
+                "status": "renewal_pending",
+                "days_remaining": 14,
+                "health_ok": True,
+                "threshold_days": 30,
+            },
+            "severity": "info",
+            "created_at": now - timedelta(minutes=5),
+        },
+        {
+            "node": "sandbox",
+            "payload": {
+                "node": "sandbox",
+                "status": "ok",
+                "days_remaining": 44,
+                "health_ok": True,
+                "threshold_days": 30,
+            },
+            "severity": "info",
+            "created_at": now - timedelta(hours=25),
+        },
+        {
+            "node": "gateway",
+            "payload": {
+                "node": "gateway",
+                "status": "ok",
+                "days_remaining": 36,
+                "health_ok": False,
+                "threshold_days": 30,
+            },
+            "severity": "error",
+            "created_at": now - timedelta(minutes=5),
+        },
+    ]
+
+    findings = sweep_tls_report_findings(rows, now=now)
+    codes = {(finding["node"], finding["code"]) for finding in findings}
+
+    assert codes == {
+        ("endpoint", "sweep_tls_report_missing"),
+        ("sandbox", "sweep_tls_report_stale"),
+        ("gateway", "sweep_tls_report_failed"),
+    }
+    routes = owner_routes(findings)
+    assert {route["recommended_action"] for route in routes} == {
+        "verify_sweep_launchagent_and_report_secret",
+        "verify_node_local_sweep_schedule",
+        "triage_node_tls_health",
+    }

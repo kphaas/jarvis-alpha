@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import json
 
 from scripts import sweep_tls_cert_renewal as sweep
 
@@ -204,3 +205,96 @@ def test_run_node_uses_local_path_for_current_node(monkeypatch):
             },
         )
     ]
+
+
+def test_sweep_report_signature_is_stable():
+    result = sweep.NodeResult(
+        node="brain",
+        fqdn="jarvis-brain.tail40ed36.ts.net",
+        status="ok",
+        days_remaining=85,
+        cert_issued_at="2026-06-01T00:00:00+00:00",
+        cert_expires_at="2026-09-01T00:00:00+00:00",
+        source_cert="/Users/jarvisbrain/jarvis/certs/brain.crt",
+        health_ok=True,
+    )
+    body = sweep.sweep_report_body(
+        result,
+        threshold_days=30,
+        reported_at=datetime(2026, 6, 12, 12, 0, 0, tzinfo=timezone.utc),
+    )
+
+    signature = sweep.sign_report_body("secret", timestamp="1791806400", body=body)
+
+    assert json.loads(body)["node"] == "brain"
+    assert (
+        signature == "1a7453819ebf90b4854fad4753ff7ca7bacaed78393265e91837a3d866d3a651"
+    )
+
+
+def test_post_sweep_report_uses_signed_headers(monkeypatch):
+    result = sweep.NodeResult(
+        node="sandbox",
+        fqdn="jarvis-sandbox.tail40ed36.ts.net",
+        status="ok",
+        days_remaining=44,
+        cert_issued_at="2026-06-01T00:00:00+00:00",
+        cert_expires_at="2026-07-27T00:00:00+00:00",
+        source_cert="/Users/jarvissand/jarvis/certs/sandbox.crt",
+        health_ok=True,
+    )
+    captured = {}
+
+    class FakeResponse:
+        status = 202
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["timeout"] = timeout
+        captured["headers"] = dict(request.header_items())
+        captured["body"] = request.data
+        return FakeResponse()
+
+    monkeypatch.setattr(sweep, "urlopen", fake_urlopen)
+    monkeypatch.setattr(sweep.time, "time", lambda: 1791806400)
+
+    posted = sweep.post_sweep_report(
+        result,
+        threshold_days=30,
+        report_url="https://brain.example/v1/security/sweep-report",
+        secret="secret",
+    )
+
+    assert posted == {"posted": True, "status": 202}
+    assert captured["url"] == "https://brain.example/v1/security/sweep-report"
+    assert captured["headers"]["X-jarvis-node"] == "sandbox"
+    assert captured["headers"]["X-jarvis-timestamp"] == "1791806400"
+    assert "X-jarvis-signature" in captured["headers"]
+    assert json.loads(captured["body"])["threshold_days"] == 30
+
+
+def test_post_sweep_report_is_nonblocking_without_secret():
+    result = sweep.NodeResult(
+        node="endpoint",
+        fqdn="jarvis-endpoint.tail40ed36.ts.net",
+        status="ok",
+        days_remaining=85,
+        cert_issued_at="2026-06-01T00:00:00+00:00",
+        cert_expires_at="2026-09-01T00:00:00+00:00",
+        source_cert="/Users/jarvisendpoint/jarvis/certs/endpoint.crt",
+    )
+
+    posted = sweep.post_sweep_report(
+        result,
+        threshold_days=30,
+        report_url="https://brain.example/v1/security/sweep-report",
+        secret=None,
+    )
+
+    assert posted == {"posted": False, "reason": "missing_report_secret"}
