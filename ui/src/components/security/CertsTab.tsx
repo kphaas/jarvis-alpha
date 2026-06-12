@@ -27,6 +27,29 @@ function renewalModeLabel(value: unknown): string {
   return labelize(value)
 }
 
+function reportStatusClass(report: { severity: string; is_stale: boolean }): string {
+  if (report.severity === 'error' || report.severity === 'critical') {
+    return 'border-rose-500/30 bg-rose-500/10 text-rose-300'
+  }
+  if (report.is_stale || report.severity === 'warning') {
+    return 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+  }
+  return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+}
+
+function reportReceivedLabel(value?: string | null): string {
+  if (!value) return 'no report'
+  const received = new Date(value)
+  if (Number.isNaN(received.getTime())) return 'invalid report time'
+  const ageSeconds = Math.max(0, Math.floor((Date.now() - received.getTime()) / 1000))
+  if (ageSeconds < 60) return 'just now'
+  const ageMinutes = Math.floor(ageSeconds / 60)
+  if (ageMinutes < 60) return `${ageMinutes}m ago`
+  const ageHours = Math.floor(ageMinutes / 60)
+  if (ageHours < 48) return `${ageHours}h ago`
+  return `${Math.floor(ageHours / 24)}d ago`
+}
+
 export function SweepTab({
   isDark, border, subtle, fg, muted,
   certs, sortedCerts, loadCerts, errCerts,
@@ -46,6 +69,7 @@ export function SweepTab({
       : {}
   )
   const shortestCertDays = certs?.length ? Math.min(...certs.map((cert) => cert.days_remaining)) : null
+  const sweepReports = wardenStatus?.sweep_tls_reports
 
   return (
         <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
@@ -193,6 +217,68 @@ export function SweepTab({
                 </div>
               )}
             </div>
+          </section>
+
+          <section>
+            <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest">
+                  Node-local report health
+                </p>
+                <p className={`mt-1 text-xs ${muted}`}>
+                  Each node posts a signed Sweep result to Warden after local renewal checks.
+                </p>
+              </div>
+              {sweepReports && (
+                <span className={`inline-flex w-fit rounded border px-2 py-1 text-[10px] font-mono uppercase ${
+                  sweepReports.attention > 0
+                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                    : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                }`}>
+                  {sweepReports.received}/{sweepReports.expected_nodes.length} reporting · {sweepReports.attention} attention
+                </span>
+              )}
+            </div>
+            {!sweepReports ? (
+              <SectionUnavailable border={border} subtle={subtle} />
+            ) : (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {sweepReports.reports.map((report) => (
+                  <div key={report.node} className={`rounded-2xl border ${border} ${subtle} p-4`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className={`text-sm font-bold capitalize ${fg}`}>{report.node}</p>
+                        <p className={`mt-1 truncate text-[11px] font-mono ${muted}`}>
+                          {report.fqdn ?? 'pending first report'}
+                        </p>
+                      </div>
+                      <span className={`shrink-0 rounded border px-2 py-1 text-[10px] font-mono uppercase ${reportStatusClass(report)}`}>
+                        {report.is_stale ? 'stale' : report.status}
+                      </span>
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 gap-2">
+                      <div>
+                        <p className={`text-[9px] font-mono uppercase ${muted}`}>cert</p>
+                        <p className="mt-1 text-sm font-bold font-mono">
+                          {typeof report.days_remaining === 'number' ? `${report.days_remaining}d` : '—'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className={`text-[9px] font-mono uppercase ${muted}`}>health</p>
+                        <p className={`mt-1 text-sm font-bold font-mono ${
+                          report.health_ok === false ? 'text-rose-300' : report.health_ok === true ? 'text-emerald-400' : muted
+                        }`}>
+                          {report.health_ok === true ? 'ok' : report.health_ok === false ? 'fail' : 'unknown'}
+                        </p>
+                      </div>
+                    </div>
+                    <p className={`mt-3 text-[11px] ${muted}`}>
+                      Received {reportReceivedLabel(report.received_at)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
 
           <section>

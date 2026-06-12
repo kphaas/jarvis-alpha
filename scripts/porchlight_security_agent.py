@@ -125,13 +125,22 @@ SECURITY_LAUNCHAGENTS: dict[str, set[str]] = {
         "com.jarvis.alpha.gmail-health",
         "com.jarvis.alpha.sweep-cert-renewal.brain",
     },
-    "endpoint": {"com.jarvis.alpha.rotate.endpoint"},
-    "gateway": {"com.jarvis.alpha.rotate.gateway"},
+    "endpoint": {
+        "com.jarvis.alpha.rotate.endpoint",
+        "com.jarvis.alpha.sweep-cert-renewal.endpoint",
+    },
+    "gateway": {
+        "com.jarvis.alpha.rotate.gateway",
+        "com.jarvis.alpha.sweep-cert-renewal.gateway",
+    },
     "sandbox": {
         "com.jarvis.alpha.rotate.sandbox",
         "com.jarvis.alpha.restore_drill",
+        "com.jarvis.alpha.sweep-cert-renewal.sandbox",
     },
 }
+SWEEP_TLS_REPORT_EXPECTED_NODES = ("brain", "endpoint", "gateway", "sandbox")
+SWEEP_TLS_REPORT_STALE_AFTER = timedelta(hours=24)
 
 TOKEN_LOG_NODES: dict[str, set[str]] = {
     "brain": {"brain", "brain_service"},
@@ -2405,6 +2414,149 @@ def _financial_security_posture_url() -> str:
     )
 
 
+def _parse_sweep_report_time(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def check_sweep_tls_report_intake(
+    psql: Callable[[str], CommandResult] = run_psql,
+    now: datetime | None = None,
+) -> CheckResult:
+    """Verify Brain is receiving signed node-local Sweep TLS reports."""
+    now = now or datetime.now(UTC)
+    query = """
+SELECT set_config('rls.role', 'platform_admin', false);
+WITH latest AS (
+    SELECT DISTINCT ON (payload->>'node')
+           payload->>'node' AS node,
+           severity,
+           to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
+           payload->>'status' AS status,
+           COALESCE(payload->>'days_remaining', '') AS days_remaining,
+           COALESCE(payload->>'threshold_days', '30') AS threshold_days,
+           COALESCE(payload->>'health_ok', '') AS health_ok
+    FROM public.alpha_agent_events
+    WHERE agent_id = 'sweep'
+      AND event_type = 'sweep.tls_report'
+      AND payload ? 'node'
+    ORDER BY payload->>'node', created_at DESC
+)
+SELECT node, severity, created_at, status, days_remaining, threshold_days, health_ok
+FROM latest
+ORDER BY node;
+""".strip()
+    result = psql(query)
+    if result.returncode != 0:
+        return CheckResult(
+            name="sweep_tls_report_intake",
+            status="fail",
+            severity="high",
+            summary="Could not inspect node-local Sweep TLS report intake.",
+            detail=(result.stderr or result.stdout).strip()[:500],
+        )
+
+    rows = parse_psql_rows(result.stdout)
+    by_node: dict[str, dict[str, str]] = {}
+    for row in rows:
+        if len(row) < 7:
+            continue
+        (
+            node,
+            severity,
+            created_at,
+            status,
+            days_remaining,
+            threshold_days,
+            health_ok,
+        ) = row[:7]
+        by_node[node] = {
+            "severity": severity,
+            "created_at": created_at,
+            "status": status,
+            "days_remaining": days_remaining,
+            "threshold_days": threshold_days,
+            "health_ok": health_ok,
+        }
+
+    failures: list[str] = []
+    warnings: list[str] = []
+    for node in SWEEP_TLS_REPORT_EXPECTED_NODES:
+        report = by_node.get(node)
+        if report is None:
+            warnings.append(f"{node} has not posted a Sweep TLS report")
+            continue
+
+        created_at = _parse_sweep_report_time(report["created_at"])
+        if created_at is None:
+            warnings.append(f"{node} Sweep TLS report has an invalid timestamp")
+        elif now - created_at > SWEEP_TLS_REPORT_STALE_AFTER:
+            warnings.append(f"{node} Sweep TLS report is stale")
+
+        status = report["status"]
+        health_ok = report["health_ok"].lower()
+        severity = report["severity"]
+        if (
+            status == "error"
+            or health_ok == "false"
+            or severity
+            in {
+                "error",
+                "critical",
+            }
+        ):
+            failures.append(f"{node} Sweep TLS report is failing")
+            continue
+
+        try:
+            days_remaining = int(report["days_remaining"])
+            threshold_days = int(report["threshold_days"] or "30")
+        except ValueError:
+            continue
+        if days_remaining <= threshold_days and status not in {
+            "renewed",
+            "renewal_pending",
+        }:
+            warnings.append(
+                f"{node} cert is inside the renewal window without pending renewal"
+            )
+
+    metadata = {
+        "expected_nodes": list(SWEEP_TLS_REPORT_EXPECTED_NODES),
+        "reported_nodes": sorted(by_node),
+        "reports": by_node,
+    }
+    if failures:
+        return CheckResult(
+            name="sweep_tls_report_intake",
+            status="fail",
+            severity="high",
+            summary="One or more node-local Sweep TLS reports are failing.",
+            detail="; ".join((failures + warnings)[:10]),
+            metadata=metadata,
+        )
+    if warnings:
+        return CheckResult(
+            name="sweep_tls_report_intake",
+            status="warn",
+            severity="medium",
+            summary="Node-local Sweep TLS report intake needs attention.",
+            detail="; ".join(warnings[:10]),
+            metadata=metadata,
+        )
+    return CheckResult(
+        name="sweep_tls_report_intake",
+        status="pass",
+        severity="info",
+        summary="Brain has fresh signed Sweep TLS reports from all nodes.",
+        metadata=metadata,
+    )
+
+
 def check_financial_security_posture(
     url: str | None = None,
     command: Callable[..., CommandResult] = run_command,
@@ -3090,6 +3242,7 @@ def run_sweep(args: argparse.Namespace) -> dict[str, object]:
         check_cloudflare_access_policy_drift(),
         check_cloudflare_audit_logs(window_hours=args.cloudflare_audit_window_hours),
         check_dependency_cve_scan(),
+        check_sweep_tls_report_intake(),
         check_financial_security_posture(),
         check_github_branch_protection_drift(),
         check_route_db_access(),

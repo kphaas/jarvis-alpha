@@ -468,6 +468,85 @@ def test_security_launchagents_warns_when_remote_probe_not_configured(monkeypatc
     assert "brain" in result.metadata["loaded_by_node"]
 
 
+def test_sweep_tls_report_intake_passes_with_fresh_reports():
+    def fake_psql(query):
+        assert "sweep.tls_report" in query
+        return porchlight.CommandResult(
+            0,
+            "\n".join(
+                [
+                    "brain|info|2026-06-12T15:00:00Z|renewal_pending|14|30|true",
+                    "endpoint|info|2026-06-12T15:00:00Z|renewed|89|30|true",
+                    "gateway|info|2026-06-12T15:00:00Z|ok|54|30|true",
+                    "sandbox|info|2026-06-12T15:00:00Z|ok|53|30|true",
+                ]
+            ),
+            "",
+        )
+
+    result = porchlight.check_sweep_tls_report_intake(
+        psql=fake_psql,
+        now=porchlight.datetime(2026, 6, 12, 16, 0, tzinfo=porchlight.UTC),
+    )
+
+    assert result.status == "pass"
+    assert result.metadata["reported_nodes"] == [
+        "brain",
+        "endpoint",
+        "gateway",
+        "sandbox",
+    ]
+
+
+def test_sweep_tls_report_intake_warns_for_stale_missing_and_untracked_window():
+    def fake_psql(query):
+        return porchlight.CommandResult(
+            0,
+            "\n".join(
+                [
+                    "brain|info|2026-06-10T15:00:00Z|ok|14|30|true",
+                    "endpoint|info|2026-06-12T15:00:00Z|ok|89|30|true",
+                    "gateway|info|2026-06-12T15:00:00Z|renewal_pending|10|30|true",
+                ]
+            ),
+            "",
+        )
+
+    result = porchlight.check_sweep_tls_report_intake(
+        psql=fake_psql,
+        now=porchlight.datetime(2026, 6, 12, 16, 0, tzinfo=porchlight.UTC),
+    )
+
+    assert result.status == "warn"
+    assert "brain Sweep TLS report is stale" in result.detail
+    assert "brain cert is inside the renewal window" in result.detail
+    assert "sandbox has not posted" in result.detail
+
+
+def test_sweep_tls_report_intake_fails_for_bad_health():
+    def fake_psql(query):
+        return porchlight.CommandResult(
+            0,
+            "\n".join(
+                [
+                    "brain|info|2026-06-12T15:00:00Z|renewal_pending|14|30|true",
+                    "endpoint|error|2026-06-12T15:00:00Z|error||30|false",
+                    "gateway|info|2026-06-12T15:00:00Z|ok|54|30|true",
+                    "sandbox|info|2026-06-12T15:00:00Z|ok|53|30|true",
+                ]
+            ),
+            "",
+        )
+
+    result = porchlight.check_sweep_tls_report_intake(
+        psql=fake_psql,
+        now=porchlight.datetime(2026, 6, 12, 16, 0, tzinfo=porchlight.UTC),
+    )
+
+    assert result.status == "fail"
+    assert "endpoint Sweep TLS report is failing" in result.detail
+
+
 def test_token_rotation_logs_warns_when_remote_probe_not_configured(monkeypatch):
     now = datetime(2026, 6, 2, 13, 0, tzinfo=UTC)
     monkeypatch.setenv("JARVIS_NODE", "brain")
