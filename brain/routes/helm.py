@@ -106,6 +106,15 @@ class HelmBeaconLastRequest(BaseModel):
     updated_at: str | None = None
 
 
+class HelmBeaconSourceQualitySummary(BaseModel):
+    supported: int = 0
+    weak: int = 0
+    insufficient: int = 0
+    rejected_citation_count: int = 0
+    official_source_count: int = 0
+    prompt_injection_rejection_count: int = 0
+
+
 class HelmBeaconProviderSummary(BaseModel):
     status: str
     provider_order: list[str] = Field(default_factory=list)
@@ -132,6 +141,9 @@ class HelmBeaconEvidenceSummary(BaseModel):
     succeeded: int = 0
     failed: int = 0
     blocked: int = 0
+    source_quality: HelmBeaconSourceQualitySummary = Field(
+        default_factory=HelmBeaconSourceQualitySummary
+    )
     last_request: HelmBeaconLastRequest | None = None
 
 
@@ -390,6 +402,26 @@ def _beacon_last_request(
     )
 
 
+def _beacon_source_quality(
+    metadata: Mapping[str, object],
+) -> HelmBeaconSourceQualitySummary:
+    source_quality = _mapping_value(metadata.get("source_quality"))
+    return HelmBeaconSourceQualitySummary(
+        supported=_metadata_int(source_quality, "supported"),
+        weak=_metadata_int(source_quality, "weak"),
+        insufficient=_metadata_int(source_quality, "insufficient"),
+        rejected_citation_count=_metadata_int(
+            source_quality,
+            "rejected_citation_count",
+        ),
+        official_source_count=_metadata_int(source_quality, "official_source_count"),
+        prompt_injection_rejection_count=_metadata_int(
+            source_quality,
+            "prompt_injection_rejection_count",
+        ),
+    )
+
+
 def _datetime_or_none(value: object | None) -> str | None:
     if value is None:
         return None
@@ -515,6 +547,7 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
             succeeded=_metadata_int(evidence_metadata, "succeeded"),
             failed=_metadata_int(evidence_metadata, "failed"),
             blocked=_metadata_int(evidence_metadata, "blocked"),
+            source_quality=_beacon_source_quality(evidence_metadata),
             last_request=_beacon_last_request(evidence_metadata),
         ),
         retention=HelmBeaconRetentionSummary(

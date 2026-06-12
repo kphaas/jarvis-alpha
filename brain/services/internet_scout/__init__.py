@@ -10,6 +10,7 @@ from brain.services.internet_scout.models import (
     BrowserSandboxPolicy,
     EvidenceClaim,
     GatewayCrawlResponse,
+    InternetScoutCitationQualitySummary,
     InternetScoutBrowserRunRequest,
     InternetScoutBrowserRunResponse,
     InternetScoutBrowserApprovalResponse,
@@ -29,6 +30,8 @@ from brain.services.internet_scout.models import (
     PolicyDecision,
     SemanticMemoryCategory,
     SourceReference,
+    SourceQualityLevel,
+    SourceQualityStatus,
 )
 from brain.services.internet_scout.browser_runner import (
     BrowserScreenshotStore,
@@ -53,6 +56,7 @@ __all__ = [
     "BrowserTaskRunner",
     "EvidenceClaim",
     "GatewayCrawlResponse",
+    "InternetScoutCitationQualitySummary",
     "InternetScoutExecutor",
     "InternetScoutBrowserApprovalResponse",
     "InternetScoutBrowserRunRequest",
@@ -76,6 +80,8 @@ __all__ = [
     "PolicyDecision",
     "SemanticMemoryCategory",
     "SourceReference",
+    "SourceQualityLevel",
+    "SourceQualityStatus",
     "browser_hourly_run_limit",
     "build_browser_task_runner_from_env",
     "evaluate_policy",

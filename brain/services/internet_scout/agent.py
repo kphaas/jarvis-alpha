@@ -24,7 +24,11 @@ def build_agent_completed_response(
 ) -> InternetScoutAgentResponse:
     local_llm = build_local_llm_response(stored)
     citations = local_llm.citations
-    not_verified = _not_verified_notes(stored, citation_count=len(citations))
+    not_verified = _not_verified_notes(
+        stored,
+        citation_count=len(citations),
+        quality_warnings=local_llm.quality.warnings,
+    )
     return InternetScoutAgentResponse(
         status="completed",
         selected_tool=stored.plan.decision.tool,
@@ -36,6 +40,8 @@ def build_agent_completed_response(
         answer_context=local_llm.answer_context,
         untrusted_warnings=[_UNTRUSTED_WARNING, local_llm.instruction_boundary],
         not_verified=not_verified,
+        source_quality_status=local_llm.quality.status,
+        source_quality=local_llm.quality,
         evidence=stored.evidence,
         raw_web_content_is_untrusted=True,
     )
@@ -83,8 +89,11 @@ def _not_verified_notes(
     stored: InternetScoutStoredResponse,
     *,
     citation_count: int,
+    quality_warnings: list[str] | None = None,
 ) -> list[str]:
     notes: list[str] = []
+    if quality_warnings:
+        notes.extend(quality_warnings[:5])
     if citation_count == 0:
         notes.append("No cited evidence was returned.")
     if citation_count == 1:

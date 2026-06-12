@@ -16,6 +16,7 @@ class FakeConn:
         counts: dict[str, int] | None = None,
         recent_row: dict[str, int] | None = None,
         last_request_row: dict[str, object] | None = None,
+        quality_row: dict[str, int] | None = None,
     ) -> None:
         self.counts = counts or {}
         self.recent_row = recent_row or {
@@ -33,6 +34,14 @@ class FakeConn:
             "created_at": now,
             "updated_at": now,
         }
+        self.quality_row = quality_row or {
+            "supported_source_quality": 2,
+            "weak_source_quality": 1,
+            "insufficient_source_quality": 1,
+            "rejected_citation_count": 3,
+            "official_source_count": 1,
+            "prompt_injection_rejection_count": 1,
+        }
 
     async def fetchval(self, query: str, *args):
         if "to_regclass" in query:
@@ -45,6 +54,8 @@ class FakeConn:
         return 0
 
     async def fetchrow(self, query: str, *args):
+        if "alpha_internet_tool_events" in query:
+            return self.quality_row
         if "ORDER BY created_at DESC" in query:
             return self.last_request_row
         return self.recent_row
@@ -130,6 +141,15 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
     assert response.checks["gateway"].metadata["usable_provider_count"] == 2
     assert response.checks["browser_runtime"].ok is True
     assert response.checks["recent_evidence"].metadata["blocked"] == 1
+    source_quality = response.checks["recent_evidence"].metadata["source_quality"]
+    assert source_quality == {
+        "supported": 2,
+        "weak": 1,
+        "insufficient": 1,
+        "rejected_citation_count": 3,
+        "official_source_count": 1,
+        "prompt_injection_rejection_count": 1,
+    }
     last_request = response.checks["recent_evidence"].metadata["last_request"]
     assert isinstance(last_request, dict)
     assert last_request["requester"] == "production_smoke"

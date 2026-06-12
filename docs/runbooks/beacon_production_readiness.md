@@ -68,6 +68,10 @@ Expected:
 - `checks.recent_evidence` is diagnostic. A recent failed request should be
   investigated, but it does not block readiness when the core dependency checks
   are healthy.
+- `checks.recent_evidence.metadata.source_quality` reports recent
+  `supported`, `weak`, and `insufficient` chat evidence events plus rejected
+  citation and prompt-injection counts. These are diagnostics; repeated
+  `insufficient` events indicate provider ranking or source-quality issues.
 
 ## Full Smoke
 
@@ -98,8 +102,35 @@ Expected:
 - selected tool `search`
 - `raw_web_content_is_untrusted` is true
 - at least one citation when providers return usable search results
+- source-quality status is `supported` or `weak` for normal sourced questions
+- official docs/API queries cite an official host or return insufficient
+  evidence instead of presenting weak sources as proof
 
 The smoke script does not print tokens or raw retrieved content.
+
+## Citation Quality
+
+Beacon ranks citations before they enter the local-model prompt:
+
+- `official`: inferred official host for the query, for example
+  `platform.openai.com` for OpenAI API docs.
+- `primary`: source with documentation/API/reference path but not an inferred
+  official host.
+- `trusted_secondary`: public institutional source such as `.gov` or `.edu`.
+- `general`: ordinary public source.
+- `low_confidence` or `rejected`: social/video/forum sources, empty snippets, or
+  content with prompt-injection markers.
+
+For official docs, API reference, SDK, release note, status, terms, or privacy
+queries, Beacon requires inferred official hosts when possible. Non-matching
+sources remain in stored evidence for audit, but they are excluded from prompt
+context and counted in quality metadata.
+
+Investigate when:
+
+- `source_quality.insufficient` grows for common official-docs questions.
+- `rejected_citation_count` spikes after provider or query changes.
+- `prompt_injection_rejection_count` is non-zero for a new source family.
 
 ## Provider Reliability
 
