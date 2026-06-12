@@ -97,9 +97,9 @@ async def test_spark_imessage_readiness_returns_safe_metadata(monkeypatch) -> No
             ready=False,
             checks=[
                 SparkRuntimeCheck(
-                    name="approved_chat_guid",
+                    name="approved_thread_binding",
                     status="failed",
-                    detail="Approved chat GUID secret is missing",
+                    detail="Approved thread binding secret is missing",
                 )
             ],
         )
@@ -111,7 +111,7 @@ async def test_spark_imessage_readiness_returns_safe_metadata(monkeypatch) -> No
 
     assert response.ready is False
     assert response.body_access is False
-    assert response.checks[0].name == "approved_chat_guid"
+    assert response.checks[0].name == "approved_thread_binding"
     logs = json.dumps(fake_logger.infos).lower()
     assert "password" not in logs
     assert "chat_guid" not in logs

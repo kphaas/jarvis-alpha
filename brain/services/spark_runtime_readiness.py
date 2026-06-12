@@ -193,12 +193,12 @@ def _check_approved_imessage_source(
     ]
     checks.append(
         SparkRuntimeCheck(
-            name="approved_chat_guid",
+            name="approved_thread_binding",
             status="passed" if configured else "failed",
             detail=(
-                "Approved chat GUID secret is configured"
+                "Approved thread binding secret is configured"
                 if configured
-                else "Approved chat GUID secret is missing"
+                else "Approved thread binding secret is missing"
             ),
         )
     )
