@@ -13,6 +13,7 @@ import json
 import time
 import asyncio
 import httpx
+from collections.abc import Mapping
 from uuid import UUID, uuid4, uuid5, NAMESPACE_DNS
 from typing import AsyncGenerator, Literal
 from fastapi import APIRouter, Request, HTTPException
@@ -105,18 +106,69 @@ def _internet_sse_metadata(
     context: InternetChatContext,
     thread_id: str,
 ) -> dict[str, object]:
+    payload = _internet_message_metadata(context)
+    payload["thread_id"] = thread_id
+    payload["done"] = False
+    return payload
+
+
+def _internet_message_metadata(
+    context: InternetChatContext,
+) -> dict[str, object]:
     return {
         "internet_mode": context.mode,
         "internet_request_id": str(context.request_id),
         "internet_selected_tool": context.selected_tool.value,
         "internet_citation_count": context.citation_count,
         "raw_web_content_is_untrusted": context.raw_web_content_is_untrusted,
-        "citations": [
-            citation.model_dump(mode="json") for citation in context.citations[:10]
-        ],
-        "thread_id": thread_id,
-        "done": False,
+        "citations": _redacted_internet_citations(context),
     }
+
+
+def _redacted_internet_citations(
+    context: InternetChatContext,
+) -> list[dict[str, object]]:
+    citations: list[dict[str, object]] = []
+    for citation in context.citations[:10]:
+        source_url = citation.source_url
+        if not source_url:
+            continue
+        payload: dict[str, object] = {"source_url": source_url}
+        if citation.host:
+            payload["host"] = citation.host
+        if citation.content_hash:
+            payload["content_hash"] = citation.content_hash
+        citations.append(payload)
+    return citations
+
+
+def _decode_json_object(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return {str(key): item for key, item in value.items()}
+    if isinstance(value, str) and value.strip():
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(decoded, dict):
+            return {str(key): item for key, item in decoded.items()}
+    return {}
+
+
+def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
+    payload = dict(row)
+    internet_metadata = _decode_json_object(payload.pop("internet_metadata", None))
+    for key in (
+        "internet_mode",
+        "internet_request_id",
+        "internet_selected_tool",
+        "internet_citation_count",
+        "raw_web_content_is_untrusted",
+        "citations",
+    ):
+        if key in internet_metadata:
+            payload[key] = internet_metadata[key]
+    return payload
 
 
 async def _embed(text: str) -> list[float]:
@@ -191,12 +243,13 @@ async def _save_message(
     council_detail: dict | None = None,
     memory_injected: bool = False,
     latency_ms: int | None = None,
+    internet_metadata: dict[str, object] | None = None,
 ) -> None:
     async with rls_connection(request) as conn:
         await conn.execute(
             """INSERT INTO chat_messages
-               (thread_id, role, content, model_used, council_detail, memory_injected, latency_ms)
-               VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7)""",
+               (thread_id, role, content, model_used, council_detail, memory_injected, latency_ms, internet_metadata)
+               VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb)""",
             UUID(thread_id),
             role,
             content,
@@ -204,6 +257,7 @@ async def _save_message(
             json.dumps(council_detail) if council_detail else None,
             memory_injected,
             latency_ms,
+            json.dumps(internet_metadata) if internet_metadata else None,
         )
         await conn.execute(
             "UPDATE chat_threads SET updated_at=now(), model_used=$1 WHERE id=$2",
@@ -437,6 +491,11 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 council_detail=council_raw,
                 memory_injected=memory_injected,
                 latency_ms=latency,
+                internet_metadata=(
+                    _internet_message_metadata(internet_context)
+                    if internet_context
+                    else None
+                ),
             )
         )
         asyncio.create_task(_store_memory_bg(uid, thread_id, full_text))
@@ -514,13 +573,13 @@ async def get_thread_messages(thread_id: str, request: Request):
     async with rls_connection(request) as conn:
         rows = await conn.fetch(
             """SELECT id, role, content, model_used, council_detail,
-                      memory_injected, latency_ms, created_at
+                      memory_injected, latency_ms, internet_metadata, created_at
                FROM chat_messages
                WHERE thread_id=$1
                ORDER BY created_at ASC""",
             UUID(thread_id),
         )
-    return [dict(r) for r in rows]
+    return [_chat_message_from_row(row) for row in rows]
 
 
 @router.post("/v1/threads/{thread_id}/escalate")
