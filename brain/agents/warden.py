@@ -28,6 +28,8 @@ DEFAULT_MANAGED_AGENTS = (
 )
 STALE_SCHEDULED_RUN_SECONDS = 5 * 60
 STALE_POSTURE_SWEEP_SECONDS = 30 * 60 * 60
+SWEEP_TLS_REPORT_STALE_SECONDS = 24 * 60 * 60
+SWEEP_TLS_EXPECTED_NODES = ("brain", "endpoint", "gateway", "sandbox")
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +93,7 @@ async def collect_and_emit_warden_supervision(
     agents = await load_supervised_agents(pool, managed_ids)
     now = datetime.now(timezone.utc)
     findings = supervision_findings(agents, now=now)
+    findings.extend(await load_sweep_tls_report_findings(pool, now=now))
     snapshot = supervision_snapshot(agents, findings, checked_at=now)
     signature = supervision_signature(snapshot)
     previous_signature = str(previous_metadata.get("last_supervision_signature") or "")
@@ -185,12 +188,116 @@ async def load_supervised_agents(
     ]
 
 
+async def load_sweep_tls_report_findings(
+    pool: asyncpg.Pool,
+    *,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    async with platform_admin_connection(
+        source="buddy",
+        audit_actor=WARDEN_AGENT_ID,
+        pool=pool,
+    ) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT ON (payload->>'node')
+                   payload->>'node' AS node,
+                   severity,
+                   payload,
+                   created_at
+            FROM public.alpha_agent_events
+            WHERE agent_id = 'sweep'
+              AND event_type = 'sweep.tls_report'
+              AND payload ? 'node'
+            ORDER BY payload->>'node', created_at DESC
+            """
+        )
+    return sweep_tls_report_findings(rows, now=now)
+
+
 def managed_agent_ids(metadata: dict[str, Any]) -> tuple[str, ...]:
     raw = metadata.get("managed_agents")
     if not isinstance(raw, list):
         return DEFAULT_MANAGED_AGENTS
     ids = tuple(str(value) for value in raw if str(value).strip())
     return ids or DEFAULT_MANAGED_AGENTS
+
+
+def sweep_tls_report_findings(
+    rows: list[Any],
+    *,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    by_node = {str(row["node"]): row for row in rows}
+    findings: list[dict[str, Any]] = []
+    for node in SWEEP_TLS_EXPECTED_NODES:
+        row = by_node.get(node)
+        if row is None:
+            findings.append(
+                sweep_tls_finding(
+                    node=node,
+                    severity="warning",
+                    code="sweep_tls_report_missing",
+                    detail=f"Sweep has not received a node-local TLS report from {node}.",
+                )
+            )
+            continue
+
+        payload = jsonb(row["payload"])
+        created_at = as_aware(row["created_at"])
+        age_seconds = (now - created_at).total_seconds()
+        if age_seconds > SWEEP_TLS_REPORT_STALE_SECONDS:
+            findings.append(
+                sweep_tls_finding(
+                    node=node,
+                    severity="warning",
+                    code="sweep_tls_report_stale",
+                    detail=(
+                        f"Sweep TLS report from {node} is {int(age_seconds)}s old."
+                    ),
+                )
+            )
+
+        status = str(payload.get("status") or "")
+        health_ok = payload.get("health_ok")
+        if (
+            status == "error"
+            or health_ok is False
+            or row["severity"]
+            in {
+                "error",
+                "critical",
+            }
+        ):
+            findings.append(
+                sweep_tls_finding(
+                    node=node,
+                    severity="error",
+                    code="sweep_tls_report_failed",
+                    detail=f"Sweep TLS report from {node} is failing.",
+                )
+            )
+            continue
+
+        days_remaining = payload.get("days_remaining")
+        threshold_days = int(payload.get("threshold_days") or 30)
+        if (
+            isinstance(days_remaining, int)
+            and days_remaining <= threshold_days
+            and status not in {"renewed", "renewal_pending"}
+        ):
+            findings.append(
+                sweep_tls_finding(
+                    node=node,
+                    severity="warning",
+                    code="sweep_tls_report_inside_window",
+                    detail=(
+                        f"Sweep TLS report from {node} is inside the "
+                        "renewal window without a renewed or pending status."
+                    ),
+                )
+            )
+    return findings
 
 
 def supervision_findings(
@@ -378,6 +485,24 @@ def finding(
     }
 
 
+def sweep_tls_finding(
+    *,
+    node: str,
+    severity: str,
+    code: str,
+    detail: str,
+) -> dict[str, Any]:
+    return {
+        "agent_id": "sweep",
+        "display_name": "Sweep",
+        "role": "network_sweep",
+        "severity": severity,
+        "code": code,
+        "detail": detail,
+        "node": node,
+    }
+
+
 def owner_route(item: dict[str, Any]) -> dict[str, Any]:
     owner_agent = str(
         item.get("owner_agent") or item.get("agent_id") or WARDEN_AGENT_ID
@@ -398,6 +523,10 @@ def owner_route(item: dict[str, Any]) -> dict[str, Any]:
         "scheduled_agent_stale": "check_launchagent_and_last_run",
         "posture_sweep_never_seen": "run_porchlight_and_verify_report",
         "posture_sweep_stale": "run_porchlight_and_verify_schedule",
+        "sweep_tls_report_missing": "verify_sweep_launchagent_and_report_secret",
+        "sweep_tls_report_stale": "verify_node_local_sweep_schedule",
+        "sweep_tls_report_failed": "triage_node_tls_health",
+        "sweep_tls_report_inside_window": "renew_or_confirm_pending_acme_order",
         "last_event_error": "triage_latest_agent_error",
         "last_event_attention": "review_latest_agent_warning",
     }.get(code, "review_control_gap")
