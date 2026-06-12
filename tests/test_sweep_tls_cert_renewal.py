@@ -57,6 +57,63 @@ def test_build_registry_update_sql_skips_errors():
     assert "endpoint" not in sql
 
 
+def test_check_health_uses_primary_url_when_healthy(monkeypatch):
+    seen = []
+
+    def fake_run_command(args, **kwargs):
+        seen.append(args[-1])
+
+        class Result:
+            returncode = 0
+            stdout = "200"
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(sweep, "run_command", fake_run_command)
+
+    assert (
+        sweep.check_health(
+            "https://jarvis-sandbox.tail40ed36.ts.net:5001/api/health",
+            ("https://127.0.0.1:5001/api/health",),
+        )
+        is True
+    )
+    assert seen == ["https://jarvis-sandbox.tail40ed36.ts.net:5001/api/health"]
+
+
+def test_check_health_falls_back_after_primary_resolution_failure(monkeypatch):
+    seen = []
+
+    def fake_run_command(args, **kwargs):
+        seen.append(args[-1])
+
+        class Result:
+            stderr = ""
+            if args[-1] == "https://127.0.0.1:5001/api/health":
+                returncode = 0
+                stdout = "200"
+            else:
+                returncode = 6
+                stdout = "000"
+
+        return Result()
+
+    monkeypatch.setattr(sweep, "run_command", fake_run_command)
+
+    assert (
+        sweep.check_health(
+            "https://jarvis-sandbox.tail40ed36.ts.net:5001/api/health",
+            ("https://127.0.0.1:5001/api/health",),
+        )
+        is True
+    )
+    assert seen == [
+        "https://jarvis-sandbox.tail40ed36.ts.net:5001/api/health",
+        "https://127.0.0.1:5001/api/health",
+    ]
+
+
 def test_run_remote_node_changes_directory_before_python(monkeypatch):
     seen = {}
 
