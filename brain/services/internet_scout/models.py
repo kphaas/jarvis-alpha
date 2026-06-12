@@ -27,6 +27,15 @@ MemoryPromotionStatus = Literal[
     "skipped",
     "failed",
 ]
+SourceQualityLevel = Literal[
+    "official",
+    "primary",
+    "trusted_secondary",
+    "general",
+    "low_confidence",
+    "rejected",
+]
+SourceQualityStatus = Literal["supported", "weak", "insufficient"]
 
 
 class InternetTool(str, Enum):
@@ -237,6 +246,19 @@ class InternetScoutLocalLLMCitation(BaseModel):
     content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     citation_text: str = Field(min_length=1, max_length=1000)
     confidence: Literal["low", "medium", "high"] = "medium"
+    source_quality: SourceQualityLevel = "general"
+    quality_reasons: list[str] = Field(default_factory=list, max_length=10)
+
+
+class InternetScoutCitationQualitySummary(BaseModel):
+    status: SourceQualityStatus = "supported"
+    accepted_citation_count: int = 0
+    rejected_citation_count: int = 0
+    official_source_count: int = 0
+    prompt_injection_rejection_count: int = 0
+    official_source_required: bool = False
+    required_source_hosts: list[str] = Field(default_factory=list, max_length=20)
+    warnings: list[str] = Field(default_factory=list, max_length=20)
 
 
 class InternetScoutLocalLLMResponse(BaseModel):
@@ -246,6 +268,9 @@ class InternetScoutLocalLLMResponse(BaseModel):
     citations: list[InternetScoutLocalLLMCitation] = Field(
         default_factory=list,
         max_length=25,
+    )
+    quality: InternetScoutCitationQualitySummary = Field(
+        default_factory=InternetScoutCitationQualitySummary
     )
     answer_context: str = Field(default="", max_length=12000)
     raw_web_content_is_untrusted: bool = True
@@ -298,6 +323,10 @@ class InternetScoutAgentResponse(BaseModel):
     answer_context: str = Field(default="", max_length=12000)
     untrusted_warnings: list[str] = Field(default_factory=list, max_length=20)
     not_verified: list[str] = Field(default_factory=list, max_length=20)
+    source_quality_status: SourceQualityStatus = "supported"
+    source_quality: InternetScoutCitationQualitySummary = Field(
+        default_factory=InternetScoutCitationQualitySummary
+    )
     evidence: InternetEvidencePacket | None = None
     raw_web_content_is_untrusted: bool = True
 

@@ -7,33 +7,22 @@ from brain.services.internet_scout.models import (
     InternetScoutLocalLLMResponse,
     InternetScoutStoredResponse,
 )
+from brain.services.internet_scout.source_quality import evaluate_citation_quality
 
 
 def build_local_llm_response(
     stored: InternetScoutStoredResponse,
 ) -> InternetScoutLocalLLMResponse:
     """Format Beacon evidence for a local model without granting page authority."""
-    source_by_url = {source.url: source for source in stored.evidence.sources}
-    citations: list[InternetScoutLocalLLMCitation] = []
-    for claim in stored.evidence.claims[:25]:
-        source = source_by_url.get(claim.source_url)
-        if source is None:
-            continue
-        citations.append(
-            InternetScoutLocalLLMCitation(
-                source_url=source.url,
-                host=source.host,
-                content_hash=source.content_hash,
-                citation_text=claim.citation_text,
-                confidence=claim.confidence,
-            )
-        )
+    evaluation = evaluate_citation_quality(stored.evidence)
+    citations = evaluation.citations
 
     return InternetScoutLocalLLMResponse(
         request_id=stored.request_id,
         plan=stored.plan,
         evidence=stored.evidence,
         citations=citations,
+        quality=evaluation.summary,
         answer_context=_answer_context(citations),
     )
 
@@ -49,6 +38,7 @@ def _answer_context(citations: list[InternetScoutLocalLLMCitation]) -> str:
                     f"Host: {citation.host}",
                     f"Content hash: {citation.content_hash}",
                     f"Confidence: {citation.confidence}",
+                    f"Source quality: {citation.source_quality}",
                 ]
             )
         )

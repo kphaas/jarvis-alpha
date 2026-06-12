@@ -120,6 +120,20 @@ def _internet_message_metadata(
         "internet_request_id": str(context.request_id),
         "internet_selected_tool": context.selected_tool.value,
         "internet_citation_count": context.citation_count,
+        "internet_source_quality_status": context.source_quality.status,
+        "internet_accepted_citation_count": (
+            context.source_quality.accepted_citation_count
+        ),
+        "internet_rejected_citation_count": (
+            context.source_quality.rejected_citation_count
+        ),
+        "internet_official_source_count": context.source_quality.official_source_count,
+        "internet_prompt_injection_rejection_count": (
+            context.source_quality.prompt_injection_rejection_count
+        ),
+        "internet_official_source_required": (
+            context.source_quality.official_source_required
+        ),
         "raw_web_content_is_untrusted": context.raw_web_content_is_untrusted,
         "citations": _redacted_internet_citations(context),
     }
@@ -163,6 +177,12 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
         "internet_request_id",
         "internet_selected_tool",
         "internet_citation_count",
+        "internet_source_quality_status",
+        "internet_accepted_citation_count",
+        "internet_rejected_citation_count",
+        "internet_official_source_count",
+        "internet_prompt_injection_rejection_count",
+        "internet_official_source_required",
         "raw_web_content_is_untrusted",
         "citations",
     ):

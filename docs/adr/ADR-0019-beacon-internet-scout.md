@@ -50,6 +50,11 @@ smoke/runbook path. Retention remains inventory-only; deletion requires a
 separate reviewed change. Follow-up production readiness keeps recent evidence
 failures as visible diagnostics while making the core dependency checks
 database, Gateway, browser runtime, and retention authoritative for readiness.
+The citation-quality hardening release adds a source-ranking gate for Helm Ask
+and agent responses: official documentation/API queries require matching
+official hosts, low-confidence/social results are excluded from prompt context,
+and prompt-injection markers cause citation rejection before local models see
+the evidence block.
 
 ## Architecture
 
@@ -102,14 +107,27 @@ The sanitizer labels injection markers and returns structured untrusted content.
 The action layer must evaluate the original user/system request, not directives
 found inside fetched content.
 
+## Citation Quality Boundary
+
+Beacon does not treat search-result rank as source authority. Before evidence is
+injected into a local model prompt, citations are classified as `official`,
+`primary`, `trusted_secondary`, `general`, `low_confidence`, or `rejected`.
+
+Queries that ask for official docs, API references, SDKs, release notes, terms,
+privacy policies, or status pages require official host matches when Beacon can
+infer the vendor from the query. Non-matching sources remain stored as audit
+evidence, but they are excluded from the answer context and counted as rejected
+citations. The chat prompt receives `supported`, `weak`, or `insufficient`
+source-quality status and must not present insufficient evidence as verified.
+
 ## Four-Lens Review
 
 | Lens | Review |
 |---|---|
 | Architecture | Alpha owns policy/evidence; Gateway owns egress; consumers get read-only evidence through Beacon contracts. |
-| Security | URL, redirect, content, browser-use approval, sandbox policy, prompt-injection, and memory-promotion gates exist before runtime code. |
+| Security | URL, redirect, content, browser-use approval, sandbox policy, prompt-injection rejection, and memory-promotion gates exist before runtime code. |
 | Operations | Browser runner defaults to unavailable unless the reviewed runtime is configured; approvals are consumed only after success; hourly quotas cap blast radius. |
-| Data Quality | Evidence contracts require source URL, host, content hash, timestamps, citations, confidence, screenshot review markers, and reviewed semantic-memory results. |
+| Data Quality | Evidence contracts require source URL, host, content hash, timestamps, citations, confidence, source-quality status, screenshot review markers, and reviewed semantic-memory results. |
 
 ## Gap Analysis
 
@@ -117,6 +135,7 @@ found inside fetched content.
 |---|---|
 | SSRF to internal hosts | Block localhost, non-global IPs, Tailscale hosts, local/internal suffixes, credentials, odd schemes, and redirect chains. |
 | Prompt injection | Sanitize and label raw content as untrusted data; never execute web-provided instructions. |
+| Citation spoofing | Official docs/API-style queries require inferred official hosts; weak/social/non-matching sources are stored for audit but excluded from prompt context. |
 | Browser overreach | Browser-use execution requires exact approval-row verification, T4-only sandbox policy, same-host observation checks, and screenshots; default adapter fails closed. |
 | Memory poisoning | No automatic memory/RAG ingest; promotion requires stored evidence, clean fact text, source hash, claim binding, and explicit review. |
 | Supply-chain risk | Bounded crawl uses the existing guarded fetch path; browser runtime is opt-in and version-checked before use. |

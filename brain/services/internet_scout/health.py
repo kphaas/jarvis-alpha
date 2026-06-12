@@ -163,6 +163,45 @@ async def _recent_evidence_check(conn) -> InternetScoutHealthCheck:
         LIMIT 1
         """
     )
+    quality_row = await conn.fetchrow(
+        """
+        SELECT
+            COUNT(*) FILTER (
+                WHERE metadata->>'source_quality_status' = 'insufficient'
+            ) AS insufficient_source_quality,
+            COUNT(*) FILTER (
+                WHERE metadata->>'source_quality_status' = 'weak'
+            ) AS weak_source_quality,
+            COUNT(*) FILTER (
+                WHERE metadata->>'source_quality_status' = 'supported'
+            ) AS supported_source_quality,
+            COALESCE(SUM(
+                CASE
+                    WHEN metadata->>'rejected_citation_count' ~ '^[0-9]+$'
+                    THEN (metadata->>'rejected_citation_count')::INTEGER
+                    ELSE 0
+                END
+            ), 0)::INTEGER AS rejected_citation_count,
+            COALESCE(SUM(
+                CASE
+                    WHEN metadata->>'official_source_count' ~ '^[0-9]+$'
+                    THEN (metadata->>'official_source_count')::INTEGER
+                    ELSE 0
+                END
+            ), 0)::INTEGER AS official_source_count,
+            COALESCE(SUM(
+                CASE
+                    WHEN metadata->>'prompt_injection_rejection_count' ~ '^[0-9]+$'
+                    THEN (metadata->>'prompt_injection_rejection_count')::INTEGER
+                    ELSE 0
+                END
+            ), 0)::INTEGER AS prompt_injection_rejection_count
+        FROM public.alpha_internet_tool_events
+        WHERE event_type = 'chat_evidence_quality'
+          AND status = 'succeeded'
+          AND created_at >= NOW() - INTERVAL '24 hours'
+        """
+    )
     total = int(row["total"] or 0) if row else 0
     failed = int(row["failed"] or 0) if row else 0
     ok = failed == 0
@@ -179,6 +218,7 @@ async def _recent_evidence_check(conn) -> InternetScoutHealthCheck:
             "failed": failed,
             "blocked": int(row["blocked"] or 0) if row else 0,
             "last_request": _last_request_metadata(last_request),
+            "source_quality": _quality_metadata(quality_row),
         },
     )
 
@@ -211,6 +251,40 @@ def _last_request_metadata(row: _RequestRow | None) -> dict[str, object] | None:
         "created_at": _datetime_metadata(row["created_at"]),
         "updated_at": _datetime_metadata(row["updated_at"]),
     }
+
+
+def _quality_metadata(row: _RequestRow | None) -> dict[str, object]:
+    if row is None:
+        return {
+            "supported": 0,
+            "weak": 0,
+            "insufficient": 0,
+            "rejected_citation_count": 0,
+            "official_source_count": 0,
+            "prompt_injection_rejection_count": 0,
+        }
+    return {
+        "supported": _int_row(row, "supported_source_quality"),
+        "weak": _int_row(row, "weak_source_quality"),
+        "insufficient": _int_row(row, "insufficient_source_quality"),
+        "rejected_citation_count": _int_row(row, "rejected_citation_count"),
+        "official_source_count": _int_row(row, "official_source_count"),
+        "prompt_injection_rejection_count": _int_row(
+            row,
+            "prompt_injection_rejection_count",
+        ),
+    }
+
+
+def _int_row(row: _RequestRow, key: str) -> int:
+    value = row[key]
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return 0
 
 
 def _datetime_metadata(value: object) -> str:
