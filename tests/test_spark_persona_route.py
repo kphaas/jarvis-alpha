@@ -8,6 +8,11 @@ from fastapi import HTTPException
 
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
 from brain.routes import spark_persona
+from brain.services.auto_brain import (
+    AutoBrainSourceMetadata,
+    AutoSparkContextMetadata,
+    AutoSparkRuntimeMode,
+)
 from brain.services.spark_persona_guardrails import default_spark_guardrails
 
 
@@ -33,11 +38,14 @@ class _FakeLogger:
 
 def test_spark_persona_routes_are_classified_t2_security_state() -> None:
     read_classes = classify_route("GET", "/v1/spark/persona/guardrails")
+    auto_context_classes = classify_route("GET", "/v1/spark/persona/auto-context")
     write_classes = classify_route("PUT", "/v1/spark/persona/guardrails")
 
     assert read_classes == ["read", "security_read"]
+    assert auto_context_classes == ["read", "security_read"]
     assert write_classes == ["write", "security_write"]
     assert determine_risk_tier(read_classes) == "T2"
+    assert determine_risk_tier(auto_context_classes) == "T2"
     assert determine_risk_tier(write_classes) == "T2"
 
 
@@ -49,6 +57,47 @@ async def test_spark_guardrails_read_requires_spark_scope() -> None:
         )
 
     assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_spark_auto_context_route_returns_metadata_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    context = AutoSparkContextMetadata(
+        version="0.1.0",
+        allowed_for=["spark-draft"],
+        source_count=1,
+        rule_count=2,
+        sources=[
+            AutoBrainSourceMetadata(
+                path="auto/mission.md",
+                sha256="0" * 64,
+                byte_count=42,
+                heading="Auto Mission",
+            )
+        ],
+        runtime_mode=AutoSparkRuntimeMode(
+            spark_can_read=True,
+            spark_can_write=False,
+            durable_memory_writes=False,
+            outbound_send_allowed=False,
+        ),
+    )
+    monkeypatch.setattr(spark_persona, "logger", fake_logger)
+    monkeypatch.setattr(spark_persona, "load_auto_spark_context", lambda: context)
+
+    response = await spark_persona.get_spark_auto_context(
+        _request(scopes=["spark.draft"]),
+        "user",
+    )
+
+    assert response.body_access is False
+    assert response.raw_content_returned is False
+    assert response.sources[0].path == "auto/mission.md"
+    logs = json.dumps(fake_logger.infos).lower()
+    assert "private body" not in logs
+    assert "raw_content_returned" in logs
 
 
 @pytest.mark.asyncio

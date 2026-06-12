@@ -11,6 +11,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from brain.services.auto_brain import load_auto_spark_context
 from brain.services.bluebubbles_client import (
     BlueBubblesReadOnlyClient,
     load_spark_bluebubbles_policy,
@@ -69,6 +70,7 @@ async def check_spark_runtime_readiness(
         "Principal voice guidance is readable",
     )
     _check_guardrails(checks)
+    _check_auto_spark_context(checks, root)
     _check_bluebubbles_policy(checks, root)
     _check_approved_imessage_source(checks, root, principal_id)
     _check_llm_gateway_token(checks)
@@ -124,6 +126,27 @@ def _check_guardrails(checks: list[SparkRuntimeCheck]) -> None:
             name="guardrails",
             status="passed",
             detail=f"Guardrails loaded in {state.active_mode}",
+        )
+    )
+
+
+def _check_auto_spark_context(checks: list[SparkRuntimeCheck], root: Path) -> None:
+    try:
+        context = load_auto_spark_context(root)
+    except Exception:
+        checks.append(
+            SparkRuntimeCheck(
+                name="auto_spark_context",
+                status="failed",
+                detail="Auto Spark context interface failed validation",
+            )
+        )
+        return
+    checks.append(
+        SparkRuntimeCheck(
+            name="auto_spark_context",
+            status="passed",
+            detail=f"{context.source_count} curated Auto source(s)",
         )
     )
 

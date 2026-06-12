@@ -225,6 +225,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/spark/imessage/recent-chats/metadata": ["read", "security_read"],
     "GET /v1/spark/imessage/readiness": ["read", "security_read"],
     # --- Spark persona — editable guardrails, no corpus content ---
+    "GET /v1/spark/persona/auto-context": ["read", "security_read"],
     "GET /v1/spark/persona/guardrails": ["read", "security_read"],
     "PUT /v1/spark/persona/guardrails": ["write", "security_write"],
     # --- Spark drafts — local draft proposal, no external send ---
