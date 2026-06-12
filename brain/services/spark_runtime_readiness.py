@@ -38,6 +38,7 @@ class SparkRuntimeReadiness(BaseModel):
     principal_id: str
     ready: bool
     checks: list[SparkRuntimeCheck]
+    body_access: bool = False
 
 
 async def check_spark_runtime_readiness(
