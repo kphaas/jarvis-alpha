@@ -37,6 +37,7 @@ class NodeSpec:
     health_url: str | None
     reload_kind: str
     cert_dir: str = "~/jarvis/certs"
+    health_fallback_urls: tuple[str, ...] = ()
 
     @property
     def cert_path(self) -> str:
@@ -87,6 +88,7 @@ NODE_SPECS: dict[str, NodeSpec] = {
         service_label=None,
         health_url="https://jarvis-sandbox.tail40ed36.ts.net:5001/api/health",
         reload_kind="none",
+        health_fallback_urls=("https://127.0.0.1:5001/api/health",),
     ),
 }
 
@@ -197,25 +199,32 @@ def restart_local_service(spec: NodeSpec) -> bool | None:
     raise RuntimeError(f"unsupported reload kind: {spec.reload_kind}")
 
 
-def check_health(url: str | None) -> bool | None:
-    if not url:
+def check_health(
+    url: str | None,
+    fallback_urls: tuple[str, ...] = (),
+) -> bool | None:
+    urls = tuple(candidate for candidate in (url, *fallback_urls) if candidate)
+    if not urls:
         return None
-    result = run_command(
-        [
-            "curl",
-            "-sk",
-            "--max-time",
-            "12",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            url,
-        ],
-        timeout=15,
-    )
-    code = (result.stdout or "").strip()
-    return result.returncode == 0 and code.startswith(("2", "3"))
+    for candidate in urls:
+        result = run_command(
+            [
+                "curl",
+                "-sk",
+                "--max-time",
+                "12",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                candidate,
+            ],
+            timeout=15,
+        )
+        code = (result.stdout or "").strip()
+        if result.returncode == 0 and code.startswith(("2", "3")):
+            return True
+    return False
 
 
 def renew_local_node(
@@ -252,7 +261,7 @@ def renew_local_node(
             cert_issued_at=initial_issued_at.isoformat(),
             cert_expires_at=initial_expires_at.isoformat(),
             source_cert=str(source_path),
-            health_ok=check_health(spec.health_url),
+            health_ok=check_health(spec.health_url, spec.health_fallback_urls),
         )
 
     if dry_run:
@@ -287,7 +296,7 @@ def renew_local_node(
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         if "alreadyReplaced" in detail:
-            health_ok = check_health(spec.health_url)
+            health_ok = check_health(spec.health_url, spec.health_fallback_urls)
             return NodeResult(
                 node=spec.node,
                 fqdn=spec.fqdn,
@@ -326,7 +335,7 @@ def renew_local_node(
         previous_expires_at=initial_expires_at,
         new_expires_at=expires_at,
     ):
-        health_ok = check_health(spec.health_url)
+        health_ok = check_health(spec.health_url, spec.health_fallback_urls)
         return NodeResult(
             node=spec.node,
             fqdn=spec.fqdn,
@@ -343,7 +352,7 @@ def renew_local_node(
     restarted = False
     if not no_restart:
         restarted = bool(restart_local_service(spec))
-    health_ok = check_health(spec.health_url)
+    health_ok = check_health(spec.health_url, spec.health_fallback_urls)
     return NodeResult(
         node=spec.node,
         fqdn=spec.fqdn,
