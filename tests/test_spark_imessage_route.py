@@ -110,6 +110,7 @@ async def test_spark_imessage_readiness_returns_safe_metadata(monkeypatch) -> No
     response = await spark_imessage.spark_imessage_readiness(_request(), "user")
 
     assert response.ready is False
+    assert response.body_access is False
     assert response.checks[0].name == "approved_chat_guid"
     logs = json.dumps(fake_logger.infos).lower()
     assert "password" not in logs
