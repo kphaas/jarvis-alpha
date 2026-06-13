@@ -7,6 +7,7 @@ import asyncpg
 import re
 
 from jarvis_common.logging_config import get_logger
+from brain.services.spark_memory_grounding import load_spark_memory_grounding
 
 logger = get_logger("alpha_memory")
 
@@ -95,12 +96,17 @@ class MemoryService:
         prompt: str,
         session_id: str,
         embedding: list[float],
+        principal_id: str | None = None,
     ) -> str:
+        spark_grounding = self._get_spark_grounding(principal_id)
         semantic = await self._get_semantic(conn, user_id)
         episodic = await self._get_episodic(conn, user_id, embedding)
         working = await self._get_working(conn, session_id)
 
         parts = []
+
+        if spark_grounding:
+            parts.append(spark_grounding)
 
         if semantic:
             facts = "\n".join(f"- {r['fact']}" for r in semantic)
@@ -115,6 +121,23 @@ class MemoryService:
             parts.append(f"[RECENT CONVERSATION]\n{turns}")
 
         return "\n\n".join(parts)
+
+    def _get_spark_grounding(self, principal_id: str | None) -> str:
+        try:
+            grounding = load_spark_memory_grounding(principal_id=principal_id)
+        except Exception as exc:
+            logger.warning(
+                "spark_memory_grounding_unavailable",
+                extra={
+                    "event": "spark_memory_grounding_unavailable",
+                    "error_class": exc.__class__.__name__,
+                    "principal_id": principal_id or "",
+                },
+            )
+            return ""
+        if grounding is None:
+            return ""
+        return grounding.to_context_block()
 
     # ------------------------------------------------------------------
     # TIER 1 — SEMANTIC (always injected, full read, no search)
