@@ -30,12 +30,15 @@ from brain.services.internet_scout.chat_adapter import (
     build_chat_internet_context,
 )
 from brain.services.internet_scout.models import Sensitivity
+from jarvis_common.logging_config import get_logger
 
 router = APIRouter(tags=["chat"])
+logger = get_logger("alpha_brain")
 
 MAX_PERSONAL_THREADS = 20
 MAX_PROJECT_THREADS = 10
 InternetMode = Literal["none", "web_search", "deep_research"]
+BEACON_INSUFFICIENT_MODEL = "beacon/insufficient-evidence"
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -99,6 +102,30 @@ def _build_enriched_prompt(
         parts.append(f"Internet context from Alpha Beacon:\n{internet_context}")
     parts.append(f"User: {user_msg}")
     return "\n\n".join(parts)
+
+
+def _should_short_circuit_internet_response(
+    internet_context: InternetChatContext | None,
+) -> bool:
+    if not internet_context:
+        return False
+    return (
+        internet_context.source_quality.status == "insufficient"
+        or internet_context.source_quality.accepted_citation_count <= 0
+        or internet_context.citation_count <= 0
+    )
+
+
+def _insufficient_beacon_response(context: InternetChatContext) -> str:
+    if context.source_quality.official_source_required:
+        return (
+            "Beacon did not find an accepted official source for this request, "
+            "so I cannot answer it as verified."
+        )
+    return (
+        "Beacon did not find acceptable trusted internet evidence for this request, "
+        "so I cannot answer it as verified."
+    )
 
 
 def _internet_sse_metadata(
@@ -357,6 +384,22 @@ async def _stream_single(
     yield "data: [DONE]\n\n"
 
 
+async def _stream_deterministic_response(
+    *,
+    text: str,
+    model_label: str,
+    thread_id: str,
+) -> AsyncGenerator[str, None]:
+    words = text.split(" ")
+    for i, word in enumerate(words):
+        chunk = word + (" " if i < len(words) - 1 else "")
+        yield f"data: {json.dumps({'delta': chunk, 'model': model_label, 'thread_id': thread_id, 'done': False})}\n\n"
+        await asyncio.sleep(0.01)
+
+    yield f"data: {json.dumps({'delta': '', 'model': model_label, 'thread_id': thread_id, 'done': True})}\n\n"
+    yield "data: [DONE]\n\n"
+
+
 async def _stream_council(
     prompt: str, models: list[str], thread_id: str, show_council: bool
 ) -> AsyncGenerator[str, None]:
@@ -482,6 +525,44 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 thread_id=thread_id,
             )
             yield f"data: {json.dumps(payload)}\n\n"
+
+        if _should_short_circuit_internet_response(internet_context):
+            assert internet_context is not None
+            deterministic_text = _insufficient_beacon_response(internet_context)
+            logger.info(
+                "BEACON_ASK_INSUFFICIENT_SHORT_CIRCUIT",
+                extra={
+                    "event": "BEACON_ASK_INSUFFICIENT_SHORT_CIRCUIT",
+                    "request_id": str(internet_context.request_id),
+                    "source_quality_status": internet_context.source_quality.status,
+                    "accepted_citation_count": (
+                        internet_context.source_quality.accepted_citation_count
+                    ),
+                    "rejected_citation_count": (
+                        internet_context.source_quality.rejected_citation_count
+                    ),
+                },
+            )
+            async for chunk in _stream_deterministic_response(
+                text=deterministic_text,
+                model_label=BEACON_INSUFFICIENT_MODEL,
+                thread_id=thread_id,
+            ):
+                yield chunk
+
+            latency = int((time.monotonic() - start) * 1000)
+            await _save_message(
+                request,
+                thread_id,
+                user_id,
+                "assistant",
+                deterministic_text,
+                model_used=BEACON_INSUFFICIENT_MODEL,
+                memory_injected=False,
+                latency_ms=latency,
+                internet_metadata=_internet_message_metadata(internet_context),
+            )
+            return
 
         is_council = body.model == "council" or len(body.council_models) >= 2
         models = body.council_models if body.council_models else [body.model]
