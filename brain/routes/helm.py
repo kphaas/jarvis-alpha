@@ -115,6 +115,16 @@ class HelmBeaconSourceQualitySummary(BaseModel):
     prompt_injection_rejection_count: int = 0
 
 
+class HelmBeaconWebSuggestionSummary(BaseModel):
+    suggested: int = 0
+    accepted: int = 0
+    acceptance_rate_percent: int = 0
+    high_confidence: int = 0
+    medium_confidence: int = 0
+    accepted_matching_mode: int = 0
+    accepted_after_confirmation: int = 0
+
+
 class HelmBeaconProviderSummary(BaseModel):
     status: str
     provider_order: list[str] = Field(default_factory=list)
@@ -143,6 +153,9 @@ class HelmBeaconEvidenceSummary(BaseModel):
     blocked: int = 0
     source_quality: HelmBeaconSourceQualitySummary = Field(
         default_factory=HelmBeaconSourceQualitySummary
+    )
+    web_suggestion: HelmBeaconWebSuggestionSummary = Field(
+        default_factory=HelmBeaconWebSuggestionSummary
     )
     last_request: HelmBeaconLastRequest | None = None
 
@@ -422,6 +435,30 @@ def _beacon_source_quality(
     )
 
 
+def _beacon_web_suggestion(
+    metadata: Mapping[str, object],
+) -> HelmBeaconWebSuggestionSummary:
+    web_suggestion = _mapping_value(metadata.get("web_suggestion"))
+    return HelmBeaconWebSuggestionSummary(
+        suggested=_metadata_int(web_suggestion, "suggested"),
+        accepted=_metadata_int(web_suggestion, "accepted"),
+        acceptance_rate_percent=_metadata_int(
+            web_suggestion,
+            "acceptance_rate_percent",
+        ),
+        high_confidence=_metadata_int(web_suggestion, "high_confidence"),
+        medium_confidence=_metadata_int(web_suggestion, "medium_confidence"),
+        accepted_matching_mode=_metadata_int(
+            web_suggestion,
+            "accepted_matching_mode",
+        ),
+        accepted_after_confirmation=_metadata_int(
+            web_suggestion,
+            "accepted_after_confirmation",
+        ),
+    )
+
+
 def _datetime_or_none(value: object | None) -> str | None:
     if value is None:
         return None
@@ -548,6 +585,7 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
             failed=_metadata_int(evidence_metadata, "failed"),
             blocked=_metadata_int(evidence_metadata, "blocked"),
             source_quality=_beacon_source_quality(evidence_metadata),
+            web_suggestion=_beacon_web_suggestion(evidence_metadata),
             last_request=_beacon_last_request(evidence_metadata),
         ),
         retention=HelmBeaconRetentionSummary(

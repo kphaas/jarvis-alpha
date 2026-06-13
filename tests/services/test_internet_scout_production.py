@@ -17,6 +17,8 @@ class FakeConn:
         recent_row: dict[str, int] | None = None,
         last_request_row: dict[str, object] | None = None,
         quality_row: dict[str, int] | None = None,
+        suggestion_row: dict[str, int] | None = None,
+        acceptance_row: dict[str, int] | None = None,
     ) -> None:
         self.counts = counts or {}
         self.recent_row = recent_row or {
@@ -42,6 +44,16 @@ class FakeConn:
             "official_source_count": 1,
             "prompt_injection_rejection_count": 1,
         }
+        self.suggestion_row = suggestion_row or {
+            "suggested": 5,
+            "high_confidence": 3,
+            "medium_confidence": 2,
+        }
+        self.acceptance_row = acceptance_row or {
+            "accepted": 2,
+            "accepted_matching_mode": 2,
+            "accepted_after_confirmation": 2,
+        }
 
     async def fetchval(self, query: str, *args):
         if "to_regclass" in query:
@@ -54,7 +66,11 @@ class FakeConn:
         return 0
 
     async def fetchrow(self, query: str, *args):
-        if "alpha_internet_tool_events" in query:
+        if "chat_web_suggestion_acceptance" in query:
+            return self.acceptance_row
+        if "FROM public.chat_messages" in query:
+            return self.suggestion_row
+        if "chat_evidence_quality" in query:
             return self.quality_row
         if "ORDER BY created_at DESC" in query:
             return self.last_request_row
@@ -149,6 +165,16 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
         "rejected_citation_count": 3,
         "official_source_count": 1,
         "prompt_injection_rejection_count": 1,
+    }
+    web_suggestion = response.checks["recent_evidence"].metadata["web_suggestion"]
+    assert web_suggestion == {
+        "suggested": 5,
+        "accepted": 2,
+        "acceptance_rate_percent": 40,
+        "high_confidence": 3,
+        "medium_confidence": 2,
+        "accepted_matching_mode": 2,
+        "accepted_after_confirmation": 2,
     }
     last_request = response.checks["recent_evidence"].metadata["last_request"]
     assert isinstance(last_request, dict)

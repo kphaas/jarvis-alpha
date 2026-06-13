@@ -202,6 +202,40 @@ async def _recent_evidence_check(conn) -> InternetScoutHealthCheck:
           AND created_at >= NOW() - INTERVAL '24 hours'
         """
     )
+    suggestion_row = await conn.fetchrow(
+        """
+        SELECT
+            COUNT(*) FILTER (
+                WHERE internet_metadata ? 'web_suggestion_mode'
+            ) AS suggested,
+            COUNT(*) FILTER (
+                WHERE internet_metadata->>'web_suggestion_confidence' = 'high'
+            ) AS high_confidence,
+            COUNT(*) FILTER (
+                WHERE internet_metadata->>'web_suggestion_confidence' = 'medium'
+            ) AS medium_confidence
+        FROM public.chat_messages
+        WHERE role = 'assistant'
+          AND internet_metadata ? 'web_suggestion_mode'
+          AND created_at >= NOW() - INTERVAL '24 hours'
+        """
+    )
+    acceptance_row = await conn.fetchrow(
+        """
+        SELECT
+            COUNT(*) AS accepted,
+            COUNT(*) FILTER (
+                WHERE metadata->>'suggested_mode' = metadata->>'requested_mode'
+            ) AS accepted_matching_mode,
+            COUNT(*) FILTER (
+                WHERE metadata->>'requires_confirmation' = 'true'
+            ) AS accepted_after_confirmation
+        FROM public.alpha_internet_tool_events
+        WHERE event_type = 'chat_web_suggestion_acceptance'
+          AND status = 'succeeded'
+          AND created_at >= NOW() - INTERVAL '24 hours'
+        """
+    )
     total = int(row["total"] or 0) if row else 0
     failed = int(row["failed"] or 0) if row else 0
     ok = failed == 0
@@ -219,6 +253,10 @@ async def _recent_evidence_check(conn) -> InternetScoutHealthCheck:
             "blocked": int(row["blocked"] or 0) if row else 0,
             "last_request": _last_request_metadata(last_request),
             "source_quality": _quality_metadata(quality_row),
+            "web_suggestion": _web_suggestion_metadata(
+                suggestion_row,
+                acceptance_row,
+            ),
         },
     )
 
@@ -273,6 +311,35 @@ def _quality_metadata(row: _RequestRow | None) -> dict[str, object]:
             row,
             "prompt_injection_rejection_count",
         ),
+    }
+
+
+def _web_suggestion_metadata(
+    suggestion_row: _RequestRow | None,
+    acceptance_row: _RequestRow | None,
+) -> dict[str, object]:
+    suggested = _int_row(suggestion_row, "suggested") if suggestion_row else 0
+    accepted = _int_row(acceptance_row, "accepted") if acceptance_row else 0
+    acceptance_rate_percent = round((accepted / suggested) * 100) if suggested else 0
+    return {
+        "suggested": suggested,
+        "accepted": accepted,
+        "acceptance_rate_percent": acceptance_rate_percent,
+        "high_confidence": _int_row(suggestion_row, "high_confidence")
+        if suggestion_row
+        else 0,
+        "medium_confidence": _int_row(suggestion_row, "medium_confidence")
+        if suggestion_row
+        else 0,
+        "accepted_matching_mode": _int_row(acceptance_row, "accepted_matching_mode")
+        if acceptance_row
+        else 0,
+        "accepted_after_confirmation": _int_row(
+            acceptance_row,
+            "accepted_after_confirmation",
+        )
+        if acceptance_row
+        else 0,
     }
 
 

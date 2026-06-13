@@ -525,6 +525,99 @@ async def test_chat_routes_supported_beacon_prompt_before_stale_memory(
 
 
 @pytest.mark.asyncio
+async def test_chat_records_web_suggestion_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = FakeConn()
+
+    @asynccontextmanager
+    async def fake_rls_connection(_request: object):
+        yield conn
+
+    class FakeMemoryService:
+        async def build_context(self, **_kwargs: object) -> str:
+            return ""
+
+    async def fake_get_or_create_thread(*_args: object, **_kwargs: object) -> str:
+        return str(THREAD_ID)
+
+    async def fake_embed(_text: str) -> list[float]:
+        return []
+
+    async def fake_build_chat_internet_context(*_args: object, **_kwargs: object):
+        return _supported_openai_context()
+
+    async def fake_route(*_args: object, **_kwargs: object):
+        return {"result": "Use the cited official source.", "mode": "auto"}
+
+    async def fake_store_memory_bg(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(chat, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(chat, "MemoryService", FakeMemoryService)
+    monkeypatch.setattr(chat, "_get_or_create_thread", fake_get_or_create_thread)
+    monkeypatch.setattr(chat, "_embed", fake_embed)
+    monkeypatch.setattr(
+        chat,
+        "build_chat_internet_context",
+        fake_build_chat_internet_context,
+    )
+    monkeypatch.setattr(chat, "route", fake_route)
+    monkeypatch.setattr(chat, "_store_memory_bg", fake_store_memory_bg)
+
+    body = chat.CompletionRequest(
+        messages=[
+            {
+                "role": "user",
+                "content": "Find the official OpenAI API reference URL.",
+            }
+        ],
+        model="auto",
+        thread_id=str(THREAD_ID),
+        internet_mode="deep_research",
+        web_suggestion_acceptance=chat.WebSuggestionAcceptance(
+            suggested_mode="deep_research",
+            reason="official_source_requested",
+            confidence="high",
+            source="alpha_smart_web_suggestion",
+            requires_confirmation=True,
+        ),
+    )
+    request = cast(
+        Request,
+        SimpleNamespace(state=SimpleNamespace(user_id="ken", role="adult")),
+    )
+
+    response = await chat.chat_completions(body, request)
+    _chunks = [
+        chunk.decode() if isinstance(chunk, bytes) else str(chunk)
+        async for chunk in response.body_iterator
+    ]
+    await asyncio.sleep(0)
+
+    event_inserts = [
+        args
+        for query, args in conn.execute_calls
+        if "INSERT INTO public.alpha_internet_tool_events" in query
+    ]
+    acceptance_args = [
+        args for args in event_inserts if args[2] == "chat_web_suggestion_acceptance"
+    ]
+    assert len(acceptance_args) == 1
+    metadata = json.loads(str(acceptance_args[0][-1]))
+    assert metadata == {
+        "accepted": True,
+        "source": "alpha_smart_web_suggestion",
+        "suggested_mode": "deep_research",
+        "requested_mode": "deep_research",
+        "reason": "official_source_requested",
+        "confidence": "high",
+        "requires_confirmation": True,
+        "thread_id": str(THREAD_ID),
+    }
+
+
+@pytest.mark.asyncio
 async def test_chat_emits_web_suggestion_without_running_beacon(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
