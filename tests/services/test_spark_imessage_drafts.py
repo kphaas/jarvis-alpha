@@ -92,7 +92,7 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
 
     async def fake_llm_call(**kwargs):
         calls.append(kwargs)
-        return "Fair enough, I am on it and will come back with a clear answer."
+        return "Fair enough, I am on it and will see what actually makes sense."
 
     proposal = await drafts.create_imessage_draft_proposal(
         vault_root=vault_root,
@@ -110,9 +110,17 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
     assert "llm_generated" in payload["warnings"]
     assert "private inbound body" not in json.dumps(payload).lower()
     assert len(calls) == 1
+    system_prompt = str(calls[0]["system_prompt"])
+    assert "Ken text-message calibration" in system_prompt
+    assert "talk through the trade-offs" in system_prompt
+    assert "what actually makes sense" in system_prompt
+    assert "Auto operating context" in system_prompt
+    assert "Surface the next real blocker" in system_prompt
+    assert "Principal voice files win" in system_prompt
     llm_message = str(calls[0]["user_message"])
     assert "private inbound body" in llm_message
     assert "approved-chat-guid" not in json.dumps(calls).lower()
+    assert "surface the next real blocker" not in json.dumps(payload).lower()
 
 
 @pytest.mark.asyncio
@@ -194,6 +202,25 @@ async def test_imessage_draft_requires_runtime_chat_guid_before_body_read(
 
 
 @pytest.mark.asyncio
+async def test_imessage_draft_requires_auto_context_before_body_read(
+    tmp_path: Path,
+) -> None:
+    vault_root = _write_vault(tmp_path, include_auto=False)
+    fake_client = FakeBodyClient()
+
+    with pytest.raises(drafts.SparkDraftConfigError, match="auto_spark_context"):
+        await drafts.create_imessage_draft_proposal(
+            vault_root=vault_root,
+            principal_id="ken",
+            max_context_messages=10,
+            bluebubbles_client=fake_client,
+            approved_chat_guid="approved-chat-guid",
+        )
+
+    assert fake_client.calls == []
+
+
+@pytest.mark.asyncio
 async def test_imessage_draft_uses_edited_draft_override(tmp_path: Path) -> None:
     vault_root = _write_vault(tmp_path)
     fake_client = FakeBodyClient()
@@ -215,6 +242,7 @@ def _write_vault(
     tmp_path: Path,
     *,
     relationship_specific_approval_granted: str = "yes",
+    include_auto: bool = True,
 ) -> Path:
     principal_root = tmp_path / "spark" / "principals" / "ken"
     approvals = principal_root / "corpus_approvals"
@@ -256,6 +284,15 @@ Avoid sounding:
 | Text | Less formal |
 | Email | More formal |
 
+## Text Message Calibration
+
+Avoid robotic wrap-ups such as:
+- talk through the trade-offs
+- circle back with a clear answer
+
+Prefer natural endings with a concrete next action Ken would actually say:
+- Let me look at the numbers and we'll see what actually makes sense.
+
 ## Accessibility Style
 
 Prefer:
@@ -270,6 +307,8 @@ Prefer:
 """,
         encoding="utf-8",
     )
+    if include_auto:
+        _write_auto_context(tmp_path)
     (approvals / "imessage.md").write_text(
         f"""
 # Corpus Approval: Ken iMessage One-To-One Thread
@@ -294,3 +333,74 @@ Prefer:
         encoding="utf-8",
     )
     return tmp_path
+
+
+def _write_auto_context(root: Path) -> None:
+    (root / "auto" / "interfaces").mkdir(parents=True)
+    (root / "auto" / "context").mkdir(parents=True)
+    (root / "04_delegation").mkdir(parents=True)
+    (root / "auto" / "interfaces" / "spark_context.yml").write_text(
+        """
+version: 0.1.0
+allowed_for:
+  - spark-draft
+read_sources:
+  - auto/mission.md
+  - auto/context/current_state.md
+  - auto/context/open_loops.md
+  - 04_delegation/delegation_policy.yml
+rules:
+  - "Use this context only to understand current priorities and boundaries."
+  - "Do not copy Auto internal notes into outbound drafts."
+  - "Do not expose hidden chain-of-thought, tool details, or internal review notes."
+  - "Do not use sensitive context unless approved."
+  - "Principal voice files win."
+runtime_mode:
+  spark_can_read: true
+  spark_can_write: false
+  durable_memory_writes: false
+  outbound_send_allowed: false
+""",
+        encoding="utf-8",
+    )
+    (root / "auto" / "mission.md").write_text(
+        """
+# Auto Mission
+
+## Primary Jobs
+
+- Surface the next real blocker.
+- Keep project state coherent.
+
+## Operating Bias
+
+- Be direct.
+- Be evidence-led.
+""",
+        encoding="utf-8",
+    )
+    (root / "auto" / "context" / "current_state.md").write_text(
+        """
+# Current State
+
+## Known Live Gates
+
+- Spark must remain draft-first.
+- External sends require approval.
+""",
+        encoding="utf-8",
+    )
+    (root / "auto" / "context" / "open_loops.md").write_text(
+        """
+# Open Loops
+
+## Spark
+
+- Wire Auto context into the draft prompt.
+""",
+        encoding="utf-8",
+    )
+    (root / "04_delegation" / "delegation_policy.yml").write_text(
+        "# Delegation Policy\n\nversion: 0.1.0\n",
+        encoding="utf-8",
+    )

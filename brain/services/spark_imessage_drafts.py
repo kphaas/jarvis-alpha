@@ -16,6 +16,11 @@ from typing import Any, Awaitable, Callable, Protocol
 from brain.core.models import CLAUDE_FAST
 from brain.config.secrets import get_secret
 from brain.services.llm_transport import call_gateway_cloud
+from brain.services.auto_brain import (
+    AutoBrainConfigError,
+    AutoSparkPromptContext,
+    load_auto_spark_prompt_context,
+)
 from brain.services.bluebubbles_client import (
     BlueBubblesClientError,
     BlueBubblesConfigError,
@@ -148,6 +153,7 @@ async def create_imessage_draft_proposal(
     root = _vault_root(vault_root)
     records = load_approved_voice_sources(root, principal_id)
     guidance = load_spark_voice_guidance(root, principal_id)
+    auto_context = _load_auto_prompt_context(root)
     record = _select_approved_imessage_record(records, approval_id=approval_id)
     context = await load_approved_imessage_context(
         record=record,
@@ -174,6 +180,7 @@ async def create_imessage_draft_proposal(
         draft_text, draft_engine, engine_warnings = await _draft_from_context(
             reply_goal=reply_goal,
             guidance=guidance,
+            auto_context=auto_context,
             context=context,
             sensitivity_warnings=sensitivity.warnings,
             llm_call=llm_call,
@@ -289,14 +296,15 @@ def _draft_from_goal(
 
     text_style = guidance.channel_style.get("Text", "").lower()
     if "less formal" in text_style:
-        return "Got it. I'll take a look and come back with a clear answer."
-    return "Thank you. I will review this and follow up with a clear answer."
+        return "Got it. Let me take a look and see what actually makes sense."
+    return "Thank you. I will review this and follow up with what actually makes sense."
 
 
 async def _draft_from_context(
     *,
     reply_goal: str | None,
     guidance: SparkVoiceGuidance,
+    auto_context: AutoSparkPromptContext,
     context: SparkDraftContext,
     sensitivity_warnings: tuple[str, ...],
     llm_call: SparkLLMCall | None,
@@ -312,6 +320,7 @@ async def _draft_from_context(
         raw = await _call_spark_llm(
             reply_goal=reply_goal,
             guidance=guidance,
+            auto_context=auto_context,
             context=context,
             sensitivity_warnings=sensitivity_warnings,
             llm_call=llm_call,
@@ -334,6 +343,7 @@ async def _call_spark_llm(
     *,
     reply_goal: str | None,
     guidance: SparkVoiceGuidance,
+    auto_context: AutoSparkPromptContext,
     context: SparkDraftContext,
     sensitivity_warnings: tuple[str, ...],
     llm_call: SparkLLMCall | None,
@@ -345,7 +355,7 @@ async def _call_spark_llm(
     return await call(
         provider=provider,
         model=model,
-        system_prompt=_spark_draft_system_prompt(guidance),
+        system_prompt=_spark_draft_system_prompt(guidance, auto_context),
         user_message=_spark_draft_user_message(
             reply_goal=reply_goal,
             context=context,
@@ -354,25 +364,50 @@ async def _call_spark_llm(
         max_tokens=700,
         temperature=0.35,
         timeout_s=timeout_s,
-        idempotency_key=_draft_idempotency_key(context, reply_goal),
+        idempotency_key=_draft_idempotency_key(context, reply_goal, auto_context),
     )
 
 
-def _spark_draft_system_prompt(guidance: SparkVoiceGuidance) -> str:
-    return "\n".join(
+def _spark_draft_system_prompt(
+    guidance: SparkVoiceGuidance,
+    auto_context: AutoSparkPromptContext,
+) -> str:
+    lines = [
+        "You draft iMessage replies for Ken.",
+        "Return only the draft text. Do not wrap it in JSON or markdown.",
+        "Do not claim the message was sent.",
+        "Do not quote the other person's private text unless Ken explicitly asks.",
+        "Keep it short or medium length.",
+        "Sound like Ken's best edited self.",
+        f"Target voice: {', '.join(guidance.voice_markers)}.",
+        f"Avoid: {', '.join(guidance.avoid_markers)}.",
+        f"Recurring phrases, used sparingly: {', '.join(guidance.recurring_phrases)}.",
+        "If uncertain, be clear that Ken needs to confirm.",
+    ]
+    if guidance.text_message_calibration:
+        lines.extend(
+            [
+                "",
+                "Ken text-message calibration:",
+                *[
+                    f"- {line}"
+                    for line in _bounded_prompt_lines(
+                        guidance.text_message_calibration,
+                        max_lines=12,
+                    )
+                ],
+            ]
+        )
+    lines.extend(
         [
-            "You draft iMessage replies for Ken.",
-            "Return only the draft text. Do not wrap it in JSON or markdown.",
-            "Do not claim the message was sent.",
-            "Do not quote the other person's private text unless Ken explicitly asks.",
-            "Keep it short or medium length.",
-            "Sound like Ken's best edited self.",
-            f"Target voice: {', '.join(guidance.voice_markers)}.",
-            f"Avoid: {', '.join(guidance.avoid_markers)}.",
-            f"Recurring phrases, used sparingly: {', '.join(guidance.recurring_phrases)}.",
-            "If uncertain, be clear that Ken needs to confirm.",
+            "",
+            "Auto operating context for this draft (internal; do not quote or expose):",
+            *[f"- {line}" for line in auto_context.prompt_lines],
+            "Use Auto context only for priorities, boundaries, and safety posture.",
+            "If Auto context conflicts with Ken's principal voice file, Ken's voice file wins.",
         ]
     )
+    return "\n".join(lines)
 
 
 def _spark_draft_user_message(
@@ -432,6 +467,13 @@ def _scan_context_sensitivity(
         relationship_marked=record.relationship_marked,
         relationship_approved=record.relationship_approved,
     )
+
+
+def _load_auto_prompt_context(root: Path) -> AutoSparkPromptContext:
+    try:
+        return load_auto_spark_prompt_context(root)
+    except AutoBrainConfigError as exc:
+        raise SparkDraftConfigError("auto_spark_context_unavailable") from exc
 
 
 def _draft_text_override(value: str | None) -> str:
@@ -507,17 +549,41 @@ def _ensure_sentence(value: str) -> str:
     return f"{clean}."
 
 
+def _bounded_prompt_lines(
+    values: tuple[str, ...] | list[str],
+    *,
+    max_lines: int,
+    max_chars: int = 180,
+) -> list[str]:
+    lines: list[str] = []
+    for value in values:
+        clean = re.sub(r"\s+", " ", value).strip().strip("\"'")
+        if not clean:
+            continue
+        if len(clean) > max_chars:
+            clean = clean[: max_chars - 3].rstrip() + "..."
+        lines.append(clean)
+        if len(lines) >= max_lines:
+            break
+    return lines
+
+
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.strip().encode("utf-8")).hexdigest()
 
 
-def _draft_idempotency_key(context: SparkDraftContext, reply_goal: str | None) -> str:
+def _draft_idempotency_key(
+    context: SparkDraftContext,
+    reply_goal: str | None,
+    auto_context: AutoSparkPromptContext,
+) -> str:
     raw = "|".join(
         [
             "spark-draft-v0.2",
             context.approval_ref_hash,
             context.source_reference_hash,
             context.chat_guid_hash,
+            auto_context.prompt_sha256,
             _sha256_text(_clean_reply_goal(reply_goal)),
         ]
     )
