@@ -30,6 +30,10 @@ from brain.services.internet_scout.chat_adapter import (
     build_chat_internet_context,
 )
 from brain.services.internet_scout.models import Sensitivity
+from brain.services.internet_scout.web_suggestion import (
+    WebSuggestion,
+    suggest_web_for_chat,
+)
 from jarvis_common.logging_config import get_logger
 
 router = APIRouter(tags=["chat"])
@@ -39,6 +43,19 @@ MAX_PERSONAL_THREADS = 20
 MAX_PROJECT_THREADS = 10
 InternetMode = Literal["none", "web_search", "deep_research"]
 BEACON_INSUFFICIENT_MODEL = "beacon/insufficient-evidence"
+BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
+    [
+        "Authority rule for internet-enabled answers:",
+        "- Treat accepted Alpha Beacon evidence as the source of truth for "
+        "current/public web claims.",
+        "- This includes official-source, URL, citation, release, pricing, "
+        "legal, medical, market, schedule, and other time-sensitive claims.",
+        "- Use memory only for stable personal preferences or local context.",
+        "- Do not use memory to override, replace, or contradict Beacon evidence.",
+        "- If memory conflicts with Beacon, follow Beacon and ignore the "
+        "conflicting memory.",
+    ]
+)
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -96,10 +113,21 @@ def _build_enriched_prompt(
         return user_msg
 
     parts: list[str] = []
-    if memory_context:
-        parts.append(f"Context from memory:\n{memory_context}")
     if internet_context:
-        parts.append(f"Internet context from Alpha Beacon:\n{internet_context}")
+        parts.append(BEACON_INTERNET_AUTHORITY_RULE)
+        parts.append(
+            "Internet context from Alpha Beacon "
+            "(authoritative for current/public web claims):\n"
+            f"{internet_context}"
+        )
+        if memory_context:
+            parts.append(
+                "Context from memory "
+                "(secondary; must not override Beacon evidence):\n"
+                f"{memory_context}"
+            )
+    elif memory_context:
+        parts.append(f"Context from memory:\n{memory_context}")
     parts.append(f"User: {user_msg}")
     return "\n\n".join(parts)
 
@@ -166,6 +194,23 @@ def _internet_message_metadata(
     }
 
 
+def _web_suggestion_message_metadata(
+    suggestion: WebSuggestion | None,
+) -> dict[str, object] | None:
+    return suggestion.to_metadata() if suggestion else None
+
+
+def _web_suggestion_sse_metadata(
+    *,
+    suggestion: WebSuggestion,
+    thread_id: str,
+) -> dict[str, object]:
+    payload = suggestion.to_metadata()
+    payload["thread_id"] = thread_id
+    payload["done"] = False
+    return payload
+
+
 def _redacted_internet_citations(
     context: InternetChatContext,
 ) -> list[dict[str, object]]:
@@ -212,6 +257,12 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
         "internet_official_source_required",
         "raw_web_content_is_untrusted",
         "citations",
+        "web_suggestion_mode",
+        "web_suggestion_reason",
+        "web_suggestion_confidence",
+        "web_suggestion_query",
+        "web_suggestion_requires_confirmation",
+        "web_suggestion_source",
     ):
         if key in internet_metadata:
             payload[key] = internet_metadata[key]
@@ -353,7 +404,9 @@ JARVIS_SYSTEM_PROMPT = (
     "Gateway (Mac Mini, internet egress), and Endpoint (Mac Mini M1, UI). "
     "You are not a cloud service — you are a private, self-hosted system. "
     "Always answer as JARVIS. Be direct, concise, and technically precise. "
-    "When you have memory context provided, use it to give accurate, personalized answers."
+    "When memory context is provided, use it for stable personal context. "
+    "When Alpha Beacon internet context is provided, treat accepted Beacon evidence "
+    "as authoritative for current/public web claims."
 )
 
 
@@ -496,13 +549,19 @@ async def chat_completions(body: CompletionRequest, request: Request):
             embedding=embedding,
         )
     memory_injected = bool(context)
+    sensitivity = _internet_sensitivity(request)
+    web_suggestion = suggest_web_for_chat(
+        query=user_msg,
+        internet_mode=body.internet_mode,
+        sensitivity=sensitivity,
+    )
     internet_context: InternetChatContext | None = None
     if body.internet_mode != "none":
         internet_context = await build_chat_internet_context(
             request=request,
             query=user_msg,
             mode=body.internet_mode,
-            sensitivity=_internet_sensitivity(request),
+            sensitivity=sensitivity,
         )
     enriched = _build_enriched_prompt(
         memory_context=context,
@@ -519,6 +578,13 @@ async def chat_completions(body: CompletionRequest, request: Request):
     delta_parts: list[str] = []
 
     async def _generator():
+        if web_suggestion:
+            payload = _web_suggestion_sse_metadata(
+                suggestion=web_suggestion,
+                thread_id=thread_id,
+            )
+            yield f"data: {json.dumps(payload)}\n\n"
+
         if internet_context:
             payload = _internet_sse_metadata(
                 context=internet_context,
@@ -595,7 +661,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 internet_metadata=(
                     _internet_message_metadata(internet_context)
                     if internet_context
-                    else None
+                    else _web_suggestion_message_metadata(web_suggestion)
                 ),
             )
         )
