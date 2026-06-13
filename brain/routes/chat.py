@@ -547,6 +547,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
             prompt=user_msg,
             session_id=thread_id,
             embedding=embedding,
+            principal_id=user_id,
         )
     memory_injected = bool(context)
     sensitivity = _internet_sensitivity(request)
