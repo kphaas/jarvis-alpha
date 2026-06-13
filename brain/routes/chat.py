@@ -43,6 +43,19 @@ MAX_PERSONAL_THREADS = 20
 MAX_PROJECT_THREADS = 10
 InternetMode = Literal["none", "web_search", "deep_research"]
 BEACON_INSUFFICIENT_MODEL = "beacon/insufficient-evidence"
+BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
+    [
+        "Authority rule for internet-enabled answers:",
+        "- Treat accepted Alpha Beacon evidence as the source of truth for "
+        "current/public web claims.",
+        "- This includes official-source, URL, citation, release, pricing, "
+        "legal, medical, market, schedule, and other time-sensitive claims.",
+        "- Use memory only for stable personal preferences or local context.",
+        "- Do not use memory to override, replace, or contradict Beacon evidence.",
+        "- If memory conflicts with Beacon, follow Beacon and ignore the "
+        "conflicting memory.",
+    ]
+)
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -100,10 +113,21 @@ def _build_enriched_prompt(
         return user_msg
 
     parts: list[str] = []
-    if memory_context:
-        parts.append(f"Context from memory:\n{memory_context}")
     if internet_context:
-        parts.append(f"Internet context from Alpha Beacon:\n{internet_context}")
+        parts.append(BEACON_INTERNET_AUTHORITY_RULE)
+        parts.append(
+            "Internet context from Alpha Beacon "
+            "(authoritative for current/public web claims):\n"
+            f"{internet_context}"
+        )
+        if memory_context:
+            parts.append(
+                "Context from memory "
+                "(secondary; must not override Beacon evidence):\n"
+                f"{memory_context}"
+            )
+    elif memory_context:
+        parts.append(f"Context from memory:\n{memory_context}")
     parts.append(f"User: {user_msg}")
     return "\n\n".join(parts)
 
@@ -380,7 +404,9 @@ JARVIS_SYSTEM_PROMPT = (
     "Gateway (Mac Mini, internet egress), and Endpoint (Mac Mini M1, UI). "
     "You are not a cloud service — you are a private, self-hosted system. "
     "Always answer as JARVIS. Be direct, concise, and technically precise. "
-    "When you have memory context provided, use it to give accurate, personalized answers."
+    "When memory context is provided, use it for stable personal context. "
+    "When Alpha Beacon internet context is provided, treat accepted Beacon evidence "
+    "as authoritative for current/public web claims."
 )
 
 

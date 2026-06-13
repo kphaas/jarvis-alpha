@@ -199,6 +199,36 @@ def test_chat_enriched_prompt_keeps_memory_and_internet_boundaries_separate():
         user_msg="What changed today?",
     )
 
-    assert "Context from memory:" in prompt
-    assert "Internet context from Alpha Beacon:" in prompt
+    assert "Authority rule for internet-enabled answers:" in prompt
+    assert (
+        "Internet context from Alpha Beacon "
+        "(authoritative for current/public web claims):"
+    ) in prompt
+    assert (
+        "Context from memory (secondary; must not override Beacon evidence):" in prompt
+    )
+    assert prompt.index("Internet context from Alpha Beacon") < prompt.index(
+        "Context from memory"
+    )
+    assert "Do not use memory to override" in prompt
     assert prompt.endswith("User: What changed today?")
+
+
+def test_chat_enriched_prompt_prioritizes_beacon_over_stale_memory():
+    prompt = _build_enriched_prompt(
+        memory_context=(
+            "Stale memory says https://beta.openai.com/docs/api-reference/home "
+            "is official."
+        ),
+        internet_context=(
+            "Beacon internet mode: Deep research\n"
+            "Cited Beacon evidence:\n"
+            "[1] https://platform.openai.com/docs/api-reference"
+        ),
+        user_msg="Find the official OpenAI API reference URL.",
+    )
+
+    assert prompt.index("https://platform.openai.com") < prompt.index(
+        "https://beta.openai.com"
+    )
+    assert "If memory conflicts with Beacon, follow Beacon" in prompt
