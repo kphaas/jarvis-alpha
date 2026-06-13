@@ -20,9 +20,14 @@ from brain.services.spark_imessage_drafts import (
     SparkDraftContextError,
     SparkDraftPolicyError,
     SparkDraftProposal,
+    apply_draft_text_override,
     create_imessage_draft_proposal,
 )
 from brain.services.spark_draft_approvals import enqueue_spark_draft_approval
+from brain.services.spark_voice_feedback import (
+    SparkDraftEditFeedbackResult,
+    record_spark_draft_edit_feedback,
+)
 from brain.services.spark_voice_ingest import SparkVoiceIngestError
 from jarvis_common.logging_config import get_logger
 
@@ -68,6 +73,9 @@ class SparkIMessageDraftOut(BaseModel):
 class SparkIMessageDraftApprovalOut(SparkIMessageDraftOut):
     queue_id: str
     approval_status: str
+    voice_feedback_recorded: bool = False
+    voice_feedback_ref_hash: str | None = None
+    candidate_key_phrases: list[str] = Field(default_factory=list)
 
 
 def _check_draft_scopes(request: Request) -> None:
@@ -144,6 +152,7 @@ def _log_approval_success(
     proposal: SparkDraftProposal,
     *,
     queue_id: str,
+    feedback: SparkDraftEditFeedbackResult,
 ) -> None:
     event = "spark_imessage_draft_approval_queued"
     payload = proposal.to_payload()
@@ -157,6 +166,9 @@ def _log_approval_success(
             "can_send": False,
             "requires_human_approval": True,
             "queue_id": queue_id,
+            "voice_feedback_recorded": feedback.recorded,
+            "voice_feedback_ref_hash": feedback.feedback_ref_hash or "",
+            "candidate_key_phrase_count": len(feedback.candidate_key_phrases),
             "context_messages_read": payload["context_messages_read"],
             "principal_sent_messages": payload["principal_sent_messages"],
             "runtime_context_messages": payload["runtime_context_messages"],
@@ -166,6 +178,30 @@ def _log_approval_success(
             "draft_engine": payload["draft_engine"],
             "detected_sensitivity": payload["detected_sensitivity"],
             "blocked_sensitivity_count": len(payload["blocked_sensitivity"]),
+            **_safe_actor_fields(request),
+        },
+    )
+
+
+def _log_feedback_failure(
+    request: Request,
+    proposal: SparkDraftProposal,
+    *,
+    exc: Exception,
+) -> None:
+    event = "spark_voice_feedback_record_failed"
+    payload = proposal.to_payload()
+    logger.warning(
+        event,
+        extra={
+            "event": event,
+            "component": "spark_drafts",
+            "action": "imessage_draft_feedback",
+            "body_access": False,
+            "error_class": exc.__class__.__name__,
+            "approval_ref_hash": payload["approval_ref_hash"],
+            "source_reference_hash": payload["source_reference_hash"],
+            "chat_guid_hash": payload["chat_guid_hash"],
             **_safe_actor_fields(request),
         },
     )
@@ -234,12 +270,15 @@ async def spark_imessage_draft_approval_request(
 ) -> SparkIMessageDraftApprovalOut:
     _check_draft_scopes(request)
     try:
-        proposal = await create_imessage_draft_proposal(
+        original_proposal = await create_imessage_draft_proposal(
             principal_id=payload.principal_id,
             approval_id=payload.approval_id,
             reply_goal=payload.reply_goal,
             max_context_messages=payload.max_context_messages,
-            draft_text_override=payload.draft_text_override,
+        )
+        proposal = apply_draft_text_override(
+            original_proposal,
+            payload.draft_text_override,
         )
         actor_sub = str(getattr(request.state, "user_id", "unknown"))
         actor_type = str(getattr(request.state, "actor_type", "unknown"))
@@ -251,13 +290,27 @@ async def spark_imessage_draft_approval_request(
                 actor_type=actor_type,
                 nonce=uuid4().hex,
             )
+        try:
+            feedback = record_spark_draft_edit_feedback(
+                original_proposal=original_proposal,
+                edited_proposal=proposal,
+            )
+        except Exception as feedback_exc:
+            _log_feedback_failure(request, proposal, exc=feedback_exc)
+            feedback = SparkDraftEditFeedbackResult(
+                recorded=False,
+                feedback_ref_hash=None,
+            )
     except Exception as exc:
         route_error = _route_error(exc)
         _log_failure(request, exc=exc, status_code=route_error.status_code)
         raise route_error from exc
-    _log_approval_success(request, proposal, queue_id=str(queue_id))
+    _log_approval_success(request, proposal, queue_id=str(queue_id), feedback=feedback)
     return SparkIMessageDraftApprovalOut(
         **proposal.to_payload(),
         queue_id=str(queue_id),
         approval_status="pending",
+        voice_feedback_recorded=feedback.recorded,
+        voice_feedback_ref_hash=feedback.feedback_ref_hash,
+        candidate_key_phrases=list(feedback.candidate_key_phrases),
     )

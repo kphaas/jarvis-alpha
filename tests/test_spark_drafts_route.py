@@ -15,6 +15,7 @@ from brain.services.spark_imessage_drafts import (
     SparkDraftProposal,
     SparkRuntimeMessage,
 )
+from brain.services.spark_voice_feedback import SparkDraftEditFeedbackResult
 
 
 def _request(scopes: list[str] | None = None):
@@ -210,16 +211,8 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
             "approval_id": None,
             "reply_goal": "Tell her I am on it",
             "max_context_messages": 10,
-            "draft_text_override": "Edited draft",
         }
-        proposal = _proposal()
-        return SparkDraftProposal(
-            principal_id=proposal.principal_id,
-            draft_text="Edited draft",
-            context=proposal.context,
-            warnings=proposal.warnings,
-            draft_engine=proposal.draft_engine,
-        )
+        return _proposal()
 
     async def fake_enqueue(conn, **kwargs):
         assert conn is fake_conn
@@ -227,11 +220,25 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
         assert kwargs["actor_type"] == "service"
         assert isinstance(kwargs["nonce"], str)
         assert kwargs["proposal"].draft_text == "Edited draft"
+        assert kwargs["proposal"].draft_engine == "human_override"
         return UUID("11111111-1111-4111-8111-111111111111")
+
+    feedback_calls: list[dict[str, object]] = []
+
+    def fake_feedback(**kwargs):
+        feedback_calls.append(kwargs)
+        assert kwargs["original_proposal"].draft_text == "Tell her I am on it."
+        assert kwargs["edited_proposal"].draft_text == "Edited draft"
+        return SparkDraftEditFeedbackResult(
+            recorded=True,
+            feedback_ref_hash="feedback-hash",
+            candidate_key_phrases=("Edited draft",),
+        )
 
     fake_conn = object()
     monkeypatch.setattr(spark_drafts, "create_imessage_draft_proposal", fake_create)
     monkeypatch.setattr(spark_drafts, "enqueue_spark_draft_approval", fake_enqueue)
+    monkeypatch.setattr(spark_drafts, "record_spark_draft_edit_feedback", fake_feedback)
     monkeypatch.setattr(
         spark_drafts,
         "rls_connection",
@@ -252,9 +259,14 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
     assert payload["draft_text"] == "Edited draft"
     assert payload["queue_id"] == "11111111-1111-4111-8111-111111111111"
     assert payload["approval_status"] == "pending"
+    assert payload["voice_feedback_recorded"] is True
+    assert payload["voice_feedback_ref_hash"] == "feedback-hash"
+    assert payload["candidate_key_phrases"] == ["Edited draft"]
+    assert len(feedback_calls) == 1
     logs = json.dumps(fake_logger.infos).lower()
     assert "spark_imessage_draft_approval_queued" in logs
     assert "edited draft" not in logs
+    assert "feedback-hash" in logs
     assert "private inbound body" not in logs
     assert "approved-chat-guid" not in logs
 
