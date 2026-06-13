@@ -305,3 +305,60 @@ class MemoryService:
                 str(user_id),
             )
         )
+
+    async def summarize(
+        self,
+        conn: asyncpg.Connection,
+        user_id: UUID,
+        *,
+        semantic_limit: int = 20,
+        working_limit: int = 10,
+    ) -> dict:
+        """Return a bounded review snapshot without embeddings or raw internals."""
+        semantic_rows = await conn.fetch(
+            """
+            SELECT id::text, fact, category, source, created_at, updated_at
+            FROM alpha_semantic_memory
+            WHERE user_id = $1
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT $2
+            """,
+            user_id,
+            semantic_limit,
+        )
+        semantic_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM alpha_semantic_memory WHERE user_id = $1",
+            user_id,
+        )
+        conversation_counts = await conn.fetch(
+            """
+            SELECT tier, COUNT(*) AS count
+            FROM alpha_conversation_memory
+            WHERE user_id = $1
+            GROUP BY tier
+            """,
+            str(user_id),
+        )
+        working_rows = await conn.fetch(
+            """
+            SELECT id::text, session_id, summary, memory_type AS role,
+                   importance_score, created_at
+            FROM alpha_conversation_memory
+            WHERE user_id = $1
+              AND tier = 'working'
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            str(user_id),
+            working_limit,
+        )
+        tier_counts = {
+            str(row["tier"]): int(row["count"]) for row in conversation_counts
+        }
+        return {
+            "semantic_count": int(semantic_count or 0),
+            "episodic_count": tier_counts.get("episodic", 0),
+            "working_count": tier_counts.get("working", 0),
+            "semantic": [dict(row) for row in semantic_rows],
+            "working": [dict(row) for row in working_rows],
+        }
