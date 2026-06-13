@@ -22,6 +22,10 @@ def _user_uuid(user_id: str) -> UUID:
         return uuid5(NAMESPACE_DNS, user_id)
 
 
+def _principal_id(request: Request) -> str:
+    return str(getattr(request.state, "user_id", None) or "anon")
+
+
 class AskRequest(BaseModel):
     prompt: str
     mode: str = Field(
@@ -114,7 +118,8 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
     start_time = time.monotonic()
     try:
         embedding = await _embed(body.prompt)
-        uid = _user_uuid(getattr(request.state, "user_id", None) or "anon")
+        raw_user_id = _principal_id(request)
+        uid = _user_uuid(raw_user_id)
 
         async with rls_connection(request) as conn:
             context = await memory.build_context(
@@ -123,6 +128,7 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
                 prompt=body.prompt,
                 session_id=body.session_id,
                 embedding=embedding,
+                principal_id=raw_user_id,
             )
 
         enriched_prompt = body.prompt

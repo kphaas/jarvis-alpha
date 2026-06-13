@@ -17,6 +17,7 @@ from brain.services.temporal_storage_monitor import (
     collect_temporal_storage_snapshot,
     temporal_storage_summary_body,
 )
+from brain.services.spark_memory_grounding import collect_spark_memory_grounding_status
 from jarvis_common.logging_config import get_logger, new_trace_id
 
 logger = get_logger("alpha_buddy")
@@ -29,6 +30,7 @@ TEMPORAL_STORAGE_SUMMARY_WEEKDAY = int(
 
 _VALID_BUDDY_EVENT_TYPES = frozenset({"alert", "reminder", "suggestion", "system"})
 _last_temporal_storage_week_key: str | None = None
+_last_spark_memory_day_key: str | None = None
 
 
 def _normalize_buddy_event_type(event_type: str) -> str:
@@ -166,10 +168,66 @@ async def _maybe_write_temporal_storage_summary(pool: asyncpg.Pool) -> None:
         logger.warning("temporal storage weekly summary failed: %s", exc)
 
 
+def spark_memory_summary_body(status: dict[str, object]) -> str:
+    """Human-safe Buddy summary of the Spark persona grounding lane."""
+
+    principal = str(status.get("principal_id") or "unknown")
+    state = str(status.get("status") or "unknown")
+    if state == "ok":
+        feedback_count = int(status.get("feedback_count") or 0)
+        line_count = int(status.get("line_count") or 0)
+        return (
+            f"Spark persona grounding is available for {principal}. "
+            f"Runtime context lines: {line_count}. "
+            f"Draft-edit feedback waiting for review: {feedback_count}."
+        )
+    if state == "skipped":
+        return f"Spark persona grounding skipped for {principal}."
+    error_class = str(status.get("error_class") or "unknown_error")
+    return (
+        f"Spark persona grounding is unavailable for {principal}. "
+        f"Error class: {error_class}."
+    )
+
+
+async def _maybe_write_spark_memory_summary(pool: asyncpg.Pool) -> None:
+    global _last_spark_memory_day_key
+
+    now = datetime.now(timezone.utc)
+    day_key = now.strftime("%Y-%m-%d")
+    if _last_spark_memory_day_key == day_key:
+        return
+
+    try:
+        status = collect_spark_memory_grounding_status(principal_id="ken")
+        priority = 1 if status.get("status") in {"ok", "skipped"} else 3
+        await _write_event(
+            pool,
+            user_id="system",
+            event_type="alert" if priority == 3 else "system",
+            title="Spark memory grounding status",
+            body=spark_memory_summary_body(status),
+            priority=priority,
+            source="spark_memory_grounding",
+            payload={
+                "day_key": day_key,
+                "principal_id": status.get("principal_id"),
+                "status": status.get("status"),
+                "line_count": status.get("line_count"),
+                "feedback_count": status.get("feedback_count"),
+                "error_class": status.get("error_class"),
+            },
+        )
+        _last_spark_memory_day_key = day_key
+    except Exception as exc:
+        logger.warning("spark memory summary failed: %s", exc)
+
+
 async def _run_cycle(pool: asyncpg.Pool) -> None:
     new_trace_id()
     await _expire_pending_approvals(pool)
     await _maybe_write_temporal_storage_summary(pool)
+    await _maybe_write_spark_memory_summary(pool)
     await _maybe_run_managed_agents(pool)
 
     async with pool.acquire() as conn:

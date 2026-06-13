@@ -203,6 +203,31 @@ async def create_imessage_draft_proposal(
     )
 
 
+def apply_draft_text_override(
+    proposal: SparkDraftProposal,
+    draft_text_override: str | None,
+) -> SparkDraftProposal:
+    """Return a copy with reviewer-edited text when an override is present."""
+
+    override = _draft_text_override(draft_text_override)
+    if not override:
+        return proposal
+
+    warnings = (*proposal.warnings, "review_ui_override")
+    return SparkDraftProposal(
+        principal_id=proposal.principal_id,
+        draft_text=override,
+        context=proposal.context,
+        warnings=tuple(dict.fromkeys(warnings)),
+        detected_sensitivity=proposal.detected_sensitivity,
+        blocked_sensitivity=proposal.blocked_sensitivity,
+        draft_engine="human_override",
+        draft_version=proposal.draft_version,
+        can_send=proposal.can_send,
+        requires_human_approval=proposal.requires_human_approval,
+    )
+
+
 async def load_approved_imessage_context(
     *,
     record: SparkApprovedSourceRecord,
