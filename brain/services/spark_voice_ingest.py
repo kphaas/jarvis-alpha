@@ -58,6 +58,7 @@ class SparkVoiceGuidance:
     recurring_phrases: tuple[str, ...]
     avoid_markers: tuple[str, ...]
     channel_style: dict[str, str]
+    text_message_calibration: tuple[str, ...]
     accessibility_style: tuple[str, ...]
     judgment_style: dict[str, str]
 
@@ -67,6 +68,7 @@ class SparkVoiceGuidance:
             "recurring_phrases": list(self.recurring_phrases),
             "avoid_markers": list(self.avoid_markers),
             "channel_style": dict(self.channel_style),
+            "text_message_calibration": list(self.text_message_calibration),
             "accessibility_style": list(self.accessibility_style),
             "judgment_style": dict(self.judgment_style),
         }
@@ -281,6 +283,9 @@ def load_spark_voice_guidance(
         ),
         avoid_markers=tuple(_list_after_label(text, "Avoid sounding:")),
         channel_style=_table_after_heading(text, "## Channel Style"),
+        text_message_calibration=tuple(
+            _bullets_after_heading(text, "## Text Message Calibration")
+        ),
         accessibility_style=tuple(_list_after_label(text, "Prefer:")),
         judgment_style=_table_after_heading(text, "## Judgment Style"),
     )
@@ -530,6 +535,15 @@ def _table_after_heading(text: str, heading: str) -> dict[str, str]:
             continue
         rows[key] = value
     return rows
+
+
+def _bullets_after_heading(text: str, heading: str) -> list[str]:
+    section = _section_after_heading(text, heading)
+    values: list[str] = []
+    for line in section.splitlines():
+        if line.startswith("- "):
+            values.append(line.removeprefix("- ").strip())
+    return values
 
 
 def _section_after_heading(text: str, heading: str) -> str:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,17 @@ from pydantic import BaseModel, ConfigDict
 
 DEFAULT_PERSONALITY_VAULT = "~/jarvis-personality"
 AUTO_SPARK_CONTEXT_PATH = Path("auto/interfaces/spark_context.yml")
+AUTO_PROMPT_MAX_LINES = 24
+AUTO_PROMPT_LINE_MAX_CHARS = 180
+AUTO_PROMPT_ALLOWED_HEADINGS = {
+    "auto/mission.md": {"Primary Jobs", "Operating Bias", "Non-Goals"},
+    "auto/context/current_state.md": {"Active Focus", "Known Live Gates"},
+    "auto/context/open_loops.md": {"Spark", "Auto Brain"},
+}
+AUTO_PROMPT_BLOCKED_LINE = re.compile(
+    r"\b(password|token|secret|private body|raw thread|contact detail)\b",
+    re.IGNORECASE,
+)
 
 
 class AutoBrainConfigError(RuntimeError):
@@ -53,13 +65,49 @@ class AutoSparkContextMetadata(BaseModel):
     raw_content_returned: bool = False
 
 
+class AutoSparkPromptContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    metadata: AutoSparkContextMetadata
+    prompt_lines: list[str]
+    prompt_sha256: str
+
+
 def load_auto_spark_context(
     vault_root: str | Path | None = None,
 ) -> AutoSparkContextMetadata:
     """Load and validate Auto's curated Spark-facing context contract."""
 
+    root, manifest = _load_manifest(vault_root)
+    return _context_metadata(root, manifest)
+
+
+def load_auto_spark_prompt_context(
+    vault_root: str | Path | None = None,
+) -> AutoSparkPromptContext:
+    """Load bounded Auto context lines for internal Spark draft prompts."""
+
+    root, manifest = _load_manifest(vault_root)
+    metadata = _context_metadata(root, manifest)
+    lines = _prompt_lines(root, manifest)
+    prompt_text = "\n".join(lines)
+    return AutoSparkPromptContext(
+        metadata=metadata,
+        prompt_lines=lines,
+        prompt_sha256=hashlib.sha256(prompt_text.encode("utf-8")).hexdigest(),
+    )
+
+
+def _load_manifest(vault_root: str | Path | None) -> tuple[Path, dict[str, Any]]:
     root = _vault_root(vault_root)
-    manifest = _parse_simple_yaml(_read_required(root / AUTO_SPARK_CONTEXT_PATH))
+    return root, _parse_simple_yaml(_read_required(root / AUTO_SPARK_CONTEXT_PATH))
+
+
+def _context_metadata(
+    root: Path,
+    manifest: dict[str, Any],
+) -> AutoSparkContextMetadata:
+    """Validate the Auto Spark contract and return route-safe metadata."""
 
     allowed_for = _string_list(manifest.get("allowed_for"))
     if "spark-draft" not in allowed_for:
@@ -88,6 +136,64 @@ def load_auto_spark_context(
         sources=sources,
         runtime_mode=runtime_mode,
     )
+
+
+def _prompt_lines(root: Path, manifest: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for rule in _string_list(manifest.get("rules")):
+        clean = _safe_prompt_line(rule)
+        if clean:
+            lines.append(f"Rule: {clean}")
+
+    for raw_source in _string_list(manifest.get("read_sources")):
+        relative = _safe_relative_path(raw_source)
+        text = _read_required(root / relative)
+        allowed_headings = AUTO_PROMPT_ALLOWED_HEADINGS.get(relative.as_posix())
+        if not allowed_headings:
+            continue
+        for bullet in _markdown_section_bullets(text, allowed_headings):
+            clean = _safe_prompt_line(bullet)
+            if clean:
+                lines.append(clean)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        key = line.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(line)
+        if len(deduped) >= AUTO_PROMPT_MAX_LINES:
+            break
+    if not deduped:
+        raise AutoBrainConfigError("auto_spark_context_prompt_empty")
+    return deduped
+
+
+def _markdown_section_bullets(text: str, allowed_headings: set[str]) -> list[str]:
+    bullets: list[str] = []
+    capture = False
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("## "):
+            heading = stripped.removeprefix("## ").strip()
+            capture = heading in allowed_headings
+            continue
+        if capture and stripped.startswith("- "):
+            bullets.append(stripped.removeprefix("- ").strip())
+    return bullets
+
+
+def _safe_prompt_line(value: str) -> str:
+    clean = re.sub(r"\s+", " ", value).strip().strip("\"'")
+    if not clean or "<FILL_IN" in clean:
+        return ""
+    if AUTO_PROMPT_BLOCKED_LINE.search(clean):
+        return ""
+    if len(clean) > AUTO_PROMPT_LINE_MAX_CHARS:
+        clean = clean[: AUTO_PROMPT_LINE_MAX_CHARS - 3].rstrip() + "..."
+    return clean
 
 
 def _vault_root(vault_root: str | Path | None) -> Path:

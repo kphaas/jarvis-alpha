@@ -5,6 +5,7 @@ import pytest
 from brain.services.auto_brain import (
     AutoBrainConfigError,
     load_auto_spark_context,
+    load_auto_spark_prompt_context,
 )
 
 
@@ -29,6 +30,22 @@ def test_auto_spark_context_returns_metadata_only(tmp_path) -> None:
         "auto/context/open_loops.md",
         "04_delegation/delegation_policy.yml",
     }
+    assert "private body" not in serialized
+    assert "secret" not in serialized
+
+
+def test_auto_spark_prompt_context_extracts_bounded_safe_lines(tmp_path) -> None:
+    _write_auto_vault(tmp_path)
+
+    context = load_auto_spark_prompt_context(tmp_path)
+    serialized = str(context.model_dump()).lower()
+
+    assert context.metadata.source_count == 4
+    assert context.metadata.rule_count == 5
+    assert context.prompt_sha256
+    assert "Rule: Principal voice wins." in context.prompt_lines
+    assert "Surface the next real blocker." in context.prompt_lines
+    assert "Spark must remain draft-first." in context.prompt_lines
     assert "private body" not in serialized
     assert "secret" not in serialized
 
@@ -89,15 +106,36 @@ runtime_mode:
         encoding="utf-8",
     )
     (root / "auto" / "mission.md").write_text(
-        "# Auto Mission\n\nPrivate body text stays inside the vault.",
+        """
+# Auto Mission
+
+## Primary Jobs
+
+- Surface the next real blocker.
+- Private body text stays inside the vault.
+""",
         encoding="utf-8",
     )
     (root / "auto" / "context" / "current_state.md").write_text(
-        "# Current State\n\nSecret operational details stay inside the vault.",
+        """
+# Current State
+
+## Known Live Gates
+
+- Spark must remain draft-first.
+- Secret operational details stay inside the vault.
+""",
         encoding="utf-8",
     )
     (root / "auto" / "context" / "open_loops.md").write_text(
-        "# Open Loops\n\nNo raw Auto note body should be returned.",
+        """
+# Open Loops
+
+## Spark
+
+- Wire Auto context into the draft prompt.
+- No raw Auto note body should be returned.
+""",
         encoding="utf-8",
     )
     (root / "04_delegation" / "delegation_policy.yml").write_text(
