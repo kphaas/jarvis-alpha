@@ -238,6 +238,27 @@ restart_launchagent() {
 
 emit ok pull node="$NODE_SHORT" from_hash="${PREV_HEAD:-none}" to_hash="$NEW_HEAD" file_count="$FILE_COUNT" dur_ms="$PULL_DUR"
 
+if [ "$NODE_SHORT" = "brain" ]; then
+  echo ""
+  echo "Syncing Spark personality vault..."
+  PERSONA_START=$(time_ms)
+  PERSONA_LOG=$(mktemp)
+  if bash "${REPO_DIR}/scripts/sync_personality_vault.sh" >"$PERSONA_LOG" 2>&1; then
+    PERSONA_HEAD=$(grep -oE 'head=[A-Za-z0-9]+' "$PERSONA_LOG" | tail -1 | cut -d= -f2)
+    cat "$PERSONA_LOG"
+    rm -f "$PERSONA_LOG"
+    emit ok personality_sync node="$NODE_SHORT" service="spark-personality" head="${PERSONA_HEAD:-unknown}" dur_ms=$(($(time_ms) - PERSONA_START))
+  else
+    PERSONA_ERR=$(tail -5 "$PERSONA_LOG" | tr '\n' ' ' | cut -c1-300)
+    cat "$PERSONA_LOG" >&2
+    rm -f "$PERSONA_LOG"
+    emit fail personality_sync node="$NODE_SHORT" service="spark-personality" dur_ms=$(($(time_ms) - PERSONA_START)) error="$PERSONA_ERR"
+    echo "❌ Spark personality vault sync failed — aborting pull deploy."
+    echo "   Check: cd ~/jarvis-personality && git status"
+    exit 1
+  fi
+fi
+
 if [ -n "${PREV_HEAD:-}" ] && [ "$PREV_HEAD" != "$NEW_HEAD" ]; then
   echo ""
   echo "── INCOMING COMMITS ─────────────────────────────────────"
