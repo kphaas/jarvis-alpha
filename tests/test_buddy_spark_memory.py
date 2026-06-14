@@ -10,12 +10,16 @@ def test_spark_memory_summary_body_reports_available_context() -> None:
             "status": "ok",
             "line_count": 12,
             "feedback_count": 3,
-        }
+        },
+        {
+            "proposal_count": 4,
+        },
     )
 
     assert "Spark persona grounding is available for ken." in body
     assert "Runtime context lines: 12." in body
     assert "Draft-edit feedback waiting for review: 3." in body
+    assert "Spark memory proposals waiting for review: 4." in body
 
 
 def test_spark_memory_summary_body_reports_unavailable_context() -> None:

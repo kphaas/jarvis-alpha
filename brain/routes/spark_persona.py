@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from dataclasses import asdict
 
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field
+
+from brain.db.rls import rls_connection
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
 from brain.services.auto_brain import (
     AutoBrainConfigError,
     AutoSparkContextMetadata,
     load_auto_spark_context,
+)
+from brain.services.spark_personality_memory import (
+    PersonalityMemoryKind,
+    PersonalityMemorySource,
+    build_personality_memory_proposals,
+    fetch_personality_memory,
+    save_personality_memory,
 )
 from brain.services.spark_persona_guardrails import (
     SparkGuardrailState,
@@ -20,6 +31,56 @@ from jarvis_common.logging_config import get_logger
 
 router = APIRouter(prefix="/v1/spark/persona", tags=["spark-persona"])
 logger = get_logger("alpha_brain")
+
+
+class SparkPersonalityMemoryItem(BaseModel):
+    id: str
+    principal_id: str
+    kind: str
+    content: str
+    source: str
+    evidence_ref_hash: str | None = None
+    importance_score: float
+    approved_by: str
+    approved_at: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class SparkPersonalityMemoryProposalModel(BaseModel):
+    proposal_id: str
+    principal_id: str
+    kind: PersonalityMemoryKind
+    content: str
+    source: PersonalityMemorySource
+    reason: str
+    confidence: float
+    evidence_ref_hash: str | None = None
+
+
+class SparkPersonalityMemoryReviewResponse(BaseModel):
+    principal_id: str
+    active: list[SparkPersonalityMemoryItem]
+    proposals: list[SparkPersonalityMemoryProposalModel]
+    buddy: dict[str, object]
+
+
+class SparkPersonalityMemoryApproveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    approved: bool = True
+    proposal_id: str = Field(min_length=8, max_length=64)
+    principal_id: str = Field(default="ken", min_length=1, max_length=64)
+    kind: PersonalityMemoryKind
+    content: str = Field(min_length=1, max_length=500)
+    source: PersonalityMemorySource = "spark_approved"
+    evidence_ref_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    importance_score: float = Field(default=0.8, ge=0.0, le=1.0)
+
+
+class SparkPersonalityMemoryApproveResponse(BaseModel):
+    status: str
+    result: dict[str, object]
 
 
 @router.get("/auto-context", response_model=AutoSparkContextMetadata)
@@ -96,3 +157,118 @@ async def put_spark_guardrails(
         },
     )
     return saved
+
+
+@router.get("/memory", response_model=SparkPersonalityMemoryReviewResponse)
+async def get_spark_personality_memory(
+    request: Request,
+    principal_id: str = "ken",
+    _: str = Depends(require_auth),
+) -> SparkPersonalityMemoryReviewResponse:
+    check_scopes(request, "admin")
+    guardrails = load_spark_guardrails()
+    async with rls_connection(request) as conn:
+        rows = await fetch_personality_memory(conn, principal_id)
+    proposals = build_personality_memory_proposals(
+        principal_id=principal_id,
+        guardrails=guardrails,
+        existing_rows=rows,
+    )
+    logger.info(
+        "spark_personality_memory_reviewed",
+        extra={
+            "event": "spark_personality_memory_reviewed",
+            "component": "spark_persona",
+            "principal_id": principal_id,
+            "active_count": len(rows),
+            "proposal_count": len(proposals),
+            "actor_sub": str(getattr(request.state, "user_id", "unknown")),
+            "actor_type": str(getattr(request.state, "actor_type", "unknown")),
+        },
+    )
+    return SparkPersonalityMemoryReviewResponse(
+        principal_id=principal_id,
+        active=[_personality_item(row) for row in rows],
+        proposals=[
+            SparkPersonalityMemoryProposalModel(**asdict(proposal))
+            for proposal in proposals
+        ],
+        buddy={
+            "status": "review_ready",
+            "proposal_count": len(proposals),
+            "feedback_phrase_count": sum(
+                1 for proposal in proposals if proposal.source == "spark_feedback"
+            ),
+        },
+    )
+
+
+@router.post("/memory/approve", response_model=SparkPersonalityMemoryApproveResponse)
+async def approve_spark_personality_memory(
+    request: Request,
+    payload: SparkPersonalityMemoryApproveRequest,
+    _: str = Depends(require_auth),
+) -> SparkPersonalityMemoryApproveResponse:
+    check_scopes(request, "admin")
+    if not payload.approved:
+        raise HTTPException(status_code=400, detail="spark_memory_approval_required")
+
+    approved_by = str(
+        getattr(request.state, "user_sub", None)
+        or getattr(request.state, "user_id", None)
+        or "unknown"
+    )
+    async with rls_connection(request) as conn:
+        result = await save_personality_memory(
+            conn,
+            principal_id=payload.principal_id,
+            kind=payload.kind,
+            content=payload.content,
+            source=payload.source,
+            evidence_ref_hash=payload.evidence_ref_hash,
+            approved_by=approved_by,
+            importance_score=payload.importance_score,
+        )
+    logger.info(
+        "spark_personality_memory_approved",
+        extra={
+            "event": "spark_personality_memory_approved",
+            "component": "spark_persona",
+            "principal_id": payload.principal_id,
+            "kind": payload.kind,
+            "source": payload.source,
+            "saved": result.get("saved"),
+            "proposal_id": payload.proposal_id,
+            "actor_sub": approved_by,
+            "actor_type": str(getattr(request.state, "actor_type", "unknown")),
+        },
+    )
+    return SparkPersonalityMemoryApproveResponse(
+        status="saved" if result.get("saved") else "not_saved",
+        result=result,
+    )
+
+
+def _personality_item(row: dict[str, object]) -> SparkPersonalityMemoryItem:
+    return SparkPersonalityMemoryItem(
+        id=str(row["id"]),
+        principal_id=str(row["principal_id"]),
+        kind=str(row["kind"]),
+        content=str(row["content"]),
+        source=str(row["source"]),
+        evidence_ref_hash=(
+            str(row["evidence_ref_hash"]) if row.get("evidence_ref_hash") else None
+        ),
+        importance_score=float(row["importance_score"]),
+        approved_by=str(row["approved_by"]),
+        approved_at=_iso(row.get("approved_at")),
+        created_at=_iso(row.get("created_at")),
+        updated_at=_iso(row.get("updated_at")),
+    )
+
+
+def _iso(value: object) -> str | None:
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        return str(isoformat())
+    return str(value) if value else None

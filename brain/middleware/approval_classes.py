@@ -228,7 +228,9 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Spark persona — editable guardrails, no corpus content ---
     "GET /v1/spark/persona/auto-context": ["read", "security_read"],
     "GET /v1/spark/persona/guardrails": ["read", "security_read"],
+    "GET /v1/spark/persona/memory": ["read", "security_read"],
     "PUT /v1/spark/persona/guardrails": ["write", "security_write"],
+    "POST /v1/spark/persona/memory/approve": ["write", "security_write"],
     # --- Spark drafts — local draft proposal, no external send ---
     "POST /v1/spark/drafts/imessage": ["write", "security_write"],
     "POST /v1/spark/drafts/imessage/approval-request": [

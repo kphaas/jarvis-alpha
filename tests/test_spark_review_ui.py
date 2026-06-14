@@ -10,6 +10,10 @@ SPARK_GUARDRAIL_HOOK = REPO_ROOT / "ui" / "src" / "hooks" / "useSparkGuardrails.
 SPARK_GUARDRAIL_PANEL = (
     REPO_ROOT / "ui" / "src" / "components" / "spark" / "SparkGuardrailsPanel.tsx"
 )
+SPARK_MEMORY_HOOK = REPO_ROOT / "ui" / "src" / "hooks" / "useSparkPersonalityMemory.ts"
+SPARK_MEMORY_PANEL = (
+    REPO_ROOT / "ui" / "src" / "components" / "spark" / "SparkMemoryReviewPanel.tsx"
+)
 SPARK_TYPES = REPO_ROOT / "ui" / "src" / "types" / "spark.ts"
 APP_PAGE = REPO_ROOT / "ui" / "src" / "App.tsx"
 LAYOUT = REPO_ROOT / "ui" / "src" / "components" / "Layout.tsx"
@@ -34,6 +38,8 @@ def test_spark_review_ui_uses_draft_routes_and_api_wrapper() -> None:
             SPARK_HOOK,
             SPARK_GUARDRAIL_HOOK,
             SPARK_GUARDRAIL_PANEL,
+            SPARK_MEMORY_HOOK,
+            SPARK_MEMORY_PANEL,
             SPARK_TYPES,
         )
     )
@@ -42,6 +48,8 @@ def test_spark_review_ui_uses_draft_routes_and_api_wrapper() -> None:
     assert "/v1/spark/drafts/imessage" in source
     assert "/v1/spark/drafts/imessage/approval-request" in source
     assert "/v1/spark/persona/guardrails" in source
+    assert "/v1/spark/persona/memory" in source
+    assert "/v1/spark/persona/memory/approve" in source
     assert "draft_text_override" in source
     assert "fetch(" not in source
     assert "XMLHttpRequest" not in source
@@ -55,6 +63,8 @@ def test_spark_review_ui_keeps_send_out_of_phase() -> None:
             SPARK_HOOK,
             SPARK_GUARDRAIL_HOOK,
             SPARK_GUARDRAIL_PANEL,
+            SPARK_MEMORY_HOOK,
+            SPARK_MEMORY_PANEL,
             SPARK_TYPES,
         )
     )
@@ -91,6 +101,8 @@ def test_spark_guardrail_ui_is_editable_without_message_content() -> None:
             SPARK_PAGE,
             SPARK_GUARDRAIL_HOOK,
             SPARK_GUARDRAIL_PANEL,
+            SPARK_MEMORY_HOOK,
+            SPARK_MEMORY_PANEL,
             SPARK_TYPES,
         )
     )
@@ -104,3 +116,24 @@ def test_spark_guardrail_ui_is_editable_without_message_content() -> None:
     assert "signature_phrases" in source
     assert "message_body" not in source
     assert "private inbound body" not in source
+
+
+def test_spark_memory_review_ui_exposes_approval_backlog_without_raw_threads() -> None:
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            SPARK_PAGE,
+            SPARK_MEMORY_HOOK,
+            SPARK_MEMORY_PANEL,
+            SPARK_TYPES,
+        )
+    )
+
+    assert "SparkMemoryReviewPanel" in source
+    assert "candidate_key_phrases" not in source
+    assert "key phrases" in source
+    assert "Approve" in source
+    assert "proposals" in source
+    assert "approved_by" in source
+    assert "raw thread" not in source.lower()
+    assert "message_body" not in source

@@ -13,11 +13,16 @@ from brain.agents.chatops_smoke import maybe_run_chatops_smoke
 from brain.agents.network_watchdog import maybe_run_network_watchdog
 from brain.agents.porchlight import maybe_run_porchlight
 from brain.agents.warden import maybe_run_warden_supervisor
+from brain.db.rls import platform_admin_connection
 from brain.services.temporal_storage_monitor import (
     collect_temporal_storage_snapshot,
     temporal_storage_summary_body,
 )
 from brain.services.spark_memory_grounding import collect_spark_memory_grounding_status
+from brain.services.spark_personality_memory import (
+    collect_spark_personality_memory_status,
+    fetch_personality_memory,
+)
 from jarvis_common.logging_config import get_logger, new_trace_id
 
 logger = get_logger("alpha_buddy")
@@ -168,11 +173,20 @@ async def _maybe_write_temporal_storage_summary(pool: asyncpg.Pool) -> None:
         logger.warning("temporal storage weekly summary failed: %s", exc)
 
 
-def spark_memory_summary_body(status: dict[str, object]) -> str:
+def spark_memory_summary_body(
+    status: dict[str, object],
+    personality_status: dict[str, object] | None = None,
+) -> str:
     """Human-safe Buddy summary of the Spark persona grounding lane."""
 
     principal = str(status.get("principal_id") or "unknown")
     state = str(status.get("status") or "unknown")
+    proposal_suffix = ""
+    if personality_status:
+        proposal_suffix = (
+            " Spark memory proposals waiting for review: "
+            f"{int(personality_status.get('proposal_count') or 0)}."
+        )
     if state == "ok":
         feedback_count = int(status.get("feedback_count") or 0)
         line_count = int(status.get("line_count") or 0)
@@ -180,13 +194,14 @@ def spark_memory_summary_body(status: dict[str, object]) -> str:
             f"Spark persona grounding is available for {principal}. "
             f"Runtime context lines: {line_count}. "
             f"Draft-edit feedback waiting for review: {feedback_count}."
+            f"{proposal_suffix}"
         )
     if state == "skipped":
-        return f"Spark persona grounding skipped for {principal}."
+        return f"Spark persona grounding skipped for {principal}.{proposal_suffix}"
     error_class = str(status.get("error_class") or "unknown_error")
     return (
         f"Spark persona grounding is unavailable for {principal}. "
-        f"Error class: {error_class}."
+        f"Error class: {error_class}.{proposal_suffix}"
     )
 
 
@@ -200,13 +215,27 @@ async def _maybe_write_spark_memory_summary(pool: asyncpg.Pool) -> None:
 
     try:
         status = collect_spark_memory_grounding_status(principal_id="ken")
+        existing_rows: list[dict[str, object]] = []
+        try:
+            async with platform_admin_connection(
+                source="buddy",
+                audit_actor="buddy:spark_memory_summary",
+                pool=pool,
+            ) as conn:
+                existing_rows = await fetch_personality_memory(conn, "ken")
+        except Exception as exc:
+            logger.warning("spark personality memory rows unavailable: %s", exc)
+        personality_status = collect_spark_personality_memory_status(
+            principal_id="ken",
+            existing_rows=existing_rows,
+        )
         priority = 1 if status.get("status") in {"ok", "skipped"} else 3
         await _write_event(
             pool,
             user_id="system",
             event_type="alert" if priority == 3 else "system",
             title="Spark memory grounding status",
-            body=spark_memory_summary_body(status),
+            body=spark_memory_summary_body(status, personality_status),
             priority=priority,
             source="spark_memory_grounding",
             payload={
@@ -216,6 +245,11 @@ async def _maybe_write_spark_memory_summary(pool: asyncpg.Pool) -> None:
                 "line_count": status.get("line_count"),
                 "feedback_count": status.get("feedback_count"),
                 "error_class": status.get("error_class"),
+                "personality_active_count": personality_status.get("active_count"),
+                "personality_proposal_count": personality_status.get("proposal_count"),
+                "feedback_phrase_count": personality_status.get(
+                    "feedback_phrase_count"
+                ),
             },
         )
         _last_spark_memory_day_key = day_key

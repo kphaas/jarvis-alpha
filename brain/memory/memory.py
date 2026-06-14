@@ -8,6 +8,10 @@ import re
 
 from jarvis_common.logging_config import get_logger
 from brain.services.spark_memory_grounding import load_spark_memory_grounding
+from brain.services.spark_personality_memory import (
+    fetch_personality_memory,
+    personality_memory_context,
+)
 
 logger = get_logger("alpha_memory")
 
@@ -98,8 +102,8 @@ class MemoryService:
         embedding: list[float],
         principal_id: str | None = None,
     ) -> str:
-        spark_grounding = self._get_spark_grounding(principal_id)
-        semantic = await self._get_semantic(conn, user_id)
+        spark_grounding = await self._get_spark_grounding(conn, principal_id)
+        semantic = await self._get_semantic(conn, user_id, prompt=prompt)
         episodic = await self._get_episodic(conn, user_id, embedding)
         working = await self._get_working(conn, session_id)
 
@@ -122,7 +126,26 @@ class MemoryService:
 
         return "\n\n".join(parts)
 
-    def _get_spark_grounding(self, principal_id: str | None) -> str:
+    async def _get_spark_grounding(
+        self,
+        conn: asyncpg.Connection,
+        principal_id: str | None,
+    ) -> str:
+        try:
+            rows = await fetch_personality_memory(conn, principal_id)
+            context = personality_memory_context(rows)
+            if context:
+                return context
+        except Exception as exc:
+            logger.warning(
+                "spark_personality_memory_unavailable",
+                extra={
+                    "event": "spark_personality_memory_unavailable",
+                    "error_class": exc.__class__.__name__,
+                    "principal_id": principal_id or "",
+                },
+            )
+
         try:
             grounding = load_spark_memory_grounding(principal_id=principal_id)
         except Exception as exc:
@@ -144,14 +167,56 @@ class MemoryService:
     # ------------------------------------------------------------------
 
     async def _get_semantic(
-        self, conn: asyncpg.Connection, user_id: UUID
+        self,
+        conn: asyncpg.Connection,
+        user_id: UUID,
+        *,
+        prompt: str = "",
     ) -> list[dict]:
+        query = (prompt or "").strip()
+        if query:
+            rows = await conn.fetch(
+                """
+                WITH ranked AS (
+                    SELECT
+                        fact,
+                        category,
+                        source,
+                        created_at,
+                        updated_at,
+                        ts_rank_cd(
+                            to_tsvector('simple', fact || ' ' || category),
+                            websearch_to_tsquery('simple', $3)
+                        ) AS text_rank,
+                        CASE category
+                            WHEN 'constraint' THEN 0.25
+                            WHEN 'health' THEN 0.20
+                            WHEN 'child_profile' THEN 0.20
+                            WHEN 'preference' THEN 0.10
+                            ELSE 0.0
+                        END AS category_boost
+                    FROM alpha_semantic_memory
+                    WHERE user_id = $1
+                )
+                SELECT fact, category, source
+                FROM ranked
+                ORDER BY (text_rank + category_boost) DESC,
+                         updated_at DESC,
+                         created_at DESC
+                LIMIT $2
+                """,
+                user_id,
+                SEMANTIC_CAP,
+                query,
+            )
+            return [dict(r) for r in rows]
+
         rows = await conn.fetch(
             """
-            SELECT fact, category
+            SELECT fact, category, source
             FROM alpha_semantic_memory
             WHERE user_id = $1
-            ORDER BY created_at DESC
+            ORDER BY updated_at DESC, created_at DESC
             LIMIT $2
             """,
             user_id,
