@@ -115,6 +115,12 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Memory reads — T1 ---
     "GET /v1/memory": ["read"],
     "GET /v1/memory/search": ["read"],
+    # --- ADR-0026 reviewed memory consolidation writes — T5, never security_write ---
+    "POST /v1/memory/consolidation/proposals": ["memory_consolidation_reviewed_write"],
+    "POST /v1/memory/consolidation/proposals/{proposal_id}/execute": [
+        "memory_consolidation_reviewed_write"
+    ],
+    "POST /v1/memory/consolidation/{unknown_action}": ["unclassified"],
     # --- Rotation — T2 security_read ---
     "GET /v1/rotation": ["read", "security_read"],
     # --- Dev — T5 admin ---
@@ -386,6 +392,7 @@ TIER_RULES: list[tuple[set[str], str]] = [
     # Compound high-risk first
     ({"approval_decide"}, "T2"),
     ({"approval_unlock"}, "T2"),
+    ({"memory_consolidation_reviewed_write"}, "T5"),
     ({"security_write"}, "T2"),
     ({"deploy", "child_facing"}, "T5"),
     ({"unclassified"}, "T5"),
