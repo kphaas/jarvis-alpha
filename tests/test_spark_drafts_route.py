@@ -46,6 +46,26 @@ class _FakeLogger:
         self.errors.append((message, extra))
 
 
+def _stub_personality_memory(
+    monkeypatch: pytest.MonkeyPatch,
+    rows: list[dict[str, object]] | None = None,
+) -> object:
+    fake_conn = object()
+
+    async def fake_fetch(conn: object, principal_id: str):
+        assert conn is fake_conn
+        assert principal_id == "ken"
+        return rows or []
+
+    monkeypatch.setattr(
+        spark_drafts,
+        "rls_connection",
+        lambda request: _AsyncContext(fake_conn),
+    )
+    monkeypatch.setattr(spark_drafts, "fetch_personality_memory", fake_fetch)
+    return fake_conn
+
+
 def test_spark_imessage_draft_route_is_classified_t2_write() -> None:
     classes = classify_route("POST", "/v1/spark/drafts/imessage")
 
@@ -92,7 +112,14 @@ async def test_spark_imessage_draft_returns_review_payload_and_safe_logs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_logger = _FakeLogger()
+    personality_rows = [
+        {
+            "kind": "relationship",
+            "content": "Sweta: partner; default hybrid_review; approval required True.",
+        }
+    ]
     monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+    _stub_personality_memory(monkeypatch, personality_rows)
 
     async def fake_create(**kwargs):
         assert kwargs == {
@@ -100,6 +127,7 @@ async def test_spark_imessage_draft_returns_review_payload_and_safe_logs(
             "approval_id": None,
             "reply_goal": "Tell her I am on it",
             "max_context_messages": 10,
+            "personality_memory_rows": personality_rows,
         }
         return _proposal()
 
@@ -158,6 +186,7 @@ async def test_spark_imessage_draft_failure_log_omits_exception_text(
 ) -> None:
     fake_logger = _FakeLogger()
     monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+    _stub_personality_memory(monkeypatch)
 
     async def fake_create(**kwargs):
         raise SparkDraftContextError(
@@ -204,6 +233,7 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
 ) -> None:
     fake_logger = _FakeLogger()
     monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+    fake_conn = _stub_personality_memory(monkeypatch)
 
     async def fake_create(**kwargs):
         assert kwargs == {
@@ -211,6 +241,7 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
             "approval_id": None,
             "reply_goal": "Tell her I am on it",
             "max_context_messages": 10,
+            "personality_memory_rows": [],
         }
         return _proposal()
 
@@ -235,15 +266,9 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
             candidate_key_phrases=("Edited draft",),
         )
 
-    fake_conn = object()
     monkeypatch.setattr(spark_drafts, "create_imessage_draft_proposal", fake_create)
     monkeypatch.setattr(spark_drafts, "enqueue_spark_draft_approval", fake_enqueue)
     monkeypatch.setattr(spark_drafts, "record_spark_draft_edit_feedback", fake_feedback)
-    monkeypatch.setattr(
-        spark_drafts,
-        "rls_connection",
-        lambda request: _AsyncContext(fake_conn),
-    )
 
     response = await spark_drafts.spark_imessage_draft_approval_request(
         _request(),
