@@ -109,7 +109,7 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
             {
                 "kind": "boundary",
                 "content": "relationship topics require Spark review before action.",
-            }
+            },
         ],
         llm_call=fake_llm_call,
     )
