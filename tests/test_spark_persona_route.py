@@ -14,6 +14,7 @@ from brain.services.auto_brain import (
     AutoSparkRuntimeMode,
 )
 from brain.services.spark_persona_guardrails import default_spark_guardrails
+from brain.services.spark_personality_memory import SparkPersonalityMemoryProposal
 
 
 def _request(*, role: str | None = None, scopes: list[str] | None = None):
@@ -39,14 +40,20 @@ class _FakeLogger:
 def test_spark_persona_routes_are_classified_t2_security_state() -> None:
     read_classes = classify_route("GET", "/v1/spark/persona/guardrails")
     auto_context_classes = classify_route("GET", "/v1/spark/persona/auto-context")
+    memory_read_classes = classify_route("GET", "/v1/spark/persona/memory")
     write_classes = classify_route("PUT", "/v1/spark/persona/guardrails")
+    memory_write_classes = classify_route("POST", "/v1/spark/persona/memory/approve")
 
     assert read_classes == ["read", "security_read"]
     assert auto_context_classes == ["read", "security_read"]
+    assert memory_read_classes == ["read", "security_read"]
     assert write_classes == ["write", "security_write"]
+    assert memory_write_classes == ["write", "security_write"]
     assert determine_risk_tier(read_classes) == "T2"
     assert determine_risk_tier(auto_context_classes) == "T2"
+    assert determine_risk_tier(memory_read_classes) == "T2"
     assert determine_risk_tier(write_classes) == "T2"
+    assert determine_risk_tier(memory_write_classes) == "T2"
 
 
 @pytest.mark.asyncio
@@ -163,3 +170,171 @@ async def test_spark_guardrails_write_logs_only_safe_metadata(
     logs = json.dumps(fake_logger.infos)
     assert "private inbound body" not in logs
     assert "draft_text" not in logs
+
+
+@pytest.mark.asyncio
+async def test_spark_memory_read_requires_admin_scope() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await spark_persona.get_spark_personality_memory(
+            _request(scopes=["spark.draft"]),
+            "ken",
+            "user",
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_spark_memory_read_returns_active_and_proposals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    rows = [
+        {
+            "id": "memory-1",
+            "principal_id": "ken",
+            "kind": "voice",
+            "content": "Voice should feel composed.",
+            "source": "spark_approved",
+            "evidence_ref_hash": None,
+            "importance_score": 0.9,
+            "approved_by": "ken",
+            "approved_at": None,
+            "created_at": None,
+            "updated_at": None,
+        }
+    ]
+    proposal = SparkPersonalityMemoryProposal(
+        proposal_id="proposal-123",
+        principal_id="ken",
+        kind="phrase",
+        content="Signature phrase: fair enough.",
+        source="spark_feedback",
+        reason="human-edited Spark draft feedback",
+        confidence=0.65,
+        evidence_ref_hash="a" * 64,
+    )
+    monkeypatch.setattr(spark_persona, "logger", fake_logger)
+    monkeypatch.setattr(
+        spark_persona,
+        "rls_connection",
+        lambda _request: _AsyncConn(rows=rows),
+    )
+    monkeypatch.setattr(
+        spark_persona,
+        "load_spark_guardrails",
+        default_spark_guardrails,
+    )
+    monkeypatch.setattr(
+        spark_persona,
+        "fetch_personality_memory",
+        _async_return(rows),
+    )
+    monkeypatch.setattr(
+        spark_persona,
+        "build_personality_memory_proposals",
+        lambda **_kwargs: (proposal,),
+    )
+
+    response = await spark_persona.get_spark_personality_memory(
+        _request(role="admin"),
+        "ken",
+        "user",
+    )
+
+    assert response.active[0].content == "Voice should feel composed."
+    assert response.proposals[0].content == "Signature phrase: fair enough."
+    assert response.buddy["feedback_phrase_count"] == 1
+    logs = json.dumps(fake_logger.infos)
+    assert "draft_text" not in logs
+    assert "private inbound body" not in logs
+
+
+@pytest.mark.asyncio
+async def test_spark_memory_approval_requires_admin() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await spark_persona.approve_spark_personality_memory(
+            _request(scopes=["spark.draft"]),
+            spark_persona.SparkPersonalityMemoryApproveRequest(
+                proposal_id="proposal-123",
+                kind="phrase",
+                content="Signature phrase: cheers.",
+                source="spark_feedback",
+            ),
+            "user",
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_spark_memory_approval_calls_reviewed_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    saved_calls: list[dict[str, object]] = []
+
+    async def fake_save(_conn: object, **kwargs: object) -> dict[str, object]:
+        saved_calls.append(kwargs)
+        return {
+            "saved": True,
+            "personality_id": "memory-1",
+            "principal_id": kwargs["principal_id"],
+            "kind": kwargs["kind"],
+            "source": kwargs["source"],
+        }
+
+    monkeypatch.setattr(spark_persona, "logger", fake_logger)
+    monkeypatch.setattr(
+        spark_persona,
+        "rls_connection",
+        lambda _request: _AsyncConn(rows=[]),
+    )
+    monkeypatch.setattr(spark_persona, "save_personality_memory", fake_save)
+
+    response = await spark_persona.approve_spark_personality_memory(
+        _request(role="admin"),
+        spark_persona.SparkPersonalityMemoryApproveRequest(
+            proposal_id="proposal-123",
+            kind="phrase",
+            content="Signature phrase: cheers.",
+            source="spark_feedback",
+            evidence_ref_hash="a" * 64,
+            importance_score=0.7,
+        ),
+        "user",
+    )
+
+    assert response.status == "saved"
+    assert saved_calls == [
+        {
+            "principal_id": "ken",
+            "kind": "phrase",
+            "content": "Signature phrase: cheers.",
+            "source": "spark_feedback",
+            "evidence_ref_hash": "a" * 64,
+            "approved_by": "ken",
+            "importance_score": 0.7,
+        }
+    ]
+    logs = json.dumps(fake_logger.infos)
+    assert "Signature phrase: cheers." not in logs
+    assert "draft_text" not in logs
+
+
+class _AsyncConn:
+    def __init__(self, *, rows: list[dict[str, object]]) -> None:
+        self.rows = rows
+
+    async def __aenter__(self) -> "_AsyncConn":
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+
+def _async_return(value: object):
+    async def inner(*_args: object, **_kwargs: object) -> object:
+        return value
+
+    return inner

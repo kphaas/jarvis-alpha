@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { SparkGuardrailsPanel } from "../components/spark/SparkGuardrailsPanel"
+import { SparkMemoryReviewPanel } from "../components/spark/SparkMemoryReviewPanel"
 import { useSparkDraftReview } from "../hooks/useSparkDraftReview"
 import { useAppStore } from "../store"
 import type { SparkIMessageDraftResponse } from "../types/spark"
@@ -301,6 +302,16 @@ export default function Spark() {
       </div>
 
       <SparkGuardrailsPanel
+        border={border}
+        panel={panel}
+        input={input}
+        muted={muted}
+        okClass={okClass}
+        warnClass={warnClass}
+        errorClass={errorClass}
+      />
+
+      <SparkMemoryReviewPanel
         border={border}
         panel={panel}
         input={input}

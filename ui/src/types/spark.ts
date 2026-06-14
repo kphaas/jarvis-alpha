@@ -75,3 +75,78 @@ export interface SparkGuardrailState {
   calibration: SparkPersonaCalibration
   updated_at: string
 }
+
+export type SparkPersonalityMemoryKind =
+  | 'voice'
+  | 'avoid'
+  | 'phrase'
+  | 'boundary'
+  | 'relationship'
+  | 'value'
+  | 'style'
+  | 'preference'
+
+export type SparkPersonalityMemorySource =
+  | 'spark_approved'
+  | 'spark_feedback'
+  | 'spark_vault'
+  | 'buddy_proposal'
+
+export interface SparkPersonalityMemoryItem {
+  id: string
+  principal_id: string
+  kind: SparkPersonalityMemoryKind
+  content: string
+  source: SparkPersonalityMemorySource
+  evidence_ref_hash?: string | null
+  importance_score: number
+  approved_by: string
+  approved_at?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface SparkPersonalityMemoryProposal {
+  proposal_id: string
+  principal_id: string
+  kind: SparkPersonalityMemoryKind
+  content: string
+  source: SparkPersonalityMemorySource
+  reason: string
+  confidence: number
+  evidence_ref_hash?: string | null
+}
+
+export interface SparkPersonalityMemoryReviewResponse {
+  principal_id: string
+  active: SparkPersonalityMemoryItem[]
+  proposals: SparkPersonalityMemoryProposal[]
+  buddy: {
+    status: string
+    proposal_count: number
+    feedback_phrase_count: number
+  }
+}
+
+export interface SparkPersonalityMemoryApproveRequest {
+  approved: true
+  proposal_id: string
+  principal_id: string
+  kind: SparkPersonalityMemoryKind
+  content: string
+  source: SparkPersonalityMemorySource
+  evidence_ref_hash?: string | null
+  importance_score: number
+}
+
+export interface SparkPersonalityMemoryApproveResponse {
+  status: string
+  result: {
+    saved?: boolean
+    reason?: string
+    personality_id?: string
+    principal_id?: string
+    kind?: SparkPersonalityMemoryKind
+    source?: SparkPersonalityMemorySource
+  }
+}
