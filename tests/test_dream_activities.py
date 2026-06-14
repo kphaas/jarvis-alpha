@@ -233,6 +233,37 @@ async def test_persist_plan_activity_replaces_steps_and_updates_session(monkeypa
     assert any("review_verdict" in query for query in queries)
 
 
+async def test_plan_memory_consolidation_activity_returns_read_only_report(monkeypatch):
+    conn = FakeConn()
+    patch_activity_db(monkeypatch, conn)
+    calls = {}
+
+    async def fake_collect(conn_arg, user_id):
+        calls["conn"] = conn_arg
+        calls["user_id"] = user_id
+        return {
+            "user_id": user_id,
+            "status": "review_ready",
+            "write_actions_enabled": False,
+        }
+
+    monkeypatch.setattr(
+        activities,
+        "collect_memory_consolidation_report",
+        fake_collect,
+    )
+
+    result = await activities.plan_memory_consolidation_activity(
+        "dream:memory:consolidate:ken",
+        "ken",
+    )
+
+    assert calls["conn"] is conn
+    assert calls["user_id"] == "ken"
+    assert result["status"] == "review_ready"
+    assert result["write_actions_enabled"] is False
+
+
 async def test_flush_cleanup_activity_upserts_dream_agent_run(monkeypatch):
     conn = FakeFlushConn()
     patch_activity_db(monkeypatch, conn)

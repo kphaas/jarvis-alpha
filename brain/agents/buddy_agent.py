@@ -18,6 +18,10 @@ from brain.services.temporal_storage_monitor import (
     collect_temporal_storage_snapshot,
     temporal_storage_summary_body,
 )
+from brain.services.memory_consolidation import (
+    collect_memory_consolidation_report,
+    memory_consolidation_summary_body,
+)
 from brain.services.spark_memory_grounding import collect_spark_memory_grounding_status
 from brain.services.spark_personality_memory import (
     collect_spark_personality_memory_status,
@@ -36,6 +40,7 @@ TEMPORAL_STORAGE_SUMMARY_WEEKDAY = int(
 _VALID_BUDDY_EVENT_TYPES = frozenset({"alert", "reminder", "suggestion", "system"})
 _last_temporal_storage_week_key: str | None = None
 _last_spark_memory_day_key: str | None = None
+_last_memory_consolidation_day_key: str | None = None
 
 
 def _normalize_buddy_event_type(event_type: str) -> str:
@@ -257,11 +262,99 @@ async def _maybe_write_spark_memory_summary(pool: asyncpg.Pool) -> None:
         logger.warning("spark memory summary failed: %s", exc)
 
 
+async def _maybe_write_memory_consolidation_summary(pool: asyncpg.Pool) -> None:
+    global _last_memory_consolidation_day_key
+
+    now = datetime.now(timezone.utc)
+    day_key = now.strftime("%Y-%m-%d")
+    if _last_memory_consolidation_day_key == day_key:
+        return
+
+    try:
+        reports: list[dict[str, object]] = []
+        async with platform_admin_connection(
+            source="buddy",
+            audit_actor="buddy:memory_consolidation_summary",
+            pool=pool,
+        ) as conn:
+            users = await conn.fetch(
+                "SELECT unnest(public.list_active_memory_users()) AS user_id"
+            )
+            for row in users:
+                report = await collect_memory_consolidation_report(
+                    conn,
+                    str(row["user_id"]),
+                )
+                reports.append(report)
+
+        if not reports:
+            return
+
+        total_candidates = sum(
+            int(report.get("candidate_count") or 0) for report in reports
+        )
+        total_blocked = sum(
+            int(report.get("blocked_candidate_count") or 0) for report in reports
+        )
+        if len(reports) == 1:
+            body = memory_consolidation_summary_body(reports[0])
+        else:
+            body = (
+                "Dream memory consolidation backlog across "
+                f"{len(reports)} users: {total_candidates} review candidates. "
+                f"Blocked suspicious candidates: {total_blocked}. "
+                "Writes are disabled; every consolidation action requires review."
+            )
+        priority = 2 if total_candidates else 1
+        await _write_event(
+            pool,
+            user_id="system",
+            event_type="system",
+            title="Dream memory consolidation backlog",
+            body=body,
+            priority=priority,
+            source="memory_consolidation",
+            payload={
+                "day_key": day_key,
+                "user_count": len(reports),
+                "candidate_count": total_candidates,
+                "blocked_candidate_count": total_blocked,
+                "write_actions_enabled": False,
+                "users": [
+                    {
+                        "user_id": report.get("user_id"),
+                        "canonical_user_id": report.get("canonical_user_id"),
+                        "status": report.get("status"),
+                        "candidate_count": report.get("candidate_count"),
+                        "blocked_candidate_count": report.get(
+                            "blocked_candidate_count"
+                        ),
+                        "promotion_count": len(
+                            report.get("promotion_candidates") or []
+                        ),
+                        "duplicate_count": len(
+                            report.get("semantic_duplicate_groups") or []
+                        ),
+                        "decay_count": len(report.get("decay_candidates") or []),
+                        "procedural_count": len(
+                            report.get("procedural_candidates") or []
+                        ),
+                    }
+                    for report in reports
+                ],
+            },
+        )
+        _last_memory_consolidation_day_key = day_key
+    except Exception as exc:
+        logger.warning("memory consolidation summary failed: %s", exc)
+
+
 async def _run_cycle(pool: asyncpg.Pool) -> None:
     new_trace_id()
     await _expire_pending_approvals(pool)
     await _maybe_write_temporal_storage_summary(pool)
     await _maybe_write_spark_memory_summary(pool)
+    await _maybe_write_memory_consolidation_summary(pool)
     await _maybe_run_managed_agents(pool)
 
     async with pool.acquire() as conn:
