@@ -198,6 +198,10 @@ def _internet_message_metadata(
             context.source_quality.rejected_citation_count
         ),
         "internet_official_source_count": context.source_quality.official_source_count,
+        "internet_verified_claim_count": context.source_quality.verified_claim_count,
+        "internet_unsupported_claim_count": (
+            context.source_quality.unsupported_claim_count
+        ),
         "internet_prompt_injection_rejection_count": (
             context.source_quality.prompt_injection_rejection_count
         ),
@@ -286,6 +290,8 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
         "internet_accepted_citation_count",
         "internet_rejected_citation_count",
         "internet_official_source_count",
+        "internet_verified_claim_count",
+        "internet_unsupported_claim_count",
         "internet_prompt_injection_rejection_count",
         "internet_official_source_required",
         "raw_web_content_is_untrusted",

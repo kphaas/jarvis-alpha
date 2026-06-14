@@ -9,18 +9,36 @@ from brain.services.internet_scout.gateway_client import InternetScoutGatewayCli
 from brain.services.internet_scout.models import (
     GatewayCrawlResponse,
     GatewayExtractResponse,
+    GatewaySearchResponse,
     InternetScoutRequest,
     InternetTool,
 )
+from brain.services.internet_scout.orchestrator import InternetScoutOrchestrator
 
 
 class FakeGatewayClient(InternetScoutGatewayClient):
     def __init__(self) -> None:
+        self.search_calls: list[dict[str, object]] = []
         self.extract_calls: list[dict[str, object]] = []
         self.crawl_calls: list[dict[str, object]] = []
 
-    async def search(self, *, query: str, count: int = 5):
-        raise AssertionError("search should not be called for extract requests")
+    async def search(self, *, query: str, count: int = 5) -> GatewaySearchResponse:
+        self.search_calls.append({"query": query, "count": count})
+        call_index = len(self.search_calls)
+        return GatewaySearchResponse(
+            provider="fake",
+            query_hash="a" * 64,
+            fetched_at=datetime(2026, 6, 6, 13, 0, tzinfo=UTC),
+            results=[
+                {
+                    "title": f"Result {call_index}",
+                    "url": f"https://public.example.test/result-{call_index}",
+                    "host": "public.example.test",
+                    "description": f"Beacon search result {call_index}.",
+                    "risk_markers": [],
+                }
+            ],
+        )
 
     async def fetch(self, *, url: str, max_bytes: int):
         raise AssertionError("fetch should not be called for extract requests")
@@ -105,6 +123,28 @@ async def test_executor_uses_extract_gateway_path_for_extract_tool():
         }
     ]
     assert packet.claims[0].citation_text == "Beacon extracted body."
+
+
+@pytest.mark.asyncio
+async def test_executor_uses_research_plan_for_deep_search():
+    gateway = FakeGatewayClient()
+    executor = InternetScoutExecutor(gateway_client=gateway)
+    request = InternetScoutRequest(
+        query="Find the official OpenAI API reference URL",
+        tool_hint=InternetTool.SEARCH,
+        max_pages=4,
+        requester="alpha_chat.deep_research",
+    )
+    plan = InternetScoutOrchestrator().plan(request)
+
+    decision, packet = await executor.execute(request, plan=plan)
+
+    assert decision.tool == InternetTool.SEARCH
+    assert len(gateway.search_calls) == len(plan.research.searches)
+    assert all(call["count"] == 3 for call in gateway.search_calls)
+    assert packet.request == request
+    assert len(packet.sources) == len(plan.research.searches)
+    assert packet.claims[0].citation_text == "Beacon search result 1."
 
 
 @pytest.mark.asyncio

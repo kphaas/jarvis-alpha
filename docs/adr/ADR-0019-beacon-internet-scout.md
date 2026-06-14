@@ -54,7 +54,10 @@ The citation-quality hardening release adds a source-ranking gate for Helm Ask
 and agent responses: official documentation/API queries require matching
 official hosts, low-confidence/social results are excluded from prompt context,
 and prompt-injection markers cause citation rejection before local models see
-the evidence block.
+the evidence block. The research-quality release adds a deterministic research
+planner, bounded multi-query Deep Beacon searches, stricter official-host
+matching, and claim-support verification. Unsupported claims are stored as audit
+evidence but excluded from local-model prompt context.
 
 ## Architecture
 
@@ -120,6 +123,17 @@ evidence, but they are excluded from the answer context and counted as rejected
 citations. The chat prompt receives `supported`, `weak`, or `insufficient`
 source-quality status and must not present insufficient evidence as verified.
 
+Deep research requests carry an explicit research plan with intent, search
+budget, authority requirements, freshness requirements, and planned query
+purposes. Normal web search remains a single Gateway search. Deep research can
+issue several bounded Gateway search calls and merge the results into one
+evidence packet.
+
+Citation acceptance also requires deterministic claim support. Beacon compares
+each stored claim with its citation text, rejects unsupported or number-mismatched
+claims before prompt injection, and records verified/unsupported claim counters
+for health and Helm visibility.
+
 ## Four-Lens Review
 
 | Lens | Review |
@@ -136,6 +150,7 @@ source-quality status and must not present insufficient evidence as verified.
 | SSRF to internal hosts | Block localhost, non-global IPs, Tailscale hosts, local/internal suffixes, credentials, odd schemes, and redirect chains. |
 | Prompt injection | Sanitize and label raw content as untrusted data; never execute web-provided instructions. |
 | Citation spoofing | Official docs/API-style queries require inferred official hosts; weak/social/non-matching sources are stored for audit but excluded from prompt context. |
+| Unsupported snippets | Claim-support verification excludes citations whose text does not substantiate the stored claim. |
 | Browser overreach | Browser-use execution requires exact approval-row verification, T4-only sandbox policy, same-host observation checks, and screenshots; default adapter fails closed. |
 | Memory poisoning | No automatic memory/RAG ingest; promotion requires stored evidence, clean fact text, source hash, claim binding, and explicit review. |
 | Supply-chain risk | Bounded crawl uses the existing guarded fetch path; browser runtime is opt-in and version-checked before use. |

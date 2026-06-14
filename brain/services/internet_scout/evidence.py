@@ -81,6 +81,31 @@ def packet_from_search_response(
     return build_evidence_packet(request=request, sources=sources, claims=claims)
 
 
+def packet_from_search_responses(
+    *,
+    request: InternetScoutRequest,
+    responses: list[GatewaySearchResponse],
+) -> InternetEvidencePacket:
+    sources: list[SourceReference] = []
+    claims: list[EvidenceClaim] = []
+    seen_urls: set[str] = set()
+    seen_claims: set[tuple[str, str]] = set()
+    for response in responses:
+        packet = packet_from_search_response(request=request, response=response)
+        for source in packet.sources:
+            if source.url in seen_urls:
+                continue
+            seen_urls.add(source.url)
+            sources.append(source)
+        for claim in packet.claims:
+            key = (claim.source_url, claim.citation_text)
+            if claim.source_url not in seen_urls or key in seen_claims:
+                continue
+            seen_claims.add(key)
+            claims.append(claim)
+    return build_evidence_packet(request=request, sources=sources, claims=claims)
+
+
 def packet_from_fetch_response(
     *,
     request: InternetScoutRequest,

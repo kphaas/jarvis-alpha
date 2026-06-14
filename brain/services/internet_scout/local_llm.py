@@ -33,6 +33,7 @@ def _answer_context(citations: list[InternetScoutLocalLLMCitation]) -> str:
         parts.append(
             "\n".join(
                 [
+                    f"Claim: {citation.claim}" if citation.claim else "Claim: n/a",
                     f"[{index}] {citation.citation_text}",
                     f"Source: {citation.source_url}",
                     f"Host: {citation.host}",
