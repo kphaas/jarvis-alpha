@@ -297,6 +297,20 @@ class InternetScoutLocalLLMCitation(BaseModel):
     confidence: Literal["low", "medium", "high"] = "medium"
     source_quality: SourceQualityLevel = "general"
     quality_reasons: list[str] = Field(default_factory=list, max_length=10)
+    source_rank: int | None = Field(default=None, ge=1, le=25)
+    source_score: int = Field(default=0, ge=0, le=100)
+
+
+class InternetScoutSourceRanking(BaseModel):
+    """Redacted source ranking for UI/report surfaces."""
+
+    rank: int = Field(ge=1, le=25)
+    source_url: str
+    host: str
+    source_quality: SourceQualityLevel
+    confidence: Literal["low", "medium", "high"] = "medium"
+    score: int = Field(ge=0, le=100)
+    reasons: list[str] = Field(default_factory=list, max_length=10)
 
 
 class InternetScoutCitationQualitySummary(BaseModel):
@@ -359,6 +373,10 @@ class InternetScoutResearchReport(BaseModel):
     limitations: list[str] = Field(default_factory=list, max_length=10)
     cited_source_count: int = Field(default=0, ge=0, le=25)
     source_hosts: list[str] = Field(default_factory=list, max_length=25)
+    source_rankings: list[InternetScoutSourceRanking] = Field(
+        default_factory=list,
+        max_length=25,
+    )
     report_markdown: str = Field(default="", max_length=16000)
 
 

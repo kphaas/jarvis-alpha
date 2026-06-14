@@ -332,4 +332,7 @@ def _research_report_metadata(
         "research_report_answerability": report.answerability,
         "research_report_cited_source_count": report.cited_source_count,
         "research_report_source_hosts": report.source_hosts,
+        "research_report_source_rankings": [
+            ranking.model_dump(mode="json") for ranking in report.source_rankings[:10]
+        ],
     }

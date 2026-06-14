@@ -10,12 +10,28 @@ from brain.services.internet_scout.models import (
     InternetScoutLocalLLMResponse,
     InternetScoutMemoryBoundary,
     InternetScoutResearchReport,
+    InternetScoutSourceRanking,
     InternetScoutSynthesisContract,
     InternetScoutStoredResponse,
+    SourceQualityLevel,
 )
 from brain.services.internet_scout.source_quality import evaluate_citation_quality
 
 ReportAnswerability = Literal["answerable", "limited", "not_verified"]
+
+_SOURCE_QUALITY_SCORE: dict[SourceQualityLevel, int] = {
+    "official": 95,
+    "primary": 85,
+    "trusted_secondary": 72,
+    "general": 55,
+    "low_confidence": 25,
+    "rejected": 0,
+}
+_CONFIDENCE_SCORE_ADJUSTMENT = {
+    "high": 5,
+    "medium": 0,
+    "low": -8,
+}
 
 
 def build_local_llm_response(
@@ -23,7 +39,7 @@ def build_local_llm_response(
 ) -> InternetScoutLocalLLMResponse:
     """Format Beacon evidence for a local model without granting page authority."""
     evaluation = evaluate_citation_quality(stored.evidence)
-    citations = evaluation.citations
+    citations = _rank_citations(evaluation.citations)
     synthesis = _synthesis_contract(
         citations=citations,
         quality=evaluation.summary,
@@ -101,6 +117,7 @@ def _research_report(
     query = (stored.evidence.request.query or "Beacon research").strip()
     answerability = _report_answerability(synthesis)
     source_hosts = list(dict.fromkeys(citation.host for citation in citations))
+    source_rankings = _source_rankings(citations)
     findings = _report_findings(citations)
     limitations = [
         *synthesis.limitations[:5],
@@ -117,6 +134,7 @@ def _research_report(
         findings=findings,
         limitations=limitations,
         source_hosts=source_hosts,
+        source_rankings=source_rankings,
         memory_boundary=memory_boundary,
     )
     return InternetScoutResearchReport(
@@ -127,6 +145,7 @@ def _research_report(
         limitations=limitations,
         cited_source_count=len(citations),
         source_hosts=source_hosts,
+        source_rankings=source_rankings,
         report_markdown=report_markdown,
     )
 
@@ -177,6 +196,7 @@ def _report_markdown(
     findings: list[str],
     limitations: list[str],
     source_hosts: list[str],
+    source_rankings: list[InternetScoutSourceRanking],
     memory_boundary: InternetScoutMemoryBoundary,
 ) -> str:
     lines = [
@@ -194,6 +214,16 @@ def _report_markdown(
     lines.extend(f"- {item}" for item in limitations[:10])
     if not limitations:
         lines.append("- No additional limitations beyond the cited evidence boundary.")
+    lines.extend(["", "## Source Ranking"])
+    lines.extend(
+        (
+            f"- [{source.rank}] {source.host} "
+            f"({source.source_quality}, {source.confidence}, score {source.score})"
+        )
+        for source in source_rankings[:10]
+    )
+    if not source_rankings:
+        lines.append("- No ranked accepted sources.")
     lines.extend(["", "## Sources"])
     lines.extend(f"- {host}" for host in source_hosts[:25])
     if not source_hosts:
@@ -210,6 +240,58 @@ def _report_markdown(
     return "\n".join(lines)[:16000]
 
 
+def _rank_citations(
+    citations: list[InternetScoutLocalLLMCitation],
+) -> list[InternetScoutLocalLLMCitation]:
+    ranked: list[InternetScoutLocalLLMCitation] = []
+    for rank, citation in enumerate(citations[:25], start=1):
+        ranked.append(
+            citation.model_copy(
+                update={
+                    "source_rank": rank,
+                    "source_score": _source_score(citation),
+                }
+            )
+        )
+    return ranked
+
+
+def _source_rankings(
+    citations: list[InternetScoutLocalLLMCitation],
+) -> list[InternetScoutSourceRanking]:
+    rankings: list[InternetScoutSourceRanking] = []
+    for citation in citations[:25]:
+        if citation.source_rank is None:
+            continue
+        rankings.append(
+            InternetScoutSourceRanking(
+                rank=citation.source_rank,
+                source_url=citation.source_url,
+                host=citation.host,
+                source_quality=citation.source_quality,
+                confidence=citation.confidence,
+                score=citation.source_score,
+                reasons=_source_ranking_reasons(citation),
+            )
+        )
+    return rankings
+
+
+def _source_score(citation: InternetScoutLocalLLMCitation) -> int:
+    score = _SOURCE_QUALITY_SCORE[citation.source_quality]
+    score += _CONFIDENCE_SCORE_ADJUSTMENT[citation.confidence]
+    return max(0, min(100, score))
+
+
+def _source_ranking_reasons(citation: InternetScoutLocalLLMCitation) -> list[str]:
+    reasons = [
+        f"source_quality:{citation.source_quality}",
+        f"confidence:{citation.confidence}",
+    ]
+    reasons.extend(citation.quality_reasons[:8])
+    return reasons[:10]
+
+
 def _answer_context(citations: list[InternetScoutLocalLLMCitation]) -> str:
     parts: list[str] = []
     for index, citation in enumerate(citations, start=1):
@@ -223,6 +305,8 @@ def _answer_context(citations: list[InternetScoutLocalLLMCitation]) -> str:
                     f"Content hash: {citation.content_hash}",
                     f"Confidence: {citation.confidence}",
                     f"Source quality: {citation.source_quality}",
+                    f"Source rank: {citation.source_rank or index}",
+                    f"Source score: {citation.source_score}",
                 ]
             )
         )
