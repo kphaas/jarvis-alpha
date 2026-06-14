@@ -143,7 +143,7 @@ async def execute_memory_consolidation_proposal(
     x_approval_token: str = Header(alias="X-Approval-Token"),
     _user_id: str = Depends(require_auth),
 ) -> MemoryConsolidationExecutionResponse:
-    """Execute an approved archive proposal.
+    """Execute an approved archive or semantic-promotion proposal.
 
     ADR-0026 requires the executor to validate proposal-bound approval
     provenance. The header must contain the proposal-specific Approval Gateway
@@ -160,7 +160,7 @@ async def execute_memory_consolidation_proposal(
     async with rls_connection(request) as conn:
         result = await conn.fetchval(
             """
-            SELECT public.execute_memory_consolidation_archive(
+            SELECT public.execute_memory_consolidation_proposal(
                 $1::uuid,
                 $2::uuid,
                 $3
