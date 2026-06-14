@@ -9,10 +9,12 @@ from brain.services.internet_scout.evidence import (
     packet_from_extract_response,
     packet_from_fetch_response,
     packet_from_search_response,
+    packet_from_search_responses,
 )
 from brain.services.internet_scout.gateway_client import InternetScoutGatewayClient
 from brain.services.internet_scout.models import (
     InternetEvidencePacket,
+    InternetScoutPlan,
     InternetScoutRequest,
     InternetTool,
     PolicyDecision,
@@ -23,6 +25,7 @@ from brain.services.internet_scout.policy import (
     evaluate_policy,
 )
 from brain.services.internet_scout.safety import DEFAULT_MAX_CONTENT_BYTES
+from brain.services.internet_scout.research_planner import plan_research
 
 
 class InternetScoutExecutor:
@@ -36,6 +39,8 @@ class InternetScoutExecutor:
     async def execute(
         self,
         request: InternetScoutRequest,
+        *,
+        plan: InternetScoutPlan | None = None,
     ) -> tuple[PolicyDecision, InternetEvidencePacket]:
         decision = evaluate_policy(request)
         if not decision.allowed:
@@ -50,10 +55,30 @@ class InternetScoutExecutor:
         if decision.tool == InternetTool.SEARCH:
             if request.query is None:
                 raise HTTPException(status_code=400, detail="query is required")
-            search_response = await self.gateway_client.search(query=request.query)
-            return decision, packet_from_search_response(
+            research = (
+                plan.research
+                if plan is not None
+                else plan_research(request, selected_tool=decision.tool)
+            )
+            searches = research.searches or []
+            if len(searches) <= 1:
+                search_response = await self.gateway_client.search(query=request.query)
+                return decision, packet_from_search_response(
+                    request=request,
+                    response=search_response,
+                )
+            responses = []
+            per_query_count = 3 if len(searches) > 1 else 5
+            for search in searches[: research.max_searches]:
+                responses.append(
+                    await self.gateway_client.search(
+                        query=search.query,
+                        count=per_query_count,
+                    )
+                )
+            return decision, packet_from_search_responses(
                 request=request,
-                response=search_response,
+                responses=responses,
             )
 
         if decision.tool == InternetTool.FETCH:

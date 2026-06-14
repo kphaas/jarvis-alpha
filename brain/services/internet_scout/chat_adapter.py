@@ -58,7 +58,7 @@ async def build_chat_internet_context(
     scout_request = InternetScoutRequest(
         query=normalized_query,
         tool_hint=InternetTool.SEARCH,
-        max_pages=1,
+        max_pages=4 if mode == "deep_research" else 1,
         max_depth=0,
         needs_interaction=False,
         sensitivity=sensitivity,
@@ -123,7 +123,7 @@ async def _execute_and_store_chat_research(
                 status="started",
             )
 
-        _decision, packet = await InternetScoutExecutor().execute(body)
+        _decision, packet = await InternetScoutExecutor().execute(body, plan=plan)
 
         async with rls_connection(request) as conn:
             repo = InternetScoutRepository(conn)
@@ -241,6 +241,8 @@ def _quality_metadata(
         "accepted_citation_count": quality.accepted_citation_count,
         "rejected_citation_count": quality.rejected_citation_count,
         "official_source_count": quality.official_source_count,
+        "verified_claim_count": quality.verified_claim_count,
+        "unsupported_claim_count": quality.unsupported_claim_count,
         "prompt_injection_rejection_count": quality.prompt_injection_rejection_count,
         "official_source_required": quality.official_source_required,
         "required_source_hosts": quality.required_source_hosts,
