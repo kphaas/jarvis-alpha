@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Iterable, Protocol
+from typing import Iterable, Optional, Protocol
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -75,7 +75,7 @@ class HealthResponse(BaseModel):
     stt_available: bool
     model_path: str
     ffmpeg_available: bool
-    reason: str | None = None
+    reason: Optional[str] = None
 
 
 class TranscribeResponse(BaseModel):
@@ -85,7 +85,7 @@ class TranscribeResponse(BaseModel):
     latency_ms: int
 
 
-_model: WhisperModel | None = None
+_model: Optional[WhisperModel] = None
 _model_lock = asyncio.Lock()
 
 
@@ -99,7 +99,7 @@ def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
         return default
 
 
-def _backend_token() -> str | None:
+def _backend_token() -> Optional[str]:
     token = os.getenv("JARVIS_AT0_VOICE_BACKEND_TOKEN", "").strip()
     return token or None
 
@@ -130,7 +130,7 @@ def _audio_content_type(file: UploadFile) -> str:
     return (file.content_type or "application/octet-stream").split(";", 1)[0].strip()
 
 
-def _verify_authorization(authorization: str | None) -> None:
+def _verify_authorization(authorization: Optional[str]) -> None:
     expected = _backend_token()
     if not expected:
         logger.warning("at0_voice_rejected auth_unconfigured")
@@ -147,7 +147,7 @@ def _verify_authorization(authorization: str | None) -> None:
         raise HTTPException(status_code=403, detail="voice_backend_auth_invalid")
 
 
-def _runtime_status() -> tuple[bool, str | None]:
+def _runtime_status() -> tuple[bool, Optional[str]]:
     model_path = _model_path()
     if not model_path.exists():
         return False, "model_path_missing"
@@ -310,7 +310,7 @@ async def health() -> HealthResponse:
 @app.post("/transcribe")
 async def transcribe(
     audio: UploadFile = File(...),
-    authorization: str | None = Header(default=None),
+    authorization: Optional[str] = Header(default=None),
 ) -> TranscribeResponse:
     _verify_authorization(authorization)
     try:
