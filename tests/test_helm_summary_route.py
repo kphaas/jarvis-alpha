@@ -140,6 +140,23 @@ def _fake_beacon_summary() -> helm.HelmBeaconSummary:
             succeeded=4,
             failed=0,
             blocked=0,
+            source_quality=helm.HelmBeaconSourceQualitySummary(
+                supported=3,
+                weak=1,
+                insufficient=0,
+                rejected_citation_count=2,
+                official_source_count=3,
+                prompt_injection_rejection_count=1,
+            ),
+            web_suggestion=helm.HelmBeaconWebSuggestionSummary(
+                suggested=5,
+                accepted=2,
+                acceptance_rate_percent=40,
+                high_confidence=3,
+                medium_confidence=2,
+                accepted_matching_mode=2,
+                accepted_after_confirmation=2,
+            ),
             last_request=helm.HelmBeaconLastRequest(
                 id="request-1",
                 requester="helm_ask",
@@ -216,6 +233,23 @@ async def test_helm_summary_returns_redacted_counts(monkeypatch) -> None:
         "configured_provider_count": 2,
         "usable_provider_count": 1,
     }
+    assert payload["beacon"]["evidence"]["source_quality"] == {
+        "supported": 3,
+        "weak": 1,
+        "insufficient": 0,
+        "rejected_citation_count": 2,
+        "official_source_count": 3,
+        "prompt_injection_rejection_count": 1,
+    }
+    assert payload["beacon"]["evidence"]["web_suggestion"] == {
+        "suggested": 5,
+        "accepted": 2,
+        "acceptance_rate_percent": 40,
+        "high_confidence": 3,
+        "medium_confidence": 2,
+        "accepted_matching_mode": 2,
+        "accepted_after_confirmation": 2,
+    }
     assert payload["beacon"]["raw_web_content_is_untrusted"] is True
     assert "description" not in str(payload)
     assert "actor_sub" not in str(payload)
@@ -278,6 +312,23 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
                         "succeeded": 4,
                         "failed": 1,
                         "blocked": 0,
+                        "source_quality": {
+                            "supported": 4,
+                            "weak": 1,
+                            "insufficient": 1,
+                            "rejected_citation_count": 3,
+                            "official_source_count": 2,
+                            "prompt_injection_rejection_count": 1,
+                        },
+                        "web_suggestion": {
+                            "suggested": 6,
+                            "accepted": 3,
+                            "acceptance_rate_percent": 50,
+                            "high_confidence": 4,
+                            "medium_confidence": 2,
+                            "accepted_matching_mode": 3,
+                            "accepted_after_confirmation": 3,
+                        },
                         "last_request": {
                             "id": "request-1",
                             "requester": "helm_ask",
@@ -311,6 +362,23 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
     }
     assert payload["browser"]["screenshot_store_ready"] is True
     assert payload["evidence"]["last_request"]["id"] == "request-1"
+    assert payload["evidence"]["source_quality"] == {
+        "supported": 4,
+        "weak": 1,
+        "insufficient": 1,
+        "rejected_citation_count": 3,
+        "official_source_count": 2,
+        "prompt_injection_rejection_count": 1,
+    }
+    assert payload["evidence"]["web_suggestion"] == {
+        "suggested": 6,
+        "accepted": 3,
+        "acceptance_rate_percent": 50,
+        "high_confidence": 4,
+        "medium_confidence": 2,
+        "accepted_matching_mode": 3,
+        "accepted_after_confirmation": 3,
+    }
     assert payload["approvals"] == {
         "pending_browser_approvals": 2,
         "next_expires_at": expires_at.isoformat(),

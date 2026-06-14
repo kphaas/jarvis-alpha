@@ -19,6 +19,7 @@ from brain.services.internet_scout.chat_adapter import build_chat_internet_conte
 from brain.services.internet_scout.models import (
     EvidenceClaim,
     InternetEvidencePacket,
+    InternetScoutPlan,
     InternetScoutRequest,
     InternetTool,
     PolicyDecision,
@@ -96,7 +97,11 @@ class FakeExecutor:
     async def execute(
         self,
         request: InternetScoutRequest,
+        *,
+        plan: InternetScoutPlan | None = None,
     ) -> tuple[PolicyDecision, InternetEvidencePacket]:
+        assert plan is not None
+        assert plan.research.intent == "current_fact"
         source = SourceReference(
             url="https://example.com/beacon",
             host="example.com",

@@ -79,3 +79,24 @@ def test_orchestrator_enables_policy_allowed_gateway_execution():
     assert plan.gateway_required is True
     assert plan.decision.allowed is True
     assert "Gateway-owned endpoints" in " ".join(plan.notes)
+
+
+def test_orchestrator_plans_deep_official_research_queries():
+    plan = InternetScoutOrchestrator().plan(
+        InternetScoutRequest(
+            query="Find the official OpenAI API reference URL",
+            tool_hint=InternetTool.SEARCH,
+            max_pages=4,
+            requester="alpha_chat.deep_research",
+        )
+    )
+
+    assert plan.research.intent == "official_docs"
+    assert plan.research.authority_required is True
+    assert plan.research.primary_source_required is True
+    assert plan.research.max_searches == 4
+    assert len(plan.research.searches) >= 3
+    assert plan.research.searches[0].purpose == "baseline"
+    assert any(
+        "site:platform.openai.com" in item.query for item in plan.research.searches
+    )

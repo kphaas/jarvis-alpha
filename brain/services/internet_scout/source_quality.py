@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import re
 from urllib.parse import urlparse
 
+from brain.services.internet_scout.claim_verifier import verify_claim_support
 from brain.services.internet_scout.models import (
     EvidenceClaim,
     InternetEvidencePacket,
@@ -43,6 +44,9 @@ _OFFICIAL_HOSTS_BY_TERM: dict[str, tuple[str, ...]] = {
     "cloudflare": ("cloudflare.com", "developers.cloudflare.com"),
 }
 _LOW_CONFIDENCE_HOSTS = (
+    "community.openai.com",
+    "community.anthropic.com",
+    "stackoverflow.com",
     "youtube.com",
     "youtu.be",
     "tiktok.com",
@@ -81,6 +85,7 @@ class EvaluatedCitation:
     citation: InternetScoutLocalLLMCitation
     accepted: bool
     prompt_injection_rejected: bool = False
+    unsupported_claim: bool = False
 
 
 @dataclass(frozen=True)
@@ -115,12 +120,25 @@ def evaluate_citation_quality(
             content_hash=source.content_hash,
             policy=policy,
         )
-        is_accepted_citation, injection_rejected = _is_accepted(citation, policy)
+        claim_support = verify_claim_support(
+            claim=claim.claim,
+            citation_text=citation.citation_text,
+        )
+        if not claim_support.supported:
+            citation.quality_reasons.extend(
+                f"claim_support:{reason}" for reason in claim_support.reasons
+            )
+        is_accepted_citation, injection_rejected = _is_accepted(
+            citation,
+            policy,
+            claim_supported=claim_support.supported,
+        )
         evaluated.append(
             EvaluatedCitation(
                 citation=citation,
                 accepted=is_accepted_citation,
                 prompt_injection_rejected=injection_rejected,
+                unsupported_claim=not claim_support.supported,
             )
         )
 
@@ -157,6 +175,7 @@ def _citation_for_claim(
             *[f"prompt_injection:{marker}" for marker in sanitized.risk_markers],
         ]
     return InternetScoutLocalLLMCitation(
+        claim=claim.claim,
         source_url=claim.source_url,
         host=host,
         content_hash=content_hash,
@@ -195,7 +214,7 @@ def _classify_source(
     path = parsed.path.lower()
     normalized_host = host.lower().strip(".")
 
-    if _host_matches_any(normalized_host, policy.required_source_hosts):
+    if _host_matches_official(normalized_host, policy.required_source_hosts):
         return "official", ["matches_required_official_host"]
 
     if _is_low_confidence_host(normalized_host):
@@ -224,12 +243,16 @@ def _classify_source(
 def _is_accepted(
     citation: InternetScoutLocalLLMCitation,
     policy: _Policy,
+    *,
+    claim_supported: bool,
 ) -> tuple[bool, bool]:
     injection_rejected = any(
         reason.startswith("prompt_injection:") for reason in citation.quality_reasons
     )
     if injection_rejected:
         return False, True
+    if not claim_supported:
+        return False, False
     if (
         policy.official_source_required
         and policy.required_source_hosts
@@ -250,6 +273,7 @@ def _summary(
     quality_counts = Counter(item.citation.source_quality for item in evaluated)
     rejected_count = len(evaluated) - accepted_count
     injection_rejected = sum(1 for item in evaluated if item.prompt_injection_rejected)
+    unsupported_count = sum(1 for item in evaluated if item.unsupported_claim)
     warnings: list[str] = []
 
     if (
@@ -268,6 +292,11 @@ def _summary(
         warnings.append(
             f"{injection_rejected} citation(s) contained prompt-injection markers."
         )
+    if unsupported_count:
+        warnings.append(
+            f"{unsupported_count} citation(s) were excluded because the claim was not "
+            "supported by the citation text."
+        )
 
     status: SourceQualityStatus = "supported"
     if accepted_count == 0:
@@ -284,6 +313,8 @@ def _summary(
         accepted_citation_count=accepted_count,
         rejected_citation_count=rejected_count,
         official_source_count=quality_counts["official"],
+        verified_claim_count=accepted_count,
+        unsupported_claim_count=unsupported_count,
         prompt_injection_rejection_count=injection_rejected,
         official_source_required=policy.official_source_required,
         required_source_hosts=list(policy.required_source_hosts),
@@ -291,10 +322,17 @@ def _summary(
     )
 
 
-def _host_matches_any(host: str, required_hosts: tuple[str, ...]) -> bool:
-    return any(
-        host == required or host.endswith(f".{required}") for required in required_hosts
-    )
+def _host_matches_official(host: str, required_hosts: tuple[str, ...]) -> bool:
+    for required in required_hosts:
+        if host == required:
+            return True
+        # Bare company domains should not let arbitrary community/forum subdomains
+        # satisfy official-source requirements.
+        if required.count(".") == 1 and host == f"www.{required}":
+            return True
+        if required.count(".") > 1 and host.endswith(f".{required}"):
+            return True
+    return False
 
 
 def _is_low_confidence_host(host: str) -> bool:

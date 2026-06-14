@@ -151,6 +151,72 @@ def test_local_llm_prefers_official_source_for_official_docs_query():
     assert response.quality.status == "supported"
     assert response.quality.official_source_count == 1
     assert response.quality.rejected_citation_count == 1
+    assert response.quality.verified_claim_count == 1
+
+
+def test_local_llm_rejects_community_subdomain_for_official_docs_query():
+    request = InternetScoutRequest(
+        query="official OpenAI API reference URL",
+    )
+    community_source = build_source_reference(
+        url="https://community.openai.com/t/api-reference-question/123",
+        content="A community answer about API docs.",
+    )
+    packet = build_evidence_packet(
+        request=request,
+        sources=[community_source],
+        claims=[
+            EvidenceClaim(
+                claim="A community answer about API docs.",
+                source_url=community_source.url,
+                citation_text="A community answer about API docs.",
+            )
+        ],
+    )
+    stored = InternetScoutStoredResponse(
+        request_id=uuid4(),
+        plan=InternetScoutOrchestrator().plan(request),
+        evidence=packet,
+    )
+
+    response = build_local_llm_response(stored)
+
+    assert response.citations == []
+    assert response.quality.status == "insufficient"
+    assert response.quality.official_source_count == 0
+    assert response.quality.rejected_citation_count == 1
+
+
+def test_local_llm_rejects_claim_not_supported_by_citation_text():
+    request = InternetScoutRequest(query="official OpenAI API reference URL")
+    openai_source = build_source_reference(
+        url="https://platform.openai.com/docs/api-reference",
+        content="The API reference documents Responses, Chat, and model endpoints.",
+    )
+    packet = build_evidence_packet(
+        request=request,
+        sources=[openai_source],
+        claims=[
+            EvidenceClaim(
+                claim="The official OpenAI API reference says the monthly price is $20.",
+                source_url=openai_source.url,
+                citation_text="The API reference documents Responses, Chat, and model endpoints.",
+            )
+        ],
+    )
+    stored = InternetScoutStoredResponse(
+        request_id=uuid4(),
+        plan=InternetScoutOrchestrator().plan(request),
+        evidence=packet,
+    )
+
+    response = build_local_llm_response(stored)
+
+    assert response.citations == []
+    assert response.quality.status == "insufficient"
+    assert response.quality.official_source_count == 1
+    assert response.quality.unsupported_claim_count == 1
+    assert response.quality.verified_claim_count == 0
 
 
 def test_local_llm_rejects_prompt_injection_citations():

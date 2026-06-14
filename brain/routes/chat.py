@@ -30,8 +30,11 @@ from brain.services.internet_scout.chat_adapter import (
     build_chat_internet_context,
 )
 from brain.services.internet_scout.models import Sensitivity
+from brain.services.internet_scout.repository import InternetScoutRepository
 from brain.services.internet_scout.web_suggestion import (
     WebSuggestion,
+    WebSuggestionConfidence,
+    WebSuggestionMode,
     suggest_web_for_chat,
 )
 from jarvis_common.logging_config import get_logger
@@ -61,6 +64,14 @@ BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
 # ── Pydantic models ────────────────────────────────────────────────────────────
 
 
+class WebSuggestionAcceptance(BaseModel):
+    suggested_mode: WebSuggestionMode
+    reason: str | None = Field(default=None, max_length=120)
+    confidence: WebSuggestionConfidence | None = None
+    source: str = Field(default="alpha_smart_web_suggestion", max_length=120)
+    requires_confirmation: bool = True
+
+
 class CompletionRequest(BaseModel):
     messages: list[dict]
     model: str = Field(
@@ -75,6 +86,10 @@ class CompletionRequest(BaseModel):
     show_council: bool = False
     internet_mode: InternetMode = Field(
         default="none", description="none|web_search|deep_research"
+    )
+    web_suggestion_acceptance: WebSuggestionAcceptance | None = Field(
+        default=None,
+        description="Client confirmation that a prior Smart Web Suggestion was accepted.",
     )
 
 
@@ -183,6 +198,10 @@ def _internet_message_metadata(
             context.source_quality.rejected_citation_count
         ),
         "internet_official_source_count": context.source_quality.official_source_count,
+        "internet_verified_claim_count": context.source_quality.verified_claim_count,
+        "internet_unsupported_claim_count": (
+            context.source_quality.unsupported_claim_count
+        ),
         "internet_prompt_injection_rejection_count": (
             context.source_quality.prompt_injection_rejection_count
         ),
@@ -209,6 +228,24 @@ def _web_suggestion_sse_metadata(
     payload["thread_id"] = thread_id
     payload["done"] = False
     return payload
+
+
+def _web_suggestion_acceptance_metadata(
+    *,
+    acceptance: WebSuggestionAcceptance,
+    requested_mode: InternetMode,
+    thread_id: str,
+) -> dict[str, object]:
+    return {
+        "accepted": True,
+        "source": acceptance.source,
+        "suggested_mode": acceptance.suggested_mode,
+        "requested_mode": requested_mode,
+        "reason": acceptance.reason,
+        "confidence": acceptance.confidence,
+        "requires_confirmation": acceptance.requires_confirmation,
+        "thread_id": thread_id,
+    }
 
 
 def _redacted_internet_citations(
@@ -253,6 +290,8 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
         "internet_accepted_citation_count",
         "internet_rejected_citation_count",
         "internet_official_source_count",
+        "internet_verified_claim_count",
+        "internet_unsupported_claim_count",
         "internet_prompt_injection_rejection_count",
         "internet_official_source_required",
         "raw_web_content_is_untrusted",
@@ -362,6 +401,51 @@ async def _save_message(
             model_used,
             UUID(thread_id),
         )
+
+
+async def _record_web_suggestion_acceptance(
+    *,
+    request: Request,
+    context: InternetChatContext,
+    acceptance: WebSuggestionAcceptance,
+    requested_mode: InternetMode,
+    thread_id: str,
+) -> None:
+    metadata = _web_suggestion_acceptance_metadata(
+        acceptance=acceptance,
+        requested_mode=requested_mode,
+        thread_id=thread_id,
+    )
+    try:
+        async with rls_connection(request) as conn:
+            await InternetScoutRepository(conn).record_tool_event(
+                request_id=context.request_id,
+                tool=context.selected_tool.value,
+                event_type="chat_web_suggestion_acceptance",
+                status="succeeded",
+                metadata=metadata,
+            )
+    except Exception:
+        logger.warning(
+            "BEACON_CHAT_WEB_SUGGESTION_ACCEPTANCE_EVENT_FAIL",
+            extra={
+                "event": "BEACON_CHAT_WEB_SUGGESTION_ACCEPTANCE_EVENT_FAIL",
+                "request_id": str(context.request_id),
+            },
+        )
+        return
+
+    logger.info(
+        "BEACON_CHAT_WEB_SUGGESTION_ACCEPTED",
+        extra={
+            "event": "BEACON_CHAT_WEB_SUGGESTION_ACCEPTED",
+            "request_id": str(context.request_id),
+            "suggested_mode": acceptance.suggested_mode,
+            "requested_mode": requested_mode,
+            "reason": acceptance.reason,
+            "confidence": acceptance.confidence,
+        },
+    )
 
 
 async def _auto_name_thread(
@@ -556,6 +640,17 @@ async def chat_completions(body: CompletionRequest, request: Request):
         internet_mode=body.internet_mode,
         sensitivity=sensitivity,
     )
+    if web_suggestion:
+        logger.info(
+            "BEACON_CHAT_WEB_SUGGESTION_SHOWN",
+            extra={
+                "event": "BEACON_CHAT_WEB_SUGGESTION_SHOWN",
+                "thread_id": thread_id,
+                "suggested_mode": web_suggestion.mode,
+                "reason": web_suggestion.reason,
+                "confidence": web_suggestion.confidence,
+            },
+        )
     internet_context: InternetChatContext | None = None
     if body.internet_mode != "none":
         internet_context = await build_chat_internet_context(
@@ -564,6 +659,14 @@ async def chat_completions(body: CompletionRequest, request: Request):
             mode=body.internet_mode,
             sensitivity=sensitivity,
         )
+        if body.web_suggestion_acceptance:
+            await _record_web_suggestion_acceptance(
+                request=request,
+                context=internet_context,
+                acceptance=body.web_suggestion_acceptance,
+                requested_mode=body.internet_mode,
+                thread_id=thread_id,
+            )
     enriched = _build_enriched_prompt(
         memory_context=context,
         internet_context=internet_context.prompt_context if internet_context else None,

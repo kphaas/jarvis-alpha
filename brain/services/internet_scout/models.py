@@ -36,6 +36,21 @@ SourceQualityLevel = Literal[
     "rejected",
 ]
 SourceQualityStatus = Literal["supported", "weak", "insufficient"]
+ResearchIntent = Literal[
+    "official_docs",
+    "current_fact",
+    "comparison",
+    "troubleshooting",
+    "general",
+]
+ResearchQueryPurpose = Literal[
+    "baseline",
+    "official_source",
+    "primary_source",
+    "recency",
+    "comparison",
+    "cross_check",
+]
 
 
 class InternetTool(str, Enum):
@@ -149,10 +164,31 @@ class InternetEvidencePacket(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class InternetScoutResearchQuery(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    purpose: ResearchQueryPurpose
+    required: bool = False
+
+
+class InternetScoutResearchPlan(BaseModel):
+    intent: ResearchIntent = "general"
+    searches: list[InternetScoutResearchQuery] = Field(
+        default_factory=list, max_length=6
+    )
+    authority_required: bool = False
+    freshness_required: bool = False
+    primary_source_required: bool = False
+    max_searches: int = Field(default=1, ge=1, le=6)
+    notes: list[str] = Field(default_factory=list, max_length=12)
+
+
 class InternetScoutPlan(BaseModel):
     request: InternetScoutRequest
     selected_tool: InternetTool
     decision: PolicyDecision
+    research: InternetScoutResearchPlan = Field(
+        default_factory=InternetScoutResearchPlan
+    )
     execution_enabled: bool = False
     gateway_required: bool = True
     notes: list[str] = Field(default_factory=list)
@@ -241,6 +277,7 @@ class InternetScoutBrowserApprovalResponse(BaseModel):
 
 
 class InternetScoutLocalLLMCitation(BaseModel):
+    claim: str | None = Field(default=None, max_length=2000)
     source_url: str
     host: str
     content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -255,6 +292,8 @@ class InternetScoutCitationQualitySummary(BaseModel):
     accepted_citation_count: int = 0
     rejected_citation_count: int = 0
     official_source_count: int = 0
+    verified_claim_count: int = 0
+    unsupported_claim_count: int = 0
     prompt_injection_rejection_count: int = 0
     official_source_required: bool = False
     required_source_hosts: list[str] = Field(default_factory=list, max_length=20)
