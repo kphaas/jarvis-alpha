@@ -101,6 +101,12 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
         max_context_messages=10,
         bluebubbles_client=fake_client,
         approved_chat_guid="approved-chat-guid",
+        personality_memory_rows=[
+            {
+                "kind": "relationship",
+                "content": "Sweta: partner; default hybrid_review; approval required True.",
+            }
+        ],
         llm_call=fake_llm_call,
     )
 
@@ -117,10 +123,13 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
     assert "Auto operating context" in system_prompt
     assert "Surface the next real blocker" in system_prompt
     assert "Principal voice files win" in system_prompt
+    assert "Approved Spark personality memory" in system_prompt
+    assert "Sweta: partner; default hybrid_review" in system_prompt
     llm_message = str(calls[0]["user_message"])
     assert "private inbound body" in llm_message
     assert "approved-chat-guid" not in json.dumps(calls).lower()
     assert "surface the next real blocker" not in json.dumps(payload).lower()
+    assert "sweta: partner" not in json.dumps(payload).lower()
 
 
 @pytest.mark.asyncio

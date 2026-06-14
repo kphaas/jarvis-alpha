@@ -24,6 +24,7 @@ from brain.services.spark_imessage_drafts import (
     create_imessage_draft_proposal,
 )
 from brain.services.spark_draft_approvals import enqueue_spark_draft_approval
+from brain.services.spark_personality_memory import fetch_personality_memory
 from brain.services.spark_voice_feedback import (
     SparkDraftEditFeedbackResult,
     record_spark_draft_edit_feedback,
@@ -92,6 +93,27 @@ def _safe_actor_fields(request: Request) -> dict[str, object]:
         "scopes_used": [SPARK_DRAFT_SCOPE, SPARK_READ_SCOPE],
         "risk_tier": "T2",
     }
+
+
+async def _load_personality_memory_rows(
+    request: Request,
+    principal_id: str,
+) -> list[dict[str, object]]:
+    try:
+        async with rls_connection(request) as conn:
+            return await fetch_personality_memory(conn, principal_id)
+    except Exception as exc:
+        logger.warning(
+            "spark_personality_memory_load_failed",
+            extra={
+                "event": "spark_personality_memory_load_failed",
+                "component": "spark_drafts",
+                "principal_id": principal_id,
+                "error_class": exc.__class__.__name__,
+                **_safe_actor_fields(request),
+            },
+        )
+        return []
 
 
 def _route_error(exc: Exception) -> HTTPException:
@@ -247,12 +269,17 @@ async def spark_imessage_draft(
     _: str = Depends(require_auth),
 ) -> SparkIMessageDraftOut:
     _check_draft_scopes(request)
+    personality_memory_rows = await _load_personality_memory_rows(
+        request,
+        payload.principal_id,
+    )
     try:
         proposal = await create_imessage_draft_proposal(
             principal_id=payload.principal_id,
             approval_id=payload.approval_id,
             reply_goal=payload.reply_goal,
             max_context_messages=payload.max_context_messages,
+            personality_memory_rows=personality_memory_rows,
         )
     except Exception as exc:
         route_error = _route_error(exc)
@@ -269,12 +296,17 @@ async def spark_imessage_draft_approval_request(
     _: str = Depends(require_auth),
 ) -> SparkIMessageDraftApprovalOut:
     _check_draft_scopes(request)
+    personality_memory_rows = await _load_personality_memory_rows(
+        request,
+        payload.principal_id,
+    )
     try:
         original_proposal = await create_imessage_draft_proposal(
             principal_id=payload.principal_id,
             approval_id=payload.approval_id,
             reply_goal=payload.reply_goal,
             max_context_messages=payload.max_context_messages,
+            personality_memory_rows=personality_memory_rows,
         )
         proposal = apply_draft_text_override(
             original_proposal,

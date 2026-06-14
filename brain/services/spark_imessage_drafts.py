@@ -43,6 +43,11 @@ from brain.services.spark_sensitivity import scan_spark_draft_sensitivity
 
 DRAFT_VERSION = "spark-imessage-draft/v0.2"
 DEFAULT_MAX_CONTEXT_MESSAGES = 20
+PERSONALITY_MEMORY_MAX_PROMPT_LINES = 18
+PERSONALITY_MEMORY_BLOCKED = re.compile(
+    r"\b(password|token|secret|private key|raw thread|message body|phone number)\b",
+    re.IGNORECASE,
+)
 MAX_CONTEXT_MESSAGES = 50
 APPROVED_CHAT_GUID_ENV = "SPARK_IMESSAGE_APPROVED_CHAT_GUID"
 SPARK_DRAFT_LLM_PROVIDER_ENV = "SPARK_DRAFT_LLM_PROVIDER"
@@ -146,6 +151,7 @@ async def create_imessage_draft_proposal(
     bluebubbles_client: SparkIMessageBodyClient | None = None,
     approved_chat_guid: str | None = None,
     draft_text_override: str | None = None,
+    personality_memory_rows: list[dict[str, object]] | None = None,
     llm_call: SparkLLMCall | None = None,
 ) -> SparkDraftProposal:
     """Create a human-reviewable draft from approved iMessage runtime context."""
@@ -181,6 +187,7 @@ async def create_imessage_draft_proposal(
             reply_goal=reply_goal,
             guidance=guidance,
             auto_context=auto_context,
+            personality_memory_rows=personality_memory_rows or [],
             context=context,
             sensitivity_warnings=sensitivity.warnings,
             llm_call=llm_call,
@@ -330,6 +337,7 @@ async def _draft_from_context(
     reply_goal: str | None,
     guidance: SparkVoiceGuidance,
     auto_context: AutoSparkPromptContext,
+    personality_memory_rows: list[dict[str, object]],
     context: SparkDraftContext,
     sensitivity_warnings: tuple[str, ...],
     llm_call: SparkLLMCall | None,
@@ -346,6 +354,7 @@ async def _draft_from_context(
             reply_goal=reply_goal,
             guidance=guidance,
             auto_context=auto_context,
+            personality_memory_rows=personality_memory_rows,
             context=context,
             sensitivity_warnings=sensitivity_warnings,
             llm_call=llm_call,
@@ -369,6 +378,7 @@ async def _call_spark_llm(
     reply_goal: str | None,
     guidance: SparkVoiceGuidance,
     auto_context: AutoSparkPromptContext,
+    personality_memory_rows: list[dict[str, object]],
     context: SparkDraftContext,
     sensitivity_warnings: tuple[str, ...],
     llm_call: SparkLLMCall | None,
@@ -380,7 +390,11 @@ async def _call_spark_llm(
     return await call(
         provider=provider,
         model=model,
-        system_prompt=_spark_draft_system_prompt(guidance, auto_context),
+        system_prompt=_spark_draft_system_prompt(
+            guidance,
+            auto_context,
+            personality_memory_rows,
+        ),
         user_message=_spark_draft_user_message(
             reply_goal=reply_goal,
             context=context,
@@ -393,9 +407,30 @@ async def _call_spark_llm(
     )
 
 
+def _personality_memory_prompt(rows: list[dict[str, object]]) -> str:
+    lines: list[str] = []
+    for row in rows:
+        kind = str(row.get("kind") or "memory").strip().replace("_", " ")
+        content = _clean_personality_memory_content(str(row.get("content") or ""))
+        if not content:
+            continue
+        lines.append(f"- {kind.title()}: {content}")
+        if len(lines) >= PERSONALITY_MEMORY_MAX_PROMPT_LINES:
+            break
+    return "\n".join(lines)
+
+
+def _clean_personality_memory_content(value: str) -> str:
+    content = " ".join(value.strip().split())
+    if not content or PERSONALITY_MEMORY_BLOCKED.search(content):
+        return ""
+    return content[:240]
+
+
 def _spark_draft_system_prompt(
     guidance: SparkVoiceGuidance,
     auto_context: AutoSparkPromptContext,
+    personality_memory_rows: list[dict[str, object]],
 ) -> str:
     lines = [
         "You draft iMessage replies for Ken.",
@@ -421,6 +456,16 @@ def _spark_draft_system_prompt(
                         max_lines=12,
                     )
                 ],
+            ]
+        )
+    memory_context = _personality_memory_prompt(personality_memory_rows)
+    if memory_context:
+        lines.extend(
+            [
+                "",
+                "Approved Spark personality memory (reviewed; do not expose directly):",
+                memory_context,
+                "Use approved personality memory for voice, boundaries, relationship policy, and preferences.",
             ]
         )
     lines.extend(
