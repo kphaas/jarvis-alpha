@@ -286,8 +286,10 @@ def _quality_metadata(
 
 def _research_metadata(plan: InternetScoutResearchPlan) -> dict[str, object]:
     return {
+        "research_plan_id": plan.plan_id,
         "research_intent": plan.intent,
         "research_search_count": len(plan.searches),
+        "research_subquestion_count": len(plan.subquestions),
         "research_search_budget": plan.max_searches,
         "research_provider_strategy": plan.provider_strategy,
         "research_search_providers": plan.search_providers,
@@ -295,10 +297,12 @@ def _research_metadata(plan: InternetScoutResearchPlan) -> dict[str, object]:
         "research_authority_required": plan.authority_required,
         "research_freshness_required": plan.freshness_required,
         "research_primary_source_required": plan.primary_source_required,
+        "research_expected_source_types": plan.expected_source_types,
         "research_query_purposes": [query.purpose for query in plan.searches],
         "research_required_query_purposes": [
             query.purpose for query in plan.searches if query.required
         ],
+        "research_stop_criteria": plan.stop_criteria.model_dump(mode="json"),
     }
 
 
@@ -329,9 +333,19 @@ def _research_report_metadata(
     report: InternetScoutResearchReport,
 ) -> dict[str, object]:
     return {
+        "research_report_plan_id": report.plan_id,
+        "research_report_source_quality_status": report.source_quality_status,
         "research_report_answerability": report.answerability,
         "research_report_cited_source_count": report.cited_source_count,
+        "research_report_accepted_citation_count": report.accepted_citation_count,
+        "research_report_rejected_citation_count": report.rejected_citation_count,
+        "research_report_verified_claim_count": report.verified_claim_count,
+        "research_report_unsupported_claim_count": report.unsupported_claim_count,
         "research_report_source_hosts": report.source_hosts,
+        "research_report_required_source_hosts": report.required_source_hosts,
+        "research_report_expected_source_types": report.expected_source_types,
+        "research_report_subquestion_count": report.subquestion_count,
+        "research_report_coverage_warnings": report.coverage_warnings,
         "research_report_source_rankings": [
             ranking.model_dump(mode="json") for ranking in report.source_rankings[:10]
         ],
