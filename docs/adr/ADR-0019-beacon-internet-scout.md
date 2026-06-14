@@ -64,6 +64,11 @@ contract. Brain still does not choose raw public egress hosts directly: fanout
 uses Gateway provider hints, Gateway enforces configured provider credentials and
 fallback, and extracted pages re-enter Beacon as untrusted evidence before any
 local model sees them.
+The production-quality search follow-up adds live canary-suite evaluation, a
+bounded Deep Research report contract, and an explicit memory boundary. Beacon
+can prove the positive Ask path repeatedly, return a report object for richer
+research UX, and mark all internet evidence as evidence-store-only unless a
+reviewed memory promotion is approved.
 
 ## Architecture
 
@@ -152,6 +157,16 @@ behaviors: answer with citations, answer with limitations, or state that Beacon
 could not verify the claim. This keeps answerability explicit and prevents a
 model from silently upgrading weak search evidence into verified facts.
 
+Deep Research responses also include a report contract with summary, key
+findings, limitations, source hosts, and bounded markdown. The report is a
+rendering aid for Helm/consumers, not a new trust boundary; accepted citations,
+source quality, and synthesis behavior remain authoritative.
+
+Search evidence has an explicit memory boundary: automatic memory writes are
+not allowed, memory context is secondary to Beacon for current/public web
+claims, and memory promotion must use the reviewed promotion route bound to
+stored evidence, source hash, and claim.
+
 ## Four-Lens Review
 
 | Lens | Review |
@@ -173,6 +188,7 @@ model from silently upgrading weak search evidence into verified facts.
 | Provider monoculture | Deep research can fan out across Gateway providers and rerank cross-provider agreement without giving Brain direct provider credentials. |
 | Browser overreach | Browser-use execution requires exact approval-row verification, T4-only sandbox policy, same-host observation checks, and screenshots; default adapter fails closed. |
 | Memory poisoning | No automatic memory/RAG ingest; promotion requires stored evidence, clean fact text, source hash, claim binding, and explicit review. |
+| Search-to-memory drift | Local LLM, chat, and agent contracts carry `automatic_memory_write_allowed=false` and promotion-review metadata. |
 | Supply-chain risk | Bounded crawl uses the existing guarded fetch path; browser runtime is opt-in and version-checked before use. |
 | Cross-repo misuse | Consumers call Alpha policy-scoped routes; they do not import Beacon internals or hold internet credentials. |
 | Sensitive consumers | Family and Financial force minor/financial sensitivity and block browser/crawl in P9. |
@@ -184,6 +200,7 @@ model from silently upgrading weak search evidence into verified facts.
 | Local LLM misuse | P16 returns citations, confidence, explicit untrusted-content warnings, and not-verified notes instead of raw authority. |
 | Operator readiness | P17 adds a smoke script and rollback runbook before deploy approval. |
 | Readiness noise | Recent evidence failures remain diagnostic warnings; they do not block readiness when database, Gateway, browser runtime, and retention are healthy. |
+| Quality regression detection | Helm Ask smoke supports a multi-case canary suite that checks supported official evidence, stale-memory rejection, synthesis behavior, untrusted-content metadata, and memory-write blocking. |
 
 ## Consequences
 

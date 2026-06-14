@@ -210,6 +210,8 @@ def _internet_message_metadata(
         ),
         **_internet_research_metadata(context),
         **_internet_synthesis_metadata(context),
+        **_internet_memory_boundary_metadata(context),
+        **_internet_research_report_metadata(context),
         "raw_web_content_is_untrusted": context.raw_web_content_is_untrusted,
         "citations": _redacted_internet_citations(context),
     }
@@ -246,6 +248,33 @@ def _internet_synthesis_metadata(
         "internet_synthesis_citation_count": synthesis.citation_count,
         "internet_synthesis_minimum_citations_met": synthesis.minimum_citations_met,
         "internet_synthesis_required_behavior": synthesis.required_behavior,
+    }
+
+
+def _internet_memory_boundary_metadata(
+    context: InternetChatContext,
+) -> dict[str, object]:
+    boundary = context.memory_boundary
+    return {
+        "internet_memory_context_priority": boundary.memory_context_priority,
+        "internet_automatic_memory_write_allowed": (
+            boundary.automatic_memory_write_allowed
+        ),
+        "internet_memory_promotion_review_required": (
+            boundary.promotion_review_required
+        ),
+        "internet_memory_promotion_route": boundary.promotion_route,
+    }
+
+
+def _internet_research_report_metadata(
+    context: InternetChatContext,
+) -> dict[str, object]:
+    report = context.research_report
+    return {
+        "internet_research_report_answerability": report.answerability,
+        "internet_research_report_cited_source_count": report.cited_source_count,
+        "internet_research_report_source_hosts": report.source_hosts,
     }
 
 
@@ -352,6 +381,13 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
         "internet_synthesis_citation_count",
         "internet_synthesis_minimum_citations_met",
         "internet_synthesis_required_behavior",
+        "internet_memory_context_priority",
+        "internet_automatic_memory_write_allowed",
+        "internet_memory_promotion_review_required",
+        "internet_memory_promotion_route",
+        "internet_research_report_answerability",
+        "internet_research_report_cited_source_count",
+        "internet_research_report_source_hosts",
         "raw_web_content_is_untrusted",
         "citations",
         "web_suggestion_mode",

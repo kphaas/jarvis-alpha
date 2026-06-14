@@ -108,6 +108,41 @@ Expected:
 
 The smoke script does not print tokens or raw retrieved content.
 
+## Helm Ask Quality Canary Suite
+
+Run this after the production smoke when Helm Ask or Beacon ranking changed:
+
+```bash
+python scripts/smoke_helm_ask_canary.py --suite
+```
+
+For production targets, the suite uses a target-side token by default:
+
+```bash
+python scripts/smoke_helm_ask_canary.py \
+  --suite \
+  --token-ssh-target jarvisbrain@jarvis-brain.tail40ed36.ts.net
+```
+
+Expected:
+
+- each canary returns a streamed answer
+- Helm Ask uses `deep_research`
+- Beacon reports `supported` evidence
+- at least one accepted citation is present
+- the expected official host is present
+- forbidden stale-memory hosts are absent
+- raw web content remains marked untrusted
+- synthesis behavior is `answer_with_citations`
+- automatic memory writes are blocked and memory promotion review is required
+
+Use the single-prompt canary for focused debugging:
+
+```bash
+python scripts/smoke_helm_ask_canary.py \
+  --prompt "Find the official OpenAI API reference URL."
+```
+
 ## Citation Quality
 
 Beacon ranks citations before they enter the local-model prompt:

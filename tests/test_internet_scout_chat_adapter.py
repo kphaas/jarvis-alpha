@@ -160,6 +160,10 @@ async def test_chat_internet_context_uses_beacon_search_envelope():
     assert context.source_quality.status == "weak"
     assert context.synthesis.required_behavior == "answer_with_limitations"
     assert context.synthesis.answerable is True
+    assert context.memory_boundary.automatic_memory_write_allowed is False
+    assert context.memory_boundary.promotion_review_required is True
+    assert context.research_report.answerability == "limited"
+    assert context.research_report.cited_source_count == 1
     assert context.research_plan.intent == "current_fact"
     assert context.research_plan.max_searches == 4
     assert context.research_plan.provider_strategy == "fanout"
@@ -174,6 +178,8 @@ async def test_chat_internet_context_uses_beacon_search_envelope():
     assert "Beacon synthesis behavior: answer_with_limitations" in (
         context.prompt_context
     )
+    assert "Beacon memory boundary" in context.prompt_context
+    assert "Deep research report:" in context.prompt_context
     assert "Deep research requirements" in context.prompt_context
     assert "Source: https://example.com/beacon" in context.prompt_context
     assert FakeRepo.created[0].requester == "alpha_chat.deep_research"
@@ -203,6 +209,10 @@ async def test_chat_internet_context_uses_beacon_search_envelope():
     assert quality_events[0]["metadata"]["synthesis_required_behavior"] == (
         "answer_with_limitations"
     )
+    assert quality_events[0]["metadata"]["automatic_memory_write_allowed"] is False
+    assert quality_events[0]["metadata"]["memory_promotion_review_required"] is True
+    assert quality_events[0]["metadata"]["research_report_answerability"] == "limited"
+    assert quality_events[0]["metadata"]["research_report_cited_source_count"] == 1
     assert "baseline" in quality_events[0]["metadata"]["research_query_purposes"]
 
 
