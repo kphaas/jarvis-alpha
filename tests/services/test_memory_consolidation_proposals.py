@@ -11,6 +11,7 @@ from brain.services.memory_consolidation_proposals import (
     MEMORY_CONSOLIDATION_APPROVAL_TIER,
     UnknownConsolidationActionError,
     build_memory_consolidation_proposal_records,
+    create_reviewed_memory_consolidation_proposals,
     enqueue_memory_consolidation_approval,
 )
 
@@ -22,6 +23,32 @@ class FakeConn:
     async def fetchval(self, query: str, *args: object):
         self.calls.append((query, args))
         return UUID("11111111-1111-4111-8111-111111111111")
+
+
+class FakeProposalConn:
+    def __init__(self) -> None:
+        self.fetchrow_calls: list[tuple[str, tuple[object, ...]]] = []
+        self.fetchval_calls: list[tuple[str, tuple[object, ...]]] = []
+        self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
+
+    async def fetchrow(self, query: str, *args: object):
+        self.fetchrow_calls.append((query, args))
+        return {
+            "id": "22222222-2222-4222-8222-222222222222",
+            "status": "pending_review",
+            "executable": True,
+            "approval_queue_id": None,
+        }
+
+    async def fetchval(self, query: str, *args: object):
+        self.fetchval_calls.append((query, args))
+        if "mark_memory_consolidation_archive_hold" in query:
+            return 1
+        return UUID("11111111-1111-4111-8111-111111111111")
+
+    async def execute(self, query: str, *args: object):
+        self.execute_calls.append((query, args))
+        return "UPDATE 1"
 
 
 def test_proposal_records_are_deterministic_and_idempotent() -> None:
@@ -74,6 +101,33 @@ def test_unknown_candidate_action_fails_closed() -> None:
 
     with pytest.raises(UnknownConsolidationActionError):
         build_memory_consolidation_proposal_records(report)
+
+
+@pytest.mark.asyncio
+async def test_archive_proposal_marks_buddy_hold_after_queueing() -> None:
+    report = _report()
+    report["promotion_candidates"] = []
+    report["semantic_duplicate_groups"] = []
+    report["procedural_candidates"] = []
+    conn = FakeProposalConn()
+
+    proposals = await create_reviewed_memory_consolidation_proposals(
+        conn,  # type: ignore[arg-type]
+        report=report,
+        actor_sub="ken",
+        actor_type="user",
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0].proposed_action == "archive_working"
+    assert proposals[0].status == "queued"
+    assert any(
+        "enqueue_approval_request" in query for query, _args in conn.fetchval_calls
+    )
+    assert any(
+        "mark_memory_consolidation_archive_hold" in query
+        for query, _args in conn.fetchval_calls
+    )
 
 
 @pytest.mark.asyncio

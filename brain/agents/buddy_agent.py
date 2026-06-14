@@ -303,7 +303,7 @@ async def _maybe_write_memory_consolidation_summary(pool: asyncpg.Pool) -> None:
                 "Dream memory consolidation backlog across "
                 f"{len(reports)} users: {total_candidates} review candidates. "
                 f"Blocked suspicious candidates: {total_blocked}. "
-                "Writes are disabled; every consolidation action requires review."
+                "Planner writes are disabled; executable proposals require T5 review."
             )
         priority = 2 if total_candidates else 1
         await _write_event(

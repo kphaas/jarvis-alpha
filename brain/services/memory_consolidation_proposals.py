@@ -211,6 +211,16 @@ async def create_reviewed_memory_consolidation_proposals(
             )
             status = "queued"
 
+        if record.proposed_action == "archive_working" and status in {
+            "pending_review",
+            "queued",
+            "approved",
+        }:
+            await conn.fetchval(
+                "SELECT public.mark_memory_consolidation_archive_hold($1::uuid)",
+                proposal_id,
+            )
+
         persisted.append(
             PersistedMemoryConsolidationProposal(
                 proposal_id=proposal_id,

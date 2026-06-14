@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 from typing import Literal
 from uuid import NAMESPACE_DNS, UUID, uuid5
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from brain.db.rls import rls_connection
@@ -50,6 +51,12 @@ class CreateMemoryConsolidationProposalsResponse(BaseModel):
     informational_count: int
     write_actions_enabled: bool
     proposals: list[MemoryConsolidationProposalItem]
+
+
+class MemoryConsolidationExecutionResponse(BaseModel):
+    status: str
+    proposal_id: str
+    result: dict
 
 
 @router.post("/proposals", response_model=CreateMemoryConsolidationProposalsResponse)
@@ -126,6 +133,76 @@ async def create_memory_consolidation_proposals(
     )
 
 
+@router.post(
+    "/proposals/{proposal_id}/execute",
+    response_model=MemoryConsolidationExecutionResponse,
+)
+async def execute_memory_consolidation_proposal(
+    proposal_id: UUID,
+    request: Request,
+    x_approval_token: str = Header(alias="X-Approval-Token"),
+    _user_id: str = Depends(require_auth),
+) -> MemoryConsolidationExecutionResponse:
+    """Execute an approved archive proposal.
+
+    ADR-0026 requires the executor to validate proposal-bound approval
+    provenance. The header must contain the proposal-specific Approval Gateway
+    queue id, not merely a flipped proposal status.
+    """
+
+    check_scopes(request, "memory.write", "admin")
+    approval_queue_id = _uuid_header(x_approval_token, "X-Approval-Token")
+    actor_sub = (
+        str(getattr(request.state, "user_sub", None) or "")
+        or str(getattr(request.state, "user_id", None) or "")
+        or "unknown"
+    )
+    async with rls_connection(request) as conn:
+        result = await conn.fetchval(
+            """
+            SELECT public.execute_memory_consolidation_archive(
+                $1::uuid,
+                $2::uuid,
+                $3
+            )
+            """,
+            str(proposal_id),
+            str(approval_queue_id),
+            actor_sub,
+        )
+    payload = _json_result(result)
+    return MemoryConsolidationExecutionResponse(
+        status=str(payload.get("status") or "unknown"),
+        proposal_id=str(proposal_id),
+        result=payload,
+    )
+
+
+@router.post(
+    "/proposals/{proposal_id}/revert",
+    response_model=MemoryConsolidationExecutionResponse,
+)
+async def revert_memory_consolidation_proposal(
+    proposal_id: UUID,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> MemoryConsolidationExecutionResponse:
+    """Revert an executed archive proposal through the ledger undo path."""
+
+    check_scopes(request, "memory.write", "admin")
+    async with rls_connection(request) as conn:
+        result = await conn.fetchval(
+            "SELECT public.revert_consolidation($1::uuid)",
+            str(proposal_id),
+        )
+    payload = _json_result(result)
+    return MemoryConsolidationExecutionResponse(
+        status=str(payload.get("status") or "unknown"),
+        proposal_id=str(proposal_id),
+        result=payload,
+    )
+
+
 def _proposal_item(
     item: PersistedMemoryConsolidationProposal,
 ) -> MemoryConsolidationProposalItem:
@@ -149,3 +226,22 @@ def _target_user_id(request: Request, requested: str | None) -> UUID:
         return UUID(str(raw_value))
     except ValueError:
         return uuid5(NAMESPACE_DNS, str(raw_value))
+
+
+def _uuid_header(value: str, header_name: str) -> UUID:
+    try:
+        return UUID(str(value))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{header_name} must be an approval queue UUID",
+        ) from exc
+
+
+def _json_result(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        loaded = json.loads(value)
+        return loaded if isinstance(loaded, dict) else {"value": loaded}
+    return {"value": value}
