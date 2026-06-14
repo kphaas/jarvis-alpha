@@ -69,6 +69,12 @@ bounded Deep Research report contract, and an explicit memory boundary. Beacon
 can prove the positive Ask path repeatedly, return a report object for richer
 research UX, and mark all internet evidence as evidence-store-only unless a
 reviewed memory promotion is approved.
+Research quality v2 makes the Deep Research contract more explicit: every plan
+has a deterministic plan id, redacted subquestions, expected source types, and
+stop criteria. Claim verification fails closed on clear negation, version, date,
+unit, currency, and number mismatches. Research reports expose redacted coverage
+counters and warnings so Helm and operators can see why Beacon answered,
+limited, or refused verification without persisting raw page text.
 
 ## Architecture
 

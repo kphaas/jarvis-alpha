@@ -92,6 +92,7 @@ class EvaluatedCitation:
 class CitationQualityEvaluation:
     citations: list[InternetScoutLocalLLMCitation]
     summary: InternetScoutCitationQualitySummary
+    evaluated: list[EvaluatedCitation]
 
 
 @dataclass(frozen=True)
@@ -151,7 +152,11 @@ def evaluate_citation_quality(
         evaluated=evaluated,
         accepted_count=len(accepted_citations),
     )
-    return CitationQualityEvaluation(citations=accepted_citations, summary=summary)
+    return CitationQualityEvaluation(
+        citations=accepted_citations,
+        summary=summary,
+        evaluated=evaluated,
+    )
 
 
 def classify_source_for_query(

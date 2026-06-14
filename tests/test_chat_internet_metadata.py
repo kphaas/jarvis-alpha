@@ -25,6 +25,8 @@ from brain.services.internet_scout.models import (
     InternetScoutResearchReport,
     InternetScoutResearchPlan,
     InternetScoutResearchQuery,
+    InternetScoutResearchStopCriteria,
+    InternetScoutResearchSubquestion,
     InternetScoutSourceRanking,
     InternetScoutSynthesisContract,
     InternetTool,
@@ -38,6 +40,7 @@ MESSAGE_ID = UUID("44444444-4444-4444-8444-444444444444")
 
 def _context() -> InternetChatContext:
     research_plan = InternetScoutResearchPlan(
+        plan_id="plan-context-1",
         intent="current_fact",
         searches=[
             InternetScoutResearchQuery(
@@ -46,9 +49,24 @@ def _context() -> InternetChatContext:
                 required=True,
             )
         ],
+        subquestions=[
+            InternetScoutResearchSubquestion(
+                question="What evidence proves the answer is current?",
+                purpose="baseline",
+                required=True,
+                expected_source_types=["general_web"],
+            )
+        ],
+        expected_source_types=["general_web"],
         freshness_required=True,
         max_searches=1,
         max_extracts=1,
+        stop_criteria=InternetScoutResearchStopCriteria(
+            min_accepted_citations=1,
+            max_searches=1,
+            max_extracts=1,
+            stop_when=["accepted_citations>=1", "unsupported_claims=0"],
+        ),
     )
     return InternetChatContext(
         mode="web_search",
@@ -88,8 +106,15 @@ def _context() -> InternetChatContext:
         ),
         research_report=InternetScoutResearchReport(
             answerability="limited",
+            plan_id="plan-context-1",
+            research_intent="current_fact",
+            source_quality_status="weak",
             cited_source_count=1,
+            accepted_citation_count=1,
+            verified_claim_count=1,
             source_hosts=["example.com"],
+            expected_source_types=["general_web"],
+            subquestion_count=1,
             source_rankings=[
                 InternetScoutSourceRanking(
                     rank=1,
@@ -115,6 +140,7 @@ def _context() -> InternetChatContext:
 
 def _insufficient_context() -> InternetChatContext:
     research_plan = InternetScoutResearchPlan(
+        plan_id="plan-insufficient-1",
         intent="official_docs",
         searches=[
             InternetScoutResearchQuery(
@@ -136,12 +162,38 @@ def _insufficient_context() -> InternetChatContext:
                 required=True,
             ),
         ],
+        subquestions=[
+            InternetScoutResearchSubquestion(
+                question="What direct evidence answers the user request?",
+                purpose="baseline",
+                required=True,
+                expected_source_types=["official_docs", "primary_source"],
+            ),
+            InternetScoutResearchSubquestion(
+                question="Which official source establishes the answer?",
+                purpose="official_source",
+                required=True,
+                expected_source_types=["official_docs", "primary_source"],
+            ),
+        ],
+        expected_source_types=["official_docs", "primary_source"],
         authority_required=True,
         primary_source_required=True,
         max_searches=4,
         provider_strategy="fanout",
         search_providers=["brave", "perplexity"],
         max_extracts=4,
+        stop_criteria=InternetScoutResearchStopCriteria(
+            min_accepted_citations=1,
+            require_official_source=True,
+            max_searches=4,
+            max_extracts=4,
+            stop_when=[
+                "accepted_citations>=1",
+                "unsupported_claims=0",
+                "official_source_present",
+            ],
+        ),
     )
     return InternetChatContext(
         mode="deep_research",
@@ -171,8 +223,19 @@ def _insufficient_context() -> InternetChatContext:
         ),
         research_report=InternetScoutResearchReport(
             answerability="not_verified",
+            plan_id="plan-insufficient-1",
+            research_intent="official_docs",
+            source_quality_status="insufficient",
             cited_source_count=0,
+            rejected_citation_count=3,
             source_hosts=[],
+            required_source_hosts=[
+                "openai.com",
+                "platform.openai.com",
+                "docs.openai.com",
+            ],
+            expected_source_types=["official_docs", "primary_source"],
+            subquestion_count=2,
         ),
         research_plan=research_plan,
         prompt_context=(
@@ -186,6 +249,7 @@ def _insufficient_context() -> InternetChatContext:
 
 def _supported_openai_context() -> InternetChatContext:
     research_plan = InternetScoutResearchPlan(
+        plan_id="plan-supported-1",
         intent="official_docs",
         searches=[
             InternetScoutResearchQuery(
@@ -199,12 +263,38 @@ def _supported_openai_context() -> InternetChatContext:
                 required=True,
             ),
         ],
+        subquestions=[
+            InternetScoutResearchSubquestion(
+                question="What direct evidence answers the user request?",
+                purpose="baseline",
+                required=True,
+                expected_source_types=["official_docs", "primary_source"],
+            ),
+            InternetScoutResearchSubquestion(
+                question="Which official source establishes the answer?",
+                purpose="official_source",
+                required=True,
+                expected_source_types=["official_docs", "primary_source"],
+            ),
+        ],
+        expected_source_types=["official_docs", "primary_source"],
         authority_required=True,
         primary_source_required=True,
         max_searches=4,
         provider_strategy="fanout",
         search_providers=["brave", "perplexity"],
         max_extracts=4,
+        stop_criteria=InternetScoutResearchStopCriteria(
+            min_accepted_citations=1,
+            require_official_source=True,
+            max_searches=4,
+            max_extracts=4,
+            stop_when=[
+                "accepted_citations>=1",
+                "unsupported_claims=0",
+                "official_source_present",
+            ],
+        ),
     )
     return InternetChatContext(
         mode="deep_research",
@@ -244,8 +334,20 @@ def _supported_openai_context() -> InternetChatContext:
         ),
         research_report=InternetScoutResearchReport(
             answerability="answerable",
+            plan_id="plan-supported-1",
+            research_intent="official_docs",
+            source_quality_status="supported",
             cited_source_count=1,
+            accepted_citation_count=1,
+            verified_claim_count=1,
             source_hosts=["platform.openai.com"],
+            required_source_hosts=[
+                "openai.com",
+                "platform.openai.com",
+                "docs.openai.com",
+            ],
+            expected_source_types=["official_docs", "primary_source"],
+            subquestion_count=2,
         ),
         research_plan=research_plan,
         prompt_context=(
@@ -270,16 +372,28 @@ def test_internet_message_metadata_redacts_raw_citation_text() -> None:
     assert metadata["internet_rejected_citation_count"] == 0
     assert metadata["internet_official_source_count"] == 0
     assert metadata["internet_prompt_injection_rejection_count"] == 0
+    assert metadata["internet_research_plan_id"] == "plan-context-1"
     assert metadata["internet_research_intent"] == "current_fact"
     assert metadata["internet_research_search_count"] == 1
+    assert metadata["internet_research_subquestion_count"] == 1
     assert metadata["internet_research_search_budget"] == 1
     assert metadata["internet_research_provider_strategy"] == "auto"
     assert metadata["internet_research_search_providers"] == ["auto"]
     assert metadata["internet_research_max_extracts"] == 1
     assert metadata["internet_research_authority_required"] is False
     assert metadata["internet_research_freshness_required"] is True
+    assert metadata["internet_research_expected_source_types"] == ["general_web"]
     assert metadata["internet_research_query_purposes"] == ["baseline"]
     assert metadata["internet_research_required_query_purposes"] == ["baseline"]
+    assert metadata["internet_research_stop_criteria"] == {
+        "min_accepted_citations": 1,
+        "require_official_source": False,
+        "require_cross_check": False,
+        "max_searches": 1,
+        "max_extracts": 1,
+        "unsupported_claim_policy": "fail_closed",
+        "stop_when": ["accepted_citations>=1", "unsupported_claims=0"],
+    }
     assert metadata["internet_synthesis_answerable"] is True
     assert metadata["internet_synthesis_status"] == "weak"
     assert metadata["internet_synthesis_citation_count"] == 1
@@ -291,9 +405,19 @@ def test_internet_message_metadata_redacts_raw_citation_text() -> None:
     assert metadata["internet_memory_promotion_route"] == (
         "internet_scout.memory_promotions"
     )
+    assert metadata["internet_research_report_plan_id"] == "plan-context-1"
+    assert metadata["internet_research_report_source_quality_status"] == "weak"
     assert metadata["internet_research_report_answerability"] == "limited"
     assert metadata["internet_research_report_cited_source_count"] == 1
+    assert metadata["internet_research_report_accepted_citation_count"] == 1
+    assert metadata["internet_research_report_rejected_citation_count"] == 0
+    assert metadata["internet_research_report_verified_claim_count"] == 1
+    assert metadata["internet_research_report_unsupported_claim_count"] == 0
     assert metadata["internet_research_report_source_hosts"] == ["example.com"]
+    assert metadata["internet_research_report_required_source_hosts"] == []
+    assert metadata["internet_research_report_expected_source_types"] == ["general_web"]
+    assert metadata["internet_research_report_subquestion_count"] == 1
+    assert metadata["internet_research_report_coverage_warnings"] == []
     assert metadata["internet_research_report_source_rankings"] == [
         {
             "rank": 1,
@@ -472,8 +596,10 @@ async def test_thread_messages_return_flattened_internet_metadata(
             "internet_unsupported_claim_count": 0,
             "internet_prompt_injection_rejection_count": 0,
             "internet_official_source_required": False,
+            "internet_research_plan_id": "plan-context-1",
             "internet_research_intent": "current_fact",
             "internet_research_search_count": 1,
+            "internet_research_subquestion_count": 1,
             "internet_research_search_budget": 1,
             "internet_research_provider_strategy": "auto",
             "internet_research_search_providers": ["auto"],
@@ -481,8 +607,18 @@ async def test_thread_messages_return_flattened_internet_metadata(
             "internet_research_authority_required": False,
             "internet_research_freshness_required": True,
             "internet_research_primary_source_required": False,
+            "internet_research_expected_source_types": ["general_web"],
             "internet_research_query_purposes": ["baseline"],
             "internet_research_required_query_purposes": ["baseline"],
+            "internet_research_stop_criteria": {
+                "min_accepted_citations": 1,
+                "require_official_source": False,
+                "require_cross_check": False,
+                "max_searches": 1,
+                "max_extracts": 1,
+                "unsupported_claim_policy": "fail_closed",
+                "stop_when": ["accepted_citations>=1", "unsupported_claims=0"],
+            },
             "internet_synthesis_answerable": True,
             "internet_synthesis_status": "weak",
             "internet_synthesis_citation_count": 1,
@@ -492,9 +628,19 @@ async def test_thread_messages_return_flattened_internet_metadata(
             "internet_automatic_memory_write_allowed": False,
             "internet_memory_promotion_review_required": True,
             "internet_memory_promotion_route": "internet_scout.memory_promotions",
+            "internet_research_report_plan_id": "plan-context-1",
+            "internet_research_report_source_quality_status": "weak",
             "internet_research_report_answerability": "limited",
             "internet_research_report_cited_source_count": 1,
+            "internet_research_report_accepted_citation_count": 1,
+            "internet_research_report_rejected_citation_count": 0,
+            "internet_research_report_verified_claim_count": 1,
+            "internet_research_report_unsupported_claim_count": 0,
             "internet_research_report_source_hosts": ["example.com"],
+            "internet_research_report_required_source_hosts": [],
+            "internet_research_report_expected_source_types": ["general_web"],
+            "internet_research_report_subquestion_count": 1,
+            "internet_research_report_coverage_warnings": [],
             "internet_research_report_source_rankings": [
                 {
                     "rank": 1,
@@ -653,12 +799,21 @@ async def test_chat_short_circuits_insufficient_beacon_evidence(
     assert persisted_metadata["internet_source_quality_status"] == "insufficient"
     assert persisted_metadata["internet_accepted_citation_count"] == 0
     assert persisted_metadata["internet_rejected_citation_count"] == 3
+    assert persisted_metadata["internet_research_plan_id"] == "plan-insufficient-1"
     assert persisted_metadata["internet_research_provider_strategy"] == "fanout"
     assert persisted_metadata["internet_research_search_providers"] == [
         "brave",
         "perplexity",
     ]
     assert persisted_metadata["internet_research_max_extracts"] == 4
+    assert persisted_metadata["internet_research_expected_source_types"] == [
+        "official_docs",
+        "primary_source",
+    ]
+    assert (
+        persisted_metadata["internet_research_stop_criteria"]["require_official_source"]
+        is True
+    )
     assert persisted_metadata["internet_synthesis_answerable"] is False
     assert persisted_metadata["internet_synthesis_status"] == "insufficient"
     assert persisted_metadata["internet_synthesis_required_behavior"] == (
@@ -669,7 +824,16 @@ async def test_chat_short_circuits_insufficient_beacon_evidence(
     assert persisted_metadata["internet_research_report_answerability"] == (
         "not_verified"
     )
+    assert persisted_metadata["internet_research_report_plan_id"] == (
+        "plan-insufficient-1"
+    )
     assert persisted_metadata["internet_research_report_cited_source_count"] == 0
+    assert persisted_metadata["internet_research_report_rejected_citation_count"] == 3
+    assert persisted_metadata["internet_research_report_required_source_hosts"] == [
+        "openai.com",
+        "platform.openai.com",
+        "docs.openai.com",
+    ]
     assert persisted_metadata["citations"] == []
 
 

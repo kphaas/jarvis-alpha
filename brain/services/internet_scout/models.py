@@ -51,6 +51,17 @@ ResearchQueryPurpose = Literal[
     "comparison",
     "cross_check",
 ]
+ResearchSourceType = Literal[
+    "official_docs",
+    "primary_source",
+    "trusted_secondary",
+    "release_notes",
+    "pricing",
+    "legal_regulatory",
+    "security_advisory",
+    "status_page",
+    "general_web",
+]
 SearchProvider = Literal["auto", "brave", "perplexity"]
 SearchProviderStrategy = Literal["auto", "fanout"]
 
@@ -176,10 +187,43 @@ class InternetScoutResearchQuery(BaseModel):
     required: bool = False
 
 
+class InternetScoutResearchSubquestion(BaseModel):
+    """Redacted planning unit for Deep Research-style query fanout."""
+
+    question: str = Field(min_length=1, max_length=500)
+    purpose: ResearchQueryPurpose
+    required: bool = False
+    expected_source_types: list[ResearchSourceType] = Field(
+        default_factory=list,
+        max_length=8,
+    )
+
+
+class InternetScoutResearchStopCriteria(BaseModel):
+    """Deterministic stop/coverage criteria for a Beacon research plan."""
+
+    min_accepted_citations: int = Field(default=1, ge=0, le=10)
+    require_official_source: bool = False
+    require_cross_check: bool = False
+    max_searches: int = Field(default=1, ge=1, le=6)
+    max_extracts: int = Field(default=0, ge=0, le=5)
+    unsupported_claim_policy: Literal["fail_closed"] = "fail_closed"
+    stop_when: list[str] = Field(default_factory=list, max_length=10)
+
+
 class InternetScoutResearchPlan(BaseModel):
+    plan_id: str = Field(default="", max_length=32)
     intent: ResearchIntent = "general"
     searches: list[InternetScoutResearchQuery] = Field(
         default_factory=list, max_length=6
+    )
+    subquestions: list[InternetScoutResearchSubquestion] = Field(
+        default_factory=list,
+        max_length=6,
+    )
+    expected_source_types: list[ResearchSourceType] = Field(
+        default_factory=list,
+        max_length=8,
     )
     authority_required: bool = False
     freshness_required: bool = False
@@ -191,6 +235,9 @@ class InternetScoutResearchPlan(BaseModel):
         max_length=3,
     )
     max_extracts: int = Field(default=0, ge=0, le=5)
+    stop_criteria: InternetScoutResearchStopCriteria = Field(
+        default_factory=InternetScoutResearchStopCriteria
+    )
     notes: list[str] = Field(default_factory=list, max_length=12)
 
 
@@ -367,12 +414,31 @@ class InternetScoutResearchReport(BaseModel):
 
     mode: Literal["deep_research_report"] = "deep_research_report"
     answerability: Literal["answerable", "limited", "not_verified"] = "not_verified"
+    plan_id: str | None = Field(default=None, max_length=32)
+    research_intent: ResearchIntent = "general"
+    source_quality_status: SourceQualityStatus = "insufficient"
     title: str = Field(default="Beacon research report", max_length=200)
     summary: str = Field(default="", max_length=1000)
     key_findings: list[str] = Field(default_factory=list, max_length=10)
     limitations: list[str] = Field(default_factory=list, max_length=10)
     cited_source_count: int = Field(default=0, ge=0, le=25)
+    accepted_citation_count: int = Field(default=0, ge=0, le=25)
+    rejected_citation_count: int = Field(default=0, ge=0, le=100)
+    verified_claim_count: int = Field(default=0, ge=0, le=100)
+    unsupported_claim_count: int = Field(default=0, ge=0, le=100)
     source_hosts: list[str] = Field(default_factory=list, max_length=25)
+    required_source_hosts: list[str] = Field(default_factory=list, max_length=20)
+    expected_source_types: list[ResearchSourceType] = Field(
+        default_factory=list,
+        max_length=8,
+    )
+    subquestion_count: int = Field(default=0, ge=0, le=6)
+    stop_criteria: InternetScoutResearchStopCriteria = Field(
+        default_factory=InternetScoutResearchStopCriteria
+    )
+    verified_claims: list[str] = Field(default_factory=list, max_length=10)
+    unsupported_claims: list[str] = Field(default_factory=list, max_length=10)
+    coverage_warnings: list[str] = Field(default_factory=list, max_length=20)
     source_rankings: list[InternetScoutSourceRanking] = Field(
         default_factory=list,
         max_length=25,

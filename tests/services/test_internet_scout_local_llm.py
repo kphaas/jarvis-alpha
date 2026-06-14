@@ -55,7 +55,17 @@ def test_local_llm_response_wraps_evidence_as_untrusted_citations():
     assert response.memory_boundary.automatic_memory_write_allowed is False
     assert response.memory_boundary.promotion_review_required is True
     assert response.research_report.answerability == "limited"
+    assert response.research_report.plan_id == stored.plan.research.plan_id
+    assert response.research_report.research_intent == "general"
+    assert response.research_report.source_quality_status == "weak"
     assert response.research_report.cited_source_count == 1
+    assert response.research_report.accepted_citation_count == 1
+    assert response.research_report.rejected_citation_count == 0
+    assert response.research_report.verified_claim_count == 1
+    assert response.research_report.unsupported_claim_count == 0
+    assert response.research_report.expected_source_types == ["general_web"]
+    assert response.research_report.subquestion_count == 1
+    assert response.research_report.verified_claims == ["Beacon source body."]
     assert response.research_report.source_hosts == ["public.example.test"]
     assert response.research_report.source_rankings[0].rank == 1
     assert response.research_report.source_rankings[0].score == 55
@@ -64,6 +74,8 @@ def test_local_llm_response_wraps_evidence_as_untrusted_citations():
         "confidence:medium",
         "cited_search_result",
     ]
+    assert "Research Plan" in response.research_report.report_markdown
+    assert "Claim Verification" in response.research_report.report_markdown
     assert "Source Ranking" in response.research_report.report_markdown
     assert "Memory Boundary" in response.research_report.report_markdown
     assert source.content_hash in response.answer_context
@@ -129,6 +141,8 @@ def test_local_llm_filters_non_official_sources_for_official_docs_query():
         "platform.openai.com",
         "docs.openai.com",
     ]
+    assert response.research_report.source_quality_status == "insufficient"
+    assert response.research_report.coverage_warnings
 
 
 def test_local_llm_prefers_official_source_for_official_docs_query():
@@ -178,6 +192,11 @@ def test_local_llm_prefers_official_source_for_official_docs_query():
     assert response.synthesis.minimum_citations_met is True
     assert response.research_report.answerability == "answerable"
     assert response.research_report.source_hosts == ["platform.openai.com"]
+    assert response.research_report.required_source_hosts == [
+        "openai.com",
+        "platform.openai.com",
+        "docs.openai.com",
+    ]
     assert response.research_report.source_rankings[0].source_quality == "official"
     assert response.research_report.source_rankings[0].confidence == "high"
     assert response.research_report.source_rankings[0].score == 100
@@ -249,6 +268,9 @@ def test_local_llm_rejects_claim_not_supported_by_citation_text():
     assert response.quality.official_source_count == 1
     assert response.quality.unsupported_claim_count == 1
     assert response.quality.verified_claim_count == 0
+    assert response.research_report.unsupported_claims == [
+        "The official OpenAI API reference says the monthly price is $20."
+    ]
 
 
 def test_local_llm_rejects_prompt_injection_citations():

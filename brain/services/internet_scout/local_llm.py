@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 
 from brain.services.internet_scout.models import (
@@ -10,12 +11,16 @@ from brain.services.internet_scout.models import (
     InternetScoutLocalLLMResponse,
     InternetScoutMemoryBoundary,
     InternetScoutResearchReport,
+    InternetScoutResearchStopCriteria,
     InternetScoutSourceRanking,
     InternetScoutSynthesisContract,
     InternetScoutStoredResponse,
     SourceQualityLevel,
 )
-from brain.services.internet_scout.source_quality import evaluate_citation_quality
+from brain.services.internet_scout.source_quality import (
+    CitationQualityEvaluation,
+    evaluate_citation_quality,
+)
 
 ReportAnswerability = Literal["answerable", "limited", "not_verified"]
 
@@ -48,6 +53,7 @@ def build_local_llm_response(
     research_report = _research_report(
         stored=stored,
         citations=citations,
+        evaluation=evaluation,
         quality=evaluation.summary,
         synthesis=synthesis,
         memory_boundary=memory_boundary,
@@ -110,23 +116,35 @@ def _research_report(
     *,
     stored: InternetScoutStoredResponse,
     citations: list[InternetScoutLocalLLMCitation],
+    evaluation: CitationQualityEvaluation,
     quality: InternetScoutCitationQualitySummary,
     synthesis: InternetScoutSynthesisContract,
     memory_boundary: InternetScoutMemoryBoundary,
 ) -> InternetScoutResearchReport:
     query = (stored.evidence.request.query or "Beacon research").strip()
+    plan = stored.plan.research
     answerability = _report_answerability(synthesis)
     source_hosts = list(dict.fromkeys(citation.host for citation in citations))
     source_rankings = _source_rankings(citations)
     findings = _report_findings(citations)
+    verified_claims = _verified_claims(citations)
+    unsupported_claims = _unsupported_claims(evaluation)
     limitations = [
         *synthesis.limitations[:5],
         *quality.warnings[:5],
     ][:10]
+    coverage_warnings = _coverage_warnings(
+        quality=quality,
+        source_hosts=source_hosts,
+        accepted_count=len(citations),
+        stop_criteria=plan.stop_criteria,
+    )
     summary = _report_summary(
         answerability=answerability,
         citation_count=len(citations),
         source_hosts=source_hosts,
+        verified_claim_count=quality.verified_claim_count,
+        unsupported_claim_count=quality.unsupported_claim_count,
     )
     report_markdown = _report_markdown(
         title=query,
@@ -135,16 +153,37 @@ def _research_report(
         limitations=limitations,
         source_hosts=source_hosts,
         source_rankings=source_rankings,
+        plan_id=plan.plan_id,
+        research_intent=plan.intent,
+        expected_source_types=plan.expected_source_types,
+        stop_criteria=plan.stop_criteria.stop_when,
+        verified_claims=verified_claims,
+        unsupported_claims=unsupported_claims,
+        coverage_warnings=coverage_warnings,
         memory_boundary=memory_boundary,
     )
     return InternetScoutResearchReport(
         answerability=answerability,
+        plan_id=plan.plan_id or None,
+        research_intent=plan.intent,
+        source_quality_status=quality.status,
         title=query[:200],
         summary=summary,
         key_findings=findings,
         limitations=limitations,
         cited_source_count=len(citations),
+        accepted_citation_count=quality.accepted_citation_count,
+        rejected_citation_count=quality.rejected_citation_count,
+        verified_claim_count=quality.verified_claim_count,
+        unsupported_claim_count=quality.unsupported_claim_count,
         source_hosts=source_hosts,
+        required_source_hosts=quality.required_source_hosts,
+        expected_source_types=plan.expected_source_types,
+        subquestion_count=len(plan.subquestions),
+        stop_criteria=plan.stop_criteria,
+        verified_claims=verified_claims,
+        unsupported_claims=unsupported_claims,
+        coverage_warnings=coverage_warnings,
         source_rankings=source_rankings,
         report_markdown=report_markdown,
     )
@@ -175,16 +214,21 @@ def _report_summary(
     answerability: ReportAnswerability,
     citation_count: int,
     source_hosts: list[str],
+    verified_claim_count: int,
+    unsupported_claim_count: int,
 ) -> str:
     if answerability == "answerable":
         return (
             f"Beacon found {citation_count} accepted cited source(s) across "
-            f"{len(source_hosts)} host(s)."
+            f"{len(source_hosts)} host(s), with {verified_claim_count} verified "
+            f"claim(s) and {unsupported_claim_count} unsupported claim(s)."
         )
     if answerability == "limited":
         return (
             f"Beacon found limited cited evidence from {citation_count} accepted "
-            "source(s); answer with explicit limitations."
+            f"source(s), with {verified_claim_count} verified claim(s) and "
+            f"{unsupported_claim_count} unsupported claim(s); answer with explicit "
+            "limitations."
         )
     return "Beacon did not find acceptable cited evidence for a verified answer."
 
@@ -197,10 +241,24 @@ def _report_markdown(
     limitations: list[str],
     source_hosts: list[str],
     source_rankings: list[InternetScoutSourceRanking],
+    plan_id: str,
+    research_intent: str,
+    expected_source_types: Sequence[str],
+    stop_criteria: Sequence[str],
+    verified_claims: list[str],
+    unsupported_claims: list[str],
+    coverage_warnings: list[str],
     memory_boundary: InternetScoutMemoryBoundary,
 ) -> str:
     lines = [
         f"# {title[:200]}",
+        "",
+        "## Research Plan",
+        f"- Plan id: {plan_id or 'n/a'}",
+        f"- Intent: {research_intent}",
+        "- Expected source types: "
+        f"{', '.join(expected_source_types) if expected_source_types else 'n/a'}",
+        f"- Stop criteria: {'; '.join(stop_criteria) if stop_criteria else 'n/a'}",
         "",
         "## Summary",
         summary,
@@ -214,6 +272,16 @@ def _report_markdown(
     lines.extend(f"- {item}" for item in limitations[:10])
     if not limitations:
         lines.append("- No additional limitations beyond the cited evidence boundary.")
+    lines.extend(["", "## Claim Verification"])
+    lines.extend(f"- Verified: {claim}" for claim in verified_claims[:10])
+    if not verified_claims:
+        lines.append("- Verified: none")
+    lines.extend(f"- Unsupported: {claim}" for claim in unsupported_claims[:10])
+    if not unsupported_claims:
+        lines.append("- Unsupported: none")
+    if coverage_warnings:
+        lines.extend(["", "## Coverage Warnings"])
+        lines.extend(f"- {warning}" for warning in coverage_warnings[:10])
     lines.extend(["", "## Source Ranking"])
     lines.extend(
         (
@@ -238,6 +306,46 @@ def _report_markdown(
         ]
     )
     return "\n".join(lines)[:16000]
+
+
+def _verified_claims(
+    citations: list[InternetScoutLocalLLMCitation],
+) -> list[str]:
+    claims: list[str] = []
+    for citation in citations[:10]:
+        if citation.claim:
+            claims.append(citation.claim[:500])
+    return claims
+
+
+def _unsupported_claims(
+    evaluation: CitationQualityEvaluation,
+) -> list[str]:
+    claims: list[str] = []
+    for item in evaluation.evaluated:
+        if not item.unsupported_claim or not item.citation.claim:
+            continue
+        claims.append(item.citation.claim[:500])
+        if len(claims) >= 10:
+            break
+    return claims
+
+
+def _coverage_warnings(
+    *,
+    quality: InternetScoutCitationQualitySummary,
+    source_hosts: list[str],
+    accepted_count: int,
+    stop_criteria: InternetScoutResearchStopCriteria,
+) -> list[str]:
+    warnings = list(quality.warnings[:10])
+    if accepted_count < stop_criteria.min_accepted_citations:
+        warnings.append("Accepted citations are below the research stop criteria.")
+    if stop_criteria.require_official_source and quality.official_source_count == 0:
+        warnings.append("Required official source evidence was not accepted.")
+    if stop_criteria.require_cross_check and len(source_hosts) < 2:
+        warnings.append("Cross-check coverage is below the research stop criteria.")
+    return list(dict.fromkeys(warnings))[:20]
 
 
 def _rank_citations(
