@@ -30,11 +30,15 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
     assert official.details["research_search_providers"] == ["brave", "perplexity"]
     assert official.details["research_max_extracts"] == 4
     assert official.details["synthesis_required_behavior"] == "answer_with_citations"
+    assert official.details["research_report_answerability"] == "answerable"
+    assert official.details["automatic_memory_write_allowed"] is False
+    assert official.details["memory_promotion_review_required"] is True
 
     unsupported = results["unsupported_official_pricing_claim_fails_closed"]
     assert unsupported.details["status"] == "insufficient"
     assert unsupported.details["unsupported_claim_count"] == 1
     assert unsupported.details["synthesis_answerable"] is False
+    assert unsupported.details["research_report_answerability"] == "not_verified"
 
     injection = results["prompt_injection_marker_rejects_citation"]
     assert injection.details["status"] == "insufficient"

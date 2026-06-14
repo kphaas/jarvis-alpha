@@ -106,6 +106,16 @@ def _run_case(case: SearchQualityEvalCase) -> SearchQualityEvalResult:
             "research_query_purposes": purposes,
             "synthesis_required_behavior": response.synthesis.required_behavior,
             "synthesis_answerable": response.synthesis.answerable,
+            "research_report_answerability": response.research_report.answerability,
+            "research_report_cited_source_count": (
+                response.research_report.cited_source_count
+            ),
+            "automatic_memory_write_allowed": (
+                response.memory_boundary.automatic_memory_write_allowed
+            ),
+            "memory_promotion_review_required": (
+                response.memory_boundary.promotion_review_required
+            ),
         },
         failures=tuple(failures),
     )

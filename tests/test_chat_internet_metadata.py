@@ -22,6 +22,7 @@ from brain.services.internet_scout.chat_adapter import InternetChatContext
 from brain.services.internet_scout.models import (
     InternetScoutCitationQualitySummary,
     InternetScoutLocalLLMCitation,
+    InternetScoutResearchReport,
     InternetScoutResearchPlan,
     InternetScoutResearchQuery,
     InternetScoutSynthesisContract,
@@ -81,6 +82,11 @@ def _context() -> InternetChatContext:
             citation_count=1,
             minimum_citations_met=False,
             required_behavior="answer_with_limitations",
+        ),
+        research_report=InternetScoutResearchReport(
+            answerability="limited",
+            cited_source_count=1,
+            source_hosts=["example.com"],
         ),
         research_plan=research_plan,
         prompt_context="Beacon prompt context.",
@@ -144,6 +150,11 @@ def _insufficient_context() -> InternetChatContext:
             citation_count=0,
             minimum_citations_met=False,
             required_behavior="state_not_verified",
+        ),
+        research_report=InternetScoutResearchReport(
+            answerability="not_verified",
+            cited_source_count=0,
+            source_hosts=[],
         ),
         research_plan=research_plan,
         prompt_context=(
@@ -213,6 +224,11 @@ def _supported_openai_context() -> InternetChatContext:
             minimum_citations_met=True,
             required_behavior="answer_with_citations",
         ),
+        research_report=InternetScoutResearchReport(
+            answerability="answerable",
+            cited_source_count=1,
+            source_hosts=["platform.openai.com"],
+        ),
         research_plan=research_plan,
         prompt_context=(
             "Beacon citation quality: supported\n"
@@ -251,6 +267,15 @@ def test_internet_message_metadata_redacts_raw_citation_text() -> None:
     assert metadata["internet_synthesis_citation_count"] == 1
     assert metadata["internet_synthesis_minimum_citations_met"] is False
     assert metadata["internet_synthesis_required_behavior"] == "answer_with_limitations"
+    assert metadata["internet_memory_context_priority"] == "secondary_to_beacon"
+    assert metadata["internet_automatic_memory_write_allowed"] is False
+    assert metadata["internet_memory_promotion_review_required"] is True
+    assert metadata["internet_memory_promotion_route"] == (
+        "internet_scout.memory_promotions"
+    )
+    assert metadata["internet_research_report_answerability"] == "limited"
+    assert metadata["internet_research_report_cited_source_count"] == 1
+    assert metadata["internet_research_report_source_hosts"] == ["example.com"]
     assert metadata["raw_web_content_is_untrusted"] is True
     assert metadata["citations"] == [
         {
@@ -428,6 +453,13 @@ async def test_thread_messages_return_flattened_internet_metadata(
             "internet_synthesis_citation_count": 1,
             "internet_synthesis_minimum_citations_met": False,
             "internet_synthesis_required_behavior": "answer_with_limitations",
+            "internet_memory_context_priority": "secondary_to_beacon",
+            "internet_automatic_memory_write_allowed": False,
+            "internet_memory_promotion_review_required": True,
+            "internet_memory_promotion_route": "internet_scout.memory_promotions",
+            "internet_research_report_answerability": "limited",
+            "internet_research_report_cited_source_count": 1,
+            "internet_research_report_source_hosts": ["example.com"],
             "raw_web_content_is_untrusted": True,
             "citations": [
                 {
@@ -580,6 +612,12 @@ async def test_chat_short_circuits_insufficient_beacon_evidence(
     assert persisted_metadata["internet_synthesis_required_behavior"] == (
         "state_not_verified"
     )
+    assert persisted_metadata["internet_automatic_memory_write_allowed"] is False
+    assert persisted_metadata["internet_memory_promotion_review_required"] is True
+    assert persisted_metadata["internet_research_report_answerability"] == (
+        "not_verified"
+    )
+    assert persisted_metadata["internet_research_report_cited_source_count"] == 0
     assert persisted_metadata["citations"] == []
 
 
