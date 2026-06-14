@@ -6,7 +6,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from brain.db.rls import rls_connection
 from brain.services.internet_scout.executor import InternetScoutExecutor
@@ -15,6 +15,7 @@ from brain.services.internet_scout.models import (
     InternetScoutCitationQualitySummary,
     InternetScoutLocalLLMCitation,
     InternetScoutLocalLLMResponse,
+    InternetScoutResearchPlan,
     InternetScoutRequest,
     InternetScoutStoredResponse,
     InternetTool,
@@ -38,6 +39,9 @@ class InternetChatContext(BaseModel):
     citation_count: int
     citations: list[InternetScoutLocalLLMCitation]
     source_quality: InternetScoutCitationQualitySummary
+    research_plan: InternetScoutResearchPlan = Field(
+        default_factory=InternetScoutResearchPlan
+    )
     prompt_context: str
     raw_web_content_is_untrusted: bool = True
     instruction_boundary: str
@@ -75,6 +79,7 @@ async def build_chat_internet_context(
         citation_count=len(local_llm.citations),
         citations=local_llm.citations,
         source_quality=local_llm.quality,
+        research_plan=stored.plan.research,
         prompt_context=prompt_context,
         raw_web_content_is_untrusted=local_llm.raw_web_content_is_untrusted,
         instruction_boundary=local_llm.instruction_boundary,
@@ -172,7 +177,10 @@ async def _record_chat_quality_metadata(
     request: Request,
     response: InternetScoutLocalLLMResponse,
 ) -> None:
-    metadata = _quality_metadata(response.quality)
+    metadata = {
+        **_quality_metadata(response.quality),
+        **_research_metadata(response.plan.research),
+    }
     try:
         async with rls_connection(request) as conn:
             await InternetScoutRepository(conn).record_tool_event(
@@ -246,4 +254,19 @@ def _quality_metadata(
         "prompt_injection_rejection_count": quality.prompt_injection_rejection_count,
         "official_source_required": quality.official_source_required,
         "required_source_hosts": quality.required_source_hosts,
+    }
+
+
+def _research_metadata(plan: InternetScoutResearchPlan) -> dict[str, object]:
+    return {
+        "research_intent": plan.intent,
+        "research_search_count": len(plan.searches),
+        "research_search_budget": plan.max_searches,
+        "research_authority_required": plan.authority_required,
+        "research_freshness_required": plan.freshness_required,
+        "research_primary_source_required": plan.primary_source_required,
+        "research_query_purposes": [query.purpose for query in plan.searches],
+        "research_required_query_purposes": [
+            query.purpose for query in plan.searches if query.required
+        ],
     }

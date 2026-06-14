@@ -208,8 +208,27 @@ def _internet_message_metadata(
         "internet_official_source_required": (
             context.source_quality.official_source_required
         ),
+        **_internet_research_metadata(context),
         "raw_web_content_is_untrusted": context.raw_web_content_is_untrusted,
         "citations": _redacted_internet_citations(context),
+    }
+
+
+def _internet_research_metadata(
+    context: InternetChatContext,
+) -> dict[str, object]:
+    plan = context.research_plan
+    return {
+        "internet_research_intent": plan.intent,
+        "internet_research_search_count": len(plan.searches),
+        "internet_research_search_budget": plan.max_searches,
+        "internet_research_authority_required": plan.authority_required,
+        "internet_research_freshness_required": plan.freshness_required,
+        "internet_research_primary_source_required": plan.primary_source_required,
+        "internet_research_query_purposes": [query.purpose for query in plan.searches],
+        "internet_research_required_query_purposes": [
+            query.purpose for query in plan.searches if query.required
+        ],
     }
 
 
@@ -261,6 +280,12 @@ def _redacted_internet_citations(
             payload["host"] = citation.host
         if citation.content_hash:
             payload["content_hash"] = citation.content_hash
+        if citation.claim:
+            payload["claim"] = citation.claim
+        payload["confidence"] = citation.confidence
+        payload["source_quality"] = citation.source_quality
+        if citation.quality_reasons:
+            payload["quality_reasons"] = citation.quality_reasons
         citations.append(payload)
     return citations
 
@@ -294,6 +319,14 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
         "internet_unsupported_claim_count",
         "internet_prompt_injection_rejection_count",
         "internet_official_source_required",
+        "internet_research_intent",
+        "internet_research_search_count",
+        "internet_research_search_budget",
+        "internet_research_authority_required",
+        "internet_research_freshness_required",
+        "internet_research_primary_source_required",
+        "internet_research_query_purposes",
+        "internet_research_required_query_purposes",
         "raw_web_content_is_untrusted",
         "citations",
         "web_suggestion_mode",
