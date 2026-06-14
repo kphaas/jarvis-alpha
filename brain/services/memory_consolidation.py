@@ -256,7 +256,7 @@ def memory_consolidation_summary_body(report: dict[str, Any]) -> str:
         f"{len(report.get('decay_candidates') or [])} stale working, "
         f"{len(report.get('procedural_candidates') or [])} procedural candidates. "
         f"Blocked suspicious candidates: {int(report.get('blocked_candidate_count') or 0)}. "
-        "Writes are disabled; every consolidation action requires review."
+        "Planner writes are disabled; executable proposals require T5 review."
     )
 
 
@@ -290,6 +290,16 @@ async def collect_memory_consolidation_report(
         FROM alpha_conversation_memory
         WHERE user_id = $1
           AND tier IN ('working', 'episodic')
+          AND archived_at IS NULL
+          AND NOT (
+              COALESCE(consolidation_hold, false)
+              AND EXISTS (
+                  SELECT 1
+                  FROM public.alpha_memory_consolidation_proposals AS p
+                  WHERE p.id = consolidation_hold_proposal_id
+                    AND p.status IN ('pending_review', 'queued', 'approved')
+              )
+          )
         ORDER BY created_at DESC
         LIMIT $2
         """,
