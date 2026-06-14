@@ -47,6 +47,15 @@ def test_local_llm_response_wraps_evidence_as_untrusted_citations():
     assert response.citations[0].source_url == source.url
     assert response.citations[0].source_quality == "general"
     assert response.quality.status == "weak"
+    assert response.synthesis.answerable is True
+    assert response.synthesis.required_behavior == "answer_with_limitations"
+    assert response.synthesis.minimum_citations_met is False
+    assert response.memory_boundary.automatic_memory_write_allowed is False
+    assert response.memory_boundary.promotion_review_required is True
+    assert response.research_report.answerability == "limited"
+    assert response.research_report.cited_source_count == 1
+    assert response.research_report.source_hosts == ["public.example.test"]
+    assert "Memory Boundary" in response.research_report.report_markdown
     assert source.content_hash in response.answer_context
     assert "Beacon source body." in response.answer_context
 
@@ -99,6 +108,9 @@ def test_local_llm_filters_non_official_sources_for_official_docs_query():
     assert response.citations == []
     assert response.answer_context == ""
     assert response.quality.status == "insufficient"
+    assert response.synthesis.answerable is False
+    assert response.synthesis.required_behavior == "state_not_verified"
+    assert response.research_report.answerability == "not_verified"
     assert response.quality.official_source_required is True
     assert response.quality.official_source_count == 0
     assert response.quality.rejected_citation_count == 3
@@ -149,6 +161,11 @@ def test_local_llm_prefers_official_source_for_official_docs_query():
     assert [citation.host for citation in response.citations] == ["platform.openai.com"]
     assert response.citations[0].source_quality == "official"
     assert response.quality.status == "supported"
+    assert response.synthesis.answerable is True
+    assert response.synthesis.required_behavior == "answer_with_citations"
+    assert response.synthesis.minimum_citations_met is True
+    assert response.research_report.answerability == "answerable"
+    assert response.research_report.source_hosts == ["platform.openai.com"]
     assert response.quality.official_source_count == 1
     assert response.quality.rejected_citation_count == 1
     assert response.quality.verified_claim_count == 1

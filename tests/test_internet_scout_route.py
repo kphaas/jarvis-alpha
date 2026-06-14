@@ -298,6 +298,11 @@ async def test_internet_scout_agent_run_returns_production_envelope(monkeypatch)
     assert response.request_id == FakeRepo.request_id
     assert response.confidence == "medium"
     assert response.raw_web_content_is_untrusted is True
+    assert response.synthesis.required_behavior == "answer_with_limitations"
+    assert response.memory_boundary.automatic_memory_write_allowed is False
+    assert response.memory_boundary.promotion_review_required is True
+    assert response.research_report.answerability == "limited"
+    assert response.research_report.cited_source_count == 1
     assert response.citations[0].source_url == "https://public.example.test/report"
     assert "untrusted data" in response.untrusted_warnings[0]
     assert FakeRepo.stored

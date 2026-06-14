@@ -42,6 +42,9 @@ def build_agent_completed_response(
         not_verified=not_verified,
         source_quality_status=local_llm.quality.status,
         source_quality=local_llm.quality,
+        synthesis=local_llm.synthesis,
+        memory_boundary=local_llm.memory_boundary,
+        research_report=local_llm.research_report,
         evidence=stored.evidence,
         raw_web_content_is_untrusted=True,
     )

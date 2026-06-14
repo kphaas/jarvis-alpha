@@ -11,6 +11,8 @@ from brain.services.internet_scout.models import (
     InternetScoutRequest,
     InternetTool,
     ResearchIntent,
+    SearchProvider,
+    SearchProviderStrategy,
 )
 
 _OFFICIAL_MARKERS = (
@@ -76,6 +78,21 @@ def plan_research(
     primary_source_required = authority_required or any(
         marker in query for marker in _PRIMARY_SOURCE_MARKERS
     )
+    provider_strategy = _provider_strategy(
+        request=request,
+        selected_tool=selected_tool,
+        max_searches=max_searches,
+    )
+    search_providers: list[SearchProvider] = (
+        ["brave", "perplexity"] if provider_strategy == "fanout" else ["auto"]
+    )
+    max_extracts = _max_extracts(
+        request=request,
+        selected_tool=selected_tool,
+        authority_required=authority_required,
+        freshness_required=freshness_required,
+        max_searches=max_searches,
+    )
 
     searches = _queries_for_intent(
         query=search_text,
@@ -95,6 +112,9 @@ def plan_research(
         notes.append("freshness_required")
     if primary_source_required:
         notes.append("primary_source_required")
+    notes.append(f"provider_strategy:{provider_strategy}")
+    if max_extracts:
+        notes.append(f"extract_top_results:{max_extracts}")
 
     return InternetScoutResearchPlan(
         intent=intent,
@@ -103,6 +123,9 @@ def plan_research(
         freshness_required=freshness_required,
         primary_source_required=primary_source_required,
         max_searches=max_searches,
+        provider_strategy=provider_strategy,
+        search_providers=search_providers,
+        max_extracts=max_extracts,
         notes=notes,
     )
 
@@ -117,6 +140,38 @@ def _max_searches(
     if request.requester.endswith(".deep_research"):
         return min(max(request.max_pages, 3), 6)
     return 1
+
+
+def _provider_strategy(
+    *,
+    request: InternetScoutRequest,
+    selected_tool: InternetTool,
+    max_searches: int,
+) -> SearchProviderStrategy:
+    if selected_tool != InternetTool.SEARCH or not request.query:
+        return "auto"
+    if request.requester.endswith(".deep_research") or max_searches > 1:
+        return "fanout"
+    return "auto"
+
+
+def _max_extracts(
+    *,
+    request: InternetScoutRequest,
+    selected_tool: InternetTool,
+    authority_required: bool,
+    freshness_required: bool,
+    max_searches: int,
+) -> int:
+    if selected_tool != InternetTool.SEARCH or not request.query:
+        return 0
+    if request.requester.endswith(".deep_research"):
+        return min(max(request.max_pages, 2), 4)
+    if authority_required or freshness_required:
+        return 1
+    if max_searches > 1:
+        return 1
+    return 0
 
 
 def _queries_for_intent(

@@ -208,8 +208,73 @@ def _internet_message_metadata(
         "internet_official_source_required": (
             context.source_quality.official_source_required
         ),
+        **_internet_research_metadata(context),
+        **_internet_synthesis_metadata(context),
+        **_internet_memory_boundary_metadata(context),
+        **_internet_research_report_metadata(context),
         "raw_web_content_is_untrusted": context.raw_web_content_is_untrusted,
         "citations": _redacted_internet_citations(context),
+    }
+
+
+def _internet_research_metadata(
+    context: InternetChatContext,
+) -> dict[str, object]:
+    plan = context.research_plan
+    return {
+        "internet_research_intent": plan.intent,
+        "internet_research_search_count": len(plan.searches),
+        "internet_research_search_budget": plan.max_searches,
+        "internet_research_provider_strategy": plan.provider_strategy,
+        "internet_research_search_providers": plan.search_providers,
+        "internet_research_max_extracts": plan.max_extracts,
+        "internet_research_authority_required": plan.authority_required,
+        "internet_research_freshness_required": plan.freshness_required,
+        "internet_research_primary_source_required": plan.primary_source_required,
+        "internet_research_query_purposes": [query.purpose for query in plan.searches],
+        "internet_research_required_query_purposes": [
+            query.purpose for query in plan.searches if query.required
+        ],
+    }
+
+
+def _internet_synthesis_metadata(
+    context: InternetChatContext,
+) -> dict[str, object]:
+    synthesis = context.synthesis
+    return {
+        "internet_synthesis_answerable": synthesis.answerable,
+        "internet_synthesis_status": synthesis.status,
+        "internet_synthesis_citation_count": synthesis.citation_count,
+        "internet_synthesis_minimum_citations_met": synthesis.minimum_citations_met,
+        "internet_synthesis_required_behavior": synthesis.required_behavior,
+    }
+
+
+def _internet_memory_boundary_metadata(
+    context: InternetChatContext,
+) -> dict[str, object]:
+    boundary = context.memory_boundary
+    return {
+        "internet_memory_context_priority": boundary.memory_context_priority,
+        "internet_automatic_memory_write_allowed": (
+            boundary.automatic_memory_write_allowed
+        ),
+        "internet_memory_promotion_review_required": (
+            boundary.promotion_review_required
+        ),
+        "internet_memory_promotion_route": boundary.promotion_route,
+    }
+
+
+def _internet_research_report_metadata(
+    context: InternetChatContext,
+) -> dict[str, object]:
+    report = context.research_report
+    return {
+        "internet_research_report_answerability": report.answerability,
+        "internet_research_report_cited_source_count": report.cited_source_count,
+        "internet_research_report_source_hosts": report.source_hosts,
     }
 
 
@@ -261,6 +326,12 @@ def _redacted_internet_citations(
             payload["host"] = citation.host
         if citation.content_hash:
             payload["content_hash"] = citation.content_hash
+        if citation.claim:
+            payload["claim"] = citation.claim
+        payload["confidence"] = citation.confidence
+        payload["source_quality"] = citation.source_quality
+        if citation.quality_reasons:
+            payload["quality_reasons"] = citation.quality_reasons
         citations.append(payload)
     return citations
 
@@ -294,6 +365,29 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
         "internet_unsupported_claim_count",
         "internet_prompt_injection_rejection_count",
         "internet_official_source_required",
+        "internet_research_intent",
+        "internet_research_search_count",
+        "internet_research_search_budget",
+        "internet_research_provider_strategy",
+        "internet_research_search_providers",
+        "internet_research_max_extracts",
+        "internet_research_authority_required",
+        "internet_research_freshness_required",
+        "internet_research_primary_source_required",
+        "internet_research_query_purposes",
+        "internet_research_required_query_purposes",
+        "internet_synthesis_answerable",
+        "internet_synthesis_status",
+        "internet_synthesis_citation_count",
+        "internet_synthesis_minimum_citations_met",
+        "internet_synthesis_required_behavior",
+        "internet_memory_context_priority",
+        "internet_automatic_memory_write_allowed",
+        "internet_memory_promotion_review_required",
+        "internet_memory_promotion_route",
+        "internet_research_report_answerability",
+        "internet_research_report_cited_source_count",
+        "internet_research_report_source_hosts",
         "raw_web_content_is_untrusted",
         "citations",
         "web_suggestion_mode",

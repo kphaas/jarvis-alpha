@@ -169,6 +169,10 @@ needs_restart_endpoint() {
   service_has_changes_matching "alpha-endpoint" '(^endpoint/|^ui/dist/|^scripts/deploy_nginx_endpoint\.sh$)'
 }
 
+needs_restart_at0_voice() {
+  service_has_changes_matching "alpha-at0-voice" '(^endpoint/voice/|^launchagents/com\.jarvis\.alpha\.at0-voice\.endpoint\.template\.plist$)'
+}
+
 needs_restart_watchdog() {
   service_has_changes_matching "alpha-watchdog" '(^brain/agents/watchdog_agent\.py$|^scripts/start_alpha_watchdog\.sh$|^launchagents/com\.jarvis\.alpha\.watchdog\.plist$)'
 }
@@ -585,6 +589,49 @@ if [ "$NODE_SHORT" = "endpoint" ]; then
   echo "✅ ui/dist present — ${DIST_FILES} files"
   emit ok dist_check node="$NODE_SHORT" file_count="$DIST_FILES" dur_ms=$(($(time_ms) - DIST_START))
   echo "ℹ️  nginx reload deferred — run scripts/deploy_nginx_endpoint.sh if alpha.conf changed"
+
+  AT0_VOICE_PLIST_SOURCE="${REPO_DIR}/launchagents/com.jarvis.alpha.at0-voice.endpoint.template.plist"
+  AT0_VOICE_PLIST_TARGET="${HOME}/Library/LaunchAgents/com.jarvis.alpha.at0-voice.endpoint.plist"
+  if needs_restart_at0_voice; then
+    echo ""
+    echo "Installing AT-0 voice worker..."
+    AT0_INSTALL_START=$(time_ms)
+    if ! bash "${REPO_DIR}/endpoint/voice/bin/install_at0_voice_runtime.sh"; then
+      emit fail restart node="$NODE_SHORT" service="alpha-at0-voice" dur_ms=$(($(time_ms) - AT0_INSTALL_START)) error="install failed"
+      echo "❌ AT-0 voice worker install failed"
+      exit 1
+    fi
+    cp "$AT0_VOICE_PLIST_SOURCE" "$AT0_VOICE_PLIST_TARGET"
+
+    echo "Restarting AT-0 voice worker..."
+    launchctl unload "$AT0_VOICE_PLIST_TARGET" 2>/dev/null || true
+    sleep 1
+    if ! launchctl load "$AT0_VOICE_PLIST_TARGET"; then
+      emit fail restart node="$NODE_SHORT" service="alpha-at0-voice" dur_ms=$(($(time_ms) - AT0_INSTALL_START)) error="launchctl load failed"
+      echo "❌ AT-0 voice worker LaunchAgent load failed"
+      exit 1
+    fi
+    sleep 2
+    AT0_VOICE_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.at0-voice" {print $1}' | head -1)
+    [ "$AT0_VOICE_PID" = "-" ] && AT0_VOICE_PID=0
+    emit ok restart node="$NODE_SHORT" service="alpha-at0-voice" pid="${AT0_VOICE_PID:-0}" dur_ms=$(($(time_ms) - AT0_INSTALL_START))
+
+    AT0_HEALTH_START=$(time_ms)
+    AT0_HEALTH_URL="${JARVIS_AT0_VOICE_HEALTH_URL:-http://127.0.0.1:4212/health}"
+    AT0_HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$AT0_HEALTH_URL" 2>/dev/null || echo "000")
+    if [ "$AT0_HEALTH_CODE" = "200" ]; then
+      echo "✅ AT-0 voice worker reachable"
+      emit ok health node="$NODE_SHORT" service="alpha-at0-voice" url="$AT0_HEALTH_URL" http_code="$AT0_HEALTH_CODE" dur_ms=$(($(time_ms) - AT0_HEALTH_START))
+    else
+      echo "⚠️  AT-0 voice worker health returned HTTP $AT0_HEALTH_CODE"
+      emit fail health node="$NODE_SHORT" service="alpha-at0-voice" url="$AT0_HEALTH_URL" http_code="$AT0_HEALTH_CODE" dur_ms=$(($(time_ms) - AT0_HEALTH_START)) error="health not reachable"
+      exit 1
+    fi
+    mark_service_checked "alpha-at0-voice"
+  else
+    emit skip restart node="$NODE_SHORT" service="alpha-at0-voice" reason="no_runtime_changes"
+    mark_service_checked "alpha-at0-voice"
+  fi
 fi
 
 # ── Final complete event ──
