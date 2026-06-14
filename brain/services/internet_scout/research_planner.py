@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from urllib.parse import urlparse
 
 from brain.services.internet_scout.models import (
     InternetScoutResearchPlan,
     InternetScoutResearchQuery,
+    InternetScoutResearchStopCriteria,
+    InternetScoutResearchSubquestion,
     InternetScoutRequest,
     InternetTool,
     ResearchIntent,
+    ResearchSourceType,
     SearchProvider,
     SearchProviderStrategy,
 )
@@ -102,7 +107,34 @@ def plan_research(
         authority_required=authority_required,
         freshness_required=freshness_required,
     )
+    expected_source_types = _expected_source_types(
+        query=query,
+        intent=intent,
+        authority_required=authority_required,
+        freshness_required=freshness_required,
+        primary_source_required=primary_source_required,
+    )
+    stop_criteria = _stop_criteria(
+        intent=intent,
+        authority_required=authority_required,
+        max_searches=max_searches,
+        max_extracts=max_extracts,
+        search_count=len(searches),
+    )
+    subquestions = _subquestions_for_plan(
+        searches=searches,
+        intent=intent,
+        expected_source_types=expected_source_types,
+    )
+    plan_id = _plan_id(
+        query=query,
+        intent=intent,
+        searches=searches,
+        expected_source_types=expected_source_types,
+        stop_criteria=stop_criteria,
+    )
     notes = [
+        f"research_plan:{plan_id}",
         f"research_intent:{intent}",
         f"search_budget:{len(searches)}",
     ]
@@ -117,8 +149,11 @@ def plan_research(
         notes.append(f"extract_top_results:{max_extracts}")
 
     return InternetScoutResearchPlan(
+        plan_id=plan_id,
         intent=intent,
         searches=searches,
+        subquestions=subquestions,
+        expected_source_types=expected_source_types,
         authority_required=authority_required,
         freshness_required=freshness_required,
         primary_source_required=primary_source_required,
@@ -126,6 +161,7 @@ def plan_research(
         provider_strategy=provider_strategy,
         search_providers=search_providers,
         max_extracts=max_extracts,
+        stop_criteria=stop_criteria,
         notes=notes,
     )
 
@@ -254,6 +290,120 @@ def _queries_for_intent(
     return _dedupe_queries(planned)[:max_searches]
 
 
+def _expected_source_types(
+    *,
+    query: str,
+    intent: ResearchIntent,
+    authority_required: bool,
+    freshness_required: bool,
+    primary_source_required: bool,
+) -> list[ResearchSourceType]:
+    source_types: list[ResearchSourceType] = []
+    if authority_required or intent == "official_docs":
+        source_types.append("official_docs")
+    if primary_source_required:
+        source_types.append("primary_source")
+    if freshness_required:
+        source_types.append("release_notes")
+    if "pricing" in query or "price" in query:
+        source_types.append("pricing")
+    if any(marker in query for marker in ("law", "legal", "regulation", "tax")):
+        source_types.append("legal_regulatory")
+    if "security advisory" in query or "cve" in query:
+        source_types.append("security_advisory")
+    if "status" in query:
+        source_types.append("status_page")
+    if not source_types:
+        source_types.append("general_web")
+    if "trusted_secondary" not in source_types and intent == "comparison":
+        source_types.append("trusted_secondary")
+    return _dedupe_source_types(source_types)[:8]
+
+
+def _stop_criteria(
+    *,
+    intent: ResearchIntent,
+    authority_required: bool,
+    max_searches: int,
+    max_extracts: int,
+    search_count: int,
+) -> InternetScoutResearchStopCriteria:
+    require_cross_check = search_count > 1 and intent != "official_docs"
+    min_accepted_citations = 1 if authority_required else 2 if search_count > 1 else 1
+    stop_when = [
+        f"accepted_citations>={min_accepted_citations}",
+        "unsupported_claims=0",
+    ]
+    if authority_required:
+        stop_when.append("official_source_present")
+    if require_cross_check:
+        stop_when.append("cross_check_query_executed")
+    return InternetScoutResearchStopCriteria(
+        min_accepted_citations=min_accepted_citations,
+        require_official_source=authority_required,
+        require_cross_check=require_cross_check,
+        max_searches=max_searches,
+        max_extracts=max_extracts,
+        stop_when=stop_when[:10],
+    )
+
+
+def _subquestions_for_plan(
+    *,
+    searches: list[InternetScoutResearchQuery],
+    intent: ResearchIntent,
+    expected_source_types: list[ResearchSourceType],
+) -> list[InternetScoutResearchSubquestion]:
+    if not searches:
+        return []
+
+    labels: dict[str, str] = {
+        "baseline": "What direct evidence answers the user request?",
+        "official_source": "Which official source establishes the answer?",
+        "primary_source": "Which primary source corroborates the answer?",
+        "recency": "What evidence proves the answer is current?",
+        "comparison": "What evidence distinguishes the compared options?",
+        "cross_check": "What independent source cross-checks the answer?",
+    }
+    subquestions: list[InternetScoutResearchSubquestion] = []
+    for search in searches:
+        subquestions.append(
+            InternetScoutResearchSubquestion(
+                question=labels.get(search.purpose, f"Research {intent}."),
+                purpose=search.purpose,
+                required=search.required,
+                expected_source_types=expected_source_types,
+            )
+        )
+    return subquestions[:6]
+
+
+def _plan_id(
+    *,
+    query: str,
+    intent: ResearchIntent,
+    searches: list[InternetScoutResearchQuery],
+    expected_source_types: list[ResearchSourceType],
+    stop_criteria: InternetScoutResearchStopCriteria,
+) -> str:
+    payload = {
+        "query": query,
+        "intent": intent,
+        "searches": [
+            {
+                "query": item.query,
+                "purpose": item.purpose,
+                "required": item.required,
+            }
+            for item in searches
+        ],
+        "expected_source_types": expected_source_types,
+        "stop_criteria": stop_criteria.model_dump(mode="json"),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()[:16]
+
+
 def _official_site_query(*, query: str, normalized_query: str) -> str | None:
     hosts = _hosts_from_query(normalized_query)
     if "openai" in normalized_query:
@@ -313,6 +463,10 @@ def _dedupe_queries(
 
 def _dedupe_strings(values: list[str]) -> list[str]:
     return list(dict.fromkeys(value.strip(".").lower() for value in values if value))
+
+
+def _dedupe_source_types(values: list[ResearchSourceType]) -> list[ResearchSourceType]:
+    return list(dict.fromkeys(values))
 
 
 def _normalize(value: str) -> str:

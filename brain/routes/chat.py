@@ -222,8 +222,10 @@ def _internet_research_metadata(
 ) -> dict[str, object]:
     plan = context.research_plan
     return {
+        "internet_research_plan_id": plan.plan_id,
         "internet_research_intent": plan.intent,
         "internet_research_search_count": len(plan.searches),
+        "internet_research_subquestion_count": len(plan.subquestions),
         "internet_research_search_budget": plan.max_searches,
         "internet_research_provider_strategy": plan.provider_strategy,
         "internet_research_search_providers": plan.search_providers,
@@ -231,10 +233,12 @@ def _internet_research_metadata(
         "internet_research_authority_required": plan.authority_required,
         "internet_research_freshness_required": plan.freshness_required,
         "internet_research_primary_source_required": plan.primary_source_required,
+        "internet_research_expected_source_types": plan.expected_source_types,
         "internet_research_query_purposes": [query.purpose for query in plan.searches],
         "internet_research_required_query_purposes": [
             query.purpose for query in plan.searches if query.required
         ],
+        "internet_research_stop_criteria": plan.stop_criteria.model_dump(mode="json"),
     }
 
 
@@ -272,9 +276,27 @@ def _internet_research_report_metadata(
 ) -> dict[str, object]:
     report = context.research_report
     return {
+        "internet_research_report_plan_id": report.plan_id,
+        "internet_research_report_source_quality_status": report.source_quality_status,
         "internet_research_report_answerability": report.answerability,
         "internet_research_report_cited_source_count": report.cited_source_count,
+        "internet_research_report_accepted_citation_count": (
+            report.accepted_citation_count
+        ),
+        "internet_research_report_rejected_citation_count": (
+            report.rejected_citation_count
+        ),
+        "internet_research_report_verified_claim_count": report.verified_claim_count,
+        "internet_research_report_unsupported_claim_count": (
+            report.unsupported_claim_count
+        ),
         "internet_research_report_source_hosts": report.source_hosts,
+        "internet_research_report_required_source_hosts": (
+            report.required_source_hosts
+        ),
+        "internet_research_report_expected_source_types": report.expected_source_types,
+        "internet_research_report_subquestion_count": report.subquestion_count,
+        "internet_research_report_coverage_warnings": report.coverage_warnings,
         "internet_research_report_source_rankings": [
             ranking.model_dump(mode="json") for ranking in report.source_rankings[:10]
         ],
@@ -372,8 +394,10 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
         "internet_unsupported_claim_count",
         "internet_prompt_injection_rejection_count",
         "internet_official_source_required",
+        "internet_research_plan_id",
         "internet_research_intent",
         "internet_research_search_count",
+        "internet_research_subquestion_count",
         "internet_research_search_budget",
         "internet_research_provider_strategy",
         "internet_research_search_providers",
@@ -381,8 +405,10 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
         "internet_research_authority_required",
         "internet_research_freshness_required",
         "internet_research_primary_source_required",
+        "internet_research_expected_source_types",
         "internet_research_query_purposes",
         "internet_research_required_query_purposes",
+        "internet_research_stop_criteria",
         "internet_synthesis_answerable",
         "internet_synthesis_status",
         "internet_synthesis_citation_count",
@@ -392,9 +418,19 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
         "internet_automatic_memory_write_allowed",
         "internet_memory_promotion_review_required",
         "internet_memory_promotion_route",
+        "internet_research_report_plan_id",
+        "internet_research_report_source_quality_status",
         "internet_research_report_answerability",
         "internet_research_report_cited_source_count",
+        "internet_research_report_accepted_citation_count",
+        "internet_research_report_rejected_citation_count",
+        "internet_research_report_verified_claim_count",
+        "internet_research_report_unsupported_claim_count",
         "internet_research_report_source_hosts",
+        "internet_research_report_required_source_hosts",
+        "internet_research_report_expected_source_types",
+        "internet_research_report_subquestion_count",
+        "internet_research_report_coverage_warnings",
         "internet_research_report_source_rankings",
         "raw_web_content_is_untrusted",
         "citations",
