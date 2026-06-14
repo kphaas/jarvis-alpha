@@ -209,6 +209,7 @@ def _internet_message_metadata(
             context.source_quality.official_source_required
         ),
         **_internet_research_metadata(context),
+        **_internet_synthesis_metadata(context),
         "raw_web_content_is_untrusted": context.raw_web_content_is_untrusted,
         "citations": _redacted_internet_citations(context),
     }
@@ -222,6 +223,9 @@ def _internet_research_metadata(
         "internet_research_intent": plan.intent,
         "internet_research_search_count": len(plan.searches),
         "internet_research_search_budget": plan.max_searches,
+        "internet_research_provider_strategy": plan.provider_strategy,
+        "internet_research_search_providers": plan.search_providers,
+        "internet_research_max_extracts": plan.max_extracts,
         "internet_research_authority_required": plan.authority_required,
         "internet_research_freshness_required": plan.freshness_required,
         "internet_research_primary_source_required": plan.primary_source_required,
@@ -229,6 +233,19 @@ def _internet_research_metadata(
         "internet_research_required_query_purposes": [
             query.purpose for query in plan.searches if query.required
         ],
+    }
+
+
+def _internet_synthesis_metadata(
+    context: InternetChatContext,
+) -> dict[str, object]:
+    synthesis = context.synthesis
+    return {
+        "internet_synthesis_answerable": synthesis.answerable,
+        "internet_synthesis_status": synthesis.status,
+        "internet_synthesis_citation_count": synthesis.citation_count,
+        "internet_synthesis_minimum_citations_met": synthesis.minimum_citations_met,
+        "internet_synthesis_required_behavior": synthesis.required_behavior,
     }
 
 
@@ -322,11 +339,19 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
         "internet_research_intent",
         "internet_research_search_count",
         "internet_research_search_budget",
+        "internet_research_provider_strategy",
+        "internet_research_search_providers",
+        "internet_research_max_extracts",
         "internet_research_authority_required",
         "internet_research_freshness_required",
         "internet_research_primary_source_required",
         "internet_research_query_purposes",
         "internet_research_required_query_purposes",
+        "internet_synthesis_answerable",
+        "internet_synthesis_status",
+        "internet_synthesis_citation_count",
+        "internet_synthesis_minimum_citations_met",
+        "internet_synthesis_required_behavior",
         "raw_web_content_is_untrusted",
         "citations",
         "web_suggestion_mode",

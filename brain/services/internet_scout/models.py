@@ -51,6 +51,12 @@ ResearchQueryPurpose = Literal[
     "comparison",
     "cross_check",
 ]
+SearchProvider = Literal["auto", "brave", "perplexity"]
+SearchProviderStrategy = Literal["auto", "fanout"]
+
+
+def _default_search_providers() -> list[SearchProvider]:
+    return ["auto"]
 
 
 class InternetTool(str, Enum):
@@ -179,6 +185,12 @@ class InternetScoutResearchPlan(BaseModel):
     freshness_required: bool = False
     primary_source_required: bool = False
     max_searches: int = Field(default=1, ge=1, le=6)
+    provider_strategy: SearchProviderStrategy = "auto"
+    search_providers: list[SearchProvider] = Field(
+        default_factory=_default_search_providers,
+        max_length=3,
+    )
+    max_extracts: int = Field(default=0, ge=0, le=5)
     notes: list[str] = Field(default_factory=list, max_length=12)
 
 
@@ -300,6 +312,25 @@ class InternetScoutCitationQualitySummary(BaseModel):
     warnings: list[str] = Field(default_factory=list, max_length=20)
 
 
+class InternetScoutSynthesisContract(BaseModel):
+    """Rules a local model must follow when turning Beacon evidence into prose."""
+
+    answerable: bool = False
+    status: SourceQualityStatus = "insufficient"
+    citation_count: int = 0
+    minimum_citations_met: bool = False
+    required_behavior: Literal[
+        "answer_with_citations",
+        "answer_with_limitations",
+        "state_not_verified",
+    ] = "state_not_verified"
+    must_cite_sources: bool = True
+    limitations: list[str] = Field(default_factory=list, max_length=10)
+    unverified_claims_policy: str = (
+        "Do not present unsupported or uncited web claims as verified."
+    )
+
+
 class InternetScoutLocalLLMResponse(BaseModel):
     request_id: UUID
     plan: InternetScoutPlan
@@ -310,6 +341,9 @@ class InternetScoutLocalLLMResponse(BaseModel):
     )
     quality: InternetScoutCitationQualitySummary = Field(
         default_factory=InternetScoutCitationQualitySummary
+    )
+    synthesis: InternetScoutSynthesisContract = Field(
+        default_factory=InternetScoutSynthesisContract
     )
     answer_context: str = Field(default="", max_length=12000)
     raw_web_content_is_untrusted: bool = True
@@ -365,6 +399,9 @@ class InternetScoutAgentResponse(BaseModel):
     source_quality_status: SourceQualityStatus = "supported"
     source_quality: InternetScoutCitationQualitySummary = Field(
         default_factory=InternetScoutCitationQualitySummary
+    )
+    synthesis: InternetScoutSynthesisContract = Field(
+        default_factory=InternetScoutSynthesisContract
     )
     evidence: InternetEvidencePacket | None = None
     raw_web_content_is_untrusted: bool = True

@@ -58,6 +58,12 @@ the evidence block. The research-quality release adds a deterministic research
 planner, bounded multi-query Deep Beacon searches, stricter official-host
 matching, and claim-support verification. Unsupported claims are stored as audit
 evidence but excluded from local-model prompt context.
+The Perplexity-quality search release adds provider fanout planning, deterministic
+reranking, bounded extraction of top search results, and an explicit synthesis
+contract. Brain still does not choose raw public egress hosts directly: fanout
+uses Gateway provider hints, Gateway enforces configured provider credentials and
+fallback, and extracted pages re-enter Beacon as untrusted evidence before any
+local model sees them.
 
 ## Architecture
 
@@ -129,10 +135,22 @@ purposes. Normal web search remains a single Gateway search. Deep research can
 issue several bounded Gateway search calls and merge the results into one
 evidence packet.
 
+Search plans also record provider strategy, provider hints, and extraction
+budget. Deep research can fan out across Brave and Perplexity provider hints,
+dedupe URLs, rerank by source quality plus cross-provider/query agreement, and
+send only the top bounded URLs through Gateway extraction. If an explicit
+provider is unavailable, Brain drops that fanout leg and falls back to Gateway
+`auto` only when no explicit provider produced results.
+
 Citation acceptance also requires deterministic claim support. Beacon compares
 each stored claim with its citation text, rejects unsupported or number-mismatched
 claims before prompt injection, and records verified/unsupported claim counters
 for health and Helm visibility.
+
+Local LLM and agent responses include a synthesis contract with one of three
+behaviors: answer with citations, answer with limitations, or state that Beacon
+could not verify the claim. This keeps answerability explicit and prevents a
+model from silently upgrading weak search evidence into verified facts.
 
 ## Four-Lens Review
 
@@ -151,6 +169,8 @@ for health and Helm visibility.
 | Prompt injection | Sanitize and label raw content as untrusted data; never execute web-provided instructions. |
 | Citation spoofing | Official docs/API-style queries require inferred official hosts; weak/social/non-matching sources are stored for audit but excluded from prompt context. |
 | Unsupported snippets | Claim-support verification excludes citations whose text does not substantiate the stored claim. |
+| Search-result overtrust | Top ranked URLs are extracted and re-scored before prompt injection; snippets remain fallback discovery evidence only. |
+| Provider monoculture | Deep research can fan out across Gateway providers and rerank cross-provider agreement without giving Brain direct provider credentials. |
 | Browser overreach | Browser-use execution requires exact approval-row verification, T4-only sandbox policy, same-host observation checks, and screenshots; default adapter fails closed. |
 | Memory poisoning | No automatic memory/RAG ingest; promotion requires stored evidence, clean fact text, source hash, claim binding, and explicit review. |
 | Supply-chain risk | Bounded crawl uses the existing guarded fetch path; browser runtime is opt-in and version-checked before use. |

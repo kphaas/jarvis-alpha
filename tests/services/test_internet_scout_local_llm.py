@@ -47,6 +47,9 @@ def test_local_llm_response_wraps_evidence_as_untrusted_citations():
     assert response.citations[0].source_url == source.url
     assert response.citations[0].source_quality == "general"
     assert response.quality.status == "weak"
+    assert response.synthesis.answerable is True
+    assert response.synthesis.required_behavior == "answer_with_limitations"
+    assert response.synthesis.minimum_citations_met is False
     assert source.content_hash in response.answer_context
     assert "Beacon source body." in response.answer_context
 
@@ -99,6 +102,8 @@ def test_local_llm_filters_non_official_sources_for_official_docs_query():
     assert response.citations == []
     assert response.answer_context == ""
     assert response.quality.status == "insufficient"
+    assert response.synthesis.answerable is False
+    assert response.synthesis.required_behavior == "state_not_verified"
     assert response.quality.official_source_required is True
     assert response.quality.official_source_count == 0
     assert response.quality.rejected_citation_count == 3
@@ -149,6 +154,9 @@ def test_local_llm_prefers_official_source_for_official_docs_query():
     assert [citation.host for citation in response.citations] == ["platform.openai.com"]
     assert response.citations[0].source_quality == "official"
     assert response.quality.status == "supported"
+    assert response.synthesis.answerable is True
+    assert response.synthesis.required_behavior == "answer_with_citations"
+    assert response.synthesis.minimum_citations_met is True
     assert response.quality.official_source_count == 1
     assert response.quality.rejected_citation_count == 1
     assert response.quality.verified_claim_count == 1

@@ -26,10 +26,15 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
     assert official.details["status"] == "supported"
     assert official.details["accepted_hosts"] == ["platform.openai.com"]
     assert official.details["official_source_count"] == 1
+    assert official.details["research_provider_strategy"] == "fanout"
+    assert official.details["research_search_providers"] == ["brave", "perplexity"]
+    assert official.details["research_max_extracts"] == 4
+    assert official.details["synthesis_required_behavior"] == "answer_with_citations"
 
     unsupported = results["unsupported_official_pricing_claim_fails_closed"]
     assert unsupported.details["status"] == "insufficient"
     assert unsupported.details["unsupported_claim_count"] == 1
+    assert unsupported.details["synthesis_answerable"] is False
 
     injection = results["prompt_injection_marker_rejects_citation"]
     assert injection.details["status"] == "insufficient"

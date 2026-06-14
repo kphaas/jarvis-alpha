@@ -154,6 +154,22 @@ def evaluate_citation_quality(
     return CitationQualityEvaluation(citations=accepted_citations, summary=summary)
 
 
+def classify_source_for_query(
+    *,
+    query: str | None,
+    url: str,
+    host: str,
+    citation_text: str,
+) -> tuple[SourceQualityLevel, list[str]]:
+    """Classify a candidate source with the same policy used for citations."""
+    return _classify_source(
+        url=url,
+        host=host,
+        citation_text=citation_text,
+        policy=_policy_for_query(query),
+    )
+
+
 def _citation_for_claim(
     *,
     claim: EvidenceClaim,

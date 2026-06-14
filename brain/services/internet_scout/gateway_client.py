@@ -8,6 +8,7 @@ from brain.services.internet_scout.models import (
     GatewayExtractResponse,
     GatewayFetchResponse,
     GatewaySearchResponse,
+    SearchProvider,
 )
 
 
@@ -35,11 +36,17 @@ class InternetScoutGatewayClient:
             )
         return dict(payload)
 
-    async def search(self, *, query: str, count: int = 5) -> GatewaySearchResponse:
+    async def search(
+        self,
+        *,
+        query: str,
+        count: int = 5,
+        provider: SearchProvider = "auto",
+    ) -> GatewaySearchResponse:
         try:
             payload = await call_gateway_proxy(
                 "internet/search",
-                {"query": query, "count": count, "provider": "auto"},
+                {"query": query, "count": count, "provider": provider},
                 timeout_s=25,
             )
         except GatewayEgressError as exc:
