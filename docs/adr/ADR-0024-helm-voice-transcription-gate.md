@@ -37,15 +37,29 @@ The backend is configured by environment:
 - `JARVIS_HELM_VOICE_TIMEOUT_SECS`
 - `JARVIS_HELM_VOICE_MAX_AUDIO_BYTES`
 
+The durable backend is the Endpoint-local AT-0 voice worker:
+
+- Service: `com.jarvis.alpha.at0-voice`
+- Default URL for Alpha gate config: `http://127.0.0.1:4212/transcribe`
+- Backend token env on Alpha: `JARVIS_HELM_VOICE_BACKEND_TOKEN`
+- Matching worker token env on Endpoint: `JARVIS_AT0_VOICE_BACKEND_TOKEN`
+- Worker model path env: `JARVIS_AT0_VOICE_MODEL_PATH`
+
+The worker fails closed when the token, local faster-whisper runtime, ffmpeg, or
+model path is absent. It does not store raw audio or transcripts.
+
 ## Consequences
 
 Helm can enable push-to-talk by setting its runtime `voiceInputUrl` to the Alpha
 route, while Alpha remains the broker of trust. The actual transcription backend
-can be Family voice for a pilot or a dedicated AT-0 voice service later without
-changing the Helm frontend.
+can be the dedicated AT-0 voice worker without changing the Helm frontend.
 
-The route does not create a transcription model inside Alpha. If no backend is
-configured, voice input remains visibly unavailable rather than silently failing.
+Family voice remains a possible pilot fallback, but it should not be the durable
+path because it enforces Family-specific consent and child-safety policy.
+
+The route does not create a transcription model inside Alpha Brain. If no backend
+is configured, voice input remains visibly unavailable rather than silently
+failing.
 
 ## Rollback
 
