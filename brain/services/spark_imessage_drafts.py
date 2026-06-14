@@ -44,9 +44,23 @@ from brain.services.spark_sensitivity import scan_spark_draft_sensitivity
 DRAFT_VERSION = "spark-imessage-draft/v0.2"
 DEFAULT_MAX_CONTEXT_MESSAGES = 20
 PERSONALITY_MEMORY_MAX_PROMPT_LINES = 18
+PERSONALITY_MEMORY_DRAFT_KINDS = frozenset(
+    {
+        "voice",
+        "avoid",
+        "phrase",
+        "relationship",
+        "value",
+        "style",
+        "preference",
+    }
+)
 PERSONALITY_MEMORY_BLOCKED = re.compile(
     r"\b(password|token|secret|private key|raw thread|message body|phone number)\b",
     re.IGNORECASE,
+)
+RELATIONSHIP_MEMORY = re.compile(
+    r"^(?P<label>[^:]{1,80}):\s*(?P<relationship>[^;]{1,80})(?:;.*)?$"
 )
 MAX_CONTEXT_MESSAGES = 50
 APPROVED_CHAT_GUID_ENV = "SPARK_IMESSAGE_APPROVED_CHAT_GUID"
@@ -410,8 +424,14 @@ async def _call_spark_llm(
 def _personality_memory_prompt(rows: list[dict[str, object]]) -> str:
     lines: list[str] = []
     for row in rows:
-        kind = str(row.get("kind") or "memory").strip().replace("_", " ")
-        content = _clean_personality_memory_content(str(row.get("content") or ""))
+        raw_kind = str(row.get("kind") or "memory").strip().lower()
+        if raw_kind not in PERSONALITY_MEMORY_DRAFT_KINDS:
+            continue
+        kind = raw_kind.replace("_", " ")
+        content = _clean_personality_memory_content(
+            str(row.get("content") or ""),
+            kind=raw_kind,
+        )
         if not content:
             continue
         lines.append(f"- {kind.title()}: {content}")
@@ -420,10 +440,16 @@ def _personality_memory_prompt(rows: list[dict[str, object]]) -> str:
     return "\n".join(lines)
 
 
-def _clean_personality_memory_content(value: str) -> str:
+def _clean_personality_memory_content(value: str, *, kind: str) -> str:
     content = " ".join(value.strip().split())
     if not content or PERSONALITY_MEMORY_BLOCKED.search(content):
         return ""
+    if kind == "relationship":
+        match = RELATIONSHIP_MEMORY.fullmatch(content)
+        if match:
+            label = match.group("label").strip()
+            relationship = match.group("relationship").strip()
+            return f"{label} is Ken's {relationship}."
     return content[:240]
 
 
@@ -463,9 +489,11 @@ def _spark_draft_system_prompt(
         lines.extend(
             [
                 "",
-                "Approved Spark personality memory (reviewed; do not expose directly):",
+                "Approved Spark personality memory (reviewed; use silently):",
                 memory_context,
-                "Use approved personality memory for voice, boundaries, relationship policy, and preferences.",
+                "Use approved personality memory for voice, relationship context, and preferences.",
+                "Never mention memory, sensitivity labels, policy, approval requirements, or review requirements in the draft.",
+                "The API already enforces draft-only human review, so write the human-facing message only.",
             ]
         )
     lines.extend(
