@@ -120,6 +120,9 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/memory/consolidation/proposals/{proposal_id}/execute": [
         "memory_consolidation_reviewed_write"
     ],
+    "POST /v1/memory/consolidation/proposals/{proposal_id}/revert": [
+        "memory_consolidation_reviewed_write"
+    ],
     "POST /v1/memory/consolidation/{unknown_action}": ["unclassified"],
     # --- Rotation — T2 security_read ---
     "GET /v1/rotation": ["read", "security_read"],

@@ -95,4 +95,5 @@ def test_memory_consolidation_summary_body_is_buddy_safe() -> None:
     assert "2 procedural candidates" in body
     assert "Blocked suspicious candidates: 1" in body
     assert "private" not in body
-    assert "Writes are disabled" in body
+    assert "Planner writes are disabled" in body
+    assert "T5 review" in body
