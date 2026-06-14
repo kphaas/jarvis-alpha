@@ -275,6 +275,9 @@ def _internet_research_report_metadata(
         "internet_research_report_answerability": report.answerability,
         "internet_research_report_cited_source_count": report.cited_source_count,
         "internet_research_report_source_hosts": report.source_hosts,
+        "internet_research_report_source_rankings": [
+            ranking.model_dump(mode="json") for ranking in report.source_rankings[:10]
+        ],
     }
 
 
@@ -330,6 +333,10 @@ def _redacted_internet_citations(
             payload["claim"] = citation.claim
         payload["confidence"] = citation.confidence
         payload["source_quality"] = citation.source_quality
+        if citation.source_rank is not None:
+            payload["source_rank"] = citation.source_rank
+        if citation.source_score:
+            payload["source_score"] = citation.source_score
         if citation.quality_reasons:
             payload["quality_reasons"] = citation.quality_reasons
         citations.append(payload)
@@ -388,6 +395,7 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
         "internet_research_report_answerability",
         "internet_research_report_cited_source_count",
         "internet_research_report_source_hosts",
+        "internet_research_report_source_rankings",
         "raw_web_content_is_untrusted",
         "citations",
         "web_suggestion_mode",

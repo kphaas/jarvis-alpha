@@ -25,6 +25,7 @@ from brain.services.internet_scout.models import (
     InternetScoutResearchReport,
     InternetScoutResearchPlan,
     InternetScoutResearchQuery,
+    InternetScoutSourceRanking,
     InternetScoutSynthesisContract,
     InternetTool,
 )
@@ -64,6 +65,8 @@ def _context() -> InternetChatContext:
                 confidence="high",
                 source_quality="general",
                 quality_reasons=["cited_search_result"],
+                source_rank=1,
+                source_score=60,
             )
         ],
         source_quality=InternetScoutCitationQualitySummary(
@@ -87,6 +90,21 @@ def _context() -> InternetChatContext:
             answerability="limited",
             cited_source_count=1,
             source_hosts=["example.com"],
+            source_rankings=[
+                InternetScoutSourceRanking(
+                    rank=1,
+                    source_url="https://example.com/report",
+                    host="example.com",
+                    source_quality="general",
+                    confidence="high",
+                    score=60,
+                    reasons=[
+                        "source_quality:general",
+                        "confidence:high",
+                        "cited_search_result",
+                    ],
+                )
+            ],
         ),
         research_plan=research_plan,
         prompt_context="Beacon prompt context.",
@@ -276,6 +294,21 @@ def test_internet_message_metadata_redacts_raw_citation_text() -> None:
     assert metadata["internet_research_report_answerability"] == "limited"
     assert metadata["internet_research_report_cited_source_count"] == 1
     assert metadata["internet_research_report_source_hosts"] == ["example.com"]
+    assert metadata["internet_research_report_source_rankings"] == [
+        {
+            "rank": 1,
+            "source_url": "https://example.com/report",
+            "host": "example.com",
+            "source_quality": "general",
+            "confidence": "high",
+            "score": 60,
+            "reasons": [
+                "source_quality:general",
+                "confidence:high",
+                "cited_search_result",
+            ],
+        }
+    ]
     assert metadata["raw_web_content_is_untrusted"] is True
     assert metadata["citations"] == [
         {
@@ -285,6 +318,8 @@ def test_internet_message_metadata_redacts_raw_citation_text() -> None:
             "claim": "Example report is available.",
             "confidence": "high",
             "source_quality": "general",
+            "source_rank": 1,
+            "source_score": 60,
             "quality_reasons": ["cited_search_result"],
         }
     ]
@@ -460,6 +495,21 @@ async def test_thread_messages_return_flattened_internet_metadata(
             "internet_research_report_answerability": "limited",
             "internet_research_report_cited_source_count": 1,
             "internet_research_report_source_hosts": ["example.com"],
+            "internet_research_report_source_rankings": [
+                {
+                    "rank": 1,
+                    "source_url": "https://example.com/report",
+                    "host": "example.com",
+                    "source_quality": "general",
+                    "confidence": "high",
+                    "score": 60,
+                    "reasons": [
+                        "source_quality:general",
+                        "confidence:high",
+                        "cited_search_result",
+                    ],
+                }
+            ],
             "raw_web_content_is_untrusted": True,
             "citations": [
                 {
@@ -469,6 +519,8 @@ async def test_thread_messages_return_flattened_internet_metadata(
                     "claim": "Example report is available.",
                     "confidence": "high",
                     "source_quality": "general",
+                    "source_rank": 1,
+                    "source_score": 60,
                     "quality_reasons": ["cited_search_result"],
                 }
             ],
