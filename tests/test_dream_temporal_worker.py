@@ -5,6 +5,7 @@ from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from brain.dream import client as dream_client
 from brain.dream.activities import (
     flush_cleanup_activity,
+    plan_memory_consolidation_activity,
     persist_plan_activity,
     plan_session_activity,
     review_plan_activity,
@@ -38,6 +39,7 @@ def test_worker_registers_dream_workflow_and_activity():
         plan_session_activity,
         review_plan_activity,
         persist_plan_activity,
+        plan_memory_consolidation_activity,
         flush_cleanup_activity,
     ]
     assert DREAM_WORKFLOW_QUEUE == PLANNING_QUEUE

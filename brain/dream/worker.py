@@ -12,6 +12,7 @@ from brain.db.dsn import ensure_writer_password
 from brain.db.pool import close_pool, init_pool
 from brain.dream.activities import (
     flush_cleanup_activity,
+    plan_memory_consolidation_activity,
     persist_plan_activity,
     plan_session_activity,
     review_plan_activity,
@@ -30,6 +31,7 @@ TEMPORAL_ACTIVITIES = [
     plan_session_activity,
     review_plan_activity,
     persist_plan_activity,
+    plan_memory_consolidation_activity,
     flush_cleanup_activity,
 ]
 

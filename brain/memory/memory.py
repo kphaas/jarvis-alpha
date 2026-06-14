@@ -18,8 +18,6 @@ logger = get_logger("alpha_memory")
 SEMANTIC_CAP = 50
 EPISODIC_LIMIT = 5
 WORKING_LIMIT = 10
-PROMOTION_SCORE_THRESHOLD = 0.7
-PROMOTION_ACCESS_THRESHOLD = 3
 
 
 class MemoryService:

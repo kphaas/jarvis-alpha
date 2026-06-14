@@ -8,6 +8,7 @@ connection acquisition.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from temporalio import activity
 
@@ -32,6 +33,7 @@ from brain.dream.types import (
     ReviewPlanResult,
     ReviewPlanSpec,
 )
+from brain.services.memory_consolidation import collect_memory_consolidation_report
 from brain.services.planner import ClaudePlanner
 from brain.services.reviewer import GeminiReviewer
 
@@ -158,6 +160,21 @@ async def persist_plan_activity(
         )
 
     return PersistPlanResult(step_count=len(plan.steps))
+
+
+@activity.defn(name="plan_memory_consolidation_activity")
+async def plan_memory_consolidation_activity(
+    idempotency_key: str,
+    user_id: str,
+) -> dict[str, Any]:
+    activity.logger.info(
+        "plan_memory_consolidation_activity start idempotency_key=%s user_id=%s",
+        idempotency_key,
+        user_id,
+    )
+
+    async with activity_db(user_id=user_id) as conn:
+        return await collect_memory_consolidation_report(conn, user_id)
 
 
 @activity.defn(name="flush_cleanup_activity")
