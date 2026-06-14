@@ -137,6 +137,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/helm/medical/summary": ["read", "security_read"],
     "GET /v1/helm/actions/status": ["read", "security_read"],
     "POST /v1/helm/actions/propose": ["write", "security_write"],
+    "POST /v1/helm/voice/transcribe": ["write", "security_write"],
     # --- Beacon internet evidence broker ---
     "GET /v1/internet-scout/health": ["read", "security_read"],
     "GET /v1/internet-scout/retention/report": ["read", "security_read"],
