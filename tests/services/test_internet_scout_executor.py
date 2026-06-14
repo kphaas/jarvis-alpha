@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 import pytest
 
 from brain.services.internet_scout.executor import InternetScoutExecutor
-from brain.services.internet_scout.gateway_client import InternetScoutGatewayClient
+from brain.services.internet_scout.gateway_client import (
+    InternetScoutGatewayClient,
+    InternetScoutGatewayError,
+)
 from brain.services.internet_scout.models import (
     GatewayCrawlResponse,
     GatewayExtractResponse,
@@ -22,18 +26,27 @@ class FakeGatewayClient(InternetScoutGatewayClient):
         self.extract_calls: list[dict[str, object]] = []
         self.crawl_calls: list[dict[str, object]] = []
 
-    async def search(self, *, query: str, count: int = 5) -> GatewaySearchResponse:
-        self.search_calls.append({"query": query, "count": count})
+    async def search(
+        self,
+        *,
+        query: str,
+        count: int = 5,
+        provider: str = "auto",
+    ) -> GatewaySearchResponse:
+        self.search_calls.append({"query": query, "count": count, "provider": provider})
         call_index = len(self.search_calls)
+        host = (
+            f"{provider}.example.test" if provider != "auto" else "public.example.test"
+        )
         return GatewaySearchResponse(
-            provider="fake",
+            provider=provider,
             query_hash="a" * 64,
             fetched_at=datetime(2026, 6, 6, 13, 0, tzinfo=UTC),
             results=[
                 {
                     "title": f"Result {call_index}",
-                    "url": f"https://public.example.test/result-{call_index}",
-                    "host": "public.example.test",
+                    "url": f"https://{host}/result-{call_index}",
+                    "host": host,
                     "description": f"Beacon search result {call_index}.",
                     "risk_markers": [],
                 }
@@ -45,19 +58,20 @@ class FakeGatewayClient(InternetScoutGatewayClient):
 
     async def extract(self, *, url: str, max_bytes: int) -> GatewayExtractResponse:
         self.extract_calls.append({"url": url, "max_bytes": max_bytes})
+        host = urlparse(url).hostname or "public.example.test"
         return GatewayExtractResponse(
-            url="https://public.example.test/report",
-            host="public.example.test",
+            url=url,
+            host=host,
             status_code=200,
             content_type="text/html",
             content_hash="d" * 64,
             fetched_at=datetime(2026, 6, 6, 13, 0, tzinfo=UTC),
-            extracted_text="Beacon extracted body.",
+            extracted_text=f"Beacon extracted body from {host}.",
             extractor="trafilatura",
             extraction_fallback=False,
             truncated=False,
             risk_markers=[],
-            redirect_chain=["https://public.example.test/report"],
+            redirect_chain=[url],
         )
 
     async def crawl(
@@ -103,6 +117,22 @@ class FakeGatewayClient(InternetScoutGatewayClient):
         )
 
 
+class FailingFanoutGatewayClient(FakeGatewayClient):
+    async def search(
+        self,
+        *,
+        query: str,
+        count: int = 5,
+        provider: str = "auto",
+    ) -> GatewaySearchResponse:
+        if provider in {"brave", "perplexity"}:
+            self.search_calls.append(
+                {"query": query, "count": count, "provider": provider}
+            )
+            raise InternetScoutGatewayError(f"{provider} unavailable")
+        return await super().search(query=query, count=count, provider=provider)
+
+
 @pytest.mark.asyncio
 async def test_executor_uses_extract_gateway_path_for_extract_tool():
     gateway = FakeGatewayClient()
@@ -122,7 +152,9 @@ async def test_executor_uses_extract_gateway_path_for_extract_tool():
             "max_bytes": 1_000_000,
         }
     ]
-    assert packet.claims[0].citation_text == "Beacon extracted body."
+    assert packet.claims[0].citation_text == (
+        "Beacon extracted body from public.example.test."
+    )
 
 
 @pytest.mark.asyncio
@@ -140,11 +172,43 @@ async def test_executor_uses_research_plan_for_deep_search():
     decision, packet = await executor.execute(request, plan=plan)
 
     assert decision.tool == InternetTool.SEARCH
-    assert len(gateway.search_calls) == len(plan.research.searches)
+    assert plan.research.provider_strategy == "fanout"
+    assert plan.research.search_providers == ["brave", "perplexity"]
+    assert plan.research.max_extracts == 4
+    assert len(gateway.search_calls) == (
+        len(plan.research.searches) * len(plan.research.search_providers)
+    )
     assert all(call["count"] == 3 for call in gateway.search_calls)
+    assert {call["provider"] for call in gateway.search_calls} == {
+        "brave",
+        "perplexity",
+    }
+    assert len(gateway.extract_calls) == plan.research.max_extracts
     assert packet.request == request
-    assert len(packet.sources) == len(plan.research.searches)
-    assert packet.claims[0].citation_text == "Beacon search result 1."
+    assert packet.claims[0].citation_text.startswith("Beacon extracted body")
+    assert all(
+        "search result" not in claim.citation_text for claim in packet.claims[:4]
+    )
+
+
+@pytest.mark.asyncio
+async def test_executor_falls_back_to_auto_when_fanout_providers_fail():
+    gateway = FailingFanoutGatewayClient()
+    executor = InternetScoutExecutor(gateway_client=gateway)
+    request = InternetScoutRequest(
+        query="latest Alpha production status",
+        tool_hint=InternetTool.SEARCH,
+        max_pages=4,
+        requester="alpha_chat.deep_research",
+    )
+    plan = InternetScoutOrchestrator().plan(request)
+
+    decision, packet = await executor.execute(request, plan=plan)
+
+    assert decision.tool == InternetTool.SEARCH
+    assert any(call["provider"] == "auto" for call in gateway.search_calls)
+    assert packet.sources
+    assert packet.claims[0].citation_text.startswith("Beacon extracted body")
 
 
 @pytest.mark.asyncio

@@ -8,13 +8,21 @@ from brain.services.internet_scout.evidence import (
     packet_from_crawl_response,
     packet_from_extract_response,
     packet_from_fetch_response,
+    packet_from_search_and_extract_responses,
     packet_from_search_response,
     packet_from_search_responses,
 )
-from brain.services.internet_scout.gateway_client import InternetScoutGatewayClient
+from brain.services.internet_scout.gateway_client import (
+    InternetScoutGatewayClient,
+    InternetScoutGatewayError,
+)
 from brain.services.internet_scout.models import (
+    GatewayExtractResponse,
+    GatewaySearchResponse,
     InternetEvidencePacket,
     InternetScoutPlan,
+    InternetScoutResearchPlan,
+    InternetScoutResearchQuery,
     InternetScoutRequest,
     InternetTool,
     PolicyDecision,
@@ -26,6 +34,7 @@ from brain.services.internet_scout.policy import (
 )
 from brain.services.internet_scout.safety import DEFAULT_MAX_CONTENT_BYTES
 from brain.services.internet_scout.research_planner import plan_research
+from brain.services.internet_scout.search_pipeline import SearchRun, rank_search_results
 
 
 class InternetScoutExecutor:
@@ -60,25 +69,27 @@ class InternetScoutExecutor:
                 if plan is not None
                 else plan_research(request, selected_tool=decision.tool)
             )
-            searches = research.searches or []
-            if len(searches) <= 1:
-                search_response = await self.gateway_client.search(query=request.query)
+            search_runs = await self._run_searches(request=request, research=research)
+            search_responses = [run.response for run in search_runs]
+            extract_responses = await self._extract_ranked_search_results(
+                request=request,
+                research=research,
+                search_runs=search_runs,
+            )
+            if extract_responses:
+                return decision, packet_from_search_and_extract_responses(
+                    request=request,
+                    search_responses=search_responses,
+                    extract_responses=extract_responses,
+                )
+            if len(search_responses) == 1:
                 return decision, packet_from_search_response(
                     request=request,
-                    response=search_response,
-                )
-            responses = []
-            per_query_count = 3 if len(searches) > 1 else 5
-            for search in searches[: research.max_searches]:
-                responses.append(
-                    await self.gateway_client.search(
-                        query=search.query,
-                        count=per_query_count,
-                    )
+                    response=search_responses[0],
                 )
             return decision, packet_from_search_responses(
                 request=request,
-                responses=responses,
+                responses=search_responses,
             )
 
         if decision.tool == InternetTool.FETCH:
@@ -123,3 +134,106 @@ class InternetScoutExecutor:
             status_code=403,
             detail=f"Beacon tool {decision.tool.value!r} is not enabled for execution",
         )
+
+    async def _run_searches(
+        self,
+        *,
+        request: InternetScoutRequest,
+        research: InternetScoutResearchPlan,
+    ) -> list[SearchRun]:
+        if request.query is None:
+            raise HTTPException(status_code=400, detail="query is required")
+
+        searches = research.searches or [
+            InternetScoutResearchQuery(
+                query=request.query,
+                purpose="baseline",
+                required=True,
+            )
+        ]
+        per_query_count = (
+            3 if (len(searches) > 1 or research.provider_strategy == "fanout") else 5
+        )
+        runs: list[SearchRun] = []
+        for search in searches[: research.max_searches]:
+            responses = await self._search_with_provider_strategy(
+                query=search.query,
+                count=per_query_count,
+                research=research,
+            )
+            runs.extend(
+                SearchRun(
+                    response=response,
+                    purpose=search.purpose,
+                    required=search.required,
+                )
+                for response in responses
+            )
+        return runs
+
+    async def _search_with_provider_strategy(
+        self,
+        *,
+        query: str,
+        count: int,
+        research: InternetScoutResearchPlan,
+    ) -> list[GatewaySearchResponse]:
+        providers = research.search_providers or ["auto"]
+        if research.provider_strategy != "fanout":
+            return [
+                await self.gateway_client.search(
+                    query=query,
+                    count=count,
+                    provider=providers[0],
+                )
+            ]
+
+        responses: list[GatewaySearchResponse] = []
+        for provider in providers:
+            try:
+                responses.append(
+                    await self.gateway_client.search(
+                        query=query,
+                        count=count,
+                        provider=provider,
+                    )
+                )
+            except InternetScoutGatewayError:
+                continue
+        if responses:
+            return responses
+        return [
+            await self.gateway_client.search(
+                query=query,
+                count=count,
+                provider="auto",
+            )
+        ]
+
+    async def _extract_ranked_search_results(
+        self,
+        *,
+        request: InternetScoutRequest,
+        research: InternetScoutResearchPlan,
+        search_runs: list[SearchRun],
+    ) -> list[GatewayExtractResponse]:
+        if research.max_extracts <= 0 or not search_runs:
+            return []
+
+        ranked = rank_search_results(
+            request=request,
+            runs=search_runs,
+            max_results=research.max_extracts,
+        )
+        extract_responses: list[GatewayExtractResponse] = []
+        for item in ranked:
+            try:
+                extract_responses.append(
+                    await self.gateway_client.extract(
+                        url=item.result.url,
+                        max_bytes=DEFAULT_MAX_CONTENT_BYTES,
+                    )
+                )
+            except InternetScoutGatewayError:
+                continue
+        return extract_responses

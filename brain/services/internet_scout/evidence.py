@@ -106,6 +106,43 @@ def packet_from_search_responses(
     return build_evidence_packet(request=request, sources=sources, claims=claims)
 
 
+def packet_from_search_and_extract_responses(
+    *,
+    request: InternetScoutRequest,
+    search_responses: list[GatewaySearchResponse],
+    extract_responses: list[GatewayExtractResponse],
+) -> InternetEvidencePacket:
+    """Build one packet that prefers extracted page text over search snippets."""
+    sources: list[SourceReference] = []
+    claims: list[EvidenceClaim] = []
+    extracted_urls: set[str] = set()
+
+    for extract_response in extract_responses:
+        packet = packet_from_extract_response(
+            request=request,
+            response=extract_response,
+        )
+        for source in packet.sources:
+            extracted_urls.add(source.url)
+            sources.append(source)
+        claims.extend(packet.claims)
+
+    search_packet = packet_from_search_responses(
+        request=request,
+        responses=search_responses,
+    )
+    for source in search_packet.sources:
+        if source.url in extracted_urls:
+            continue
+        sources.append(source)
+    for claim in search_packet.claims:
+        if claim.source_url in extracted_urls:
+            continue
+        claims.append(claim)
+
+    return build_evidence_packet(request=request, sources=sources, claims=claims)
+
+
 def packet_from_fetch_response(
     *,
     request: InternetScoutRequest,

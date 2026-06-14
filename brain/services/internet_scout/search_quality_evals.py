@@ -100,7 +100,12 @@ def _run_case(case: SearchQualityEvalCase) -> SearchQualityEvalResult:
             "accepted_hosts": accepted_hosts,
             "research_intent": plan.research.intent,
             "research_search_budget": plan.research.max_searches,
+            "research_provider_strategy": plan.research.provider_strategy,
+            "research_search_providers": plan.research.search_providers,
+            "research_max_extracts": plan.research.max_extracts,
             "research_query_purposes": purposes,
+            "synthesis_required_behavior": response.synthesis.required_behavior,
+            "synthesis_answerable": response.synthesis.answerable,
         },
         failures=tuple(failures),
     )
