@@ -14,7 +14,11 @@ from brain.services.spark_draft_approvals import (
 )
 from brain.services.spark_imessage_drafts import (
     SparkDraftContext,
+    SparkDraftConversationSummary,
+    SparkDraftQualityCheck,
+    SparkDraftQualityScorecard,
     SparkDraftProposal,
+    SparkDraftSourceReadiness,
     SparkRuntimeMessage,
 )
 
@@ -64,6 +68,9 @@ def test_spark_draft_parameters_hash_changes_when_edited_draft_changes():
         principal_id=proposal.principal_id,
         draft_text="Edited draft.",
         context=proposal.context,
+        conversation_summary=proposal.conversation_summary,
+        draft_quality=proposal.draft_quality,
+        source_readiness=proposal.source_readiness,
         warnings=proposal.warnings,
     )
 
@@ -94,6 +101,32 @@ def _proposal() -> SparkDraftProposal:
                     is_from_me=True,
                     body_text="ken sent private body",
                 ),
+            ),
+        ),
+        conversation_summary=SparkDraftConversationSummary(
+            channel="iMessage",
+            voice_principal_label="Ken",
+            reply_target_label="Sweta",
+            reply_target_confidence="approved_source_label",
+        ),
+        draft_quality=SparkDraftQualityScorecard(
+            score=100,
+            verdict="strong",
+            checks=(
+                SparkDraftQualityCheck(
+                    key="length",
+                    label="Short enough",
+                    passed=True,
+                    detail="5 words; Spark should stay short to medium.",
+                ),
+            ),
+        ),
+        source_readiness=(
+            SparkDraftSourceReadiness(
+                source="imessage",
+                channel="Text",
+                status="live_runtime_context",
+                detail="Approved iMessage thread is feeding this draft at runtime.",
             ),
         ),
         warnings=("draft_only_no_send",),

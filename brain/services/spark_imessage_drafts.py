@@ -102,6 +102,38 @@ class SparkRuntimeMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class SparkDraftConversationSummary:
+    channel: str
+    voice_principal_label: str
+    reply_target_label: str
+    reply_target_confidence: str
+    context_order: str = "newest_first"
+
+
+@dataclass(frozen=True, slots=True)
+class SparkDraftQualityCheck:
+    key: str
+    label: str
+    passed: bool
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class SparkDraftQualityScorecard:
+    score: int
+    verdict: str
+    checks: tuple[SparkDraftQualityCheck, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SparkDraftSourceReadiness:
+    source: str
+    channel: str
+    status: str
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
 class SparkPersonalityMemoryPromptItem:
     kind: str
     content: str
@@ -134,6 +166,9 @@ class SparkDraftProposal:
     draft_text: str
     context: SparkDraftContext
     warnings: tuple[str, ...]
+    conversation_summary: SparkDraftConversationSummary
+    draft_quality: SparkDraftQualityScorecard
+    source_readiness: tuple[SparkDraftSourceReadiness, ...]
     detected_sensitivity: tuple[str, ...] = ()
     blocked_sensitivity: tuple[str, ...] = ()
     draft_engine: str = "deterministic_v0"
@@ -166,10 +201,56 @@ class SparkDraftProposal:
             "detected_sensitivity": list(self.detected_sensitivity),
             "blocked_sensitivity": list(self.blocked_sensitivity),
             "draft_engine": self.draft_engine,
+            "conversation_summary": {
+                "channel": self.conversation_summary.channel,
+                "voice_principal_label": self.conversation_summary.voice_principal_label,
+                "reply_target_label": self.conversation_summary.reply_target_label,
+                "reply_target_confidence": self.conversation_summary.reply_target_confidence,
+                "context_order": self.conversation_summary.context_order,
+                "last_message_speaker": None,
+                "last_message_preview": None,
+                "last_message_ref_hash": None,
+            },
+            "draft_quality": {
+                "score": self.draft_quality.score,
+                "verdict": self.draft_quality.verdict,
+                "checks": [
+                    {
+                        "key": check.key,
+                        "label": check.label,
+                        "passed": check.passed,
+                        "detail": check.detail,
+                    }
+                    for check in self.draft_quality.checks
+                ],
+            },
+            "source_readiness": [
+                {
+                    "source": item.source,
+                    "channel": item.channel,
+                    "status": item.status,
+                    "detail": item.detail,
+                }
+                for item in self.source_readiness
+            ],
             "context_preview": [],
             "personality_memory_preview": personality_memory_preview or [],
         }
         if include_context_preview:
+            if self.context.messages:
+                last_message = self.context.messages[0]
+                payload["conversation_summary"].update(
+                    {
+                        "last_message_speaker": (
+                            "Ken" if last_message.is_from_me else "Other"
+                        ),
+                        "last_message_preview": _clip_context_message(
+                            last_message.body_text,
+                            limit=280,
+                        ),
+                        "last_message_ref_hash": last_message.message_ref_hash,
+                    }
+                )
             payload["context_preview"] = [
                 {
                     "index": index,
@@ -242,6 +323,17 @@ async def create_imessage_draft_proposal(
         principal_id=principal_id,
         draft_text=draft_text,
         context=context,
+        conversation_summary=_conversation_summary(
+            record=record,
+            context=context,
+            personality_memory_rows=personality_memory_rows or [],
+        ),
+        draft_quality=_draft_quality_scorecard(
+            draft_text=draft_text,
+            guidance=guidance,
+            personality_memory_rows=personality_memory_rows or [],
+        ),
+        source_readiness=_source_readiness(records=records, selected_record=record),
         warnings=(
             "draft_only_no_send",
             "human_approval_required",
@@ -270,6 +362,13 @@ def apply_draft_text_override(
         principal_id=proposal.principal_id,
         draft_text=override,
         context=proposal.context,
+        conversation_summary=proposal.conversation_summary,
+        draft_quality=_draft_quality_scorecard(
+            draft_text=override,
+            guidance=None,
+            personality_memory_rows=[],
+        ),
+        source_readiness=proposal.source_readiness,
         warnings=tuple(dict.fromkeys(warnings)),
         detected_sensitivity=proposal.detected_sensitivity,
         blocked_sensitivity=proposal.blocked_sensitivity,
@@ -360,6 +459,218 @@ def _select_approved_imessage_record(
     if not candidates:
         raise SparkDraftPolicyError("no approved iMessage source found")
     raise SparkDraftPolicyError("approval_id is required for multiple iMessage sources")
+
+
+def _conversation_summary(
+    *,
+    record: SparkApprovedSourceRecord,
+    context: SparkDraftContext,
+    personality_memory_rows: list[dict[str, object]],
+) -> SparkDraftConversationSummary:
+    target_label, confidence = _reply_target_label(record, personality_memory_rows)
+    return SparkDraftConversationSummary(
+        channel="iMessage",
+        voice_principal_label=_principal_label(context.principal_id),
+        reply_target_label=target_label,
+        reply_target_confidence=confidence,
+    )
+
+
+def _reply_target_label(
+    record: SparkApprovedSourceRecord,
+    personality_memory_rows: list[dict[str, object]],
+) -> tuple[str, str]:
+    if record.source_reference_label:
+        return record.source_reference_label, "approved_source_label"
+    relationship_labels = []
+    for row in personality_memory_rows:
+        if str(row.get("kind") or "").strip().lower() != "relationship":
+            continue
+        match = RELATIONSHIP_MEMORY.fullmatch(str(row.get("content") or "").strip())
+        if match:
+            relationship_labels.append(match.group("label").strip())
+    unique = sorted({label for label in relationship_labels if label})
+    if len(unique) == 1:
+        return unique[0], "personality_memory"
+    return "Approved one-to-one iMessage thread", "fallback_thread"
+
+
+def _principal_label(principal_id: str) -> str:
+    clean = re.sub(r"[^a-z0-9 _-]+", " ", principal_id.strip().lower())
+    clean = re.sub(r"\s+", " ", clean).strip()
+    if not clean:
+        return "Ken"
+    return " ".join(part[:1].upper() + part[1:] for part in clean.split(" "))
+
+
+def _source_readiness(
+    *,
+    records: tuple[SparkApprovedSourceRecord, ...],
+    selected_record: SparkApprovedSourceRecord,
+) -> tuple[SparkDraftSourceReadiness, ...]:
+    statuses: list[SparkDraftSourceReadiness] = []
+    seen_sources = set()
+    for record in records:
+        seen_sources.add(record.source)
+        if record.source == "imessage":
+            status = (
+                "live_runtime_context"
+                if record.approval_id == selected_record.approval_id
+                else "approved_not_selected"
+            )
+            detail = (
+                "Approved iMessage thread is feeding this draft at runtime."
+                if status == "live_runtime_context"
+                else "Approved iMessage source exists but was not selected."
+            )
+            statuses.append(
+                SparkDraftSourceReadiness(
+                    source="imessage",
+                    channel="Text",
+                    status=status,
+                    detail=detail,
+                )
+            )
+        elif record.source == "gmail":
+            statuses.append(
+                SparkDraftSourceReadiness(
+                    source="gmail",
+                    channel="Email",
+                    status="voice_profile_only",
+                    detail=(
+                        "Approved sent mail can shape Ken's email voice; "
+                        "live email reply context is not wired into draft generation yet."
+                    ),
+                )
+            )
+        elif record.source == "ai_export":
+            statuses.append(
+                SparkDraftSourceReadiness(
+                    source="ai_export",
+                    channel="AI chat",
+                    status="voice_profile_only",
+                    detail="Approved export can shape voice, not live reply context.",
+                )
+            )
+        elif record.source == "intake":
+            statuses.append(
+                SparkDraftSourceReadiness(
+                    source="intake",
+                    channel="Intake",
+                    status="voice_profile_only",
+                    detail="Approved intake answers can shape voice and guardrails.",
+                )
+            )
+    if "gmail" not in seen_sources:
+        statuses.append(
+            SparkDraftSourceReadiness(
+                source="gmail",
+                channel="Email",
+                status="not_configured",
+                detail="No approved Gmail source record is available for this principal.",
+            )
+        )
+    return tuple(statuses)
+
+
+def _draft_quality_scorecard(
+    *,
+    draft_text: str,
+    guidance: SparkVoiceGuidance | None,
+    personality_memory_rows: list[dict[str, object]],
+) -> SparkDraftQualityScorecard:
+    text = draft_text.strip()
+    lower = text.lower()
+    words = re.findall(r"\b[\w']+\b", text)
+    recurring_phrases = tuple(guidance.recurring_phrases if guidance else ())
+    memory_items = personality_memory_prompt_items(personality_memory_rows)
+
+    checks = (
+        SparkDraftQualityCheck(
+            key="length",
+            label="Short enough",
+            passed=2 <= len(words) <= 85,
+            detail=f"{len(words)} words; Spark should stay short to medium.",
+        ),
+        SparkDraftQualityCheck(
+            key="silent_memory",
+            label="No internal labels",
+            passed=not re.search(
+                r"\b(memory|policy|approval|guardrail|sensitivity|runtime context)\b",
+                lower,
+            ),
+            detail="The draft should not mention hidden memory, policy, or review rails.",
+        ),
+        SparkDraftQualityCheck(
+            key="not_robotic",
+            label="Not robotic",
+            passed=not _robotic_wrapup(lower),
+            detail="Avoids canned assistant closings and formal wrap-ups.",
+        ),
+        SparkDraftQualityCheck(
+            key="natural_text",
+            label="Text-message natural",
+            passed=("\n" not in text or len(text.splitlines()) <= 4)
+            and not re.search(r"\b(sincerely|best regards|dear\s+\w+)\b", lower),
+            detail="Reads like a text, not an email template.",
+        ),
+        SparkDraftQualityCheck(
+            key="actionable",
+            label="Clear next beat",
+            passed=_has_concrete_next_beat(lower),
+            detail="Gives a concrete acknowledgement or next action.",
+        ),
+        SparkDraftQualityCheck(
+            key="voice_memory_used",
+            label="Voice memory available",
+            passed=bool(memory_items or recurring_phrases),
+            detail="Reviewed voice memory or recurring phrases were available to the prompt.",
+        ),
+    )
+    score = round(sum(1 for check in checks if check.passed) / len(checks) * 100)
+    if score >= 85:
+        verdict = "strong"
+    elif score >= 70:
+        verdict = "review"
+    else:
+        verdict = "needs_edit"
+    return SparkDraftQualityScorecard(score=score, verdict=verdict, checks=checks)
+
+
+def _robotic_wrapup(lower_text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b("
+            r"please let me know if you have any questions|"
+            r"i hope this message finds you well|"
+            r"i would be happy to assist|"
+            r"as an ai|"
+            r"moving forward|"
+            r"circle back"
+            r")\b",
+            lower_text,
+        )
+    )
+
+
+def _has_concrete_next_beat(lower_text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b("
+            r"i('| a)?m|"
+            r"i will|"
+            r"i can|"
+            r"let me|"
+            r"we can|"
+            r"happy to|"
+            r"got it|"
+            r"sounds|"
+            r"fair enough|"
+            r"here"
+            r")\b",
+            lower_text,
+        )
+    )
 
 
 def _draft_from_goal(

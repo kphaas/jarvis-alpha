@@ -66,6 +66,7 @@ export function SparkMemoryReviewPanel({
       ]
     : backendProposals;
   const active = state.memory?.active ?? [];
+  const scorecard = state.memory?.scorecard ?? null;
   const feedbackPhraseCount = state.memory?.buddy.feedback_phrase_count ?? 0;
   const pendingPhraseCount = proposals.filter(
     (proposal) => proposal.kind === "phrase",
@@ -176,6 +177,68 @@ export function SparkMemoryReviewPanel({
           </button>
         </div>
       </div>
+
+      {scorecard && (
+        <div className={`mt-4 rounded-lg border p-3 ${border}`}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+              <span
+                className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+              >
+                Memory scorecard
+              </span>
+            </div>
+            <span
+              className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${
+                scorecard.readiness === "strong" ? okClass : warnClass
+              }`}
+            >
+              {labelize(scorecard.readiness)}
+            </span>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <div className={`rounded-md border px-3 py-2 ${border}`}>
+              <div className={`text-[10px] font-mono uppercase ${muted}`}>
+                Active
+              </div>
+              <div className="text-lg font-bold">{scorecard.active_count}</div>
+            </div>
+            <div className={`rounded-md border px-3 py-2 ${border}`}>
+              <div className={`text-[10px] font-mono uppercase ${muted}`}>
+                Proposals
+              </div>
+              <div className="text-lg font-bold">{scorecard.proposal_count}</div>
+            </div>
+            <div className={`rounded-md border px-3 py-2 ${border}`}>
+              <div className={`text-[10px] font-mono uppercase ${muted}`}>
+                Edit phrases
+              </div>
+              <div className="text-lg font-bold">
+                {scorecard.feedback_phrase_count}
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {scorecard.kinds_present.map((kind) => (
+              <span
+                key={kind}
+                className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${okClass}`}
+              >
+                {labelize(kind)}
+              </span>
+            ))}
+            {scorecard.missing_core_kinds.map((kind) => (
+              <span
+                key={kind}
+                className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${warnClass}`}
+              >
+                Missing {labelize(kind)}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(280px,0.9fr)]">
         <div className="space-y-3">

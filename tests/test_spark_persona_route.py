@@ -253,6 +253,12 @@ async def test_spark_memory_read_returns_active_and_proposals(
 
     assert response.active[0].content == "Voice should feel composed."
     assert response.proposals[0].content == "Signature phrase: fair enough."
+    assert response.scorecard.active_count == 1
+    assert response.scorecard.proposal_count == 1
+    assert response.scorecard.feedback_phrase_count == 1
+    assert response.scorecard.readiness == "needs_review"
+    assert "voice" in response.scorecard.kinds_present
+    assert "relationship" in response.scorecard.missing_core_kinds
     assert response.buddy["feedback_phrase_count"] == 1
     logs = json.dumps(fake_logger.infos)
     assert "draft_text" not in logs

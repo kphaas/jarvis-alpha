@@ -80,6 +80,7 @@ class SparkApprovedSourceRecord:
     source: SparkCorpusSource
     approval_id: str
     source_reference_hash: str
+    source_reference_label: str | None
     source_reference_path: Path | None
     source_sha256: str | None
     thread_kind: SparkThreadKind
@@ -449,6 +450,7 @@ def _approval_from_fields(
         source=_source(fields.get("source") or fallback_source),
         approval_id=fields.get("approval_id") or fallback_approval_id,
         source_reference_hash=_sha256_text(source_reference),
+        source_reference_label=_source_reference_label(source_reference),
         source_reference_path=_source_path(source_reference),
         source_sha256=_optional_hash(fields.get("source_sha_256")),
         thread_kind=_thread_kind(fields.get("thread_kind")),
@@ -461,6 +463,20 @@ def _approval_from_fields(
         legal_marked=_is_yes(fields.get("legal_or_custody_content")),
         decision_approved=fields.get("decision_approved") == "true",
     )
+
+
+def _source_reference_label(value: str) -> str | None:
+    clean = re.sub(r"\s+", " ", value or "").strip()
+    match = re.match(
+        r"(?i)^relationship-thread-label:\s*(?P<label>[a-z0-9][a-z0-9 _.-]{0,80})$",
+        clean,
+    )
+    if not match:
+        return None
+    label = match.group("label").strip(" ._-")
+    if not label:
+        return None
+    return label[:1].upper() + label[1:]
 
 
 def _parse_source_records(text: str) -> list[dict[str, str]]:

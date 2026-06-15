@@ -76,6 +76,11 @@ class SparkIMessageDraftOut(BaseModel):
     detected_sensitivity: list[str]
     blocked_sensitivity: list[str]
     draft_engine: str
+    conversation_summary: "SparkIMessageDraftConversationSummaryOut"
+    draft_quality: "SparkIMessageDraftQualityOut"
+    source_readiness: list["SparkIMessageDraftSourceReadinessOut"] = Field(
+        default_factory=list
+    )
     context_preview: list["SparkIMessageDraftContextMessageOut"] = Field(
         default_factory=list
     )
@@ -90,6 +95,37 @@ class SparkIMessageDraftContextMessageOut(BaseModel):
     is_from_me: bool
     message_ref_hash: str
     body_text: str
+
+
+class SparkIMessageDraftConversationSummaryOut(BaseModel):
+    channel: str
+    voice_principal_label: str
+    reply_target_label: str
+    reply_target_confidence: str
+    context_order: str
+    last_message_speaker: str | None = None
+    last_message_preview: str | None = None
+    last_message_ref_hash: str | None = None
+
+
+class SparkIMessageDraftQualityCheckOut(BaseModel):
+    key: str
+    label: str
+    passed: bool
+    detail: str
+
+
+class SparkIMessageDraftQualityOut(BaseModel):
+    score: int
+    verdict: str
+    checks: list[SparkIMessageDraftQualityCheckOut]
+
+
+class SparkIMessageDraftSourceReadinessOut(BaseModel):
+    source: str
+    channel: str
+    status: str
+    detail: str
 
 
 class SparkIMessageDraftMemoryDebugOut(BaseModel):

@@ -3,9 +3,11 @@ import {
   AlertTriangle,
   Brain,
   CheckCircle2,
+  CircleCheck,
   Copy,
   GitCompareArrows,
   LoaderCircle,
+  Mail,
   MessagesSquare,
   MessageSquareText,
   RefreshCw,
@@ -13,6 +15,7 @@ import {
   Sparkles,
   ThumbsDown,
   ThumbsUp,
+  UserRound,
 } from "lucide-react";
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -22,6 +25,7 @@ import { useSparkDraftReview } from "../hooks/useSparkDraftReview";
 import { useAppStore } from "../store";
 import type {
   SparkDraftFeedbackLabel,
+  SparkIMessageDraftContextMessage,
   SparkIMessageDraftResponse,
 } from "../types/spark";
 
@@ -167,6 +171,228 @@ function DraftMetadata({
         }
         muted={muted}
       />
+    </div>
+  );
+}
+
+function ConversationBriefPanel({
+  draft,
+  selectedPrincipalLabel,
+  border,
+  panel,
+  muted,
+  okClass,
+  warnClass,
+}: {
+  draft: SparkIMessageDraftResponse | null;
+  selectedPrincipalLabel: string;
+  border: string;
+  panel: string;
+  muted: string;
+  okClass: string;
+  warnClass: string;
+}) {
+  const summary = draft?.conversation_summary;
+
+  return (
+    <section className={`rounded-xl border ${border} ${panel} p-4`}>
+      <div className="grid gap-3 lg:grid-cols-[minmax(220px,0.7fr)_minmax(0,1.3fr)]">
+        <div className="flex flex-wrap items-center gap-2">
+          <UserRound className="h-4 w-4 text-emerald-400" />
+          <span className={`text-[10px] font-mono uppercase ${muted}`}>
+            Drafting to
+          </span>
+          <span
+            className={`rounded-md border px-2 py-1 text-sm font-bold ${okClass}`}
+          >
+            {summary?.reply_target_label ?? "Generate draft first"}
+          </span>
+          <span
+            className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${warnClass}`}
+          >
+            Voice: {summary?.voice_principal_label ?? selectedPrincipalLabel}
+          </span>
+        </div>
+        <div className={`min-w-0 rounded-lg border p-3 ${border}`}>
+          <div className="flex flex-wrap items-center gap-2">
+            <MessagesSquare className="h-4 w-4 text-emerald-400" />
+            <span className={`text-[10px] font-mono uppercase ${muted}`}>
+              Last thread message
+            </span>
+            {summary?.last_message_speaker && (
+              <span
+                className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${
+                  summary.last_message_speaker === "Ken" ? okClass : warnClass
+                }`}
+              >
+                {summary.last_message_speaker}
+              </span>
+            )}
+          </div>
+          <p className="mt-2 line-clamp-3 text-sm leading-relaxed">
+            {summary?.last_message_preview ??
+              "Generate a draft to see the last message Spark is replying to."}
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RecentThreadStrip({
+  context,
+  border,
+  muted,
+  okClass,
+  warnClass,
+}: {
+  context: SparkIMessageDraftContextMessage[];
+  border: string;
+  muted: string;
+  okClass: string;
+  warnClass: string;
+}) {
+  const recent = context.slice(0, 5);
+  return (
+    <div className={`rounded-lg border p-3 ${border}`}>
+      <div className="flex items-center justify-between gap-3">
+        <span className={`text-[10px] font-mono uppercase ${muted}`}>
+          Recent thread
+        </span>
+        <span className={`text-[10px] font-mono uppercase ${muted}`}>
+          newest first
+        </span>
+      </div>
+      {recent.length ? (
+        <div className="mt-3 space-y-2">
+          {recent.map((message) => (
+            <div key={`${message.message_ref_hash}-brief`}>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${
+                    message.is_from_me ? okClass : warnClass
+                  }`}
+                >
+                  {message.speaker}
+                </span>
+                <span className={`truncate text-[10px] font-mono ${muted}`}>
+                  {shortHash(message.message_ref_hash)}
+                </span>
+              </div>
+              <p className="mt-1 line-clamp-2 text-sm leading-relaxed">
+                {message.body_text}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className={`mt-3 text-sm ${muted}`}>
+          Generate a draft to see the last 5 messages here.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function DraftQualityPanel({
+  draft,
+  border,
+  muted,
+  okClass,
+  warnClass,
+  errorClass,
+}: {
+  draft: SparkIMessageDraftResponse | null;
+  border: string;
+  muted: string;
+  okClass: string;
+  warnClass: string;
+  errorClass: string;
+}) {
+  if (!draft) return null;
+  const quality = draft.draft_quality;
+  const scoreClass =
+    quality.verdict === "strong"
+      ? okClass
+      : quality.verdict === "needs_edit"
+        ? errorClass
+        : warnClass;
+
+  return (
+    <div className={`rounded-lg border p-3 ${border}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <CircleCheck className="h-4 w-4 text-emerald-400" />
+          <span className={`text-[10px] font-mono uppercase ${muted}`}>
+            Ken-like score
+          </span>
+        </div>
+        <span
+          className={`rounded-md border px-2 py-1 text-sm font-bold ${scoreClass}`}
+        >
+          {quality.score}% {labelize(quality.verdict)}
+        </span>
+      </div>
+      <div className="mt-3 space-y-2">
+        {quality.checks.map((check) => (
+          <div key={check.key} className="flex gap-2 text-sm">
+            <CheckCircle2
+              className={`mt-0.5 h-4 w-4 shrink-0 ${
+                check.passed ? "text-emerald-400" : "text-amber-400"
+              }`}
+            />
+            <div className="min-w-0">
+              <div className="font-semibold">{check.label}</div>
+              <div className={`text-xs ${muted}`}>{check.detail}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SourceReadinessPanel({
+  draft,
+  border,
+  muted,
+  okClass,
+  warnClass,
+}: {
+  draft: SparkIMessageDraftResponse | null;
+  border: string;
+  muted: string;
+  okClass: string;
+  warnClass: string;
+}) {
+  if (!draft) return null;
+  return (
+    <div className={`rounded-lg border p-3 ${border}`}>
+      <div className="flex items-center gap-2">
+        <Mail className="h-4 w-4 text-emerald-400" />
+        <span className={`text-[10px] font-mono uppercase ${muted}`}>
+          Channel parity
+        </span>
+      </div>
+      <div className="mt-3 space-y-2">
+        {draft.source_readiness.map((item) => (
+          <div key={`${item.source}-${item.status}`} className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${
+                  item.status === "live_runtime_context" ? okClass : warnClass
+                }`}
+              >
+                {item.channel}
+              </span>
+              <span className={`text-[10px] font-mono uppercase ${muted}`}>
+                {labelize(item.status)}
+              </span>
+            </div>
+            <p className={`text-xs ${muted}`}>{item.detail}</p>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -433,6 +659,16 @@ export default function Spark() {
         </div>
       </div>
 
+      <ConversationBriefPanel
+        draft={state.draft}
+        selectedPrincipalLabel={selectedPrincipal.label}
+        border={border}
+        panel={panel}
+        muted={muted}
+        okClass={okClass}
+        warnClass={warnClass}
+      />
+
       {activeApproval && (
         <div className={`rounded-lg border px-3 py-2 text-sm ${okClass}`}>
           Approval queue {activeApproval}
@@ -610,7 +846,29 @@ export default function Spark() {
             <div className="space-y-4">
               {state.draft ? (
                 <>
+                  <RecentThreadStrip
+                    context={state.draft.context_preview}
+                    border={border}
+                    muted={muted}
+                    okClass={okClass}
+                    warnClass={warnClass}
+                  />
                   <DraftMetadata draft={state.draft} muted={muted} />
+                  <DraftQualityPanel
+                    draft={state.draft}
+                    border={border}
+                    muted={muted}
+                    okClass={okClass}
+                    warnClass={warnClass}
+                    errorClass={errorClass}
+                  />
+                  <SourceReadinessPanel
+                    draft={state.draft}
+                    border={border}
+                    muted={muted}
+                    okClass={okClass}
+                    warnClass={warnClass}
+                  />
                   <div className="flex flex-wrap gap-2">
                     {state.draft.warnings.map((warning) => (
                       <StatusChip

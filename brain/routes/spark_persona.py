@@ -61,10 +61,20 @@ class SparkPersonalityMemoryProposalModel(BaseModel):
     evidence_ref_hash: str | None = None
 
 
+class SparkPersonalityMemoryScorecard(BaseModel):
+    active_count: int
+    proposal_count: int
+    feedback_phrase_count: int
+    kinds_present: list[str]
+    missing_core_kinds: list[str]
+    readiness: str
+
+
 class SparkPersonalityMemoryReviewResponse(BaseModel):
     principal_id: str
     active: list[SparkPersonalityMemoryItem]
     proposals: list[SparkPersonalityMemoryProposalModel]
+    scorecard: SparkPersonalityMemoryScorecard
     buddy: dict[str, object]
 
 
@@ -233,6 +243,7 @@ async def get_spark_personality_memory(
             SparkPersonalityMemoryProposalModel(**asdict(proposal))
             for proposal in proposals
         ],
+        scorecard=_memory_scorecard(rows, proposals),
         buddy={
             "status": "review_ready",
             "proposal_count": len(proposals),
@@ -435,6 +446,36 @@ def _personality_item(row: dict[str, object]) -> SparkPersonalityMemoryItem:
         approved_at=_iso(row.get("approved_at")),
         created_at=_iso(row.get("created_at")),
         updated_at=_iso(row.get("updated_at")),
+    )
+
+
+def _memory_scorecard(
+    rows: list[dict[str, object]],
+    proposals: tuple[object, ...],
+) -> SparkPersonalityMemoryScorecard:
+    kinds_present = sorted({str(row.get("kind") or "") for row in rows if row})
+    proposal_count = len(proposals)
+    feedback_phrase_count = sum(
+        1
+        for proposal in proposals
+        if getattr(proposal, "source", None) == "spark_feedback"
+    )
+    core_kinds = {"voice", "avoid", "phrase", "relationship", "style"}
+    missing = sorted(core_kinds.difference(kinds_present))
+    active_count = len(rows)
+    if active_count >= 8 and len(missing) <= 1:
+        readiness = "strong"
+    elif active_count >= 3 or proposal_count:
+        readiness = "needs_review"
+    else:
+        readiness = "thin"
+    return SparkPersonalityMemoryScorecard(
+        active_count=active_count,
+        proposal_count=proposal_count,
+        feedback_phrase_count=feedback_phrase_count,
+        kinds_present=kinds_present,
+        missing_core_kinds=missing,
+        readiness=readiness,
     )
 
 

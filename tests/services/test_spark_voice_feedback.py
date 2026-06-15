@@ -6,7 +6,11 @@ from pathlib import Path
 
 from brain.services.spark_imessage_drafts import (
     SparkDraftContext,
+    SparkDraftConversationSummary,
+    SparkDraftQualityCheck,
+    SparkDraftQualityScorecard,
     SparkDraftProposal,
+    SparkDraftSourceReadiness,
     SparkRuntimeMessage,
     apply_draft_text_override,
 )
@@ -148,6 +152,32 @@ def _proposal(draft_text: str) -> SparkDraftProposal:
                     is_from_me=True,
                     body_text="ken sent private body",
                 ),
+            ),
+        ),
+        conversation_summary=SparkDraftConversationSummary(
+            channel="iMessage",
+            voice_principal_label="Ken",
+            reply_target_label="Sweta",
+            reply_target_confidence="approved_source_label",
+        ),
+        draft_quality=SparkDraftQualityScorecard(
+            score=100,
+            verdict="strong",
+            checks=(
+                SparkDraftQualityCheck(
+                    key="length",
+                    label="Short enough",
+                    passed=True,
+                    detail="5 words; Spark should stay short to medium.",
+                ),
+            ),
+        ),
+        source_readiness=(
+            SparkDraftSourceReadiness(
+                source="imessage",
+                channel="Text",
+                status="live_runtime_context",
+                detail="Approved iMessage thread is feeding this draft at runtime.",
             ),
         ),
         warnings=("draft_only_no_send",),
