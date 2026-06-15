@@ -151,6 +151,8 @@ async def test_spark_imessage_draft_returns_review_payload_and_safe_logs(
     assert payload["requires_human_approval"] is True
     assert payload["body_access"] is True
     assert payload["context_messages_read"] == 2
+    assert payload["context_preview"] == []
+    assert payload["personality_memory_preview"] == []
     assert fake_logger.infos == [
         (
             "spark_imessage_draft_proposed",
@@ -181,6 +183,81 @@ async def test_spark_imessage_draft_returns_review_payload_and_safe_logs(
     logs = json.dumps(fake_logger.infos).lower()
     assert "private inbound body" not in logs
     assert "approved-chat-guid" not in logs
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_draft_can_return_runtime_review_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    personality_rows = [
+        {
+            "kind": "style",
+            "content": "Ken prefers short bullets when timing matters.",
+            "source": "spark_approved",
+            "evidence_ref_hash": "memory-hash",
+        },
+        {
+            "kind": "boundary",
+            "content": "Relationship topics require Spark review before action.",
+            "source": "spark_vault",
+        },
+    ]
+    monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+    _stub_personality_memory(monkeypatch, personality_rows)
+
+    async def fake_create(**kwargs):
+        assert kwargs == {
+            "principal_id": "ken",
+            "approval_id": None,
+            "reply_goal": "Show me context",
+            "max_context_messages": 10,
+            "personality_memory_rows": personality_rows,
+        }
+        return _proposal()
+
+    monkeypatch.setattr(spark_drafts, "create_imessage_draft_proposal", fake_create)
+
+    response = await spark_drafts.spark_imessage_draft(
+        _request(),
+        spark_drafts.SparkIMessageDraftRequest(
+            reply_goal="Show me context",
+            max_context_messages=10,
+            include_context_preview=True,
+            include_memory_preview=True,
+        ),
+        "user",
+    )
+
+    payload = response.model_dump()
+    assert payload["context_preview"] == [
+        {
+            "index": 1,
+            "speaker": "Other",
+            "is_from_me": False,
+            "message_ref_hash": "msg-1",
+            "body_text": "private inbound body",
+        },
+        {
+            "index": 2,
+            "speaker": "Ken",
+            "is_from_me": True,
+            "message_ref_hash": "msg-2",
+            "body_text": "ken sent private body",
+        },
+    ]
+    assert payload["personality_memory_preview"] == [
+        {
+            "kind": "style",
+            "content": "Ken prefers short bullets when timing matters.",
+            "source": "spark_approved",
+            "evidence_ref_hash": "memory-hash",
+        }
+    ]
+    logs = json.dumps(fake_logger.infos).lower()
+    assert "private inbound body" not in logs
+    assert "ken sent private body" not in logs
+    assert "short bullets" not in logs
 
 
 @pytest.mark.asyncio

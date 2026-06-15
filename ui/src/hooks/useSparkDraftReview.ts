@@ -38,6 +38,9 @@ function baseRequest(
     principal_id: principalId,
     reply_goal: replyGoal.trim() || null,
     max_context_messages: maxContextMessages,
+    include_context_preview: true,
+    context_preview_limit: Math.min(maxContextMessages, 10),
+    include_memory_preview: true,
   };
 }
 

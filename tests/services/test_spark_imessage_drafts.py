@@ -71,6 +71,8 @@ async def test_imessage_draft_uses_runtime_context_without_exposing_thread_text(
     assert payload["context_messages_read"] == 2
     assert payload["principal_sent_messages"] == 1
     assert payload["runtime_context_messages"] == 1
+    assert payload["context_preview"] == []
+    assert payload["personality_memory_preview"] == []
     assert fake_client.calls == [("approved-chat-guid", 10)]
     for forbidden in (
         "private inbound body",
@@ -80,6 +82,63 @@ async def test_imessage_draft_uses_runtime_context_without_exposing_thread_text(
         "relationship-thread-label",
     ):
         assert forbidden not in serialized
+
+
+@pytest.mark.asyncio
+async def test_imessage_draft_can_return_runtime_context_preview_when_requested(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault_root = _write_vault(tmp_path)
+    fake_client = FakeBodyClient()
+    monkeypatch.setenv(drafts.SPARK_DRAFT_LLM_ENABLED_ENV, "false")
+
+    proposal = await drafts.create_imessage_draft_proposal(
+        vault_root=vault_root,
+        principal_id="ken",
+        reply_goal="Tell her I am on it",
+        max_context_messages=10,
+        bluebubbles_client=fake_client,
+        approved_chat_guid="approved-chat-guid",
+    )
+
+    payload = proposal.to_payload(
+        include_context_preview=True,
+        context_preview_limit=10,
+        personality_memory_preview=[
+            {
+                "kind": "style",
+                "content": "Ken prefers short bullets for urgent decisions.",
+                "source": "spark_approved",
+                "evidence_ref_hash": "memory-hash",
+            }
+        ],
+    )
+
+    assert payload["context_preview"] == [
+        {
+            "index": 1,
+            "speaker": "Other",
+            "is_from_me": False,
+            "message_ref_hash": hashlib.sha256(b"inbound-1").hexdigest(),
+            "body_text": "private inbound body with sensitive details",
+        },
+        {
+            "index": 2,
+            "speaker": "Ken",
+            "is_from_me": True,
+            "message_ref_hash": hashlib.sha256(b"sent-1").hexdigest(),
+            "body_text": "Ken sent body that stays runtime-only here",
+        },
+    ]
+    assert payload["personality_memory_preview"] == [
+        {
+            "kind": "style",
+            "content": "Ken prefers short bullets for urgent decisions.",
+            "source": "spark_approved",
+            "evidence_ref_hash": "memory-hash",
+        }
+    ]
 
 
 @pytest.mark.asyncio
