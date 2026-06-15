@@ -137,6 +137,7 @@ def _run_case(case: SearchQualityEvalCase) -> SearchQualityEvalResult:
             "research_report_coverage_warnings": (
                 response.research_report.coverage_warnings
             ),
+            "answer_context": response.answer_context,
             "automatic_memory_write_allowed": (
                 response.memory_boundary.automatic_memory_write_allowed
             ),
@@ -153,6 +154,11 @@ def _eval_cases() -> tuple[SearchQualityEvalCase, ...]:
         "platform.openai.com",
         "/docs/api-reference",
         "OpenAI API reference",
+    )
+    openai_responses = _fixture_source(
+        "platform.openai.com",
+        "/docs/api-reference/responses",
+        "OpenAI Responses API reference",
     )
     openai_community = _fixture_source(
         "community.openai.com",
@@ -302,6 +308,42 @@ def _eval_cases() -> tuple[SearchQualityEvalCase, ...]:
             eval_group="daily_use",
             min_accepted_citations=1,
             min_rejected_citations=1,
+            min_official_sources=1,
+            expected_accepted_hosts=("platform.openai.com",),
+            expected_plan_purposes=("baseline", "official_source"),
+            expected_source_types=("official_docs", "primary_source"),
+            min_subquestions=2,
+        ),
+        SearchQualityEvalCase(
+            name="openai_responses_docs_url_prefers_source_url",
+            request=InternetScoutRequest(
+                query=(
+                    "What is the official OpenAI API documentation URL for the "
+                    "Responses API? Cite the source."
+                ),
+                tool_hint=InternetTool.SEARCH,
+                max_pages=4,
+                requester="alpha_chat.deep_research",
+            ),
+            sources=(openai_responses,),
+            claims=(
+                EvidenceClaim(
+                    claim=(
+                        "The official OpenAI Responses API documentation URL is "
+                        "https://platform.openai.com/docs/api-reference/responses."
+                    ),
+                    source_url=openai_responses.url,
+                    citation_text=(
+                        "Official documentation URL: "
+                        "https://platform.openai.com/docs/api-reference/responses. "
+                        "Example endpoint: GET https://api.openai.com/v1/responses/resp_123."
+                    ),
+                    confidence="high",
+                ),
+            ),
+            expected_status="supported",
+            eval_group="daily_use",
+            min_accepted_citations=1,
             min_official_sources=1,
             expected_accepted_hosts=("platform.openai.com",),
             expected_plan_purposes=("baseline", "official_source"),
