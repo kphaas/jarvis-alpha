@@ -20,6 +20,7 @@ from brain.services.spark_imessage_drafts import (
     SparkRuntimeMessage,
 )
 from brain.services.spark_voice_feedback import SparkDraftEditFeedbackResult
+from brain.services.spark_voice_ingest import SparkApprovedSourceRecord
 
 
 def _request(scopes: list[str] | None = None):
@@ -71,6 +72,10 @@ def _stub_personality_memory(
 
 
 def test_spark_imessage_draft_route_is_classified_t2_write() -> None:
+    target_classes = classify_route("GET", "/v1/spark/drafts/imessage/targets")
+    assert target_classes == ["read", "security_read"]
+    assert determine_risk_tier(target_classes) == "T2"
+
     classes = classify_route("POST", "/v1/spark/drafts/imessage")
 
     assert classes == ["write", "security_write"]
@@ -112,6 +117,79 @@ async def test_spark_imessage_draft_approval_requires_both_scopes() -> None:
             )
 
         assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_draft_targets_list_approved_threads_safely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+    monkeypatch.setattr(
+        spark_drafts,
+        "load_approved_voice_sources",
+        lambda principal_id: (
+            SparkApprovedSourceRecord(
+                principal_id=principal_id,
+                source="imessage",
+                approval_id="ken-imessage-approved-20260605-001",
+                source_reference_hash="source-hash",
+                source_reference_label="Sweta",
+                source_reference_path=None,
+                source_sha256=None,
+                thread_kind="one_to_one",
+                requested_max_messages=200,
+                requested_date_window=None,
+                relationship_marked=True,
+                relationship_approved=True,
+                legal_marked=False,
+                decision_approved=True,
+            ),
+            SparkApprovedSourceRecord(
+                principal_id=principal_id,
+                source="gmail",
+                approval_id="ken-gmail-approved",
+                source_reference_hash="gmail-hash",
+                source_reference_label=None,
+                source_reference_path=None,
+                source_sha256=None,
+                thread_kind="one_to_one",
+                requested_max_messages=250,
+                requested_date_window="180d",
+                relationship_marked=False,
+                relationship_approved=False,
+                legal_marked=False,
+                decision_approved=True,
+            ),
+        ),
+    )
+
+    response = await spark_drafts.spark_imessage_draft_targets(
+        _request(),
+        "ken",
+        "user",
+    )
+
+    payload = response.model_dump()
+    assert payload == {
+        "principal_id": "ken",
+        "targets": [
+            {
+                "approval_id": "ken-imessage-approved-20260605-001",
+                "label": "Sweta",
+                "channel": "iMessage",
+                "thread_kind": "one_to_one",
+                "relationship_marked": True,
+                "relationship_approved": True,
+                "legal_marked": False,
+            }
+        ],
+    }
+    logs = json.dumps(fake_logger.infos).lower()
+    assert "private inbound body" not in logs
+    assert "approved-chat-guid" not in logs
+    assert "sweta" not in logs
+    assert "target_count" in logs
 
 
 @pytest.mark.asyncio

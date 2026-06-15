@@ -45,6 +45,7 @@ def test_spark_review_ui_uses_draft_routes_and_api_wrapper() -> None:
     )
 
     assert "apiJson" in source
+    assert "/v1/spark/drafts/imessage/targets" in source
     assert "/v1/spark/drafts/imessage" in source
     assert "/v1/spark/drafts/imessage/approval-request" in source
     assert "/v1/spark/persona/guardrails" in source
@@ -115,6 +116,7 @@ def test_spark_guardrail_ui_is_editable_without_message_content() -> None:
     assert "saveGuardrails" in source
     assert "protected_relationships" in source
     assert "protected_topics" in source
+    assert "return 'child'" in source
     assert "target_voice" in source
     assert "avoid_voice" in source
     assert "signature_phrases" in source
@@ -166,13 +168,19 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "meagan" in source
     assert "mother" in source
     assert "Review console" in source
+    assert "Voice profile" in source
+    assert "Draft target" in source
+    assert "Generate for" in source
+    assert "needs approved thread" in source
     assert "Thread preview" in source
     assert "Decision rail" in source
-    assert "Advanced context" in source
+    assert "Review details" in source
     assert "Memory and guardrails" in source
+    assert "Guardrails" in source
     assert "Side-by-side" in source
     assert "Compare" in source
     assert "Thread context" in source
+    assert "Draft memory" in source
     assert "Drafting to" in source
     assert "Last thread message" in source
     assert "Recent thread" in source

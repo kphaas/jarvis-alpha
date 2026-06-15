@@ -8,6 +8,21 @@ export interface SparkIMessageDraftRequest {
   include_memory_preview?: boolean;
 }
 
+export interface SparkIMessageDraftTarget {
+  approval_id: string;
+  label: string;
+  channel: string;
+  thread_kind: string;
+  relationship_marked: boolean;
+  relationship_approved: boolean;
+  legal_marked: boolean;
+}
+
+export interface SparkIMessageDraftTargetsResponse {
+  principal_id: string;
+  targets: SparkIMessageDraftTarget[];
+}
+
 export interface SparkIMessageDraftApprovalRequest extends SparkIMessageDraftRequest {
   draft_text_override?: string | null;
 }
