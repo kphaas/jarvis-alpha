@@ -75,8 +75,11 @@ def test_spark_imessage_draft_route_is_classified_t2_write() -> None:
     approval_classes = classify_route(
         "POST", "/v1/spark/drafts/imessage/approval-request"
     )
+    feedback_classes = classify_route("POST", "/v1/spark/drafts/imessage/feedback")
     assert approval_classes == ["write", "security_write"]
     assert determine_risk_tier(approval_classes) == "T2"
+    assert feedback_classes == ["write", "security_write"]
+    assert determine_risk_tier(feedback_classes) == "T2"
 
 
 @pytest.mark.asyncio
@@ -294,6 +297,60 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
     assert "feedback-hash" in logs
     assert "private inbound body" not in logs
     assert "approved-chat-guid" not in logs
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_draft_feedback_records_label_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    feedback_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+
+    def fake_feedback(**kwargs):
+        feedback_calls.append(kwargs)
+        return spark_drafts.SparkDraftQualityFeedbackResult(
+            recorded=True,
+            feedback_ref_hash="feedback-hash",
+            feedback_label="too_formal",
+        )
+
+    monkeypatch.setattr(
+        spark_drafts,
+        "record_spark_draft_quality_feedback",
+        fake_feedback,
+    )
+
+    response = await spark_drafts.spark_imessage_draft_feedback(
+        _request(),
+        spark_drafts.SparkIMessageDraftFeedbackRequest(
+            principal_id="ken",
+            feedback_label="too_formal",
+            draft_version="spark-imessage-draft/v0",
+            approval_ref_hash="approval-hash",
+            source_reference_hash="source-hash",
+            chat_guid_hash="chat-hash",
+        ),
+        "user",
+    )
+
+    assert response.status == "recorded"
+    assert response.feedback_recorded is True
+    assert response.feedback_label == "too_formal"
+    assert feedback_calls == [
+        {
+            "principal_id": "ken",
+            "feedback_label": "too_formal",
+            "draft_version": "spark-imessage-draft/v0",
+            "approval_ref_hash": "approval-hash",
+            "source_reference_hash": "source-hash",
+            "chat_guid_hash": "chat-hash",
+        }
+    ]
+    logs = json.dumps(fake_logger.infos).lower()
+    assert "too_formal" in logs
+    assert "draft_text" not in logs
+    assert "private inbound body" not in logs
 
 
 def _proposal() -> SparkDraftProposal:

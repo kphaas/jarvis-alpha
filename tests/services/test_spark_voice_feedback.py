@@ -13,6 +13,7 @@ from brain.services.spark_imessage_drafts import (
 from brain.services.spark_voice_feedback import (
     extract_candidate_key_phrases,
     record_spark_draft_edit_feedback,
+    record_spark_draft_quality_feedback,
 )
 
 
@@ -82,6 +83,37 @@ def test_draft_edit_feedback_skips_unchanged_text(tmp_path: Path) -> None:
     assert result.recorded is False
     assert result.feedback_ref_hash is None
     assert not (tmp_path / "spark").exists()
+
+
+def test_draft_quality_feedback_records_label_only(tmp_path: Path) -> None:
+    result = record_spark_draft_quality_feedback(
+        principal_id="ken",
+        feedback_label="too_robotic",
+        draft_version="spark-imessage-draft/v0",
+        approval_ref_hash="approval-hash",
+        source_reference_hash="source-hash",
+        chat_guid_hash="chat-hash",
+        vault_root=tmp_path,
+        created_at=datetime(2026, 6, 15, 9, 0, tzinfo=UTC),
+    )
+
+    assert result.recorded is True
+    assert result.feedback_ref_hash
+    feedback_path = (
+        tmp_path
+        / "spark"
+        / "principals"
+        / "ken"
+        / "feedback"
+        / "imessage_draft_edits.jsonl"
+    )
+    row = json.loads(feedback_path.read_text(encoding="utf-8").strip())
+    assert row["feedback_version"] == "spark-draft-quality-feedback/v0.1"
+    assert row["feedback_label"] == "too_robotic"
+    serialized = json.dumps(row).lower()
+    assert "draft_text" not in serialized
+    assert "private inbound body" not in serialized
+    assert "ken sent private body" not in serialized
 
 
 def test_feedback_default_root_is_not_personality_git_checkout() -> None:
