@@ -489,6 +489,7 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
             recorded=True,
             feedback_ref_hash="feedback-hash",
             candidate_key_phrases=("Edited draft",),
+            calibration_lessons=("Prefer shorter text drafts.",),
         )
 
     monkeypatch.setattr(spark_drafts, "create_imessage_draft_proposal", fake_create)
@@ -518,6 +519,7 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
     assert payload["voice_feedback_recorded"] is True
     assert payload["voice_feedback_ref_hash"] == "feedback-hash"
     assert payload["candidate_key_phrases"] == ["Edited draft"]
+    assert payload["calibration_lessons"] == ["Prefer shorter text drafts."]
     assert len(feedback_calls) == 1
     assert len(outbox_calls) == 1
     logs = json.dumps(fake_logger.infos).lower()
@@ -525,6 +527,7 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
     assert "edited draft" not in logs
     assert "22222222-2222-4222-8222-222222222222" in logs
     assert "feedback-hash" in logs
+    assert "calibration_lesson_count" in logs
     assert "private inbound body" not in logs
     assert "approved-chat-guid" not in logs
 
