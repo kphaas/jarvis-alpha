@@ -21,6 +21,7 @@ from brain.services.spark_personality_memory import (
     archive_personality_memory,
     build_personality_memory_proposals,
     fetch_personality_memory,
+    propose_personality_memory_from_note,
     reject_personality_memory_proposal,
     save_personality_memory,
 )
@@ -65,6 +66,19 @@ class SparkPersonalityMemoryReviewResponse(BaseModel):
     active: list[SparkPersonalityMemoryItem]
     proposals: list[SparkPersonalityMemoryProposalModel]
     buddy: dict[str, object]
+
+
+class SparkPersonalityMemoryProposeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    principal_id: str = Field(default="ken", min_length=1, max_length=64)
+    note: str = Field(min_length=3, max_length=800)
+
+
+class SparkPersonalityMemoryProposeResponse(BaseModel):
+    status: str
+    proposal: SparkPersonalityMemoryProposalModel | None = None
+    reason: str | None = None
 
 
 class SparkPersonalityMemoryApproveRequest(BaseModel):
@@ -226,6 +240,55 @@ async def get_spark_personality_memory(
                 1 for proposal in proposals if proposal.source == "spark_feedback"
             ),
         },
+    )
+
+
+@router.post("/memory/propose", response_model=SparkPersonalityMemoryProposeResponse)
+async def propose_spark_personality_memory(
+    request: Request,
+    payload: SparkPersonalityMemoryProposeRequest,
+    _: str = Depends(require_auth),
+) -> SparkPersonalityMemoryProposeResponse:
+    check_scopes(request, "admin")
+    try:
+        proposal = propose_personality_memory_from_note(
+            principal_id=payload.principal_id,
+            note=payload.note,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail="spark_memory_proposal_failed"
+        ) from exc
+
+    actor_sub = str(
+        getattr(request.state, "user_sub", None)
+        or getattr(request.state, "user_id", None)
+        or "unknown"
+    )
+    logger.info(
+        "spark_personality_memory_proposed",
+        extra={
+            "event": "spark_personality_memory_proposed",
+            "component": "spark_persona",
+            "principal_id": payload.principal_id,
+            "proposed": proposal is not None,
+            "proposal_id": proposal.proposal_id if proposal else "",
+            "kind": proposal.kind if proposal else "",
+            "source": proposal.source if proposal else "",
+            "evidence_ref_hash": proposal.evidence_ref_hash if proposal else "",
+            "note_length": len(payload.note),
+            "actor_sub": actor_sub,
+            "actor_type": str(getattr(request.state, "actor_type", "unknown")),
+        },
+    )
+    if proposal is None:
+        return SparkPersonalityMemoryProposeResponse(
+            status="not_proposed",
+            reason="invalid_or_sensitive_note",
+        )
+    return SparkPersonalityMemoryProposeResponse(
+        status="proposed",
+        proposal=SparkPersonalityMemoryProposalModel(**asdict(proposal)),
     )
 
 

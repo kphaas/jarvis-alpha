@@ -4,8 +4,10 @@ import {
   Brain,
   CheckCircle2,
   Archive,
+  Lightbulb,
   XCircle,
   LoaderCircle,
+  Plus,
   RefreshCw,
   ShieldCheck,
 } from "lucide-react";
@@ -51,8 +53,18 @@ export function SparkMemoryReviewPanel({
 }: StyleProps) {
   const state = useSparkPersonalityMemory(principalId);
   const [edits, setEdits] = useState<Record<string, string>>({});
+  const [memoryNote, setMemoryNote] = useState("");
 
-  const proposals = state.memory?.proposals ?? [];
+  const proposedMemory = state.proposeMemoryResult?.proposal ?? null;
+  const backendProposals = state.memory?.proposals ?? [];
+  const proposals = proposedMemory
+    ? [
+        proposedMemory,
+        ...backendProposals.filter(
+          (proposal) => proposal.proposal_id !== proposedMemory.proposal_id,
+        ),
+      ]
+    : backendProposals;
   const active = state.memory?.active ?? [];
   const feedbackPhraseCount = state.memory?.buddy.feedback_phrase_count ?? 0;
   const pendingPhraseCount = proposals.filter(
@@ -91,6 +103,15 @@ export function SparkMemoryReviewPanel({
     state.archiveMemory({
       principal_id: principalId,
       memory_id: memoryId,
+    });
+  }
+
+  function proposeFromNote() {
+    const note = memoryNote.trim();
+    if (!note || state.proposeMemoryLoading) return;
+    state.proposeMemory({
+      principal_id: principalId,
+      note,
     });
   }
 
@@ -158,6 +179,70 @@ export function SparkMemoryReviewPanel({
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(280px,0.9fr)]">
         <div className="space-y-3">
+          <div className={`rounded-lg border p-3 ${border}`}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Lightbulb className="h-4 w-4 text-emerald-400" />
+                <span
+                  className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+                >
+                  Ask Buddy
+                </span>
+              </div>
+              <span
+                className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${okClass}`}
+              >
+                proposal only
+              </span>
+            </div>
+            <textarea
+              value={memoryNote}
+              onChange={(event) => setMemoryNote(event.target.value)}
+              rows={3}
+              maxLength={800}
+              placeholder="Remember that I prefer short bullets when decisions are time-sensitive."
+              className={`mt-3 w-full resize-y rounded-lg border p-3 text-sm outline-none transition focus:border-emerald-400 ${input}`}
+            />
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <span className={`text-xs ${muted}`}>
+                Buddy drafts it. Approval still writes it.
+              </span>
+              <button
+                type="button"
+                onClick={proposeFromNote}
+                disabled={!memoryNote.trim() || state.proposeMemoryLoading}
+                className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-bold transition ${border} ${
+                  memoryNote.trim()
+                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                    : "opacity-45"
+                }`}
+              >
+                {state.proposeMemoryLoading ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
+                Propose memory
+              </button>
+            </div>
+            {state.proposeMemoryResult?.status === "not_proposed" && (
+              <div
+                className={`mt-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${warnClass}`}
+              >
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                Memory note needs a safer rewrite
+              </div>
+            )}
+            {state.proposeMemoryError && (
+              <div
+                className={`mt-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${errorClass}`}
+              >
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                Buddy proposal failed
+              </div>
+            )}
+          </div>
+
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span
               className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
