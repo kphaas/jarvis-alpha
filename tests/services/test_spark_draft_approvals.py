@@ -51,9 +51,13 @@ async def test_enqueue_spark_draft_approval_stores_only_hash_and_safe_descriptio
     assert "enqueue_approval_request" in query
     assert args[0] == list(SPARK_DRAFT_APPROVAL_ACTION_CLASSES)
     assert args[1] == SPARK_DRAFT_APPROVAL_TIER
+    assert args[0] == ["spark_draft_handoff", "imessage_send", "security_write"]
+    assert args[1] == "T4"
     assert args[2] == "spark-service"
     assert args[3] == "service"
-    assert args[4] == "Spark iMessage draft approval (2 context, 1 sent, 1 runtime)"
+    assert (
+        args[4] == "Spark iMessage approved-send request (2 context, 1 sent, 1 runtime)"
+    )
     assert args[5] == spark_draft_parameters_hash(proposal)
     assert args[6] == "nonce-1"
     serialized = json.dumps(args).lower()
@@ -77,7 +81,7 @@ def test_spark_draft_parameters_hash_changes_when_edited_draft_changes():
     assert spark_draft_parameters_hash(proposal) != spark_draft_parameters_hash(edited)
     assert "private" not in spark_draft_parameters_hash(proposal)
     assert spark_draft_approval_description(proposal) == (
-        "Spark iMessage draft approval (2 context, 1 sent, 1 runtime)"
+        "Spark iMessage approved-send request (2 context, 1 sent, 1 runtime)"
     )
 
 

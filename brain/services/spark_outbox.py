@@ -8,6 +8,7 @@ import hmac
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Mapping
 from uuid import UUID
 
@@ -58,6 +59,25 @@ class SparkOutboxCreateResult:
     draft_text_hash: str
     created: bool
     reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SparkOutboxSendItem:
+    outbox_id: UUID
+    channel: str
+    principal_id: str
+    target_ref_hash: str
+    target_label: str
+    approval_queue_id: UUID
+    approval_parameters_hash: str
+    approval_status: str
+    approval_expires_at: datetime | None
+    approval_row_parameters_hash: str
+    draft_text_ciphertext: bytes
+    draft_text_hash: str
+    payload_key_version: str
+    status: str
+    send_attempt_count: int
 
 
 class SparkOutboxCrypto:
@@ -211,6 +231,100 @@ async def create_spark_outbox_item(
         draft_text_hash=encrypted.draft_text_hash,
         created=bool(result.get("created")),
         reason=_string_or_none(result.get("reason")),
+    )
+
+
+async def fetch_spark_outbox_item_for_send(
+    conn: asyncpg.Connection,
+    *,
+    outbox_id: UUID,
+) -> SparkOutboxSendItem | None:
+    row = await conn.fetchrow(
+        """
+        SELECT *
+        FROM public.get_spark_outbox_item_for_send($1::uuid)
+        """,
+        outbox_id,
+    )
+    if row is None:
+        return None
+    return SparkOutboxSendItem(
+        outbox_id=UUID(str(row["outbox_id"])),
+        channel=str(row["channel"]),
+        principal_id=str(row["principal_id"]),
+        target_ref_hash=str(row["target_ref_hash"]),
+        target_label=str(row["target_label"]),
+        approval_queue_id=UUID(str(row["approval_queue_id"])),
+        approval_parameters_hash=str(row["approval_parameters_hash"]),
+        approval_status=str(row["approval_status"]),
+        approval_expires_at=row["approval_expires_at"],
+        approval_row_parameters_hash=str(row["approval_row_parameters_hash"]),
+        draft_text_ciphertext=bytes(row["draft_text_ciphertext"]),
+        draft_text_hash=str(row["draft_text_hash"]),
+        payload_key_version=str(row["payload_key_version"]),
+        status=str(row["status"]),
+        send_attempt_count=int(row["send_attempt_count"]),
+    )
+
+
+def decrypt_spark_outbox_draft_text(
+    item: SparkOutboxSendItem,
+    *,
+    crypto: SparkOutboxCrypto,
+) -> str:
+    encrypted = SparkOutboxEncryptedDraft(
+        ciphertext=item.draft_text_ciphertext,
+        draft_text_hash=item.draft_text_hash,
+        payload_hash="sha256:" + "0" * 64,
+        payload_key_version=item.payload_key_version,
+    )
+    draft_text = crypto.decrypt_draft_text(encrypted)
+    expected_hash = crypto.digest_value("spark_outbox_draft_text", draft_text)
+    if not hmac.compare_digest(expected_hash, item.draft_text_hash):
+        raise SparkOutboxStoreError("spark_outbox_draft_text_hash_mismatch")
+    return draft_text
+
+
+async def record_spark_outbox_event(
+    conn: asyncpg.Connection,
+    *,
+    outbox_id: UUID,
+    event_type: str,
+    actor_sub: str,
+    actor_type: str,
+    metadata: Mapping[str, object] | None = None,
+    error_class: str | None = None,
+    error_message: str | None = None,
+) -> str:
+    result = await conn.fetchval(
+        """
+        SELECT public.record_spark_outbox_event(
+            $1::uuid, $2, $3, $4, $5::jsonb, $6, $7
+        )
+        """,
+        outbox_id,
+        event_type,
+        actor_sub,
+        actor_type,
+        json.dumps(metadata or {}, sort_keys=True, separators=(",", ":")),
+        error_class,
+        error_message,
+    )
+    decoded = _decode_json_result(result)
+    status = _string_or_none(decoded.get("status"))
+    if status is None:
+        raise SparkOutboxStoreError("spark_outbox_event_result_invalid")
+    return status
+
+
+async def consume_spark_outbox_approval(
+    conn: asyncpg.Connection,
+    *,
+    approval_queue_id: UUID,
+) -> None:
+    await conn.execute(
+        "SELECT public.consume_approved_queue_item($1::uuid)",
+        approval_queue_id,
     )
 
 

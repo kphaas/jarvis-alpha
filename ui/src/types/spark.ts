@@ -132,6 +132,15 @@ export interface SparkIMessageDraftApprovalResponse extends SparkIMessageDraftRe
   candidate_key_phrases: string[];
 }
 
+export interface SparkIMessageApprovedSendResponse {
+  outbox_id: string;
+  outbox_status: string;
+  approval_queue_id: string;
+  approval_status: string;
+  message_ref_hash?: string | null;
+  send_attempt_count: number;
+}
+
 export type SparkMode = "draft_only" | "hybrid_review" | "auto_guarded";
 
 export type SparkSensitivity =
