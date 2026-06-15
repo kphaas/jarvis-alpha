@@ -256,6 +256,12 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "write",
         "security_write",
     ],
+    "POST /v1/spark/drafts/imessage/outbox/{outbox_id}/send": [
+        "write",
+        "security_write",
+        "external_call",
+        "imessage_send",
+    ],
     "POST /v1/spark/drafts/imessage/feedback": ["write", "security_write"],
     # --- MCP registry — T1 read, write T2 ---
     "GET /v1/mcp/registry": ["read"],
@@ -406,6 +412,7 @@ TIER_RULES: list[tuple[set[str], str]] = [
     ({"approval_decide"}, "T2"),
     ({"approval_unlock"}, "T2"),
     ({"memory_consolidation_reviewed_write"}, "T5"),
+    ({"imessage_send"}, "T4"),
     ({"security_write"}, "T2"),
     ({"deploy", "child_facing"}, "T5"),
     ({"unclassified"}, "T5"),

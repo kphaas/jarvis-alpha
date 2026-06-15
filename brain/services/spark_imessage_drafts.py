@@ -974,6 +974,12 @@ def _approved_chat_guid(record: SparkApprovedSourceRecord) -> str:
     raise SparkDraftConfigError("approved iMessage chat GUID is not configured")
 
 
+def approved_imessage_chat_guid_for_record(record: SparkApprovedSourceRecord) -> str:
+    """Resolve the runtime chat GUID for an approved iMessage source record."""
+
+    return _approved_chat_guid(record)
+
+
 def _approval_specific_env_name(approval_id: str) -> str:
     suffix = re.sub(r"[^A-Za-z0-9]+", "_", approval_id).strip("_").upper()
     return f"SPARK_IMESSAGE_APPROVED_CHAT_GUID_{suffix}"

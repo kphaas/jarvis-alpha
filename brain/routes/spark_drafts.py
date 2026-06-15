@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -28,8 +28,14 @@ from brain.services.spark_draft_approvals import enqueue_spark_draft_approval
 from brain.services.spark_outbox import (
     SparkOutboxConfigError,
     SparkOutboxCreateResult,
+    SparkOutboxStoreError,
     create_spark_outbox_item,
     load_spark_outbox_crypto,
+)
+from brain.services.spark_outbox_send import (
+    SparkOutboxSendError,
+    SparkOutboxSendResult,
+    send_approved_spark_imessage_outbox,
 )
 from brain.services.spark_personality_memory import fetch_personality_memory
 from brain.services.spark_voice_feedback import (
@@ -50,6 +56,7 @@ router = APIRouter(prefix="/v1/spark/drafts", tags=["spark-drafts"])
 logger = get_logger("alpha_brain")
 SPARK_DRAFT_SCOPE = "spark.draft"
 SPARK_READ_SCOPE = "imessage.read"
+SPARK_SEND_SCOPE = "imessage.send"
 
 
 class SparkIMessageDraftRequest(BaseModel):
@@ -190,19 +197,38 @@ class SparkIMessageDraftFeedbackOut(BaseModel):
     feedback_label: SparkDraftQualityFeedbackLabel | None = None
 
 
+class SparkIMessageApprovedSendOut(BaseModel):
+    outbox_id: str
+    outbox_status: str
+    approval_queue_id: str
+    approval_status: str
+    message_ref_hash: str | None = None
+    send_attempt_count: int
+
+
 def _check_draft_scopes(request: Request) -> None:
     check_scopes(request, SPARK_DRAFT_SCOPE)
     check_scopes(request, SPARK_READ_SCOPE)
 
 
-def _safe_actor_fields(request: Request) -> dict[str, object]:
+def _check_send_scopes(request: Request) -> None:
+    check_scopes(request, SPARK_DRAFT_SCOPE)
+    check_scopes(request, SPARK_SEND_SCOPE)
+
+
+def _safe_actor_fields(
+    request: Request,
+    *,
+    scopes_used: list[str] | None = None,
+    risk_tier: str = "T2",
+) -> dict[str, object]:
     state = request.state
     return {
         "actor_sub": str(getattr(state, "user_id", "unknown")),
         "actor_type": str(getattr(state, "actor_type", "unknown")),
         "actor_iss": str(getattr(state, "iss", "unknown")),
-        "scopes_used": [SPARK_DRAFT_SCOPE, SPARK_READ_SCOPE],
-        "risk_tier": "T2",
+        "scopes_used": scopes_used or [SPARK_DRAFT_SCOPE, SPARK_READ_SCOPE],
+        "risk_tier": risk_tier,
     }
 
 
@@ -252,6 +278,26 @@ def _route_error(exc: Exception) -> HTTPException:
             detail="spark_imessage_context_load_failed",
         )
     return HTTPException(status_code=500, detail="spark_imessage_draft_error")
+
+
+def _send_route_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, (SparkOutboxSendError, SparkOutboxStoreError)):
+        return HTTPException(
+            status_code=409,
+            detail=str(exc) or "spark_outbox_send_not_ready",
+        )
+    if isinstance(
+        exc,
+        (
+            SparkOutboxConfigError,
+            BlueBubblesConfigError,
+            BlueBubblesPolicyError,
+        ),
+    ):
+        return HTTPException(status_code=503, detail="spark_imessage_send_unavailable")
+    if isinstance(exc, BlueBubblesClientError):
+        return HTTPException(status_code=502, detail="spark_imessage_send_failed")
+    return HTTPException(status_code=500, detail="spark_imessage_send_error")
 
 
 def _log_success(request: Request, proposal: SparkDraftProposal) -> None:
@@ -428,6 +474,61 @@ def _log_quality_feedback_success(
             "source_reference_hash": payload.source_reference_hash,
             "chat_guid_hash": payload.chat_guid_hash,
             **_safe_actor_fields(request),
+        },
+    )
+
+
+def _log_send_success(
+    request: Request,
+    *,
+    result: SparkOutboxSendResult,
+) -> None:
+    event = "spark_imessage_approved_send_executed"
+    logger.info(
+        event,
+        extra={
+            "event": event,
+            "component": "spark_drafts",
+            "action": "imessage_approved_send",
+            "body_access": False,
+            "outbox_id": result.outbox_id,
+            "outbox_status": result.outbox_status,
+            "approval_queue_id": result.approval_queue_id,
+            "approval_status": result.approval_status,
+            "message_ref_hash": result.message_ref_hash or "",
+            "send_attempt_count": result.send_attempt_count,
+            **_safe_actor_fields(
+                request,
+                scopes_used=[SPARK_DRAFT_SCOPE, SPARK_SEND_SCOPE],
+                risk_tier="T4",
+            ),
+        },
+    )
+
+
+def _log_send_failure(
+    request: Request,
+    *,
+    outbox_id: UUID,
+    exc: Exception,
+    status_code: int,
+) -> None:
+    event = "spark_imessage_approved_send_failed"
+    logger.warning(
+        event,
+        extra={
+            "event": event,
+            "component": "spark_drafts",
+            "action": "imessage_approved_send",
+            "body_access": False,
+            "outbox_id": str(outbox_id),
+            "error_class": exc.__class__.__name__,
+            "status_code": status_code,
+            **_safe_actor_fields(
+                request,
+                scopes_used=[SPARK_DRAFT_SCOPE, SPARK_SEND_SCOPE],
+                risk_tier="T4",
+            ),
         },
     )
 
@@ -649,4 +750,46 @@ async def spark_imessage_draft_feedback(
         feedback_recorded=feedback.recorded,
         feedback_ref_hash=feedback.feedback_ref_hash,
         feedback_label=feedback.feedback_label,
+    )
+
+
+@router.post(
+    "/imessage/outbox/{outbox_id}/send",
+    response_model=SparkIMessageApprovedSendOut,
+)
+async def spark_imessage_send_approved_outbox(
+    request: Request,
+    outbox_id: UUID,
+    _: str = Depends(require_auth),
+) -> SparkIMessageApprovedSendOut:
+    _check_send_scopes(request)
+    actor_sub = str(getattr(request.state, "user_id", "unknown"))
+    actor_type = str(getattr(request.state, "actor_type", "unknown"))
+    try:
+        async with rls_connection(request) as conn:
+            result = await send_approved_spark_imessage_outbox(
+                conn,
+                outbox_id=outbox_id,
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+                crypto=load_spark_outbox_crypto(),
+            )
+    except Exception as exc:
+        route_error = _send_route_error(exc)
+        _log_send_failure(
+            request,
+            outbox_id=outbox_id,
+            exc=exc,
+            status_code=route_error.status_code,
+        )
+        raise route_error from exc
+
+    _log_send_success(request, result=result)
+    return SparkIMessageApprovedSendOut(
+        outbox_id=result.outbox_id,
+        outbox_status=result.outbox_status,
+        approval_queue_id=result.approval_queue_id,
+        approval_status=result.approval_status,
+        message_ref_hash=result.message_ref_hash,
+        send_attempt_count=result.send_attempt_count,
     )

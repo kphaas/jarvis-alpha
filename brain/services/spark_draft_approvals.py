@@ -10,8 +10,12 @@ import asyncpg
 
 from brain.services.spark_imessage_drafts import SparkDraftProposal
 
-SPARK_DRAFT_APPROVAL_ACTION_CLASSES = ("spark_draft_handoff", "security_write")
-SPARK_DRAFT_APPROVAL_TIER = "T2"
+SPARK_DRAFT_APPROVAL_ACTION_CLASSES = (
+    "spark_draft_handoff",
+    "imessage_send",
+    "security_write",
+)
+SPARK_DRAFT_APPROVAL_TIER = "T4"
 
 
 async def enqueue_spark_draft_approval(
@@ -75,6 +79,6 @@ def spark_draft_approval_description(proposal: SparkDraftProposal) -> str:
     sent_count = int(payload["principal_sent_messages"])
     runtime_count = int(payload["runtime_context_messages"])
     return (
-        "Spark iMessage draft approval "
+        "Spark iMessage approved-send request "
         f"({context_count} context, {sent_count} sent, {runtime_count} runtime)"
     )

@@ -15,6 +15,7 @@ import {
   MessageSquareText,
   PanelTopOpen,
   RefreshCw,
+  Send,
   Shield,
   ShieldCheck,
   Sparkles,
@@ -1326,6 +1327,37 @@ export default function Spark() {
                     value={shortHash(state.approval.outbox_text_hash)}
                     muted={muted}
                   />
+                )}
+                {state.approval.outbox_id && (
+                  <button
+                    type="button"
+                    onClick={state.sendApprovedOutbox}
+                    disabled={!state.canSendApprovedOutbox}
+                    className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${border} ${
+                      state.canSendApprovedOutbox
+                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                        : "opacity-45"
+                    }`}
+                  >
+                    {state.approvedSendLoading ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
+                    Send approved
+                  </button>
+                )}
+                {state.approvedSend && (
+                  <MetricRow
+                    label="Send"
+                    value={state.approvedSend.outbox_status}
+                    muted={muted}
+                  />
+                )}
+                {state.approvedSendError && (
+                  <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
+                    Send blocked
+                  </div>
                 )}
               </div>
             )}

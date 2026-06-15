@@ -3,6 +3,7 @@ import { useState } from "react";
 import { apiJson } from "../lib/apiFetch";
 import type {
   SparkDraftFeedbackLabel,
+  SparkIMessageApprovedSendResponse,
   SparkIMessageDraftApprovalRequest,
   SparkIMessageDraftApprovalResponse,
   SparkIMessageDraftFeedbackRequest,
@@ -135,9 +136,20 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     },
   });
 
+  const approvedSendMutation = useMutation({
+    mutationFn: (outboxId: string) =>
+      apiJson<SparkIMessageApprovedSendResponse>(
+        `/v1/spark/drafts/imessage/outbox/${outboxId}/send`,
+        {
+          method: "POST",
+        },
+      ),
+  });
+
   function generateDraft() {
     approvalMutation.reset();
     feedbackMutation.reset();
+    approvedSendMutation.reset();
     draftMutation.mutate(
       baseRequest(principalId, approvalId, replyGoal, maxContextMessages),
     );
@@ -146,6 +158,7 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
   function generateComparisons() {
     approvalMutation.reset();
     feedbackMutation.reset();
+    approvedSendMutation.reset();
     comparisonMutation.mutate();
   }
 
@@ -161,12 +174,21 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     feedbackMutation.mutate(feedbackLabel);
   }
 
+  function sendApprovedOutbox() {
+    const outboxId = approvalMutation.data?.outbox_id;
+    if (!outboxId) {
+      throw new Error("no_outbox_for_send");
+    }
+    approvedSendMutation.mutate(outboxId);
+  }
+
   function resetDraftSurface() {
     setDraftText("");
     draftMutation.reset();
     comparisonMutation.reset();
     approvalMutation.reset();
     feedbackMutation.reset();
+    approvedSendMutation.reset();
   }
 
   return {
@@ -194,6 +216,12 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     feedback: feedbackMutation.data ?? null,
     feedbackLoading: feedbackMutation.isPending,
     feedbackError: feedbackMutation.error,
+    approvedSend: approvedSendMutation.data ?? null,
+    approvedSendLoading: approvedSendMutation.isPending,
+    approvedSendError: approvedSendMutation.error,
+    sendApprovedOutbox,
+    canSendApprovedOutbox:
+      Boolean(approvalMutation.data?.outbox_id) && !approvedSendMutation.isPending,
     resetDraftSurface,
   };
 }
