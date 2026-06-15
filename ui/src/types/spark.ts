@@ -123,6 +123,10 @@ export interface SparkIMessageDraftResponse {
 export interface SparkIMessageDraftApprovalResponse extends SparkIMessageDraftResponse {
   queue_id: string;
   approval_status: string;
+  outbox_id?: string | null;
+  outbox_status?: string | null;
+  outbox_text_hash?: string | null;
+  outbox_recorded: boolean;
   voice_feedback_recorded: boolean;
   voice_feedback_ref_hash?: string | null;
   candidate_key_phrases: string[];

@@ -1304,6 +1304,29 @@ export default function Spark() {
                   value={state.approval.queue_id}
                   muted={muted}
                 />
+                <MetricRow
+                  label="Outbox"
+                  value={
+                    state.approval.outbox_recorded
+                      ? (state.approval.outbox_status ?? "recorded")
+                      : "not recorded"
+                  }
+                  muted={muted}
+                />
+                {state.approval.outbox_id && (
+                  <MetricRow
+                    label="Outbox ID"
+                    value={state.approval.outbox_id}
+                    muted={muted}
+                  />
+                )}
+                {state.approval.outbox_text_hash && (
+                  <MetricRow
+                    label="Draft hash"
+                    value={shortHash(state.approval.outbox_text_hash)}
+                    muted={muted}
+                  />
+                )}
               </div>
             )}
             {state.approval && (

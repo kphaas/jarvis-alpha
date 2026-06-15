@@ -25,6 +25,12 @@ from brain.services.spark_imessage_drafts import (
     personality_memory_prompt_items,
 )
 from brain.services.spark_draft_approvals import enqueue_spark_draft_approval
+from brain.services.spark_outbox import (
+    SparkOutboxConfigError,
+    SparkOutboxCreateResult,
+    create_spark_outbox_item,
+    load_spark_outbox_crypto,
+)
 from brain.services.spark_personality_memory import fetch_personality_memory
 from brain.services.spark_voice_feedback import (
     SparkDraftEditFeedbackResult,
@@ -157,6 +163,10 @@ class SparkIMessageDraftMemoryDebugOut(BaseModel):
 class SparkIMessageDraftApprovalOut(SparkIMessageDraftOut):
     queue_id: str
     approval_status: str
+    outbox_id: str | None = None
+    outbox_status: str | None = None
+    outbox_text_hash: str | None = None
+    outbox_recorded: bool = False
     voice_feedback_recorded: bool = False
     voice_feedback_ref_hash: str | None = None
     candidate_key_phrases: list[str] = Field(default_factory=list)
@@ -311,6 +321,7 @@ def _log_approval_success(
     *,
     queue_id: str,
     feedback: SparkDraftEditFeedbackResult,
+    outbox: SparkOutboxCreateResult | None,
 ) -> None:
     event = "spark_imessage_draft_approval_queued"
     payload = proposal.to_payload()
@@ -324,6 +335,10 @@ def _log_approval_success(
             "can_send": False,
             "requires_human_approval": True,
             "queue_id": queue_id,
+            "outbox_recorded": bool(outbox and outbox.outbox_id),
+            "outbox_status": outbox.status if outbox else "unavailable",
+            "outbox_id": outbox.outbox_id if outbox and outbox.outbox_id else "",
+            "outbox_text_hash": outbox.draft_text_hash if outbox else "",
             "voice_feedback_recorded": feedback.recorded,
             "voice_feedback_ref_hash": feedback.feedback_ref_hash or "",
             "candidate_key_phrase_count": len(feedback.candidate_key_phrases),
@@ -336,6 +351,32 @@ def _log_approval_success(
             "draft_engine": payload["draft_engine"],
             "detected_sensitivity": payload["detected_sensitivity"],
             "blocked_sensitivity_count": len(payload["blocked_sensitivity"]),
+            **_safe_actor_fields(request),
+        },
+    )
+
+
+def _log_outbox_failure(
+    request: Request,
+    proposal: SparkDraftProposal,
+    *,
+    exc: Exception,
+    reason: str,
+) -> None:
+    event = "spark_outbox_record_failed"
+    payload = proposal.to_payload()
+    logger.warning(
+        event,
+        extra={
+            "event": event,
+            "component": "spark_drafts",
+            "action": "imessage_draft_outbox",
+            "body_access": False,
+            "reason": reason,
+            "error_class": exc.__class__.__name__,
+            "approval_ref_hash": payload["approval_ref_hash"],
+            "source_reference_hash": payload["source_reference_hash"],
+            "chat_guid_hash": payload["chat_guid_hash"],
             **_safe_actor_fields(request),
         },
     )
@@ -512,6 +553,7 @@ async def spark_imessage_draft_approval_request(
         )
         actor_sub = str(getattr(request.state, "user_id", "unknown"))
         actor_type = str(getattr(request.state, "actor_type", "unknown"))
+        outbox: SparkOutboxCreateResult | None = None
         async with rls_connection(request) as conn:
             queue_id = await enqueue_spark_draft_approval(
                 conn,
@@ -520,6 +562,29 @@ async def spark_imessage_draft_approval_request(
                 actor_type=actor_type,
                 nonce=uuid4().hex,
             )
+            try:
+                outbox = await create_spark_outbox_item(
+                    conn,
+                    proposal=proposal,
+                    approval_queue_id=queue_id,
+                    actor_sub=actor_sub,
+                    actor_type=actor_type,
+                    crypto=load_spark_outbox_crypto(),
+                )
+            except SparkOutboxConfigError as outbox_exc:
+                _log_outbox_failure(
+                    request,
+                    proposal,
+                    exc=outbox_exc,
+                    reason="config_missing",
+                )
+            except Exception as outbox_exc:
+                _log_outbox_failure(
+                    request,
+                    proposal,
+                    exc=outbox_exc,
+                    reason="store_failed",
+                )
         try:
             feedback = record_spark_draft_edit_feedback(
                 original_proposal=original_proposal,
@@ -535,11 +600,21 @@ async def spark_imessage_draft_approval_request(
         route_error = _route_error(exc)
         _log_failure(request, exc=exc, status_code=route_error.status_code)
         raise route_error from exc
-    _log_approval_success(request, proposal, queue_id=str(queue_id), feedback=feedback)
+    _log_approval_success(
+        request,
+        proposal,
+        queue_id=str(queue_id),
+        feedback=feedback,
+        outbox=outbox,
+    )
     return SparkIMessageDraftApprovalOut(
         **_proposal_payload(proposal, payload, personality_memory_rows),
         queue_id=str(queue_id),
         approval_status="pending",
+        outbox_id=outbox.outbox_id if outbox else None,
+        outbox_status=outbox.status if outbox else None,
+        outbox_text_hash=outbox.draft_text_hash if outbox else None,
+        outbox_recorded=bool(outbox and outbox.outbox_id),
         voice_feedback_recorded=feedback.recorded,
         voice_feedback_ref_hash=feedback.feedback_ref_hash,
         candidate_key_phrases=list(feedback.candidate_key_phrases),
