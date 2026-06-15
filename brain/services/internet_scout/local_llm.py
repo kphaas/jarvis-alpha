@@ -68,7 +68,7 @@ def build_local_llm_response(
         synthesis=synthesis,
         memory_boundary=memory_boundary,
         research_report=research_report,
-        answer_context=_answer_context(citations),
+        answer_context=_answer_context(citations, query=stored.evidence.request.query),
     )
 
 
@@ -471,8 +471,15 @@ def _source_ranking_reasons(citation: InternetScoutLocalLLMCitation) -> list[str
     return reasons[:10]
 
 
-def _answer_context(citations: list[InternetScoutLocalLLMCitation]) -> str:
+def _answer_context(
+    citations: list[InternetScoutLocalLLMCitation],
+    *,
+    query: str | None = None,
+) -> str:
     parts: list[str] = []
+    source_url_guidance = _source_url_answer_guidance(citations, query=query)
+    if source_url_guidance:
+        parts.append(source_url_guidance)
     for index, citation in enumerate(citations, start=1):
         parts.append(
             "\n".join(
@@ -490,3 +497,57 @@ def _answer_context(citations: list[InternetScoutLocalLLMCitation]) -> str:
             )
         )
     return "\n\n".join(parts)[:12000]
+
+
+def _source_url_answer_guidance(
+    citations: list[InternetScoutLocalLLMCitation],
+    *,
+    query: str | None,
+) -> str:
+    if not citations or not _query_requests_source_url(query):
+        return ""
+    preferred = citations[0].source_url
+    source_lines = [
+        f"- [{index}] {citation.source_url}"
+        for index, citation in enumerate(citations[:5], start=1)
+    ]
+    return "\n".join(
+        [
+            "Answer target: source URL",
+            (
+                "The user asked for an official documentation/source URL. "
+                "Use the cited Source URL as the answer."
+            ),
+            f"Preferred answer URL: {preferred} [1]",
+            (
+                "Do not answer with API endpoint URLs, request paths, or examples "
+                "found in citation text unless the user explicitly asks for an API endpoint."
+            ),
+            "Cited source URLs:",
+            *source_lines,
+        ]
+    )
+
+
+def _query_requests_source_url(query: str | None) -> bool:
+    normalized = f" {(query or '').lower()} "
+    source_url_markers = (
+        " url",
+        " link",
+        " documentation",
+        " docs",
+        " api reference",
+        " reference url",
+        " reference page",
+        " official source",
+    )
+    endpoint_markers = (
+        " endpoint",
+        " base url",
+        " request url",
+        " /v1/",
+        " curl ",
+    )
+    return any(marker in normalized for marker in source_url_markers) and not any(
+        marker in normalized for marker in endpoint_markers
+    )

@@ -212,6 +212,60 @@ def test_local_llm_prefers_official_source_for_official_docs_query():
     assert response.quality.verified_claim_count == 1
 
 
+def test_local_llm_guides_docs_url_answers_to_cited_source_url():
+    request = InternetScoutRequest(
+        query=(
+            "What is the official OpenAI API documentation URL for the "
+            "Responses API? Cite the source."
+        ),
+    )
+    openai_source = build_source_reference(
+        url="https://platform.openai.com/docs/api-reference/responses",
+        content=(
+            "Official documentation URL: "
+            "https://platform.openai.com/docs/api-reference/responses. "
+            "Example endpoint: GET https://api.openai.com/v1/responses/resp_123."
+        ),
+    )
+    packet = build_evidence_packet(
+        request=request,
+        sources=[openai_source],
+        claims=[
+            EvidenceClaim(
+                claim=(
+                    "The official OpenAI Responses API documentation URL is "
+                    "https://platform.openai.com/docs/api-reference/responses."
+                ),
+                source_url=openai_source.url,
+                citation_text=(
+                    "Official documentation URL: "
+                    "https://platform.openai.com/docs/api-reference/responses. "
+                    "Example endpoint: GET https://api.openai.com/v1/responses/resp_123."
+                ),
+                confidence="high",
+            ),
+        ],
+    )
+    stored = InternetScoutStoredResponse(
+        request_id=uuid4(),
+        plan=InternetScoutOrchestrator().plan(request),
+        evidence=packet,
+    )
+
+    response = build_local_llm_response(stored)
+
+    assert response.quality.status == "supported"
+    assert "Answer target: source URL" in response.answer_context
+    assert (
+        "Preferred answer URL: https://platform.openai.com/docs/api-reference/responses [1]"
+        in response.answer_context
+    )
+    assert "Do not answer with API endpoint URLs" in response.answer_context
+    assert response.answer_context.index(
+        "https://platform.openai.com/docs/api-reference/responses"
+    ) < response.answer_context.index("https://api.openai.com/v1/responses/resp_123")
+
+
 def test_local_llm_rejects_community_subdomain_for_official_docs_query():
     request = InternetScoutRequest(
         query="official OpenAI API reference URL",
