@@ -165,6 +165,11 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "sloane" in source
     assert "meagan" in source
     assert "mother" in source
+    assert "Review console" in source
+    assert "Thread preview" in source
+    assert "Decision rail" in source
+    assert "Advanced context" in source
+    assert "Memory and guardrails" in source
     assert "Side-by-side" in source
     assert "Compare" in source
     assert "Thread context" in source
