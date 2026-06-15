@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 from typing import Protocol
 
 from brain.services.internet_scout.browser_runner import browser_runtime_health
@@ -356,9 +357,7 @@ def _web_suggestion_metadata(
 def _quality_canary_metadata(row: _RequestRow | None) -> dict[str, object] | None:
     if row is None:
         return None
-    metadata = row["metadata"]
-    if not isinstance(metadata, dict):
-        metadata = {}
+    metadata = _metadata_object(row["metadata"])
     return {
         "request_id": str(metadata.get("request_id") or row["request_id"]),
         "status": str(metadata.get("status") or row["status"]),
@@ -370,6 +369,19 @@ def _quality_canary_metadata(row: _RequestRow | None) -> dict[str, object] | Non
         "failure_names": _str_list(metadata.get("failure_names")),
         "last_run_at": _datetime_metadata(row["created_at"]),
     }
+
+
+def _metadata_object(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(decoded, dict):
+            return decoded
+    return {}
 
 
 def _int_row(row: _RequestRow, key: str) -> int:
