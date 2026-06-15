@@ -15,6 +15,17 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 
+def _configure_default_secrets_file() -> None:
+    if os.getenv("SECRETS_FILE"):
+        return
+    operator_secrets = Path.home() / "jarvis" / ".secrets"
+    if operator_secrets.exists():
+        os.environ["SECRETS_FILE"] = str(operator_secrets)
+
+
+_configure_default_secrets_file()
+
+
 def _writer_dsn() -> str:
     from brain.db.dsn import ensure_writer_password
     from jarvis_common.secrets import get_secret
