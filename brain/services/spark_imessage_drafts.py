@@ -859,6 +859,16 @@ def _spark_draft_system_prompt(
                 "The API already enforces draft-only human review, so write the human-facing message only.",
             ]
         )
+    edit_lessons = _spark_feedback_memory_prompt(personality_memory_rows)
+    if edit_lessons:
+        lines.extend(
+            [
+                "",
+                "Reviewed edit lessons (apply silently before drafting):",
+                edit_lessons,
+                "Use these lessons to improve phrasing, but do not mention feedback or calibration.",
+            ]
+        )
     lines.extend(
         [
             "",
@@ -868,6 +878,19 @@ def _spark_draft_system_prompt(
             "If Auto context conflicts with Ken's principal voice file, Ken's voice file wins.",
         ]
     )
+    return "\n".join(lines)
+
+
+def _spark_feedback_memory_prompt(rows: list[dict[str, object]]) -> str:
+    lines: list[str] = []
+    for item in personality_memory_prompt_items(rows):
+        if item.source != "spark_feedback":
+            continue
+        if item.kind not in {"style", "avoid", "phrase", "voice"}:
+            continue
+        lines.append(f"- {item.kind.title()}: {item.content}")
+        if len(lines) >= 8:
+            break
     return "\n".join(lines)
 
 

@@ -719,6 +719,7 @@ function DraftMemoryDebugPanel({
 }) {
   const memory = draft?.personality_memory_preview ?? [];
   const phrases = approval?.candidate_key_phrases ?? [];
+  const lessons = approval?.calibration_lessons ?? [];
 
   return (
     <section className={`rounded-xl border ${border} ${panel} p-5`}>
@@ -791,6 +792,18 @@ function DraftMemoryDebugPanel({
                     >
                       {phrase}
                     </span>
+                  ))}
+                </div>
+              )}
+              {lessons.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {lessons.map((lesson) => (
+                    <div
+                      key={lesson}
+                      className={`rounded-md border px-2 py-1 text-xs ${okClass}`}
+                    >
+                      {lesson}
+                    </div>
                   ))}
                 </div>
               )}

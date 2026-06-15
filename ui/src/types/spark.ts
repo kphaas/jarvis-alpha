@@ -130,6 +130,7 @@ export interface SparkIMessageDraftApprovalResponse extends SparkIMessageDraftRe
   voice_feedback_recorded: boolean;
   voice_feedback_ref_hash?: string | null;
   candidate_key_phrases: string[];
+  calibration_lessons: string[];
 }
 
 export interface SparkIMessageApprovedSendResponse {
@@ -233,6 +234,7 @@ export interface SparkPersonalityMemoryReviewResponse {
     status: string;
     proposal_count: number;
     feedback_phrase_count: number;
+    feedback_lesson_count: number;
   };
 }
 
@@ -240,6 +242,7 @@ export interface SparkPersonalityMemoryScorecard {
   active_count: number;
   proposal_count: number;
   feedback_phrase_count: number;
+  feedback_lesson_count: number;
   kinds_present: string[];
   missing_core_kinds: string[];
   readiness: "strong" | "needs_review" | "thin";

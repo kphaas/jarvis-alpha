@@ -181,6 +181,12 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
                 "kind": "boundary",
                 "content": "relationship topics require Spark review before action.",
             },
+            {
+                "kind": "style",
+                "content": "Prefer shorter text drafts when Spark over-explains.",
+                "source": "spark_feedback",
+                "evidence_ref_hash": "feedback-hash",
+            },
         ],
         llm_call=fake_llm_call,
     )
@@ -199,11 +205,14 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
     assert "Surface the next real blocker" in system_prompt
     assert "Principal voice files win" in system_prompt
     assert "Approved Spark personality memory" in system_prompt
+    assert "Reviewed edit lessons" in system_prompt
+    assert "Prefer shorter text drafts when Spark over-explains." in system_prompt
     assert "Sweta is Ken's partner." in system_prompt
     assert "default hybrid_review" not in system_prompt
     assert "approval required" not in system_prompt
     assert "require Spark review" not in system_prompt
     assert "Never mention memory, sensitivity labels" in system_prompt
+    assert "do not mention feedback or calibration" in system_prompt
     llm_message = str(calls[0]["user_message"])
     assert "private inbound body" in llm_message
     assert "approved-chat-guid" not in json.dumps(calls).lower()

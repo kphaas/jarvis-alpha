@@ -26,6 +26,10 @@ def test_personality_memory_proposals_include_guardrails_and_feedback(
                 "fair enough",
                 "private key should not persist",
             ],
+            "calibration_lessons": [
+                "Prefer shorter text drafts when Spark over-explains.",
+                "Avoid formal email-style phrasing in text replies.",
+            ],
         },
     )
 
@@ -42,7 +46,18 @@ def test_personality_memory_proposals_include_guardrails_and_feedback(
     assert "legal topics require Spark review before action." in contents
     assert any("Sweta: partner" in content for content in contents)
     assert "Candidate phrase from reviewed draft edit: fair enough." in contents
+    assert "Prefer shorter text drafts when Spark over-explains." in contents
+    assert "Avoid formal email-style phrasing in text replies." in contents
     assert not any("private key" in content for content in contents)
+    kinds_by_content = {proposal.content: proposal.kind for proposal in proposals}
+    assert (
+        kinds_by_content["Prefer shorter text drafts when Spark over-explains."]
+        == "style"
+    )
+    assert (
+        kinds_by_content["Avoid formal email-style phrasing in text replies."]
+        == "avoid"
+    )
 
 
 def test_personality_memory_proposals_dedupe_active_rows() -> None:

@@ -38,6 +38,7 @@ class SparkDraftEditFeedbackResult:
     recorded: bool
     feedback_ref_hash: str | None
     candidate_key_phrases: tuple[str, ...] = ()
+    calibration_lessons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,12 +67,17 @@ def record_spark_draft_edit_feedback(
         now = now.replace(tzinfo=UTC)
 
     candidate_key_phrases = extract_candidate_key_phrases(edited_text)
+    calibration_lessons = extract_calibration_lessons(
+        original_text=original_text,
+        edited_text=edited_text,
+    )
     record = _feedback_record(
         original_proposal=original_proposal,
         edited_proposal=edited_proposal,
         original_text=original_text,
         edited_text=edited_text,
         candidate_key_phrases=candidate_key_phrases,
+        calibration_lessons=calibration_lessons,
         created_at=now,
     )
     feedback_ref_hash = _record_ref_hash(record)
@@ -87,6 +93,7 @@ def record_spark_draft_edit_feedback(
         recorded=True,
         feedback_ref_hash=feedback_ref_hash,
         candidate_key_phrases=candidate_key_phrases,
+        calibration_lessons=calibration_lessons,
     )
 
 
@@ -178,6 +185,46 @@ def extract_candidate_key_phrases(text: str) -> tuple[str, ...]:
     return tuple(candidates)
 
 
+def extract_calibration_lessons(
+    *,
+    original_text: str,
+    edited_text: str,
+) -> tuple[str, ...]:
+    """Infer reviewable style lessons from a before/after draft edit."""
+
+    original = _clean_text(original_text)
+    edited = _clean_text(edited_text)
+    if not original or not edited or original == edited:
+        return ()
+
+    lessons: list[str] = []
+    original_words = _word_count(original)
+    edited_words = _word_count(edited)
+    original_lower = original.casefold()
+    edited_lower = edited.casefold()
+
+    if original_words >= 8 and edited_words <= max(6, int(original_words * 0.75)):
+        lessons.append("Prefer shorter text drafts when Spark over-explains.")
+    if _has_formal_text_markers(original_lower) and not _has_formal_text_markers(
+        edited_lower
+    ):
+        lessons.append("Avoid formal email-style phrasing in text replies.")
+    if _has_contraction(edited) and not _has_contraction(original):
+        lessons.append("Prefer natural contractions when they fit the conversation.")
+    if re.match(
+        r"(?i)^(fair enough|got it|sounds good|makes sense|ok|okay)[,.\s]", edited
+    ):
+        lessons.append("Lead with a quick acknowledgement before the next action.")
+    if edited_words > original_words + 4 and _has_next_action(edited_lower):
+        lessons.append("Include the concrete next action when Ken adds one.")
+
+    deduped: list[str] = []
+    for lesson in lessons:
+        if lesson.casefold() not in {item.casefold() for item in deduped}:
+            deduped.append(lesson)
+    return tuple(deduped[:5])
+
+
 def _feedback_record(
     *,
     original_proposal: SparkDraftProposal,
@@ -185,6 +232,7 @@ def _feedback_record(
     original_text: str,
     edited_text: str,
     candidate_key_phrases: tuple[str, ...],
+    calibration_lessons: tuple[str, ...],
     created_at: datetime,
 ) -> dict[str, Any]:
     context = edited_proposal.context
@@ -202,6 +250,7 @@ def _feedback_record(
         "original_draft_hash": _sha256_text(original_text),
         "edited_draft_hash": _sha256_text(edited_text),
         "candidate_key_phrases": list(candidate_key_phrases),
+        "calibration_lessons": list(calibration_lessons),
         "context_fingerprint": {
             "approval_ref_hash": context.approval_ref_hash,
             "source_reference_hash": context.source_reference_hash,
@@ -259,6 +308,34 @@ def _phrase_candidate(value: str) -> str:
 
 def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _word_count(value: str) -> int:
+    return len(re.findall(r"\b[\w']+\b", value))
+
+
+def _has_formal_text_markers(value: str) -> bool:
+    return bool(
+        re.search(
+            r"\b("
+            r"thank you for reaching out|"
+            r"i hope this message finds you well|"
+            r"please let me know|"
+            r"best regards|"
+            r"sincerely|"
+            r"dear\s+\w+"
+            r")\b",
+            value,
+        )
+    )
+
+
+def _has_contraction(value: str) -> bool:
+    return bool(re.search(r"\b\w+'(?:m|re|ve|ll|d|s|t)\b", value, re.I))
+
+
+def _has_next_action(value: str) -> bool:
+    return bool(re.search(r"\b(i('| a)?m|i will|i can|let me|we can)\b", value))
 
 
 def _safe_hashish(value: str) -> str:
