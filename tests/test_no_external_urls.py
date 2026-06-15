@@ -62,6 +62,9 @@ KNOWN_NON_EGRESS: tuple[tuple[str, str], ...] = (
     # Microsoft Graph OAuth scope/audience identifiers; egress is via Gateway.
     ("brain/services/at0_mail_graph_client.py", "graph.microsoft.com"),
     ("brain/services/at0_mail_graph_client.py", "login.microsoftonline.com"),
+    # Deterministic Beacon search-quality eval fixtures; no runtime egress.
+    ("brain/services/internet_scout/search_quality_evals.py", "api.openai.com"),
+    ("brain/services/internet_scout/search_quality_evals.py", "platform.openai.com"),
 )
 
 
