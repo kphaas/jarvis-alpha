@@ -389,6 +389,7 @@ def test_internet_message_metadata_redacts_raw_citation_text() -> None:
         "min_accepted_citations": 1,
         "require_official_source": False,
         "require_cross_check": False,
+        "min_source_hosts": 1,
         "max_searches": 1,
         "max_extracts": 1,
         "unsupported_claim_policy": "fail_closed",
@@ -413,6 +414,11 @@ def test_internet_message_metadata_redacts_raw_citation_text() -> None:
     assert metadata["internet_research_report_rejected_citation_count"] == 0
     assert metadata["internet_research_report_verified_claim_count"] == 1
     assert metadata["internet_research_report_unsupported_claim_count"] == 0
+    assert metadata["internet_research_report_independent_source_count"] == 0
+    assert metadata["internet_research_report_source_diversity_score"] == 0
+    assert metadata["internet_research_report_planned_query_count"] == 0
+    assert metadata["internet_research_report_contradiction_count"] == 0
+    assert metadata["internet_research_report_contradictions"] == []
     assert metadata["internet_research_report_source_hosts"] == ["example.com"]
     assert metadata["internet_research_report_required_source_hosts"] == []
     assert metadata["internet_research_report_expected_source_types"] == ["general_web"]
@@ -614,6 +620,7 @@ async def test_thread_messages_return_flattened_internet_metadata(
                 "min_accepted_citations": 1,
                 "require_official_source": False,
                 "require_cross_check": False,
+                "min_source_hosts": 1,
                 "max_searches": 1,
                 "max_extracts": 1,
                 "unsupported_claim_policy": "fail_closed",
@@ -636,6 +643,11 @@ async def test_thread_messages_return_flattened_internet_metadata(
             "internet_research_report_rejected_citation_count": 0,
             "internet_research_report_verified_claim_count": 1,
             "internet_research_report_unsupported_claim_count": 0,
+            "internet_research_report_independent_source_count": 0,
+            "internet_research_report_source_diversity_score": 0,
+            "internet_research_report_planned_query_count": 0,
+            "internet_research_report_contradiction_count": 0,
+            "internet_research_report_contradictions": [],
             "internet_research_report_source_hosts": ["example.com"],
             "internet_research_report_required_source_hosts": [],
             "internet_research_report_expected_source_types": ["general_web"],

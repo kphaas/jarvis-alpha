@@ -186,6 +186,13 @@ def _fake_beacon_summary() -> helm.HelmBeaconSummary:
             failed=0,
             request_id="request-canary",
             last_run_at=datetime(2026, 6, 12, 19, 0, tzinfo=UTC).isoformat(),
+            age_hours=0,
+            stale_after_hours=26,
+            alert=helm.HelmBeaconQualityCanaryAlert(
+                status="ok",
+                reason="quality_canary_fresh",
+                severity="info",
+            ),
         ),
     )
 
@@ -358,7 +365,28 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
                             "failed": 0,
                             "failure_names": [],
                             "last_run_at": checked_at.isoformat(),
+                            "age_hours": 0,
+                            "stale_after_hours": 26,
+                            "alert": {
+                                "status": "ok",
+                                "reason": "quality_canary_fresh",
+                                "severity": "info",
+                            },
                         },
+                        "quality_canary_history": [
+                            {
+                                "request_id": "request-canary",
+                                "status": "passed",
+                                "suite": "beacon_search_quality",
+                                "suite_version": 2,
+                                "case_count": 33,
+                                "passed": 33,
+                                "failed": 0,
+                                "failure_names": [],
+                                "last_run_at": checked_at.isoformat(),
+                                "age_hours": 0,
+                            }
+                        ],
                     },
                 ),
             },
@@ -415,6 +443,27 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
         "failure_names": [],
         "request_id": "request-canary",
         "last_run_at": checked_at.isoformat(),
+        "age_hours": 0,
+        "stale_after_hours": 26,
+        "alert": {
+            "status": "ok",
+            "reason": "quality_canary_fresh",
+            "severity": "info",
+        },
+        "history": [
+            {
+                "status": "passed",
+                "suite": "beacon_search_quality",
+                "suite_version": 2,
+                "case_count": 33,
+                "passed": 33,
+                "failed": 0,
+                "failure_names": [],
+                "request_id": "request-canary",
+                "last_run_at": checked_at.isoformat(),
+                "age_hours": 0,
+            }
+        ],
     }
     assert "secret" not in str(payload)
     assert "/private/beacon/screenshots" not in str(payload)

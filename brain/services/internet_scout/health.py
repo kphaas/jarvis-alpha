@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import json
+import os
 from typing import Protocol
 
 from brain.services.internet_scout.browser_runner import browser_runtime_health
@@ -25,7 +26,15 @@ _REQUIRED_TABLES = (
     "alpha_internet_memory_promotions",
 )
 _REQUIRED_FUNCTIONS = ("public.save_beacon_semantic_memory(uuid,text,text,text,text)",)
-_READINESS_CHECKS = ("database", "gateway", "browser_runtime", "retention")
+_READINESS_CHECKS = (
+    "database",
+    "gateway",
+    "browser_runtime",
+    "retention",
+    "quality_canary",
+)
+_QUALITY_CANARY_HISTORY_LIMIT = 7
+_QUALITY_CANARY_STALE_AFTER_HOURS = 26
 
 
 class _RequestRow(Protocol):
@@ -37,12 +46,16 @@ async def build_beacon_health(
     *,
     gateway_client: InternetScoutGatewayClient | None = None,
 ) -> InternetScoutHealthResponse:
+    checked_at = datetime.now(UTC)
     checks = {
         "database": await _database_check(conn),
         "gateway": await _gateway_check(gateway_client or InternetScoutGatewayClient()),
         "browser_runtime": _browser_runtime_check(),
-        "recent_evidence": await _recent_evidence_check(conn),
+        "recent_evidence": await _recent_evidence_check(conn, checked_at=checked_at),
     }
+    checks["quality_canary"] = _quality_canary_check(
+        checks["recent_evidence"].metadata,
+    )
     retention = await build_retention_report(conn)
     checks["retention"] = InternetScoutHealthCheck(
         ok=True,
@@ -61,7 +74,7 @@ async def build_beacon_health(
         status="ok" if readiness_ok else "degraded",
         checks=checks,
         retention=retention,
-        checked_at=datetime.now(UTC),
+        checked_at=checked_at,
     )
 
 
@@ -138,7 +151,7 @@ def _browser_runtime_check() -> InternetScoutHealthCheck:
     )
 
 
-async def _recent_evidence_check(conn) -> InternetScoutHealthCheck:
+async def _recent_evidence_check(conn, *, checked_at: datetime) -> InternetScoutHealthCheck:
     if not await _table_exists(conn, "alpha_internet_requests"):
         return InternetScoutHealthCheck(
             ok=False,
@@ -237,14 +250,22 @@ async def _recent_evidence_check(conn) -> InternetScoutHealthCheck:
           AND created_at >= NOW() - INTERVAL '24 hours'
         """
     )
-    quality_canary_row = await conn.fetchrow(
+    quality_canary_rows = await conn.fetch(
         """
         SELECT request_id, status, metadata, created_at
         FROM public.alpha_internet_tool_events
         WHERE event_type = 'quality_canary'
         ORDER BY created_at DESC
-        LIMIT 1
+        LIMIT 7
         """
+    )
+    quality_canary_history = [
+        _quality_canary_summary(row, checked_at=checked_at)
+        for row in quality_canary_rows[:_QUALITY_CANARY_HISTORY_LIMIT]
+    ]
+    quality_canary = _quality_canary_metadata(
+        quality_canary_rows[0] if quality_canary_rows else None,
+        checked_at=checked_at,
     )
     total = int(row["total"] or 0) if row else 0
     failed = int(row["failed"] or 0) if row else 0
@@ -267,7 +288,8 @@ async def _recent_evidence_check(conn) -> InternetScoutHealthCheck:
                 suggestion_row,
                 acceptance_row,
             ),
-            "quality_canary": _quality_canary_metadata(quality_canary_row),
+            "quality_canary": quality_canary,
+            "quality_canary_history": quality_canary_history,
         },
     )
 
@@ -354,10 +376,63 @@ def _web_suggestion_metadata(
     }
 
 
-def _quality_canary_metadata(row: _RequestRow | None) -> dict[str, object] | None:
+def _quality_canary_check(
+    recent_evidence_metadata: dict[str, object],
+) -> InternetScoutHealthCheck:
+    quality_canary = recent_evidence_metadata.get("quality_canary")
+    if not isinstance(quality_canary, dict):
+        return InternetScoutHealthCheck(
+            ok=False,
+            status="degraded",
+            detail="Beacon quality canary has not run.",
+            metadata={
+                "alert_status": "missing",
+                "alert_reason": "quality_canary_missing",
+            },
+        )
+
+    alert = quality_canary.get("alert")
+    alert_payload = alert if isinstance(alert, dict) else {}
+    alert_status = str(alert_payload.get("status") or "missing")
+    ok = alert_status == "ok"
+    detail = (
+        "Beacon quality canary is fresh and passing."
+        if ok
+        else str(alert_payload.get("reason") or "Beacon quality canary needs review.")
+    )
+    return InternetScoutHealthCheck(
+        ok=ok,
+        status="ok" if ok else "degraded",
+        detail=detail,
+        metadata={
+            "alert_status": alert_status,
+            "alert_reason": str(alert_payload.get("reason") or ""),
+            "quality_canary": quality_canary,
+            "history": recent_evidence_metadata.get("quality_canary_history", []),
+        },
+    )
+
+
+def _quality_canary_metadata(
+    row: _RequestRow | None,
+    *,
+    checked_at: datetime,
+) -> dict[str, object] | None:
     if row is None:
         return None
+    summary = _quality_canary_summary(row, checked_at=checked_at)
+    summary["alert"] = _quality_canary_alert(summary)
+    return summary
+
+
+def _quality_canary_summary(
+    row: _RequestRow,
+    *,
+    checked_at: datetime,
+) -> dict[str, object]:
     metadata = _metadata_object(row["metadata"])
+    created_at = row["created_at"]
+    age_hours = _age_hours(created_at, checked_at=checked_at)
     return {
         "request_id": str(metadata.get("request_id") or row["request_id"]),
         "status": str(metadata.get("status") or row["status"]),
@@ -367,8 +442,63 @@ def _quality_canary_metadata(row: _RequestRow | None) -> dict[str, object] | Non
         "passed": _int_mapping(metadata, "passed"),
         "failed": _int_mapping(metadata, "failed"),
         "failure_names": _str_list(metadata.get("failure_names")),
-        "last_run_at": _datetime_metadata(row["created_at"]),
+        "last_run_at": _datetime_metadata(created_at),
+        "age_hours": age_hours,
+        "stale_after_hours": _quality_canary_stale_after_hours(),
     }
+
+
+def _quality_canary_alert(summary: dict[str, object]) -> dict[str, object]:
+    status = str(summary.get("status") or "unknown")
+    age_hours = _int_mapping(summary, "age_hours")
+    stale_after_hours = _int_mapping(summary, "stale_after_hours")
+    failed = _int_mapping(summary, "failed")
+    case_count = _int_mapping(summary, "case_count")
+    passed = _int_mapping(summary, "passed")
+    if status != "passed" or failed > 0:
+        return {
+            "status": "failed",
+            "reason": "quality_canary_failed",
+            "severity": "warning",
+        }
+    if case_count and passed < case_count:
+        return {
+            "status": "failed",
+            "reason": "quality_canary_incomplete",
+            "severity": "warning",
+        }
+    if age_hours > stale_after_hours:
+        return {
+            "status": "stale",
+            "reason": "quality_canary_stale",
+            "severity": "warning",
+        }
+    return {
+        "status": "ok",
+        "reason": "quality_canary_fresh",
+        "severity": "info",
+    }
+
+
+def _age_hours(value: object, *, checked_at: datetime) -> int:
+    if not isinstance(value, datetime):
+        return 0
+    created_at = value
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    return max(0, int((checked_at - created_at).total_seconds() // 3600))
+
+
+def _quality_canary_stale_after_hours() -> int:
+    raw_value = os.getenv(
+        "BEACON_QUALITY_CANARY_STALE_AFTER_HOURS",
+        str(_QUALITY_CANARY_STALE_AFTER_HOURS),
+    )
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return _QUALITY_CANARY_STALE_AFTER_HOURS
+    return max(1, min(value, 168))
 
 
 def _metadata_object(value: object) -> dict[str, object]:

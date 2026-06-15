@@ -125,10 +125,17 @@ def _research_report(
     plan = stored.plan.research
     answerability = _report_answerability(synthesis)
     source_hosts = list(dict.fromkeys(citation.host for citation in citations))
+    independent_source_count = len(source_hosts)
+    source_diversity_score = _source_diversity_score(
+        source_hosts=source_hosts,
+        accepted_count=len(citations),
+        stop_criteria=plan.stop_criteria,
+    )
     source_rankings = _source_rankings(citations)
     findings = _report_findings(citations)
     verified_claims = _verified_claims(citations)
     unsupported_claims = _unsupported_claims(evaluation)
+    contradictions = _contradictions(evaluation)
     limitations = [
         *synthesis.limitations[:5],
         *quality.warnings[:5],
@@ -138,6 +145,7 @@ def _research_report(
         source_hosts=source_hosts,
         accepted_count=len(citations),
         stop_criteria=plan.stop_criteria,
+        contradiction_count=len(contradictions),
     )
     summary = _report_summary(
         answerability=answerability,
@@ -145,6 +153,7 @@ def _research_report(
         source_hosts=source_hosts,
         verified_claim_count=quality.verified_claim_count,
         unsupported_claim_count=quality.unsupported_claim_count,
+        source_diversity_score=source_diversity_score,
     )
     report_markdown = _report_markdown(
         title=query,
@@ -153,12 +162,16 @@ def _research_report(
         limitations=limitations,
         source_hosts=source_hosts,
         source_rankings=source_rankings,
+        independent_source_count=independent_source_count,
+        source_diversity_score=source_diversity_score,
         plan_id=plan.plan_id,
         research_intent=plan.intent,
+        planned_query_count=len(plan.searches),
         expected_source_types=plan.expected_source_types,
         stop_criteria=plan.stop_criteria.stop_when,
         verified_claims=verified_claims,
         unsupported_claims=unsupported_claims,
+        contradictions=contradictions,
         coverage_warnings=coverage_warnings,
         memory_boundary=memory_boundary,
     )
@@ -177,12 +190,17 @@ def _research_report(
         verified_claim_count=quality.verified_claim_count,
         unsupported_claim_count=quality.unsupported_claim_count,
         source_hosts=source_hosts,
+        independent_source_count=independent_source_count,
+        source_diversity_score=source_diversity_score,
         required_source_hosts=quality.required_source_hosts,
         expected_source_types=plan.expected_source_types,
         subquestion_count=len(plan.subquestions),
+        planned_query_count=len(plan.searches),
         stop_criteria=plan.stop_criteria,
         verified_claims=verified_claims,
         unsupported_claims=unsupported_claims,
+        contradiction_count=len(contradictions),
+        contradictions=contradictions,
         coverage_warnings=coverage_warnings,
         source_rankings=source_rankings,
         report_markdown=report_markdown,
@@ -216,12 +234,14 @@ def _report_summary(
     source_hosts: list[str],
     verified_claim_count: int,
     unsupported_claim_count: int,
+    source_diversity_score: int,
 ) -> str:
     if answerability == "answerable":
         return (
             f"Beacon found {citation_count} accepted cited source(s) across "
             f"{len(source_hosts)} host(s), with {verified_claim_count} verified "
-            f"claim(s) and {unsupported_claim_count} unsupported claim(s)."
+            f"claim(s), {unsupported_claim_count} unsupported claim(s), and a "
+            f"source diversity score of {source_diversity_score}."
         )
     if answerability == "limited":
         return (
@@ -241,12 +261,16 @@ def _report_markdown(
     limitations: list[str],
     source_hosts: list[str],
     source_rankings: list[InternetScoutSourceRanking],
+    independent_source_count: int,
+    source_diversity_score: int,
     plan_id: str,
     research_intent: str,
+    planned_query_count: int,
     expected_source_types: Sequence[str],
     stop_criteria: Sequence[str],
     verified_claims: list[str],
     unsupported_claims: list[str],
+    contradictions: list[str],
     coverage_warnings: list[str],
     memory_boundary: InternetScoutMemoryBoundary,
 ) -> str:
@@ -256,6 +280,7 @@ def _report_markdown(
         "## Research Plan",
         f"- Plan id: {plan_id or 'n/a'}",
         f"- Intent: {research_intent}",
+        f"- Planned query count: {planned_query_count}",
         "- Expected source types: "
         f"{', '.join(expected_source_types) if expected_source_types else 'n/a'}",
         f"- Stop criteria: {'; '.join(stop_criteria) if stop_criteria else 'n/a'}",
@@ -279,9 +304,21 @@ def _report_markdown(
     lines.extend(f"- Unsupported: {claim}" for claim in unsupported_claims[:10])
     if not unsupported_claims:
         lines.append("- Unsupported: none")
+    lines.extend(["", "## Contradictions"])
+    lines.extend(f"- {claim}" for claim in contradictions[:10])
+    if not contradictions:
+        lines.append("- None detected")
     if coverage_warnings:
         lines.extend(["", "## Coverage Warnings"])
         lines.extend(f"- {warning}" for warning in coverage_warnings[:10])
+    lines.extend(
+        [
+            "",
+            "## Source Diversity",
+            f"- Independent source hosts: {independent_source_count}",
+            f"- Source diversity score: {source_diversity_score}",
+        ]
+    )
     lines.extend(["", "## Source Ranking"])
     lines.extend(
         (
@@ -331,12 +368,28 @@ def _unsupported_claims(
     return claims
 
 
+def _contradictions(
+    evaluation: CitationQualityEvaluation,
+) -> list[str]:
+    claims: list[str] = []
+    for item in evaluation.evaluated:
+        if not item.citation.claim:
+            continue
+        if "claim_support:negation_mismatch" not in item.citation.quality_reasons:
+            continue
+        claims.append(item.citation.claim[:500])
+        if len(claims) >= 10:
+            break
+    return claims
+
+
 def _coverage_warnings(
     *,
     quality: InternetScoutCitationQualitySummary,
     source_hosts: list[str],
     accepted_count: int,
     stop_criteria: InternetScoutResearchStopCriteria,
+    contradiction_count: int,
 ) -> list[str]:
     warnings = list(quality.warnings[:10])
     if accepted_count < stop_criteria.min_accepted_citations:
@@ -345,7 +398,25 @@ def _coverage_warnings(
         warnings.append("Required official source evidence was not accepted.")
     if stop_criteria.require_cross_check and len(source_hosts) < 2:
         warnings.append("Cross-check coverage is below the research stop criteria.")
+    if len(source_hosts) < stop_criteria.min_source_hosts:
+        warnings.append("Source diversity is below the research stop criteria.")
+    if contradiction_count:
+        warnings.append("Potential contradictory claim evidence was detected.")
     return list(dict.fromkeys(warnings))[:20]
+
+
+def _source_diversity_score(
+    *,
+    source_hosts: list[str],
+    accepted_count: int,
+    stop_criteria: InternetScoutResearchStopCriteria,
+) -> int:
+    if not source_hosts or not accepted_count:
+        return 0
+    required_hosts = max(1, stop_criteria.min_source_hosts)
+    host_score = min(70, round((len(source_hosts) / required_hosts) * 70))
+    citation_score = min(30, accepted_count * 10)
+    return max(0, min(100, host_score + citation_score))
 
 
 def _rank_citations(

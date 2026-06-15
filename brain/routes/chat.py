@@ -290,6 +290,15 @@ def _internet_research_report_metadata(
         "internet_research_report_unsupported_claim_count": (
             report.unsupported_claim_count
         ),
+        "internet_research_report_independent_source_count": (
+            report.independent_source_count
+        ),
+        "internet_research_report_source_diversity_score": (
+            report.source_diversity_score
+        ),
+        "internet_research_report_planned_query_count": report.planned_query_count,
+        "internet_research_report_contradiction_count": report.contradiction_count,
+        "internet_research_report_contradictions": report.contradictions,
         "internet_research_report_source_hosts": report.source_hosts,
         "internet_research_report_required_source_hosts": (
             report.required_source_hosts
@@ -426,6 +435,11 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
         "internet_research_report_rejected_citation_count",
         "internet_research_report_verified_claim_count",
         "internet_research_report_unsupported_claim_count",
+        "internet_research_report_independent_source_count",
+        "internet_research_report_source_diversity_score",
+        "internet_research_report_planned_query_count",
+        "internet_research_report_contradiction_count",
+        "internet_research_report_contradictions",
         "internet_research_report_source_hosts",
         "internet_research_report_required_source_hosts",
         "internet_research_report_expected_source_types",
