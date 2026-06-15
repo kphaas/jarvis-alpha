@@ -236,6 +236,15 @@ async def _recent_evidence_check(conn) -> InternetScoutHealthCheck:
           AND created_at >= NOW() - INTERVAL '24 hours'
         """
     )
+    quality_canary_row = await conn.fetchrow(
+        """
+        SELECT request_id, status, metadata, created_at
+        FROM public.alpha_internet_tool_events
+        WHERE event_type = 'quality_canary'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """
+    )
     total = int(row["total"] or 0) if row else 0
     failed = int(row["failed"] or 0) if row else 0
     ok = failed == 0
@@ -257,6 +266,7 @@ async def _recent_evidence_check(conn) -> InternetScoutHealthCheck:
                 suggestion_row,
                 acceptance_row,
             ),
+            "quality_canary": _quality_canary_metadata(quality_canary_row),
         },
     )
 
@@ -343,6 +353,25 @@ def _web_suggestion_metadata(
     }
 
 
+def _quality_canary_metadata(row: _RequestRow | None) -> dict[str, object] | None:
+    if row is None:
+        return None
+    metadata = row["metadata"]
+    if not isinstance(metadata, dict):
+        metadata = {}
+    return {
+        "request_id": str(metadata.get("request_id") or row["request_id"]),
+        "status": str(metadata.get("status") or row["status"]),
+        "suite": str(metadata.get("suite") or "beacon_search_quality"),
+        "suite_version": _int_mapping(metadata, "suite_version"),
+        "case_count": _int_mapping(metadata, "case_count"),
+        "passed": _int_mapping(metadata, "passed"),
+        "failed": _int_mapping(metadata, "failed"),
+        "failure_names": _str_list(metadata.get("failure_names")),
+        "last_run_at": _datetime_metadata(row["created_at"]),
+    }
+
+
 def _int_row(row: _RequestRow, key: str) -> int:
     value = row[key]
     if isinstance(value, bool):
@@ -352,6 +381,23 @@ def _int_row(row: _RequestRow, key: str) -> int:
     if isinstance(value, str) and value.isdecimal():
         return int(value)
     return 0
+
+
+def _int_mapping(payload: dict[str, object], key: str) -> int:
+    value = payload.get(key)
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return 0
+
+
+def _str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value[:20]]
 
 
 def _datetime_metadata(value: object) -> str:

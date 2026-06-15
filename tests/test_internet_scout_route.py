@@ -26,6 +26,8 @@ from brain.services.internet_scout.models import (
     InternetScoutMemoryPromotionCreateRequest,
     InternetScoutMemoryPromotionReviewRequest,
     InternetScoutRequest,
+    InternetScoutRetentionDeleteRequest,
+    InternetScoutRetentionDeleteResponse,
     InternetScoutRetentionReport,
     InternetTool,
 )
@@ -239,6 +241,65 @@ async def test_internet_scout_retention_report_is_report_only(monkeypatch):
 
     assert response.mode == "report_only"
     assert response.old_request_count == 7
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_retention_delete_requires_admin(monkeypatch):
+    with pytest.raises(HTTPException) as exc:
+        await internet_scout.internet_scout_retention_delete_expired(
+            InternetScoutRetentionDeleteRequest(
+                confirm="delete_expired_beacon_evidence"
+            ),
+            _request(scopes=["internet_scout.read"]),
+            user_id="ken",
+        )
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_retention_delete_uses_reviewed_service(monkeypatch):
+    captured: dict[str, object] = {}
+
+    @asynccontextmanager
+    async def fake_platform_admin_connection(*, source: str, audit_actor: str):
+        captured["source"] = source
+        captured["audit_actor"] = audit_actor
+        yield object()
+
+    async def fake_delete_expired_evidence(conn, request):
+        return InternetScoutRetentionDeleteResponse(
+            mode="dry_run",
+            enabled=True,
+            dry_run=True,
+            evidence_retention_days=90,
+            screenshot_retention_days=30,
+            candidate_request_count=2,
+        )
+
+    monkeypatch.setattr(
+        internet_scout,
+        "platform_admin_connection",
+        fake_platform_admin_connection,
+    )
+    monkeypatch.setattr(
+        internet_scout,
+        "delete_expired_evidence",
+        fake_delete_expired_evidence,
+    )
+
+    response = await internet_scout.internet_scout_retention_delete_expired(
+        InternetScoutRetentionDeleteRequest(confirm="delete_expired_beacon_evidence"),
+        _request(scopes=["admin"]),
+        user_id="ken",
+    )
+
+    assert response.mode == "dry_run"
+    assert response.candidate_request_count == 2
+    assert captured == {
+        "source": "http",
+        "audit_actor": "beacon_retention_delete:ken",
+    }
 
 
 @pytest.mark.asyncio
@@ -579,6 +640,11 @@ def test_internet_scout_routes_are_classified():
     assert classify_route("GET", "/v1/internet-scout/retention/report") == [
         "read",
         "security_read",
+    ]
+    assert classify_route("POST", "/v1/internet-scout/retention/delete-expired") == [
+        "write",
+        "security_write",
+        "destructive",
     ]
     assert classify_route("POST", "/v1/internet-scout/research") == [
         "write",

@@ -7,7 +7,11 @@ from uuid import uuid4
 import pytest
 
 from brain.services.internet_scout import health as beacon_health
-from brain.services.internet_scout.retention import build_retention_report
+from brain.services.internet_scout.models import InternetScoutRetentionDeleteRequest
+from brain.services.internet_scout.retention import (
+    build_retention_report,
+    delete_expired_evidence,
+)
 
 
 class FakeConn:
@@ -19,8 +23,14 @@ class FakeConn:
         quality_row: dict[str, int] | None = None,
         suggestion_row: dict[str, int] | None = None,
         acceptance_row: dict[str, int] | None = None,
+        quality_canary_row: dict[str, object] | None = None,
+        expired_request_ids: list[object] | None = None,
+        delete_counts: dict[str, int] | None = None,
     ) -> None:
         self.counts = counts or {}
+        self.executed: list[tuple[str, tuple[object, ...]]] = []
+        self.expired_request_ids = expired_request_ids or []
+        self.delete_counts = delete_counts or {}
         self.recent_row = recent_row or {
             "total": 3,
             "succeeded": 2,
@@ -54,6 +64,20 @@ class FakeConn:
             "accepted_matching_mode": 2,
             "accepted_after_confirmation": 2,
         }
+        self.quality_canary_row = quality_canary_row or {
+            "request_id": uuid4(),
+            "status": "succeeded",
+            "created_at": now,
+            "metadata": {
+                "suite": "beacon_search_quality",
+                "suite_version": 2,
+                "case_count": 33,
+                "passed": 33,
+                "failed": 0,
+                "failure_names": [],
+                "status": "passed",
+            },
+        }
 
     async def fetchval(self, query: str, *args):
         if "to_regclass" in query:
@@ -65,7 +89,14 @@ class FakeConn:
                 return count
         return 0
 
+    async def fetch(self, query: str, *args):
+        if "FROM public.alpha_internet_requests" in query:
+            return [{"id": request_id} for request_id in self.expired_request_ids]
+        return []
+
     async def fetchrow(self, query: str, *args):
+        if "quality_canary" in query:
+            return self.quality_canary_row
         if "chat_web_suggestion_acceptance" in query:
             return self.acceptance_row
         if "FROM public.chat_messages" in query:
@@ -75,6 +106,13 @@ class FakeConn:
         if "ORDER BY created_at DESC" in query:
             return self.last_request_row
         return self.recent_row
+
+    async def execute(self, query: str, *args):
+        self.executed.append((query, args))
+        for table, count in self.delete_counts.items():
+            if f"public.{table}" in query:
+                return f"DELETE {count}"
+        return "SELECT 1"
 
 
 class FakeGatewayClient:
@@ -134,6 +172,61 @@ async def test_retention_report_counts_old_rows_and_screenshots(
 
 
 @pytest.mark.asyncio
+async def test_retention_delete_is_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("BEACON_RETENTION_DELETE_ENABLED", raising=False)
+    conn = FakeConn(expired_request_ids=[uuid4()])
+
+    response = await delete_expired_evidence(
+        conn,
+        InternetScoutRetentionDeleteRequest(
+            confirm="delete_expired_beacon_evidence",
+            dry_run=False,
+        ),
+    )
+
+    assert response.mode == "disabled"
+    assert response.enabled is False
+    assert response.dry_run is True
+    assert response.candidate_request_count == 1
+    assert response.deleted_request_count == 0
+    assert conn.executed == []
+
+
+@pytest.mark.asyncio
+async def test_retention_delete_removes_expired_rows_when_enabled(monkeypatch):
+    monkeypatch.setenv("BEACON_RETENTION_DELETE_ENABLED", "true")
+    request_id = uuid4()
+    conn = FakeConn(
+        expired_request_ids=[request_id],
+        delete_counts={
+            "alpha_internet_memory_promotions": 1,
+            "alpha_internet_evidence": 2,
+            "alpha_internet_sources": 3,
+            "alpha_internet_tool_events": 4,
+            "alpha_internet_requests": 1,
+        },
+    )
+
+    response = await delete_expired_evidence(
+        conn,
+        InternetScoutRetentionDeleteRequest(
+            confirm="delete_expired_beacon_evidence",
+            dry_run=False,
+        ),
+    )
+
+    assert response.mode == "deleted"
+    assert response.enabled is True
+    assert response.dry_run is False
+    assert response.deleted_memory_promotion_count == 1
+    assert response.deleted_evidence_count == 2
+    assert response.deleted_source_count == 3
+    assert response.deleted_event_count == 4
+    assert response.deleted_request_count == 1
+    assert "app.beacon_retention_cleanup" in conn.executed[0][0]
+
+
+@pytest.mark.asyncio
 async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
     monkeypatch.setattr(
         beacon_health,
@@ -181,6 +274,19 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
     assert last_request["requester"] == "production_smoke"
     assert last_request["selected_tool"] == "search"
     assert last_request["status"] == "succeeded"
+    quality_canary = response.checks["recent_evidence"].metadata["quality_canary"]
+    assert quality_canary["request_id"]
+    assert quality_canary == {
+        "request_id": quality_canary["request_id"],
+        "status": "passed",
+        "suite": "beacon_search_quality",
+        "suite_version": 2,
+        "case_count": 33,
+        "passed": 33,
+        "failed": 0,
+        "failure_names": [],
+        "last_run_at": quality_canary["last_run_at"],
+    }
     assert response.retention.mode == "report_only"
 
 

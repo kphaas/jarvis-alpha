@@ -44,11 +44,12 @@ Gateway-owned search provider selection: Brain requests `auto`, Gateway prefers
 Brave when configured, and otherwise uses the first-party Perplexity Search API
 when `PERPLEXITY_API_KEY` is present. Explicit provider requests still fail
 closed if that provider's key is missing. P13-P17 add production readiness
-surfaces: Brain health and report-only retention endpoints, Gateway provider
-health and circuit-breaker fallback, a production agent response envelope, and a
-smoke/runbook path. Retention remains inventory-only; deletion requires a
-separate reviewed change. Follow-up production readiness keeps recent evidence
-failures as visible diagnostics while making the core dependency checks
+surfaces: Brain health and retention endpoints, Gateway provider health and
+circuit-breaker fallback, a production agent response envelope, and a
+smoke/runbook path. Retention starts as inventory-only, and deletion is now a
+separate reviewed/admin/env-gated cleanup path with dry-run as the default.
+Follow-up production readiness keeps recent evidence failures as visible
+diagnostics while making the core dependency checks
 database, Gateway, browser runtime, and retention authoritative for readiness.
 The citation-quality hardening release adds a source-ranking gate for Helm Ask
 and agent responses: official documentation/API queries require matching
@@ -75,6 +76,10 @@ stop criteria. Claim verification fails closed on clear negation, version, date,
 unit, currency, and number mismatches. Research reports expose redacted coverage
 counters and warnings so Helm and operators can see why Beacon answered,
 limited, or refused verification without persisting raw page text.
+The production hardening follow-up adds a 33-case deterministic search quality
+benchmark, scheduled canary evidence, generated shared schemas for Helm, and a
+narrow retention-cleanup exception that only allows old tool-event deletes when
+`app.beacon_retention_cleanup=true` and `rls.role=platform_admin`.
 
 ## Architecture
 
@@ -202,11 +207,11 @@ stored evidence, source hash, and claim.
 | Search provider availability | Gateway owns provider selection. `auto` prefers Brave and falls back to Perplexity Search; no provider key still fails closed. |
 | Production visibility | P13 health reports database contract, Gateway provider state, browser runtime state, recent evidence status, and retention inventory without exposing secrets. |
 | Provider brownouts | P14 tracks per-provider failures in Gateway memory, opens a short cooldown circuit, and fails closed when no configured usable provider remains. |
-| Evidence lifecycle | P15 reports old evidence rows and screenshot files only; deletion is intentionally out of scope for MVP. |
+| Evidence lifecycle | P15 reports old evidence rows and screenshot files. Follow-up cleanup is admin-only, env-gated, confirm-string protected, and dry-run by default. |
 | Local LLM misuse | P16 returns citations, confidence, explicit untrusted-content warnings, and not-verified notes instead of raw authority. |
 | Operator readiness | P17 adds a smoke script and rollback runbook before deploy approval. |
 | Readiness noise | Recent evidence failures remain diagnostic warnings; they do not block readiness when database, Gateway, browser runtime, and retention are healthy. |
-| Quality regression detection | Helm Ask smoke supports a multi-case canary suite that checks supported official evidence, stale-memory rejection, synthesis behavior, untrusted-content metadata, and memory-write blocking. |
+| Quality regression detection | Helm Ask smoke supports a multi-case canary suite, and Beacon now records deterministic search-quality canary results for source ranking, claim verification, prompt-injection rejection, and official-source gating. |
 
 ## Consequences
 

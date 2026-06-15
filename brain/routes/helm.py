@@ -174,6 +174,18 @@ class HelmBeaconApprovalSummary(BaseModel):
     next_expires_at: str | None = None
 
 
+class HelmBeaconQualityCanarySummary(BaseModel):
+    status: str = "unknown"
+    suite: str = "beacon_search_quality"
+    suite_version: int = 0
+    case_count: int = 0
+    passed: int = 0
+    failed: int = 0
+    failure_names: list[str] = Field(default_factory=list)
+    request_id: str | None = None
+    last_run_at: str | None = None
+
+
 class HelmBeaconSummary(BaseModel):
     status: str
     checked_at: str
@@ -182,6 +194,9 @@ class HelmBeaconSummary(BaseModel):
     evidence: HelmBeaconEvidenceSummary
     retention: HelmBeaconRetentionSummary
     approvals: HelmBeaconApprovalSummary
+    quality_canary: HelmBeaconQualityCanarySummary = Field(
+        default_factory=HelmBeaconQualityCanarySummary
+    )
     raw_web_content_is_untrusted: bool = True
 
 
@@ -459,6 +474,30 @@ def _beacon_web_suggestion(
     )
 
 
+def _beacon_quality_canary(
+    metadata: Mapping[str, object],
+) -> HelmBeaconQualityCanarySummary:
+    quality_canary = _mapping_value(metadata.get("quality_canary"))
+    if not quality_canary:
+        return HelmBeaconQualityCanarySummary()
+    return HelmBeaconQualityCanarySummary(
+        status=_metadata_str(quality_canary, "status", "unknown") or "unknown",
+        suite=_metadata_str(
+            quality_canary,
+            "suite",
+            "beacon_search_quality",
+        )
+        or "beacon_search_quality",
+        suite_version=_metadata_int(quality_canary, "suite_version"),
+        case_count=_metadata_int(quality_canary, "case_count"),
+        passed=_metadata_int(quality_canary, "passed"),
+        failed=_metadata_int(quality_canary, "failed"),
+        failure_names=_metadata_str_list(quality_canary, "failure_names"),
+        request_id=_metadata_str(quality_canary, "request_id"),
+        last_run_at=_metadata_str(quality_canary, "last_run_at"),
+    )
+
+
 def _datetime_or_none(value: object | None) -> str | None:
     if value is None:
         return None
@@ -510,6 +549,7 @@ def _unavailable_beacon_summary() -> HelmBeaconSummary:
             screenshot_bytes=0,
         ),
         approvals=HelmBeaconApprovalSummary(),
+        quality_canary=HelmBeaconQualityCanarySummary(),
     )
 
 
@@ -597,6 +637,7 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
             screenshot_bytes=health.retention.screenshot_bytes,
         ),
         approvals=approvals,
+        quality_canary=_beacon_quality_canary(evidence_metadata),
     )
 
 

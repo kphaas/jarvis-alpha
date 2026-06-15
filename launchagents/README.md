@@ -51,6 +51,8 @@ These are deployed and working. Rename to categorical form is tracked as **TD-11
 | `com.jarvis.alpha.power.sandbox.plist` | Sandbox | KeepAlive — via `scripts/install_power_sampler.sh` |
 | `com.jarvis.alpha.fluentbit.plist` | Brain | KeepAlive — log shipper to Loki |
 | `com.jarvis.alpha.loki.plist` | Brain | KeepAlive — log aggregator |
+| `com.jarvis.alpha.gmail-health.template.plist` | Brain | Template — scheduled Gmail OAuth health watcher |
+| `com.jarvis.alpha.beacon-quality.template.plist` | Brain | Template — scheduled Beacon deterministic quality canary |
 
 ## External config sync
 

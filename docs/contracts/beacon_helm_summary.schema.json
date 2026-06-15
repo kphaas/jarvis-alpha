@@ -1,0 +1,483 @@
+{
+  "$defs": {
+    "HelmBeaconApprovalSummary": {
+      "properties": {
+        "next_expires_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Expires At"
+        },
+        "pending_browser_approvals": {
+          "default": 0,
+          "title": "Pending Browser Approvals",
+          "type": "integer"
+        }
+      },
+      "title": "HelmBeaconApprovalSummary",
+      "type": "object"
+    },
+    "HelmBeaconBrowserSummary": {
+      "properties": {
+        "expected_playwright_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Playwright Version"
+        },
+        "max_runs_per_hour": {
+          "default": 0,
+          "title": "Max Runs Per Hour",
+          "type": "integer"
+        },
+        "playwright_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Playwright Version"
+        },
+        "playwright_version_ok": {
+          "default": false,
+          "title": "Playwright Version Ok",
+          "type": "boolean"
+        },
+        "runtime": {
+          "title": "Runtime",
+          "type": "string"
+        },
+        "runtime_enabled": {
+          "default": false,
+          "title": "Runtime Enabled",
+          "type": "boolean"
+        },
+        "screenshot_store_ready": {
+          "default": false,
+          "title": "Screenshot Store Ready",
+          "type": "boolean"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "timeout_ms": {
+          "default": 0,
+          "title": "Timeout Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status",
+        "runtime"
+      ],
+      "title": "HelmBeaconBrowserSummary",
+      "type": "object"
+    },
+    "HelmBeaconEvidenceSummary": {
+      "properties": {
+        "blocked": {
+          "default": 0,
+          "title": "Blocked",
+          "type": "integer"
+        },
+        "failed": {
+          "default": 0,
+          "title": "Failed",
+          "type": "integer"
+        },
+        "last_request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HelmBeaconLastRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source_quality": {
+          "$ref": "#/$defs/HelmBeaconSourceQualitySummary"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "succeeded": {
+          "default": 0,
+          "title": "Succeeded",
+          "type": "integer"
+        },
+        "total": {
+          "default": 0,
+          "title": "Total",
+          "type": "integer"
+        },
+        "web_suggestion": {
+          "$ref": "#/$defs/HelmBeaconWebSuggestionSummary"
+        },
+        "window_hours": {
+          "default": 24,
+          "title": "Window Hours",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "HelmBeaconEvidenceSummary",
+      "type": "object"
+    },
+    "HelmBeaconLastRequest": {
+      "properties": {
+        "created_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Created At"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "requester": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requester"
+        },
+        "selected_tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Selected Tool"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "updated_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Updated At"
+        }
+      },
+      "title": "HelmBeaconLastRequest",
+      "type": "object"
+    },
+    "HelmBeaconProviderSummary": {
+      "properties": {
+        "configured_provider_count": {
+          "default": 0,
+          "title": "Configured Provider Count",
+          "type": "integer"
+        },
+        "provider_order": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Provider Order",
+          "type": "array"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "usable_provider_count": {
+          "default": 0,
+          "title": "Usable Provider Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "HelmBeaconProviderSummary",
+      "type": "object"
+    },
+    "HelmBeaconQualityCanarySummary": {
+      "properties": {
+        "case_count": {
+          "default": 0,
+          "title": "Case Count",
+          "type": "integer"
+        },
+        "failed": {
+          "default": 0,
+          "title": "Failed",
+          "type": "integer"
+        },
+        "failure_names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Failure Names",
+          "type": "array"
+        },
+        "last_run_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Run At"
+        },
+        "passed": {
+          "default": 0,
+          "title": "Passed",
+          "type": "integer"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "status": {
+          "default": "unknown",
+          "title": "Status",
+          "type": "string"
+        },
+        "suite": {
+          "default": "beacon_search_quality",
+          "title": "Suite",
+          "type": "string"
+        },
+        "suite_version": {
+          "default": 0,
+          "title": "Suite Version",
+          "type": "integer"
+        }
+      },
+      "title": "HelmBeaconQualityCanarySummary",
+      "type": "object"
+    },
+    "HelmBeaconRetentionSummary": {
+      "properties": {
+        "evidence_retention_days": {
+          "title": "Evidence Retention Days",
+          "type": "integer"
+        },
+        "mode": {
+          "title": "Mode",
+          "type": "string"
+        },
+        "old_request_count": {
+          "title": "Old Request Count",
+          "type": "integer"
+        },
+        "screenshot_bytes": {
+          "title": "Screenshot Bytes",
+          "type": "integer"
+        },
+        "screenshot_file_count": {
+          "title": "Screenshot File Count",
+          "type": "integer"
+        },
+        "screenshot_retention_days": {
+          "title": "Screenshot Retention Days",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mode",
+        "evidence_retention_days",
+        "screenshot_retention_days",
+        "old_request_count",
+        "screenshot_file_count",
+        "screenshot_bytes"
+      ],
+      "title": "HelmBeaconRetentionSummary",
+      "type": "object"
+    },
+    "HelmBeaconSourceQualitySummary": {
+      "properties": {
+        "insufficient": {
+          "default": 0,
+          "title": "Insufficient",
+          "type": "integer"
+        },
+        "official_source_count": {
+          "default": 0,
+          "title": "Official Source Count",
+          "type": "integer"
+        },
+        "prompt_injection_rejection_count": {
+          "default": 0,
+          "title": "Prompt Injection Rejection Count",
+          "type": "integer"
+        },
+        "rejected_citation_count": {
+          "default": 0,
+          "title": "Rejected Citation Count",
+          "type": "integer"
+        },
+        "supported": {
+          "default": 0,
+          "title": "Supported",
+          "type": "integer"
+        },
+        "weak": {
+          "default": 0,
+          "title": "Weak",
+          "type": "integer"
+        }
+      },
+      "title": "HelmBeaconSourceQualitySummary",
+      "type": "object"
+    },
+    "HelmBeaconWebSuggestionSummary": {
+      "properties": {
+        "acceptance_rate_percent": {
+          "default": 0,
+          "title": "Acceptance Rate Percent",
+          "type": "integer"
+        },
+        "accepted": {
+          "default": 0,
+          "title": "Accepted",
+          "type": "integer"
+        },
+        "accepted_after_confirmation": {
+          "default": 0,
+          "title": "Accepted After Confirmation",
+          "type": "integer"
+        },
+        "accepted_matching_mode": {
+          "default": 0,
+          "title": "Accepted Matching Mode",
+          "type": "integer"
+        },
+        "high_confidence": {
+          "default": 0,
+          "title": "High Confidence",
+          "type": "integer"
+        },
+        "medium_confidence": {
+          "default": 0,
+          "title": "Medium Confidence",
+          "type": "integer"
+        },
+        "suggested": {
+          "default": 0,
+          "title": "Suggested",
+          "type": "integer"
+        }
+      },
+      "title": "HelmBeaconWebSuggestionSummary",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "approvals": {
+      "$ref": "#/$defs/HelmBeaconApprovalSummary"
+    },
+    "browser": {
+      "$ref": "#/$defs/HelmBeaconBrowserSummary"
+    },
+    "checked_at": {
+      "title": "Checked At",
+      "type": "string"
+    },
+    "evidence": {
+      "$ref": "#/$defs/HelmBeaconEvidenceSummary"
+    },
+    "provider": {
+      "$ref": "#/$defs/HelmBeaconProviderSummary"
+    },
+    "quality_canary": {
+      "$ref": "#/$defs/HelmBeaconQualityCanarySummary"
+    },
+    "raw_web_content_is_untrusted": {
+      "default": true,
+      "title": "Raw Web Content Is Untrusted",
+      "type": "boolean"
+    },
+    "retention": {
+      "$ref": "#/$defs/HelmBeaconRetentionSummary"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "checked_at",
+    "provider",
+    "browser",
+    "evidence",
+    "retention",
+    "approvals"
+  ],
+  "title": "HelmBeaconSummary",
+  "type": "object"
+}

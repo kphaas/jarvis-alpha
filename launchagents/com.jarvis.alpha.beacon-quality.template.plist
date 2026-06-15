@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jarvis.alpha.beacon-quality</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>{{HOME}}/jarvis-alpha/scripts/start_alpha_beacon_quality_canary.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>{{HOME}}/jarvis-alpha</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>JARVIS_NODE</key>
+    <string>brain</string>
+    <key>SECRETS_FILE</key>
+    <string>{{HOME}}/jarvis/.secrets</string>
+    <key>GIT_TERMINAL_PROMPT</key>
+    <string>0</string>
+  </dict>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>13</integer>
+    <key>Minute</key>
+    <integer>5</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>{{HOME}}/jarvis-alpha/logs/alpha_beacon_quality_canary.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{HOME}}/jarvis-alpha/logs/alpha_beacon_quality_canary_error.log</string>
+</dict>
+</plist>

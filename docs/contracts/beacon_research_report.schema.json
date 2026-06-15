@@ -1,0 +1,322 @@
+{
+  "$defs": {
+    "InternetScoutResearchStopCriteria": {
+      "description": "Deterministic stop/coverage criteria for a Beacon research plan.",
+      "properties": {
+        "max_extracts": {
+          "default": 0,
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Max Extracts",
+          "type": "integer"
+        },
+        "max_searches": {
+          "default": 1,
+          "maximum": 6,
+          "minimum": 1,
+          "title": "Max Searches",
+          "type": "integer"
+        },
+        "min_accepted_citations": {
+          "default": 1,
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Min Accepted Citations",
+          "type": "integer"
+        },
+        "require_cross_check": {
+          "default": false,
+          "title": "Require Cross Check",
+          "type": "boolean"
+        },
+        "require_official_source": {
+          "default": false,
+          "title": "Require Official Source",
+          "type": "boolean"
+        },
+        "stop_when": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Stop When",
+          "type": "array"
+        },
+        "unsupported_claim_policy": {
+          "const": "fail_closed",
+          "default": "fail_closed",
+          "title": "Unsupported Claim Policy",
+          "type": "string"
+        }
+      },
+      "title": "InternetScoutResearchStopCriteria",
+      "type": "object"
+    },
+    "InternetScoutSourceRanking": {
+      "description": "Redacted source ranking for UI/report surfaces.",
+      "properties": {
+        "confidence": {
+          "default": "medium",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Confidence",
+          "type": "string"
+        },
+        "host": {
+          "title": "Host",
+          "type": "string"
+        },
+        "rank": {
+          "maximum": 25,
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Reasons",
+          "type": "array"
+        },
+        "score": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Score",
+          "type": "integer"
+        },
+        "source_quality": {
+          "enum": [
+            "official",
+            "primary",
+            "trusted_secondary",
+            "general",
+            "low_confidence",
+            "rejected"
+          ],
+          "title": "Source Quality",
+          "type": "string"
+        },
+        "source_url": {
+          "title": "Source Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rank",
+        "source_url",
+        "host",
+        "source_quality",
+        "score"
+      ],
+      "title": "InternetScoutSourceRanking",
+      "type": "object"
+    }
+  },
+  "description": "Bounded report contract for Deep Research-style Beacon answers.",
+  "properties": {
+    "accepted_citation_count": {
+      "default": 0,
+      "maximum": 25,
+      "minimum": 0,
+      "title": "Accepted Citation Count",
+      "type": "integer"
+    },
+    "answerability": {
+      "default": "not_verified",
+      "enum": [
+        "answerable",
+        "limited",
+        "not_verified"
+      ],
+      "title": "Answerability",
+      "type": "string"
+    },
+    "cited_source_count": {
+      "default": 0,
+      "maximum": 25,
+      "minimum": 0,
+      "title": "Cited Source Count",
+      "type": "integer"
+    },
+    "coverage_warnings": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Coverage Warnings",
+      "type": "array"
+    },
+    "expected_source_types": {
+      "items": {
+        "enum": [
+          "official_docs",
+          "primary_source",
+          "trusted_secondary",
+          "release_notes",
+          "pricing",
+          "legal_regulatory",
+          "security_advisory",
+          "status_page",
+          "general_web"
+        ],
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Expected Source Types",
+      "type": "array"
+    },
+    "key_findings": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Key Findings",
+      "type": "array"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Limitations",
+      "type": "array"
+    },
+    "mode": {
+      "const": "deep_research_report",
+      "default": "deep_research_report",
+      "title": "Mode",
+      "type": "string"
+    },
+    "plan_id": {
+      "anyOf": [
+        {
+          "maxLength": 32,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Plan Id"
+    },
+    "rejected_citation_count": {
+      "default": 0,
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Rejected Citation Count",
+      "type": "integer"
+    },
+    "report_markdown": {
+      "default": "",
+      "maxLength": 16000,
+      "title": "Report Markdown",
+      "type": "string"
+    },
+    "required_source_hosts": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Required Source Hosts",
+      "type": "array"
+    },
+    "research_intent": {
+      "default": "general",
+      "enum": [
+        "official_docs",
+        "current_fact",
+        "comparison",
+        "troubleshooting",
+        "general"
+      ],
+      "title": "Research Intent",
+      "type": "string"
+    },
+    "source_hosts": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 25,
+      "title": "Source Hosts",
+      "type": "array"
+    },
+    "source_quality_status": {
+      "default": "insufficient",
+      "enum": [
+        "supported",
+        "weak",
+        "insufficient"
+      ],
+      "title": "Source Quality Status",
+      "type": "string"
+    },
+    "source_rankings": {
+      "items": {
+        "$ref": "#/$defs/InternetScoutSourceRanking"
+      },
+      "maxItems": 25,
+      "title": "Source Rankings",
+      "type": "array"
+    },
+    "stop_criteria": {
+      "$ref": "#/$defs/InternetScoutResearchStopCriteria"
+    },
+    "subquestion_count": {
+      "default": 0,
+      "maximum": 6,
+      "minimum": 0,
+      "title": "Subquestion Count",
+      "type": "integer"
+    },
+    "summary": {
+      "default": "",
+      "maxLength": 1000,
+      "title": "Summary",
+      "type": "string"
+    },
+    "title": {
+      "default": "Beacon research report",
+      "maxLength": 200,
+      "title": "Title",
+      "type": "string"
+    },
+    "unsupported_claim_count": {
+      "default": 0,
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Unsupported Claim Count",
+      "type": "integer"
+    },
+    "unsupported_claims": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Unsupported Claims",
+      "type": "array"
+    },
+    "verified_claim_count": {
+      "default": 0,
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Verified Claim Count",
+      "type": "integer"
+    },
+    "verified_claims": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Verified Claims",
+      "type": "array"
+    }
+  },
+  "title": "InternetScoutResearchReport",
+  "type": "object"
+}

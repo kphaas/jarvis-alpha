@@ -12,7 +12,7 @@ This runbook covers the MVP production closeout for P13-P17:
 
 - P13: health and readiness checks
 - P14: provider reliability and fallback
-- P15: audit and report-only retention inventory
+- P15: audit and retention inventory
 - P16: production agent wrapper
 - P17: smoke and rollback
 
@@ -37,8 +37,16 @@ Retention inventory:
 - `BEACON_EVIDENCE_RETENTION_DAYS`, default 90
 - `BEACON_BROWSER_SCREENSHOT_RETENTION_DAYS`, default 30
 
-Retention is report-only in this MVP. Do not delete evidence rows or
-screenshots without a separate reviewed retention-delete design.
+Retention deletion:
+
+- Default is safe inventory only.
+- Actual deletion also requires:
+  - admin scope on `POST /v1/internet-scout/retention/delete-expired`
+  - request body `confirm: "delete_expired_beacon_evidence"`
+  - `dry_run: false`
+  - `BEACON_RETENTION_DELETE_ENABLED=true`
+- Screenshot deletion only runs when `include_screenshots: true`.
+- Do not enable deletion until the operator has reviewed the dry-run counts.
 
 ## Health Checks
 
@@ -72,6 +80,27 @@ Expected:
   `supported`, `weak`, and `insufficient` chat evidence events plus rejected
   citation and prompt-injection counts. These are diagnostics; repeated
   `insufficient` events indicate provider ranking or source-quality issues.
+- `checks.recent_evidence.metadata.quality_canary` reports the last scheduled
+  deterministic canary result when available.
+
+Dry-run retention cleanup:
+
+```bash
+curl -skS -X POST -H "Authorization: Bearer ${TOKEN}" \
+  -H "Content-Type: application/json" \
+  https://jarvis-brain.tail40ed36.ts.net:8186/v1/internet-scout/retention/delete-expired \
+  -d '{"confirm":"delete_expired_beacon_evidence","dry_run":true,"include_screenshots":false}'
+```
+
+Run actual cleanup only after dry-run review and explicit env enablement:
+
+```bash
+BEACON_RETENTION_DELETE_ENABLED=true \
+curl -skS -X POST -H "Authorization: Bearer ${TOKEN}" \
+  -H "Content-Type: application/json" \
+  https://jarvis-brain.tail40ed36.ts.net:8186/v1/internet-scout/retention/delete-expired \
+  -d '{"confirm":"delete_expired_beacon_evidence","dry_run":false,"include_screenshots":false}'
+```
 
 ## Full Smoke
 
@@ -105,6 +134,10 @@ Expected:
 - source-quality status is `supported` or `weak` for normal sourced questions
 - official docs/API queries cite an official host or return insufficient
   evidence instead of presenting weak sources as proof
+- deterministic quality evals pass:
+  `python scripts/eval_beacon_search_quality.py`
+- committed contracts are current:
+  `python scripts/export_beacon_contract_schema.py --check`
 
 The smoke script does not print tokens or raw retrieved content.
 

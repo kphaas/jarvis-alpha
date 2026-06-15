@@ -15,7 +15,8 @@ from brain.services.internet_scout.search_quality_evals import (
 def test_search_quality_evals_all_pass() -> None:
     results = run_search_quality_evals()
 
-    assert results
+    assert len(results) >= 30
+    assert len(results) <= 50
     assert all(result.passed for result in results)
 
 
@@ -74,3 +75,11 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
     negated = results["negated_claim_mismatch_fails_closed"]
     assert negated.details["status"] == "insufficient"
     assert negated.details["unsupported_claim_count"] == 1
+
+    claim_gap = results["number_mismatch_rejects_limit_claim"]
+    assert claim_gap.details["status"] == "insufficient"
+    assert claim_gap.details["unsupported_claim_count"] == 1
+
+    source_gap = results["reddit_rejected_for_official_openai_query"]
+    assert source_gap.details["status"] == "insufficient"
+    assert source_gap.details["rejected_citation_count"] == 1
