@@ -141,6 +141,8 @@ def test_spark_memory_review_ui_exposes_approval_backlog_without_raw_threads() -
     assert "Ask Buddy" in source
     assert "Propose memory" in source
     assert "candidate_key_phrases" in source
+    assert "calibration_lessons" in source
+    assert "Edit lessons" in source
     assert "key phrases" in source
     assert "Approve" in source
     assert "Archive" in source

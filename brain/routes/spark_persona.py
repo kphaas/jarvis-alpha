@@ -65,6 +65,7 @@ class SparkPersonalityMemoryScorecard(BaseModel):
     active_count: int
     proposal_count: int
     feedback_phrase_count: int
+    feedback_lesson_count: int
     kinds_present: list[str]
     missing_core_kinds: list[str]
     readiness: str
@@ -248,7 +249,14 @@ async def get_spark_personality_memory(
             "status": "review_ready",
             "proposal_count": len(proposals),
             "feedback_phrase_count": sum(
-                1 for proposal in proposals if proposal.source == "spark_feedback"
+                1
+                for proposal in proposals
+                if proposal.source == "spark_feedback" and proposal.kind == "phrase"
+            ),
+            "feedback_lesson_count": sum(
+                1
+                for proposal in proposals
+                if proposal.source == "spark_feedback" and proposal.kind != "phrase"
             ),
         },
     )
@@ -459,6 +467,13 @@ def _memory_scorecard(
         1
         for proposal in proposals
         if getattr(proposal, "source", None) == "spark_feedback"
+        and getattr(proposal, "kind", None) == "phrase"
+    )
+    feedback_lesson_count = sum(
+        1
+        for proposal in proposals
+        if getattr(proposal, "source", None) == "spark_feedback"
+        and getattr(proposal, "kind", None) != "phrase"
     )
     core_kinds = {"voice", "avoid", "phrase", "relationship", "style"}
     missing = sorted(core_kinds.difference(kinds_present))
@@ -473,6 +488,7 @@ def _memory_scorecard(
         active_count=active_count,
         proposal_count=proposal_count,
         feedback_phrase_count=feedback_phrase_count,
+        feedback_lesson_count=feedback_lesson_count,
         kinds_present=kinds_present,
         missing_core_kinds=missing,
         readiness=readiness,

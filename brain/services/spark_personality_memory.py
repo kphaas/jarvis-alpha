@@ -314,6 +314,21 @@ def build_personality_memory_proposals(
             evidence_ref_hash=evidence_hash,
             existing=existing,
         )
+    for kind, content, evidence_hash in _feedback_calibration_lessons(
+        principal_id=principal,
+        feedback_root=feedback_root,
+    ):
+        _append_proposal(
+            proposals,
+            principal_id=principal,
+            kind=kind,
+            content=content,
+            source="spark_feedback",
+            reason="human-edited Spark draft calibration",
+            confidence=0.72,
+            evidence_ref_hash=evidence_hash,
+            existing=existing,
+        )
 
     rejected = _rejected_proposal_ids(
         principal_id=principal,
@@ -343,7 +358,14 @@ def collect_spark_personality_memory_status(
         "status": "ok",
         "proposal_count": len(proposals),
         "feedback_phrase_count": sum(
-            1 for proposal in proposals if proposal.source == "spark_feedback"
+            1
+            for proposal in proposals
+            if proposal.source == "spark_feedback" and proposal.kind == "phrase"
+        ),
+        "feedback_lesson_count": sum(
+            1
+            for proposal in proposals
+            if proposal.source == "spark_feedback" and proposal.kind != "phrase"
         ),
         "active_count": len(existing_rows or []),
     }
@@ -458,12 +480,65 @@ def _candidate_key_phrases(
     principal_id: str,
     feedback_root: str | Path | None,
 ) -> list[tuple[str, str]]:
-    path = _feedback_file_path(principal_id=principal_id, feedback_root=feedback_root)
     phrases: list[tuple[str, str]] = []
+    for row, _line, feedback_hash in _feedback_rows(
+        principal_id=principal_id,
+        feedback_root=feedback_root,
+    ):
+        for phrase in row.get("candidate_key_phrases") or []:
+            clean = _safe_content(str(phrase))
+            if clean:
+                phrases.append((clean, feedback_hash))
+    return phrases
+
+
+def _feedback_calibration_lessons(
+    *,
+    principal_id: str,
+    feedback_root: str | Path | None,
+) -> list[tuple[PersonalityMemoryKind, str, str]]:
+    lessons: list[tuple[PersonalityMemoryKind, str, str]] = []
+    for row, _line, feedback_hash in _feedback_rows(
+        principal_id=principal_id,
+        feedback_root=feedback_root,
+    ):
+        raw_lessons = row.get("calibration_lessons") or _legacy_calibration_lessons(row)
+        for raw_lesson in raw_lessons:
+            clean = _safe_content(str(raw_lesson))
+            if not clean:
+                continue
+            kind = "avoid" if clean.casefold().startswith("avoid ") else "style"
+            lessons.append((kind, clean, feedback_hash))
+    return lessons
+
+
+def _legacy_calibration_lessons(row: dict[str, object]) -> tuple[str, ...]:
+    original = _safe_content(str(row.get("original_draft_text") or ""))
+    edited = _safe_content(str(row.get("edited_draft_text") or ""))
+    if not original or not edited or original == edited:
+        return ()
+    lessons: list[str] = []
+    if len(edited.split()) <= max(6, int(len(original.split()) * 0.75)):
+        lessons.append("Prefer shorter text drafts when Spark over-explains.")
+    if (
+        "please let me know" in original.casefold()
+        and "please let me know" not in edited.casefold()
+    ):
+        lessons.append("Avoid formal email-style phrasing in text replies.")
+    return tuple(lessons)
+
+
+def _feedback_rows(
+    *,
+    principal_id: str,
+    feedback_root: str | Path | None,
+) -> list[tuple[dict[str, object], str, str]]:
+    path = _feedback_file_path(principal_id=principal_id, feedback_root=feedback_root)
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
         return []
+    rows: list[tuple[dict[str, object], str, str]] = []
     for line in lines:
         if not line.strip():
             continue
@@ -471,14 +546,13 @@ def _candidate_key_phrases(
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not isinstance(row, dict):
+            continue
         feedback_hash = str(row.get("feedback_ref_hash") or "")
         if not re.fullmatch(r"[a-f0-9]{64}", feedback_hash):
             feedback_hash = hashlib.sha256(line.encode("utf-8")).hexdigest()
-        for phrase in row.get("candidate_key_phrases") or []:
-            clean = _safe_content(str(phrase))
-            if clean:
-                phrases.append((clean, feedback_hash))
-    return phrases
+        rows.append((row, line, feedback_hash))
+    return rows
 
 
 def _feedback_file_path(

@@ -177,6 +177,7 @@ class SparkIMessageDraftApprovalOut(SparkIMessageDraftOut):
     voice_feedback_recorded: bool = False
     voice_feedback_ref_hash: str | None = None
     candidate_key_phrases: list[str] = Field(default_factory=list)
+    calibration_lessons: list[str] = Field(default_factory=list)
 
 
 class SparkIMessageDraftFeedbackRequest(BaseModel):
@@ -388,6 +389,7 @@ def _log_approval_success(
             "voice_feedback_recorded": feedback.recorded,
             "voice_feedback_ref_hash": feedback.feedback_ref_hash or "",
             "candidate_key_phrase_count": len(feedback.candidate_key_phrases),
+            "calibration_lesson_count": len(feedback.calibration_lessons),
             "context_messages_read": payload["context_messages_read"],
             "principal_sent_messages": payload["principal_sent_messages"],
             "runtime_context_messages": payload["runtime_context_messages"],
@@ -719,6 +721,7 @@ async def spark_imessage_draft_approval_request(
         voice_feedback_recorded=feedback.recorded,
         voice_feedback_ref_hash=feedback.feedback_ref_hash,
         candidate_key_phrases=list(feedback.candidate_key_phrases),
+        calibration_lessons=list(feedback.calibration_lessons),
     )
 
 

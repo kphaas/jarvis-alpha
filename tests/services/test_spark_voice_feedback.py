@@ -15,6 +15,7 @@ from brain.services.spark_imessage_drafts import (
     apply_draft_text_override,
 )
 from brain.services.spark_voice_feedback import (
+    extract_calibration_lessons,
     extract_candidate_key_phrases,
     record_spark_draft_edit_feedback,
     record_spark_draft_quality_feedback,
@@ -40,6 +41,10 @@ def test_draft_edit_feedback_records_only_drafts_and_safe_context_hashes(
     assert result.recorded is True
     assert result.feedback_ref_hash
     assert "Let's make this one count first" in result.candidate_key_phrases
+    assert result.calibration_lessons == (
+        "Prefer shorter text drafts when Spark over-explains.",
+        "Prefer natural contractions when they fit the conversation.",
+    )
 
     feedback_path = (
         tmp_path
@@ -61,6 +66,10 @@ def test_draft_edit_feedback_records_only_drafts_and_safe_context_hashes(
     )
     assert row["edited_draft_text"] == "Perfect. Let's make this one count first."
     assert row["edited_draft_engine"] == "human_override"
+    assert row["calibration_lessons"] == [
+        "Prefer shorter text drafts when Spark over-explains.",
+        "Prefer natural contractions when they fit the conversation.",
+    ]
     assert row["context_fingerprint"] == {
         "approval_ref_hash": "approval-hash",
         "source_reference_hash": "source-hash",
@@ -130,6 +139,23 @@ def test_candidate_key_phrases_are_short_review_seeds() -> None:
     assert extract_candidate_key_phrases(
         "Fair enough. Let's make this one count first. Got it."
     ) == ("Fair enough", "Let's make this one count first")
+
+
+def test_calibration_lessons_capture_reviewable_edit_patterns() -> None:
+    lessons = extract_calibration_lessons(
+        original_text=(
+            "Thank you for reaching out. Please let me know if you need anything "
+            "else from me on this."
+        ),
+        edited_text="Got it, I'm on it.",
+    )
+
+    assert lessons == (
+        "Prefer shorter text drafts when Spark over-explains.",
+        "Avoid formal email-style phrasing in text replies.",
+        "Prefer natural contractions when they fit the conversation.",
+        "Lead with a quick acknowledgement before the next action.",
+    )
 
 
 def _proposal(draft_text: str) -> SparkDraftProposal:
