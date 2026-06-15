@@ -22,6 +22,7 @@ from brain.services.spark_imessage_drafts import (
     SparkDraftProposal,
     apply_draft_text_override,
     create_imessage_draft_proposal,
+    personality_memory_prompt_items,
 )
 from brain.services.spark_draft_approvals import enqueue_spark_draft_approval
 from brain.services.spark_personality_memory import fetch_personality_memory
@@ -48,6 +49,9 @@ class SparkIMessageDraftRequest(BaseModel):
     approval_id: str | None = Field(default=None, min_length=1, max_length=160)
     reply_goal: str | None = Field(default=None, max_length=1000)
     max_context_messages: int = Field(default=20, ge=1, le=50)
+    include_context_preview: bool = False
+    context_preview_limit: int = Field(default=10, ge=1, le=10)
+    include_memory_preview: bool = False
 
 
 class SparkIMessageDraftApprovalRequest(SparkIMessageDraftRequest):
@@ -72,6 +76,27 @@ class SparkIMessageDraftOut(BaseModel):
     detected_sensitivity: list[str]
     blocked_sensitivity: list[str]
     draft_engine: str
+    context_preview: list["SparkIMessageDraftContextMessageOut"] = Field(
+        default_factory=list
+    )
+    personality_memory_preview: list["SparkIMessageDraftMemoryDebugOut"] = Field(
+        default_factory=list
+    )
+
+
+class SparkIMessageDraftContextMessageOut(BaseModel):
+    index: int
+    speaker: str
+    is_from_me: bool
+    message_ref_hash: str
+    body_text: str
+
+
+class SparkIMessageDraftMemoryDebugOut(BaseModel):
+    kind: str
+    content: str
+    source: str
+    evidence_ref_hash: str | None = None
 
 
 class SparkIMessageDraftApprovalOut(SparkIMessageDraftOut):
@@ -187,6 +212,29 @@ def _log_success(request: Request, proposal: SparkDraftProposal) -> None:
             "blocked_sensitivity_count": len(payload["blocked_sensitivity"]),
             **_safe_actor_fields(request),
         },
+    )
+
+
+def _proposal_payload(
+    proposal: SparkDraftProposal,
+    request_payload: SparkIMessageDraftRequest,
+    personality_memory_rows: list[dict[str, object]],
+) -> dict[str, object]:
+    memory_preview: list[dict[str, object]] = []
+    if request_payload.include_memory_preview:
+        memory_preview = [
+            {
+                "kind": item.kind,
+                "content": item.content,
+                "source": item.source,
+                "evidence_ref_hash": item.evidence_ref_hash,
+            }
+            for item in personality_memory_prompt_items(personality_memory_rows)
+        ]
+    return proposal.to_payload(
+        include_context_preview=request_payload.include_context_preview,
+        context_preview_limit=request_payload.context_preview_limit,
+        personality_memory_preview=memory_preview,
     )
 
 
@@ -333,7 +381,9 @@ async def spark_imessage_draft(
         _log_failure(request, exc=exc, status_code=route_error.status_code)
         raise route_error from exc
     _log_success(request, proposal)
-    return SparkIMessageDraftOut(**proposal.to_payload())
+    return SparkIMessageDraftOut(
+        **_proposal_payload(proposal, payload, personality_memory_rows)
+    )
 
 
 @router.post("/imessage/approval-request", response_model=SparkIMessageDraftApprovalOut)
@@ -386,7 +436,7 @@ async def spark_imessage_draft_approval_request(
         raise route_error from exc
     _log_approval_success(request, proposal, queue_id=str(queue_id), feedback=feedback)
     return SparkIMessageDraftApprovalOut(
-        **proposal.to_payload(),
+        **_proposal_payload(proposal, payload, personality_memory_rows),
         queue_id=str(queue_id),
         approval_status="pending",
         voice_feedback_recorded=feedback.recorded,

@@ -1,10 +1,12 @@
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
+  Brain,
   CheckCircle2,
   Copy,
   GitCompareArrows,
   LoaderCircle,
+  MessagesSquare,
   MessageSquareText,
   RefreshCw,
   ShieldCheck,
@@ -113,6 +115,10 @@ function MetricRow({
   );
 }
 
+function labelize(value: string) {
+  return value.replace(/_/g, " ");
+}
+
 function DraftMetadata({
   draft,
   muted,
@@ -162,6 +168,185 @@ function DraftMetadata({
         muted={muted}
       />
     </div>
+  );
+}
+
+function ThreadContextPanel({
+  draft,
+  border,
+  panel,
+  muted,
+  okClass,
+  warnClass,
+}: {
+  draft: SparkIMessageDraftResponse | null;
+  border: string;
+  panel: string;
+  muted: string;
+  okClass: string;
+  warnClass: string;
+}) {
+  const context = draft?.context_preview ?? [];
+
+  return (
+    <section className={`rounded-xl border ${border} ${panel} p-5`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <MessagesSquare className="h-4 w-4 text-emerald-400" />
+          <h2
+            className={`text-xs font-mono uppercase tracking-widest ${muted}`}
+          >
+            Thread context
+          </h2>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <StatusChip label="runtime only" className={okClass} />
+          <StatusChip label="newest first" className={warnClass} />
+        </div>
+      </div>
+
+      {context.length ? (
+        <div className="mt-4 space-y-3">
+          {context.map((message) => (
+            <div
+              key={`${message.message_ref_hash}-${message.index}`}
+              className={`rounded-lg border p-3 ${border}`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span
+                  className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${
+                    message.is_from_me ? okClass : warnClass
+                  }`}
+                >
+                  {message.speaker}
+                </span>
+                <span className={`text-[10px] font-mono uppercase ${muted}`}>
+                  {shortHash(message.message_ref_hash)}
+                </span>
+              </div>
+              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed">
+                {message.body_text}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div
+          className={`mt-4 flex min-h-28 items-center justify-center rounded-lg border ${border}`}
+        >
+          <span className={`text-sm ${muted}`}>
+            Generate a draft to view the last thread messages
+          </span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DraftMemoryDebugPanel({
+  draft,
+  approval,
+  border,
+  panel,
+  muted,
+  okClass,
+  warnClass,
+}: {
+  draft: SparkIMessageDraftResponse | null;
+  approval: ReturnType<typeof useSparkDraftReview>["approval"];
+  border: string;
+  panel: string;
+  muted: string;
+  okClass: string;
+  warnClass: string;
+}) {
+  const memory = draft?.personality_memory_preview ?? [];
+  const phrases = approval?.candidate_key_phrases ?? [];
+
+  return (
+    <section className={`rounded-xl border ${border} ${panel} p-5`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Brain className="h-4 w-4 text-emerald-400" />
+          <h2
+            className={`text-xs font-mono uppercase tracking-widest ${muted}`}
+          >
+            Draft memory debug
+          </h2>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <StatusChip label={`${memory.length} used`} className={okClass} />
+          <StatusChip label="silent in draft" className={warnClass} />
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <div className="space-y-3">
+          <span
+            className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+          >
+            Reviewed memory used
+          </span>
+          {memory.length ? (
+            memory.map((item, index) => (
+              <div
+                key={`${item.kind}-${item.evidence_ref_hash ?? index}`}
+                className={`rounded-lg border p-3 ${border}`}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${okClass}`}
+                  >
+                    {labelize(item.kind)}
+                  </span>
+                  <span className={`text-[10px] font-mono uppercase ${muted}`}>
+                    {labelize(item.source)}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm leading-relaxed">{item.content}</p>
+              </div>
+            ))
+          ) : (
+            <div className={`rounded-lg border p-4 text-sm ${border} ${muted}`}>
+              No reviewed memory attached to this draft yet
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-3">
+          <span
+            className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+          >
+            Edit learning
+          </span>
+          {approval?.voice_feedback_recorded ? (
+            <div className={`rounded-lg border p-3 ${border}`}>
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                Spark captured this edit for review
+              </div>
+              {phrases.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {phrases.map((phrase) => (
+                    <span
+                      key={phrase}
+                      className={`rounded-md border px-2 py-1 text-xs ${warnClass}`}
+                    >
+                      {phrase}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className={`rounded-lg border p-4 text-sm ${border} ${muted}`}>
+              Edit the draft, submit for approval, and Spark will turn useful
+              changes into reviewed memory proposals
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -526,6 +711,26 @@ export default function Spark() {
           </div>
         </section>
       )}
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <ThreadContextPanel
+          draft={state.draft}
+          border={border}
+          panel={panel}
+          muted={muted}
+          okClass={okClass}
+          warnClass={warnClass}
+        />
+        <DraftMemoryDebugPanel
+          draft={state.draft}
+          approval={state.approval}
+          border={border}
+          panel={panel}
+          muted={muted}
+          okClass={okClass}
+          warnClass={warnClass}
+        />
+      </div>
 
       <SparkGuardrailsPanel
         border={border}
