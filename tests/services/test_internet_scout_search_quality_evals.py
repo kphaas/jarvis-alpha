@@ -49,6 +49,20 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
     assert official.details["automatic_memory_write_allowed"] is False
     assert official.details["memory_promotion_review_required"] is True
 
+    responses_docs = results["openai_responses_docs_url_prefers_source_url"]
+    responses_answer_context = str(responses_docs.details["answer_context"])
+    assert responses_docs.details["status"] == "supported"
+    assert responses_docs.details["accepted_hosts"] == ["platform.openai.com"]
+    assert responses_docs.details["official_source_count"] == 1
+    assert "Answer target: source URL" in responses_answer_context
+    assert (
+        "Preferred answer URL: https://platform.openai.com/docs/api-reference/responses [1]"
+        in responses_answer_context
+    )
+    assert responses_answer_context.index(
+        "https://platform.openai.com/docs/api-reference/responses"
+    ) < responses_answer_context.index("https://api.openai.com/v1/responses/resp_123")
+
     unsupported = results["unsupported_official_pricing_claim_fails_closed"]
     assert unsupported.details["status"] == "insufficient"
     assert unsupported.details["unsupported_claim_count"] == 1
