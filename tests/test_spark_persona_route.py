@@ -42,6 +42,7 @@ def test_spark_persona_routes_are_classified_t2_security_state() -> None:
     auto_context_classes = classify_route("GET", "/v1/spark/persona/auto-context")
     memory_read_classes = classify_route("GET", "/v1/spark/persona/memory")
     write_classes = classify_route("PUT", "/v1/spark/persona/guardrails")
+    memory_propose_classes = classify_route("POST", "/v1/spark/persona/memory/propose")
     memory_write_classes = classify_route("POST", "/v1/spark/persona/memory/approve")
     memory_archive_classes = classify_route("POST", "/v1/spark/persona/memory/archive")
     memory_reject_classes = classify_route("POST", "/v1/spark/persona/memory/reject")
@@ -50,6 +51,7 @@ def test_spark_persona_routes_are_classified_t2_security_state() -> None:
     assert auto_context_classes == ["read", "security_read"]
     assert memory_read_classes == ["read", "security_read"]
     assert write_classes == ["write", "security_write"]
+    assert memory_propose_classes == ["write", "security_write"]
     assert memory_write_classes == ["write", "security_write"]
     assert memory_archive_classes == ["write", "security_write"]
     assert memory_reject_classes == ["write", "security_write"]
@@ -57,6 +59,7 @@ def test_spark_persona_routes_are_classified_t2_security_state() -> None:
     assert determine_risk_tier(auto_context_classes) == "T2"
     assert determine_risk_tier(memory_read_classes) == "T2"
     assert determine_risk_tier(write_classes) == "T2"
+    assert determine_risk_tier(memory_propose_classes) == "T2"
     assert determine_risk_tier(memory_write_classes) == "T2"
     assert determine_risk_tier(memory_archive_classes) == "T2"
     assert determine_risk_tier(memory_reject_classes) == "T2"
@@ -271,6 +274,50 @@ async def test_spark_memory_approval_requires_admin() -> None:
         )
 
     assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_spark_memory_propose_requires_admin() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await spark_persona.propose_spark_personality_memory(
+            _request(scopes=["spark.draft"]),
+            spark_persona.SparkPersonalityMemoryProposeRequest(
+                principal_id="ken",
+                note="Remember that I prefer short bullets.",
+            ),
+            "user",
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_spark_memory_propose_returns_buddy_proposal_without_logging_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    monkeypatch.setattr(spark_persona, "logger", fake_logger)
+
+    response = await spark_persona.propose_spark_personality_memory(
+        _request(role="admin"),
+        spark_persona.SparkPersonalityMemoryProposeRequest(
+            principal_id="ken",
+            note="Remember that I prefer short bullets when timing matters.",
+        ),
+        "user",
+    )
+
+    assert response.status == "proposed"
+    assert response.proposal is not None
+    assert response.proposal.principal_id == "ken"
+    assert response.proposal.kind == "style"
+    assert response.proposal.source == "buddy_proposal"
+    assert response.proposal.evidence_ref_hash
+    logs = json.dumps(fake_logger.infos)
+    assert "short bullets" not in logs
+    assert "timing matters" not in logs
+    assert "draft_text" not in logs
+    assert "private inbound body" not in logs
 
 
 @pytest.mark.asyncio
