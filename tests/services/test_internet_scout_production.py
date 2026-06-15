@@ -301,9 +301,12 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
     }
     assert response.checks["quality_canary"].ok is True
     assert response.checks["quality_canary"].status == "ok"
-    assert response.checks["recent_evidence"].metadata["quality_canary_history"][
-        0
-    ]["passed"] == 33
+    assert (
+        response.checks["recent_evidence"].metadata["quality_canary_history"][0][
+            "passed"
+        ]
+        == 33
+    )
     assert response.retention.mode == "report_only"
 
 

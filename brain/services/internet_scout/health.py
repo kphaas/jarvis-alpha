@@ -151,7 +151,9 @@ def _browser_runtime_check() -> InternetScoutHealthCheck:
     )
 
 
-async def _recent_evidence_check(conn, *, checked_at: datetime) -> InternetScoutHealthCheck:
+async def _recent_evidence_check(
+    conn, *, checked_at: datetime
+) -> InternetScoutHealthCheck:
     if not await _table_exists(conn, "alpha_internet_requests"):
         return InternetScoutHealthCheck(
             ok=False,
