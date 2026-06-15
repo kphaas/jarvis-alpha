@@ -72,6 +72,10 @@ def _stub_personality_memory(
 
 
 def test_spark_imessage_draft_route_is_classified_t2_write() -> None:
+    target_classes = classify_route("GET", "/v1/spark/drafts/imessage/targets")
+    assert target_classes == ["read", "security_read"]
+    assert determine_risk_tier(target_classes) == "T2"
+
     classes = classify_route("POST", "/v1/spark/drafts/imessage")
 
     assert classes == ["write", "security_write"]

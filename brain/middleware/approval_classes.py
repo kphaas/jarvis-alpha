@@ -250,6 +250,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/spark/persona/memory/archive": ["write", "security_write"],
     "POST /v1/spark/persona/memory/reject": ["write", "security_write"],
     # --- Spark drafts — local draft proposal, no external send ---
+    "GET /v1/spark/drafts/imessage/targets": ["read", "security_read"],
     "POST /v1/spark/drafts/imessage": ["write", "security_write"],
     "POST /v1/spark/drafts/imessage/approval-request": [
         "write",
