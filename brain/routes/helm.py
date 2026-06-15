@@ -180,6 +180,14 @@ class HelmBeaconQualityCanaryAlert(BaseModel):
     severity: str = "warning"
 
 
+class HelmBeaconQualityCanaryGroupSummary(BaseModel):
+    case_count: int = 0
+    passed: int = 0
+    failed: int = 0
+    failure_names: list[str] = Field(default_factory=list)
+    case_names: list[str] = Field(default_factory=list)
+
+
 class HelmBeaconQualityCanaryHistoryItem(BaseModel):
     status: str = "unknown"
     suite: str = "beacon_search_quality"
@@ -188,6 +196,9 @@ class HelmBeaconQualityCanaryHistoryItem(BaseModel):
     passed: int = 0
     failed: int = 0
     failure_names: list[str] = Field(default_factory=list)
+    case_groups: dict[str, HelmBeaconQualityCanaryGroupSummary] = Field(
+        default_factory=dict
+    )
     request_id: str | None = None
     last_run_at: str | None = None
     age_hours: int = 0
@@ -346,6 +357,32 @@ def _metadata_mapping_list(
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, Mapping)]
+
+
+def _metadata_quality_canary_groups(
+    metadata: Mapping[str, object],
+    key: str,
+) -> dict[str, HelmBeaconQualityCanaryGroupSummary]:
+    value = _metadata_value(metadata, key)
+    if not isinstance(value, Mapping):
+        return {}
+
+    groups: dict[str, HelmBeaconQualityCanaryGroupSummary] = {}
+    for raw_name, raw_group in sorted(value.items()):
+        group = _mapping_value(raw_group)
+        if not group:
+            continue
+        name = str(raw_name)
+        if not name:
+            continue
+        groups[name] = HelmBeaconQualityCanaryGroupSummary(
+            case_count=_metadata_int(group, "case_count"),
+            passed=_metadata_int(group, "passed"),
+            failed=_metadata_int(group, "failed"),
+            failure_names=_metadata_str_list(group, "failure_names"),
+            case_names=_metadata_str_list(group, "case_names"),
+        )
+    return groups
 
 
 def _risk_rank(tier: str) -> int:
@@ -523,6 +560,7 @@ def _beacon_quality_canary(
         passed=_metadata_int(quality_canary, "passed"),
         failed=_metadata_int(quality_canary, "failed"),
         failure_names=_metadata_str_list(quality_canary, "failure_names"),
+        case_groups=_metadata_quality_canary_groups(quality_canary, "case_groups"),
         request_id=_metadata_str(quality_canary, "request_id"),
         last_run_at=_metadata_str(quality_canary, "last_run_at"),
         age_hours=_metadata_int(quality_canary, "age_hours"),
@@ -549,6 +587,7 @@ def _beacon_quality_canary_history_item(
         passed=_metadata_int(metadata, "passed"),
         failed=_metadata_int(metadata, "failed"),
         failure_names=_metadata_str_list(metadata, "failure_names"),
+        case_groups=_metadata_quality_canary_groups(metadata, "case_groups"),
         request_id=_metadata_str(metadata, "request_id"),
         last_run_at=_metadata_str(metadata, "last_run_at"),
         age_hours=_metadata_int(metadata, "age_hours"),

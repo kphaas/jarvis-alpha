@@ -113,6 +113,25 @@ class FakeHelmActionConn:
         ]
 
 
+def _quality_canary_case_groups() -> dict[str, object]:
+    return {
+        "core": {
+            "case_count": 30,
+            "passed": 30,
+            "failed": 0,
+            "failure_names": [],
+            "case_names": [],
+        },
+        "daily_use": {
+            "case_count": 4,
+            "passed": 4,
+            "failed": 0,
+            "failure_names": [],
+            "case_names": [],
+        },
+    }
+
+
 def _fake_beacon_summary() -> helm.HelmBeaconSummary:
     return helm.HelmBeaconSummary(
         status="ok",
@@ -181,10 +200,11 @@ def _fake_beacon_summary() -> helm.HelmBeaconSummary:
         quality_canary=helm.HelmBeaconQualityCanarySummary(
             status="passed",
             suite_version=2,
-            case_count=33,
-            passed=33,
+            case_count=34,
+            passed=34,
             failed=0,
             request_id="request-canary",
+            case_groups=_quality_canary_case_groups(),
             last_run_at=datetime(2026, 6, 12, 19, 0, tzinfo=UTC).isoformat(),
             age_hours=0,
             stale_after_hours=26,
@@ -266,7 +286,14 @@ async def test_helm_summary_returns_redacted_counts(monkeypatch) -> None:
         "accepted_matching_mode": 2,
         "accepted_after_confirmation": 2,
     }
-    assert payload["beacon"]["quality_canary"]["case_count"] == 33
+    assert payload["beacon"]["quality_canary"]["case_count"] == 34
+    assert payload["beacon"]["quality_canary"]["case_groups"]["daily_use"] == {
+        "case_count": 4,
+        "passed": 4,
+        "failed": 0,
+        "failure_names": [],
+        "case_names": [],
+    }
     assert payload["beacon"]["quality_canary"]["failed"] == 0
     assert payload["beacon"]["raw_web_content_is_untrusted"] is True
     assert "description" not in str(payload)
@@ -360,10 +387,11 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
                             "status": "passed",
                             "suite": "beacon_search_quality",
                             "suite_version": 2,
-                            "case_count": 33,
-                            "passed": 33,
+                            "case_count": 34,
+                            "passed": 34,
                             "failed": 0,
                             "failure_names": [],
+                            "case_groups": _quality_canary_case_groups(),
                             "last_run_at": checked_at.isoformat(),
                             "age_hours": 0,
                             "stale_after_hours": 26,
@@ -379,10 +407,11 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
                                 "status": "passed",
                                 "suite": "beacon_search_quality",
                                 "suite_version": 2,
-                                "case_count": 33,
-                                "passed": 33,
+                                "case_count": 34,
+                                "passed": 34,
                                 "failed": 0,
                                 "failure_names": [],
+                                "case_groups": _quality_canary_case_groups(),
                                 "last_run_at": checked_at.isoformat(),
                                 "age_hours": 0,
                             }
@@ -437,10 +466,11 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
         "status": "passed",
         "suite": "beacon_search_quality",
         "suite_version": 2,
-        "case_count": 33,
-        "passed": 33,
+        "case_count": 34,
+        "passed": 34,
         "failed": 0,
         "failure_names": [],
+        "case_groups": _quality_canary_case_groups(),
         "request_id": "request-canary",
         "last_run_at": checked_at.isoformat(),
         "age_hours": 0,
@@ -455,10 +485,11 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
                 "status": "passed",
                 "suite": "beacon_search_quality",
                 "suite_version": 2,
-                "case_count": 33,
-                "passed": 33,
+                "case_count": 34,
+                "passed": 34,
                 "failed": 0,
                 "failure_names": [],
+                "case_groups": _quality_canary_case_groups(),
                 "request_id": "request-canary",
                 "last_run_at": checked_at.isoformat(),
                 "age_hours": 0,
