@@ -241,3 +241,4 @@ def test_extended_canary_cases_stay_out_of_default_suite() -> None:
 
     assert default_names.isdisjoint(extended_names)
     assert any(case.min_independent_source_count > 0 for case in EXTENDED_CANARY_CASES)
+    assert "multi_source_non_ai_serverless_comparison" in extended_names

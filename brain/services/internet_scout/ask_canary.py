@@ -88,6 +88,24 @@ EXTENDED_CANARY_CASES: tuple[AskCanaryCase, ...] = (
         min_planned_query_count=2,
         min_independent_source_count=2,
     ),
+    AskCanaryCase(
+        name="multi_source_non_ai_serverless_comparison",
+        prompt=(
+            "Compare Cloudflare Workers and AWS Lambda for serverless functions. "
+            "Cite independent sources."
+        ),
+        expected_host="developers.cloudflare.com",
+        expected_any_hosts=(
+            "developers.cloudflare.com",
+            "cloudflare.com",
+            "docs.aws.amazon.com",
+            "aws.amazon.com",
+        ),
+        forbidden_hosts=("wikipedia.org", "reddit.com"),
+        min_accepted_citations=2,
+        min_planned_query_count=2,
+        min_independent_source_count=2,
+    ),
 )
 
 

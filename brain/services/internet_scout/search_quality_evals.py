@@ -26,6 +26,7 @@ class SearchQualityEvalCase:
     sources: tuple[SourceReference, ...]
     claims: tuple[EvidenceClaim, ...]
     expected_status: SourceQualityStatus
+    eval_group: str = "core"
     min_accepted_citations: int = 0
     min_rejected_citations: int = 0
     min_official_sources: int = 0
@@ -40,6 +41,7 @@ class SearchQualityEvalCase:
 @dataclass(frozen=True)
 class SearchQualityEvalResult:
     name: str
+    eval_group: str
     passed: bool
     details: dict[str, object]
     failures: tuple[str, ...] = ()
@@ -96,8 +98,10 @@ def _run_case(case: SearchQualityEvalCase) -> SearchQualityEvalResult:
 
     return SearchQualityEvalResult(
         name=case.name,
+        eval_group=case.eval_group,
         passed=not failures,
         details={
+            "eval_group": case.eval_group,
             "status": summary.status,
             "accepted_citation_count": summary.accepted_citation_count,
             "rejected_citation_count": summary.rejected_citation_count,
@@ -189,6 +193,11 @@ def _eval_cases() -> tuple[SearchQualityEvalCase, ...]:
         "developers.cloudflare.com",
         "/workers/runtime-apis/",
         "Cloudflare Workers docs",
+    )
+    aws_lambda_docs = _fixture_source(
+        "docs.aws.amazon.com",
+        "/lambda/latest/dg/welcome.html",
+        "AWS Lambda documentation",
     )
     aws_security = _fixture_source(
         "aws.amazon.com",
@@ -290,6 +299,7 @@ def _eval_cases() -> tuple[SearchQualityEvalCase, ...]:
                 ),
             ),
             expected_status="supported",
+            eval_group="daily_use",
             min_accepted_citations=1,
             min_rejected_citations=1,
             min_official_sources=1,
@@ -343,6 +353,7 @@ def _eval_cases() -> tuple[SearchQualityEvalCase, ...]:
                 ),
             ),
             expected_status="supported",
+            eval_group="daily_use",
             min_accepted_citations=1,
             min_official_sources=1,
             expected_accepted_hosts=("docs.github.com",),
@@ -374,8 +385,46 @@ def _eval_cases() -> tuple[SearchQualityEvalCase, ...]:
                 ),
             ),
             expected_status="supported",
+            eval_group="daily_use",
             min_accepted_citations=2,
             expected_accepted_hosts=("brave.com", "perplexity.ai"),
+            expected_plan_purposes=("baseline", "comparison", "cross_check"),
+            expected_source_types=("general_web", "trusted_secondary"),
+            min_subquestions=3,
+        ),
+        SearchQualityEvalCase(
+            name="non_ai_serverless_comparison_requires_independent_sources",
+            request=InternetScoutRequest(
+                query=(
+                    "Compare Cloudflare Workers and AWS Lambda for serverless "
+                    "functions. Cite independent sources."
+                ),
+                tool_hint=InternetTool.SEARCH,
+                max_pages=4,
+                requester="alpha_chat.deep_research",
+            ),
+            sources=(cloudflare_docs, aws_lambda_docs),
+            claims=(
+                EvidenceClaim(
+                    claim="Cloudflare Workers runs serverless functions.",
+                    source_url=cloudflare_docs.url,
+                    citation_text="Cloudflare Workers runs serverless functions.",
+                    confidence="medium",
+                ),
+                EvidenceClaim(
+                    claim="AWS Lambda runs serverless functions.",
+                    source_url=aws_lambda_docs.url,
+                    citation_text="AWS Lambda runs serverless functions.",
+                    confidence="medium",
+                ),
+            ),
+            expected_status="supported",
+            eval_group="daily_use",
+            min_accepted_citations=2,
+            expected_accepted_hosts=(
+                "developers.cloudflare.com",
+                "docs.aws.amazon.com",
+            ),
             expected_plan_purposes=("baseline", "comparison", "cross_check"),
             expected_source_types=("general_web", "trusted_secondary"),
             min_subquestions=3,
