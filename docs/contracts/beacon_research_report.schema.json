@@ -24,6 +24,13 @@
           "title": "Min Accepted Citations",
           "type": "integer"
         },
+        "min_source_hosts": {
+          "default": 1,
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Min Source Hosts",
+          "type": "integer"
+        },
         "require_cross_check": {
           "default": false,
           "title": "Require Cross Check",
@@ -143,6 +150,21 @@
       "title": "Cited Source Count",
       "type": "integer"
     },
+    "contradiction_count": {
+      "default": 0,
+      "maximum": 20,
+      "minimum": 0,
+      "title": "Contradiction Count",
+      "type": "integer"
+    },
+    "contradictions": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Contradictions",
+      "type": "array"
+    },
     "coverage_warnings": {
       "items": {
         "type": "string"
@@ -169,6 +191,13 @@
       "maxItems": 8,
       "title": "Expected Source Types",
       "type": "array"
+    },
+    "independent_source_count": {
+      "default": 0,
+      "maximum": 25,
+      "minimum": 0,
+      "title": "Independent Source Count",
+      "type": "integer"
     },
     "key_findings": {
       "items": {
@@ -205,6 +234,13 @@
       "default": null,
       "title": "Plan Id"
     },
+    "planned_query_count": {
+      "default": 0,
+      "maximum": 6,
+      "minimum": 0,
+      "title": "Planned Query Count",
+      "type": "integer"
+    },
     "rejected_citation_count": {
       "default": 0,
       "maximum": 100,
@@ -237,6 +273,13 @@
       ],
       "title": "Research Intent",
       "type": "string"
+    },
+    "source_diversity_score": {
+      "default": 0,
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Source Diversity Score",
+      "type": "integer"
     },
     "source_hosts": {
       "items": {

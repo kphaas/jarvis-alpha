@@ -174,7 +174,13 @@ class HelmBeaconApprovalSummary(BaseModel):
     next_expires_at: str | None = None
 
 
-class HelmBeaconQualityCanarySummary(BaseModel):
+class HelmBeaconQualityCanaryAlert(BaseModel):
+    status: str = "missing"
+    reason: str = "quality_canary_missing"
+    severity: str = "warning"
+
+
+class HelmBeaconQualityCanaryHistoryItem(BaseModel):
     status: str = "unknown"
     suite: str = "beacon_search_quality"
     suite_version: int = 0
@@ -184,6 +190,15 @@ class HelmBeaconQualityCanarySummary(BaseModel):
     failure_names: list[str] = Field(default_factory=list)
     request_id: str | None = None
     last_run_at: str | None = None
+    age_hours: int = 0
+
+
+class HelmBeaconQualityCanarySummary(HelmBeaconQualityCanaryHistoryItem):
+    stale_after_hours: int = 0
+    alert: HelmBeaconQualityCanaryAlert = Field(
+        default_factory=HelmBeaconQualityCanaryAlert
+    )
+    history: list[HelmBeaconQualityCanaryHistoryItem] = Field(default_factory=list)
 
 
 class HelmBeaconSummary(BaseModel):
@@ -321,6 +336,16 @@ def _metadata_str_list(metadata: Mapping[str, object], key: str) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if str(item)]
+
+
+def _metadata_mapping_list(
+    metadata: Mapping[str, object],
+    key: str,
+) -> list[Mapping[str, object]]:
+    value = _metadata_value(metadata, key)
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, Mapping)]
 
 
 def _risk_rank(tier: str) -> int:
@@ -480,6 +505,11 @@ def _beacon_quality_canary(
     quality_canary = _mapping_value(metadata.get("quality_canary"))
     if not quality_canary:
         return HelmBeaconQualityCanarySummary()
+    alert = _mapping_value(quality_canary.get("alert"))
+    history = [
+        _beacon_quality_canary_history_item(item)
+        for item in _metadata_mapping_list(metadata, "quality_canary_history")
+    ]
     return HelmBeaconQualityCanarySummary(
         status=_metadata_str(quality_canary, "status", "unknown") or "unknown",
         suite=_metadata_str(
@@ -495,6 +525,33 @@ def _beacon_quality_canary(
         failure_names=_metadata_str_list(quality_canary, "failure_names"),
         request_id=_metadata_str(quality_canary, "request_id"),
         last_run_at=_metadata_str(quality_canary, "last_run_at"),
+        age_hours=_metadata_int(quality_canary, "age_hours"),
+        stale_after_hours=_metadata_int(quality_canary, "stale_after_hours"),
+        alert=HelmBeaconQualityCanaryAlert(
+            status=_metadata_str(alert, "status", "missing") or "missing",
+            reason=_metadata_str(alert, "reason", "quality_canary_missing")
+            or "quality_canary_missing",
+            severity=_metadata_str(alert, "severity", "warning") or "warning",
+        ),
+        history=history,
+    )
+
+
+def _beacon_quality_canary_history_item(
+    metadata: Mapping[str, object],
+) -> HelmBeaconQualityCanaryHistoryItem:
+    return HelmBeaconQualityCanaryHistoryItem(
+        status=_metadata_str(metadata, "status", "unknown") or "unknown",
+        suite=_metadata_str(metadata, "suite", "beacon_search_quality")
+        or "beacon_search_quality",
+        suite_version=_metadata_int(metadata, "suite_version"),
+        case_count=_metadata_int(metadata, "case_count"),
+        passed=_metadata_int(metadata, "passed"),
+        failed=_metadata_int(metadata, "failed"),
+        failure_names=_metadata_str_list(metadata, "failure_names"),
+        request_id=_metadata_str(metadata, "request_id"),
+        last_run_at=_metadata_str(metadata, "last_run_at"),
+        age_hours=_metadata_int(metadata, "age_hours"),
     )
 
 

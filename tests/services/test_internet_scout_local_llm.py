@@ -63,6 +63,11 @@ def test_local_llm_response_wraps_evidence_as_untrusted_citations():
     assert response.research_report.rejected_citation_count == 0
     assert response.research_report.verified_claim_count == 1
     assert response.research_report.unsupported_claim_count == 0
+    assert response.research_report.independent_source_count == 1
+    assert response.research_report.source_diversity_score == 80
+    assert response.research_report.planned_query_count == 1
+    assert response.research_report.contradiction_count == 0
+    assert response.research_report.contradictions == []
     assert response.research_report.expected_source_types == ["general_web"]
     assert response.research_report.subquestion_count == 1
     assert response.research_report.verified_claims == ["Beacon source body."]
@@ -76,6 +81,8 @@ def test_local_llm_response_wraps_evidence_as_untrusted_citations():
     ]
     assert "Research Plan" in response.research_report.report_markdown
     assert "Claim Verification" in response.research_report.report_markdown
+    assert "Contradictions" in response.research_report.report_markdown
+    assert "Source Diversity" in response.research_report.report_markdown
     assert "Source Ranking" in response.research_report.report_markdown
     assert "Memory Boundary" in response.research_report.report_markdown
     assert source.content_hash in response.answer_context
@@ -271,6 +278,47 @@ def test_local_llm_rejects_claim_not_supported_by_citation_text():
     assert response.research_report.unsupported_claims == [
         "The official OpenAI API reference says the monthly price is $20."
     ]
+    assert response.research_report.contradiction_count == 0
+
+
+def test_local_llm_reports_negation_mismatch_as_contradiction():
+    request = InternetScoutRequest(query="beacon browser runtime")
+    source = build_source_reference(
+        url="https://public.example.test/browser",
+        content="The Beacon browser runtime is not available without approval.",
+    )
+    packet = build_evidence_packet(
+        request=request,
+        sources=[source],
+        claims=[
+            EvidenceClaim(
+                claim="The Beacon browser runtime is available without approval.",
+                source_url=source.url,
+                citation_text=(
+                    "The Beacon browser runtime is not available without approval."
+                ),
+            )
+        ],
+    )
+    stored = InternetScoutStoredResponse(
+        request_id=uuid4(),
+        plan=InternetScoutOrchestrator().plan(request),
+        evidence=packet,
+    )
+
+    response = build_local_llm_response(stored)
+
+    assert response.citations == []
+    assert response.quality.status == "insufficient"
+    assert response.quality.unsupported_claim_count == 1
+    assert response.research_report.contradiction_count == 1
+    assert response.research_report.contradictions == [
+        "The Beacon browser runtime is available without approval."
+    ]
+    assert "Potential contradictory claim evidence was detected." in (
+        response.research_report.coverage_warnings
+    )
+    assert "## Contradictions" in response.research_report.report_markdown
 
 
 def test_local_llm_rejects_prompt_injection_citations():

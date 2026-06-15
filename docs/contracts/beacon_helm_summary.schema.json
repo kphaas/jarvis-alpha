@@ -253,8 +253,34 @@
       "title": "HelmBeaconProviderSummary",
       "type": "object"
     },
-    "HelmBeaconQualityCanarySummary": {
+    "HelmBeaconQualityCanaryAlert": {
       "properties": {
+        "reason": {
+          "default": "quality_canary_missing",
+          "title": "Reason",
+          "type": "string"
+        },
+        "severity": {
+          "default": "warning",
+          "title": "Severity",
+          "type": "string"
+        },
+        "status": {
+          "default": "missing",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "title": "HelmBeaconQualityCanaryAlert",
+      "type": "object"
+    },
+    "HelmBeaconQualityCanaryHistoryItem": {
+      "properties": {
+        "age_hours": {
+          "default": 0,
+          "title": "Age Hours",
+          "type": "integer"
+        },
         "case_count": {
           "default": 0,
           "title": "Case Count",
@@ -300,6 +326,93 @@
           ],
           "default": null,
           "title": "Request Id"
+        },
+        "status": {
+          "default": "unknown",
+          "title": "Status",
+          "type": "string"
+        },
+        "suite": {
+          "default": "beacon_search_quality",
+          "title": "Suite",
+          "type": "string"
+        },
+        "suite_version": {
+          "default": 0,
+          "title": "Suite Version",
+          "type": "integer"
+        }
+      },
+      "title": "HelmBeaconQualityCanaryHistoryItem",
+      "type": "object"
+    },
+    "HelmBeaconQualityCanarySummary": {
+      "properties": {
+        "age_hours": {
+          "default": 0,
+          "title": "Age Hours",
+          "type": "integer"
+        },
+        "alert": {
+          "$ref": "#/$defs/HelmBeaconQualityCanaryAlert"
+        },
+        "case_count": {
+          "default": 0,
+          "title": "Case Count",
+          "type": "integer"
+        },
+        "failed": {
+          "default": 0,
+          "title": "Failed",
+          "type": "integer"
+        },
+        "failure_names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Failure Names",
+          "type": "array"
+        },
+        "history": {
+          "items": {
+            "$ref": "#/$defs/HelmBeaconQualityCanaryHistoryItem"
+          },
+          "title": "History",
+          "type": "array"
+        },
+        "last_run_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Run At"
+        },
+        "passed": {
+          "default": 0,
+          "title": "Passed",
+          "type": "integer"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "stale_after_hours": {
+          "default": 0,
+          "title": "Stale After Hours",
+          "type": "integer"
         },
         "status": {
           "default": "unknown",

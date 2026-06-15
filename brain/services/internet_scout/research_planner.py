@@ -330,8 +330,10 @@ def _stop_criteria(
 ) -> InternetScoutResearchStopCriteria:
     require_cross_check = search_count > 1 and intent != "official_docs"
     min_accepted_citations = 1 if authority_required else 2 if search_count > 1 else 1
+    min_source_hosts = 2 if require_cross_check or search_count > 1 else 1
     stop_when = [
         f"accepted_citations>={min_accepted_citations}",
+        f"source_hosts>={min_source_hosts}",
         "unsupported_claims=0",
     ]
     if authority_required:
@@ -340,6 +342,7 @@ def _stop_criteria(
         stop_when.append("cross_check_query_executed")
     return InternetScoutResearchStopCriteria(
         min_accepted_citations=min_accepted_citations,
+        min_source_hosts=min_source_hosts,
         require_official_source=authority_required,
         require_cross_check=require_cross_check,
         max_searches=max_searches,
