@@ -15,6 +15,7 @@ import {
   MessageSquareText,
   PanelTopOpen,
   RefreshCw,
+  Send,
   Shield,
   ShieldCheck,
   Sparkles,
@@ -718,6 +719,7 @@ function DraftMemoryDebugPanel({
 }) {
   const memory = draft?.personality_memory_preview ?? [];
   const phrases = approval?.candidate_key_phrases ?? [];
+  const lessons = approval?.calibration_lessons ?? [];
 
   return (
     <section className={`rounded-xl border ${border} ${panel} p-5`}>
@@ -790,6 +792,18 @@ function DraftMemoryDebugPanel({
                     >
                       {phrase}
                     </span>
+                  ))}
+                </div>
+              )}
+              {lessons.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {lessons.map((lesson) => (
+                    <div
+                      key={lesson}
+                      className={`rounded-md border px-2 py-1 text-xs ${okClass}`}
+                    >
+                      {lesson}
+                    </div>
                   ))}
                 </div>
               )}
@@ -1304,6 +1318,60 @@ export default function Spark() {
                   value={state.approval.queue_id}
                   muted={muted}
                 />
+                <MetricRow
+                  label="Outbox"
+                  value={
+                    state.approval.outbox_recorded
+                      ? (state.approval.outbox_status ?? "recorded")
+                      : "not recorded"
+                  }
+                  muted={muted}
+                />
+                {state.approval.outbox_id && (
+                  <MetricRow
+                    label="Outbox ID"
+                    value={state.approval.outbox_id}
+                    muted={muted}
+                  />
+                )}
+                {state.approval.outbox_text_hash && (
+                  <MetricRow
+                    label="Draft hash"
+                    value={shortHash(state.approval.outbox_text_hash)}
+                    muted={muted}
+                  />
+                )}
+                {state.approval.outbox_id && (
+                  <button
+                    type="button"
+                    onClick={state.sendApprovedOutbox}
+                    disabled={!state.canSendApprovedOutbox}
+                    className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${border} ${
+                      state.canSendApprovedOutbox
+                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                        : "opacity-45"
+                    }`}
+                  >
+                    {state.approvedSendLoading ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
+                    Send approved
+                  </button>
+                )}
+                {state.approvedSend && (
+                  <MetricRow
+                    label="Send"
+                    value={state.approvedSend.outbox_status}
+                    muted={muted}
+                  />
+                )}
+                {state.approvedSendError && (
+                  <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
+                    Send blocked
+                  </div>
+                )}
               </div>
             )}
             {state.approval && (

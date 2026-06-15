@@ -85,8 +85,19 @@ def test_spark_imessage_draft_route_is_classified_t2_write() -> None:
         "POST", "/v1/spark/drafts/imessage/approval-request"
     )
     feedback_classes = classify_route("POST", "/v1/spark/drafts/imessage/feedback")
+    send_classes = classify_route(
+        "POST",
+        "/v1/spark/drafts/imessage/outbox/22222222-2222-4222-8222-222222222222/send",
+    )
     assert approval_classes == ["write", "security_write"]
     assert determine_risk_tier(approval_classes) == "T2"
+    assert send_classes == [
+        "write",
+        "security_write",
+        "external_call",
+        "imessage_send",
+    ]
+    assert determine_risk_tier(send_classes) == "T4"
     assert feedback_classes == ["write", "security_write"]
     assert determine_risk_tier(feedback_classes) == "T2"
 
@@ -114,6 +125,21 @@ async def test_spark_imessage_draft_approval_requires_both_scopes() -> None:
         with pytest.raises(HTTPException) as exc_info:
             await spark_drafts.spark_imessage_draft_approval_request(
                 _request(scopes), payload, "user"
+            )
+
+        assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_send_approved_outbox_requires_send_scope() -> None:
+    outbox_id = UUID("22222222-2222-4222-8222-222222222222")
+
+    for scopes in (["spark.draft"], ["imessage.send"]):
+        with pytest.raises(HTTPException) as exc_info:
+            await spark_drafts.spark_imessage_send_approved_outbox(
+                _request(scopes),
+                outbox_id,
+                "user",
             )
 
         assert exc_info.value.status_code == 403
@@ -433,6 +459,26 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
         assert kwargs["proposal"].draft_engine == "human_override"
         return UUID("11111111-1111-4111-8111-111111111111")
 
+    crypto_token = object()
+    outbox_calls: list[dict[str, object]] = []
+
+    async def fake_create_outbox(conn, **kwargs):
+        assert conn is fake_conn
+        outbox_calls.append(kwargs)
+        assert kwargs["proposal"].draft_text == "Edited draft"
+        assert kwargs["approval_queue_id"] == UUID(
+            "11111111-1111-4111-8111-111111111111"
+        )
+        assert kwargs["actor_sub"] == "spark-service"
+        assert kwargs["actor_type"] == "service"
+        assert kwargs["crypto"] is crypto_token
+        return spark_drafts.SparkOutboxCreateResult(
+            outbox_id="22222222-2222-4222-8222-222222222222",
+            status="pending_approval",
+            draft_text_hash="hmac-sha256:" + "a" * 64,
+            created=True,
+        )
+
     feedback_calls: list[dict[str, object]] = []
 
     def fake_feedback(**kwargs):
@@ -443,10 +489,13 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
             recorded=True,
             feedback_ref_hash="feedback-hash",
             candidate_key_phrases=("Edited draft",),
+            calibration_lessons=("Prefer shorter text drafts.",),
         )
 
     monkeypatch.setattr(spark_drafts, "create_imessage_draft_proposal", fake_create)
     monkeypatch.setattr(spark_drafts, "enqueue_spark_draft_approval", fake_enqueue)
+    monkeypatch.setattr(spark_drafts, "load_spark_outbox_crypto", lambda: crypto_token)
+    monkeypatch.setattr(spark_drafts, "create_spark_outbox_item", fake_create_outbox)
     monkeypatch.setattr(spark_drafts, "record_spark_draft_edit_feedback", fake_feedback)
 
     response = await spark_drafts.spark_imessage_draft_approval_request(
@@ -463,14 +512,22 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
     assert payload["draft_text"] == "Edited draft"
     assert payload["queue_id"] == "11111111-1111-4111-8111-111111111111"
     assert payload["approval_status"] == "pending"
+    assert payload["outbox_id"] == "22222222-2222-4222-8222-222222222222"
+    assert payload["outbox_status"] == "pending_approval"
+    assert payload["outbox_text_hash"] == "hmac-sha256:" + "a" * 64
+    assert payload["outbox_recorded"] is True
     assert payload["voice_feedback_recorded"] is True
     assert payload["voice_feedback_ref_hash"] == "feedback-hash"
     assert payload["candidate_key_phrases"] == ["Edited draft"]
+    assert payload["calibration_lessons"] == ["Prefer shorter text drafts."]
     assert len(feedback_calls) == 1
+    assert len(outbox_calls) == 1
     logs = json.dumps(fake_logger.infos).lower()
     assert "spark_imessage_draft_approval_queued" in logs
     assert "edited draft" not in logs
+    assert "22222222-2222-4222-8222-222222222222" in logs
     assert "feedback-hash" in logs
+    assert "calibration_lesson_count" in logs
     assert "private inbound body" not in logs
     assert "approved-chat-guid" not in logs
 
@@ -527,6 +584,65 @@ async def test_spark_imessage_draft_feedback_records_label_only(
     assert "too_formal" in logs
     assert "draft_text" not in logs
     assert "private inbound body" not in logs
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_send_approved_outbox_executes_safe_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    fake_conn = object()
+    outbox_id = UUID("22222222-2222-4222-8222-222222222222")
+    crypto_token = object()
+    send_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+    monkeypatch.setattr(
+        spark_drafts,
+        "rls_connection",
+        lambda request: _AsyncContext(fake_conn),
+    )
+    monkeypatch.setattr(spark_drafts, "load_spark_outbox_crypto", lambda: crypto_token)
+
+    async def fake_send(conn, **kwargs):
+        assert conn is fake_conn
+        send_calls.append(kwargs)
+        assert kwargs["outbox_id"] == outbox_id
+        assert kwargs["actor_sub"] == "spark-service"
+        assert kwargs["actor_type"] == "service"
+        assert kwargs["crypto"] is crypto_token
+        return spark_drafts.SparkOutboxSendResult(
+            outbox_id=str(outbox_id),
+            outbox_status="sent",
+            approval_queue_id="11111111-1111-4111-8111-111111111111",
+            approval_status="executed",
+            message_ref_hash="message-hash",
+            send_attempt_count=1,
+        )
+
+    monkeypatch.setattr(
+        spark_drafts,
+        "send_approved_spark_imessage_outbox",
+        fake_send,
+    )
+
+    response = await spark_drafts.spark_imessage_send_approved_outbox(
+        _request(["spark.draft", "imessage.send"]),
+        outbox_id,
+        "user",
+    )
+
+    assert response.outbox_status == "sent"
+    assert response.approval_status == "executed"
+    assert response.message_ref_hash == "message-hash"
+    assert len(send_calls) == 1
+    logs = json.dumps(fake_logger.infos).lower()
+    assert "spark_imessage_approved_send_executed" in logs
+    assert "imessage.send" in logs
+    assert "t4" in logs
+    assert "private inbound body" not in logs
+    assert "approved-chat-guid" not in logs
+    assert "edited draft" not in logs
+    assert "draft_text" not in logs
 
 
 def _proposal() -> SparkDraftProposal:

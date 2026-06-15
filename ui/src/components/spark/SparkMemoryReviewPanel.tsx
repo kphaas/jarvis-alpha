@@ -68,6 +68,7 @@ export function SparkMemoryReviewPanel({
   const active = state.memory?.active ?? [];
   const scorecard = state.memory?.scorecard ?? null;
   const feedbackPhraseCount = state.memory?.buddy.feedback_phrase_count ?? 0;
+  const feedbackLessonCount = state.memory?.scorecard?.feedback_lesson_count ?? 0;
   const pendingPhraseCount = proposals.filter(
     (proposal) => proposal.kind === "phrase",
   ).length;
@@ -212,10 +213,10 @@ export function SparkMemoryReviewPanel({
             </div>
             <div className={`rounded-md border px-3 py-2 ${border}`}>
               <div className={`text-[10px] font-mono uppercase ${muted}`}>
-                Edit phrases
+                Edit lessons
               </div>
               <div className="text-lg font-bold">
-                {scorecard.feedback_phrase_count}
+                {scorecard.feedback_lesson_count}
               </div>
             </div>
           </div>
@@ -315,7 +316,7 @@ export function SparkMemoryReviewPanel({
             <span className={`text-xs ${muted}`}>
               {pendingPhraseCount} key phrases,{" "}
               {proposals.length - pendingPhraseCount} rules,{" "}
-              {feedbackPhraseCount} from reviewed edits
+              {feedbackPhraseCount + feedbackLessonCount} from reviewed edits
             </span>
           </div>
           {proposals.length ? (

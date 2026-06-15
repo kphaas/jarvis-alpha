@@ -123,9 +123,23 @@ export interface SparkIMessageDraftResponse {
 export interface SparkIMessageDraftApprovalResponse extends SparkIMessageDraftResponse {
   queue_id: string;
   approval_status: string;
+  outbox_id?: string | null;
+  outbox_status?: string | null;
+  outbox_text_hash?: string | null;
+  outbox_recorded: boolean;
   voice_feedback_recorded: boolean;
   voice_feedback_ref_hash?: string | null;
   candidate_key_phrases: string[];
+  calibration_lessons: string[];
+}
+
+export interface SparkIMessageApprovedSendResponse {
+  outbox_id: string;
+  outbox_status: string;
+  approval_queue_id: string;
+  approval_status: string;
+  message_ref_hash?: string | null;
+  send_attempt_count: number;
 }
 
 export type SparkMode = "draft_only" | "hybrid_review" | "auto_guarded";
@@ -220,6 +234,7 @@ export interface SparkPersonalityMemoryReviewResponse {
     status: string;
     proposal_count: number;
     feedback_phrase_count: number;
+    feedback_lesson_count: number;
   };
 }
 
@@ -227,6 +242,7 @@ export interface SparkPersonalityMemoryScorecard {
   active_count: number;
   proposal_count: number;
   feedback_phrase_count: number;
+  feedback_lesson_count: number;
   kinds_present: string[];
   missing_core_kinds: string[];
   readiness: "strong" | "needs_review" | "thin";

@@ -48,6 +48,7 @@ def test_spark_review_ui_uses_draft_routes_and_api_wrapper() -> None:
     assert "/v1/spark/drafts/imessage/targets" in source
     assert "/v1/spark/drafts/imessage" in source
     assert "/v1/spark/drafts/imessage/approval-request" in source
+    assert "/v1/spark/drafts/imessage/outbox/" in source
     assert "/v1/spark/persona/guardrails" in source
     assert "/v1/spark/persona/memory" in source
     assert "/v1/spark/persona/memory/propose" in source
@@ -77,6 +78,7 @@ def test_spark_review_ui_keeps_send_out_of_phase() -> None:
     assert "can_send" in source
     assert "requires_human_approval" in source
     assert "Submit approval" in source
+    assert "Send approved" in source
     assert "auto_send_enabled: false" in source
     forbidden = (
         "/message/text",
@@ -139,6 +141,8 @@ def test_spark_memory_review_ui_exposes_approval_backlog_without_raw_threads() -
     assert "Ask Buddy" in source
     assert "Propose memory" in source
     assert "candidate_key_phrases" in source
+    assert "calibration_lessons" in source
+    assert "Edit lessons" in source
     assert "key phrases" in source
     assert "Approve" in source
     assert "Archive" in source
