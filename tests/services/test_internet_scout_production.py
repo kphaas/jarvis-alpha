@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import json
 import os
 from uuid import uuid4
 
@@ -288,6 +289,58 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
         "last_run_at": quality_canary["last_run_at"],
     }
     assert response.retention.mode == "report_only"
+
+
+@pytest.mark.asyncio
+async def test_health_parses_quality_canary_json_metadata(monkeypatch):
+    monkeypatch.setattr(
+        beacon_health,
+        "browser_runtime_health",
+        lambda: {
+            "ok": True,
+            "runtime": "playwright",
+            "runtime_enabled": True,
+            "playwright_version_ok": True,
+            "screenshot_dir_writable": True,
+        },
+    )
+    request_id = uuid4()
+
+    response = await beacon_health.build_beacon_health(
+        FakeConn(
+            quality_canary_row={
+                "request_id": request_id,
+                "status": "succeeded",
+                "created_at": datetime(2026, 6, 15, 13, 42, tzinfo=UTC),
+                "metadata": json.dumps(
+                    {
+                        "request_id": str(request_id),
+                        "suite": "beacon_search_quality",
+                        "suite_version": 2,
+                        "case_count": 33,
+                        "passed": 33,
+                        "failed": 0,
+                        "failure_names": [],
+                        "status": "passed",
+                    }
+                ),
+            }
+        ),
+        gateway_client=FakeGatewayClient(),
+    )
+
+    quality_canary = response.checks["recent_evidence"].metadata["quality_canary"]
+    assert quality_canary == {
+        "request_id": str(request_id),
+        "status": "passed",
+        "suite": "beacon_search_quality",
+        "suite_version": 2,
+        "case_count": 33,
+        "passed": 33,
+        "failed": 0,
+        "failure_names": [],
+        "last_run_at": "2026-06-15T13:42:00+00:00",
+    }
 
 
 @pytest.mark.asyncio
