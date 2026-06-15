@@ -496,6 +496,32 @@ class InternetScoutRetentionReport(BaseModel):
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class InternetScoutRetentionDeleteRequest(BaseModel):
+    confirm: Literal["delete_expired_beacon_evidence"]
+    dry_run: bool = True
+    include_screenshots: bool = False
+    max_request_rows: int = Field(default=100, ge=1, le=1000)
+
+
+class InternetScoutRetentionDeleteResponse(BaseModel):
+    mode: Literal["disabled", "dry_run", "deleted"]
+    enabled: bool
+    dry_run: bool
+    evidence_retention_days: int
+    screenshot_retention_days: int
+    candidate_request_count: int = 0
+    deleted_request_count: int = 0
+    deleted_source_count: int = 0
+    deleted_evidence_count: int = 0
+    deleted_event_count: int = 0
+    deleted_memory_promotion_count: int = 0
+    candidate_screenshot_file_count: int = 0
+    candidate_screenshot_bytes: int = 0
+    deleted_screenshot_file_count: int = 0
+    deleted_screenshot_bytes: int = 0
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class InternetScoutHealthResponse(BaseModel):
     status: Literal["ok", "degraded"]
     checks: dict[str, InternetScoutHealthCheck]

@@ -178,6 +178,15 @@ def _fake_beacon_summary() -> helm.HelmBeaconSummary:
             pending_browser_approvals=0,
             next_expires_at=None,
         ),
+        quality_canary=helm.HelmBeaconQualityCanarySummary(
+            status="passed",
+            suite_version=2,
+            case_count=33,
+            passed=33,
+            failed=0,
+            request_id="request-canary",
+            last_run_at=datetime(2026, 6, 12, 19, 0, tzinfo=UTC).isoformat(),
+        ),
     )
 
 
@@ -250,6 +259,8 @@ async def test_helm_summary_returns_redacted_counts(monkeypatch) -> None:
         "accepted_matching_mode": 2,
         "accepted_after_confirmation": 2,
     }
+    assert payload["beacon"]["quality_canary"]["case_count"] == 33
+    assert payload["beacon"]["quality_canary"]["failed"] == 0
     assert payload["beacon"]["raw_web_content_is_untrusted"] is True
     assert "description" not in str(payload)
     assert "actor_sub" not in str(payload)
@@ -258,6 +269,7 @@ async def test_helm_summary_returns_redacted_counts(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
     expires_at = datetime(2026, 6, 12, 19, 15, tzinfo=UTC)
+    checked_at = datetime(2026, 6, 12, 19, 0, tzinfo=UTC)
 
     class FakeBeaconConn:
         async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
@@ -268,7 +280,6 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
             }
 
     async def fake_build_beacon_health(_conn) -> InternetScoutHealthResponse:
-        checked_at = datetime(2026, 6, 12, 19, 0, tzinfo=UTC)
         return InternetScoutHealthResponse(
             status="ok",
             checked_at=checked_at,
@@ -337,6 +348,17 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
                             "created_at": checked_at.isoformat(),
                             "updated_at": checked_at.isoformat(),
                         },
+                        "quality_canary": {
+                            "request_id": "request-canary",
+                            "status": "passed",
+                            "suite": "beacon_search_quality",
+                            "suite_version": 2,
+                            "case_count": 33,
+                            "passed": 33,
+                            "failed": 0,
+                            "failure_names": [],
+                            "last_run_at": checked_at.isoformat(),
+                        },
                     },
                 ),
             },
@@ -382,6 +404,17 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
     assert payload["approvals"] == {
         "pending_browser_approvals": 2,
         "next_expires_at": expires_at.isoformat(),
+    }
+    assert payload["quality_canary"] == {
+        "status": "passed",
+        "suite": "beacon_search_quality",
+        "suite_version": 2,
+        "case_count": 33,
+        "passed": 33,
+        "failed": 0,
+        "failure_names": [],
+        "request_id": "request-canary",
+        "last_run_at": checked_at.isoformat(),
     }
     assert "secret" not in str(payload)
     assert "/private/beacon/screenshots" not in str(payload)

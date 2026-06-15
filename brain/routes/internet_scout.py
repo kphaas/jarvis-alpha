@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from brain.db.rls import rls_connection
+from brain.db.rls import platform_admin_connection, rls_connection
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
 from brain.services.internet_scout.browser_approvals import (
@@ -48,13 +48,18 @@ from brain.services.internet_scout.models import (
     InternetScoutMemoryPromotionReviewRequest,
     InternetScoutMemoryPromotionReviewResponse,
     InternetScoutRequest,
+    InternetScoutRetentionDeleteRequest,
+    InternetScoutRetentionDeleteResponse,
     InternetScoutRetentionReport,
     InternetScoutStoredResponse,
     InternetTool,
 )
 from brain.services.internet_scout.orchestrator import InternetScoutOrchestrator
 from brain.services.internet_scout.repository import InternetScoutRepository
-from brain.services.internet_scout.retention import build_retention_report
+from brain.services.internet_scout.retention import (
+    build_retention_report,
+    delete_expired_evidence,
+)
 from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
@@ -81,6 +86,24 @@ async def internet_scout_retention_report(
     check_scopes(request, "internet_scout.read", "admin")
     async with rls_connection(request) as conn:
         return await build_retention_report(conn)
+
+
+@router.post(
+    "/retention/delete-expired",
+    response_model=InternetScoutRetentionDeleteResponse,
+)
+async def internet_scout_retention_delete_expired(
+    body: InternetScoutRetentionDeleteRequest,
+    request: Request,
+    user_id: str = Depends(require_auth),
+) -> InternetScoutRetentionDeleteResponse:
+    """Apply reviewed Beacon retention cleanup with dry-run and env gates."""
+    check_scopes(request, "admin")
+    async with platform_admin_connection(
+        source="http",
+        audit_actor=f"beacon_retention_delete:{user_id}",
+    ) as conn:
+        return await delete_expired_evidence(conn, body)
 
 
 @router.post("/research", response_model=InternetScoutStoredResponse)

@@ -22,4 +22,17 @@ def test_beacon_search_quality_eval_script_outputs_json() -> None:
     payload = json.loads(completed.stdout)
     assert payload["status"] == "passed"
     assert payload["failed"] == 0
-    assert payload["passed"] >= 3
+    assert payload["passed"] >= 30
+
+
+def test_beacon_contract_schema_exporter_is_current() -> None:
+    completed = subprocess.run(
+        [sys.executable, "scripts/export_beacon_contract_schema.py", "--check"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    assert payload["status"] == "ok"
+    assert "beacon_helm_summary.schema.json" in payload["contracts"]

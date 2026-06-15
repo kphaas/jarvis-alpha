@@ -12,32 +12,18 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(repo_root))
 
-    from brain.services.internet_scout.search_quality_evals import (
-        run_search_quality_evals,
+    from brain.services.internet_scout.quality_canary import (
+        search_quality_eval_payload,
     )
 
-    results = run_search_quality_evals()
-    failed = [result for result in results if not result.passed]
+    payload = search_quality_eval_payload()
     print(
         json.dumps(
-            {
-                "status": "failed" if failed else "passed",
-                "passed": len(results) - len(failed),
-                "failed": len(failed),
-                "results": [
-                    {
-                        "name": result.name,
-                        "passed": result.passed,
-                        "details": result.details,
-                        "failures": list(result.failures),
-                    }
-                    for result in results
-                ],
-            },
+            payload,
             sort_keys=True,
         )
     )
-    return 1 if failed else 0
+    return 1 if payload["failed"] else 0
 
 
 if __name__ == "__main__":

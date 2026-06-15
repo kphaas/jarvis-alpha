@@ -150,6 +150,11 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Beacon internet evidence broker ---
     "GET /v1/internet-scout/health": ["read", "security_read"],
     "GET /v1/internet-scout/retention/report": ["read", "security_read"],
+    "POST /v1/internet-scout/retention/delete-expired": [
+        "write",
+        "security_write",
+        "destructive",
+    ],
     "POST /v1/internet-scout/research": [
         "write",
         "external_call",
