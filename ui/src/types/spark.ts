@@ -3,6 +3,9 @@ export interface SparkIMessageDraftRequest {
   approval_id?: string | null;
   reply_goal?: string | null;
   max_context_messages: number;
+  include_context_preview?: boolean;
+  context_preview_limit?: number;
+  include_memory_preview?: boolean;
 }
 
 export interface SparkIMessageDraftApprovalRequest extends SparkIMessageDraftRequest {
@@ -31,6 +34,21 @@ export interface SparkIMessageDraftFeedbackResponse {
   feedback_label?: SparkDraftFeedbackLabel | null;
 }
 
+export interface SparkIMessageDraftContextMessage {
+  index: number;
+  speaker: string;
+  is_from_me: boolean;
+  message_ref_hash: string;
+  body_text: string;
+}
+
+export interface SparkIMessageDraftMemoryDebugItem {
+  kind: string;
+  content: string;
+  source: string;
+  evidence_ref_hash?: string | null;
+}
+
 export interface SparkIMessageDraftResponse {
   draft_version: string;
   principal_id: string;
@@ -49,11 +67,16 @@ export interface SparkIMessageDraftResponse {
   detected_sensitivity: string[];
   blocked_sensitivity: string[];
   draft_engine: string;
+  context_preview: SparkIMessageDraftContextMessage[];
+  personality_memory_preview: SparkIMessageDraftMemoryDebugItem[];
 }
 
 export interface SparkIMessageDraftApprovalResponse extends SparkIMessageDraftResponse {
   queue_id: string;
   approval_status: string;
+  voice_feedback_recorded: boolean;
+  voice_feedback_ref_hash?: string | null;
+  candidate_key_phrases: string[];
 }
 
 export type SparkMode = "draft_only" | "hybrid_review" | "auto_guarded";

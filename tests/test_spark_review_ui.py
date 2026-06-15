@@ -136,7 +136,7 @@ def test_spark_memory_review_ui_exposes_approval_backlog_without_raw_threads() -
     assert "SparkMemoryReviewPanel" in source
     assert "Ask Buddy" in source
     assert "Propose memory" in source
-    assert "candidate_key_phrases" not in source
+    assert "candidate_key_phrases" in source
     assert "key phrases" in source
     assert "Approve" in source
     assert "Archive" in source
@@ -147,7 +147,7 @@ def test_spark_memory_review_ui_exposes_approval_backlog_without_raw_threads() -
     assert "message_body" not in source
 
 
-def test_spark_workbench_exposes_person_memory_comparisons_and_feedback() -> None:
+def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     source = "\n".join(
         path.read_text(encoding="utf-8")
         for path in (
@@ -167,6 +167,15 @@ def test_spark_workbench_exposes_person_memory_comparisons_and_feedback() -> Non
     assert "mother" in source
     assert "Side-by-side" in source
     assert "Compare" in source
+    assert "Thread context" in source
+    assert "Draft memory debug" in source
+    assert "include_context_preview" in source
+    assert "include_memory_preview" in source
+    assert "context_preview" in source
+    assert "personality_memory_preview" in source
+    assert "runtime only" in source
+    assert "newest first" in source
+    assert "Edit learning" in source
     assert "Sounds like me" in source
     assert "Too robotic" in source
     assert "Too formal" in source

@@ -102,6 +102,14 @@ class SparkRuntimeMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class SparkPersonalityMemoryPromptItem:
+    kind: str
+    content: str
+    source: str
+    evidence_ref_hash: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SparkDraftContext:
     principal_id: str
     approval_ref_hash: str
@@ -133,8 +141,14 @@ class SparkDraftProposal:
     can_send: bool = False
     requires_human_approval: bool = True
 
-    def to_payload(self) -> dict[str, Any]:
-        return {
+    def to_payload(
+        self,
+        *,
+        include_context_preview: bool = False,
+        context_preview_limit: int = 10,
+        personality_memory_preview: list[dict[str, object]] | None = None,
+    ) -> dict[str, Any]:
+        payload = {
             "draft_version": self.draft_version,
             "principal_id": self.principal_id,
             "draft_text": self.draft_text,
@@ -152,7 +166,24 @@ class SparkDraftProposal:
             "detected_sensitivity": list(self.detected_sensitivity),
             "blocked_sensitivity": list(self.blocked_sensitivity),
             "draft_engine": self.draft_engine,
+            "context_preview": [],
+            "personality_memory_preview": personality_memory_preview or [],
         }
+        if include_context_preview:
+            payload["context_preview"] = [
+                {
+                    "index": index,
+                    "speaker": "Ken" if message.is_from_me else "Other",
+                    "is_from_me": message.is_from_me,
+                    "message_ref_hash": message.message_ref_hash,
+                    "body_text": _clip_context_message(message.body_text, limit=900),
+                }
+                for index, message in enumerate(
+                    self.context.messages[: max(1, min(context_preview_limit, 10))],
+                    start=1,
+                )
+            ]
+        return payload
 
 
 async def create_imessage_draft_proposal(
@@ -421,22 +452,43 @@ async def _call_spark_llm(
     )
 
 
-def _personality_memory_prompt(rows: list[dict[str, object]]) -> str:
-    lines: list[str] = []
+def personality_memory_prompt_items(
+    rows: list[dict[str, object]],
+    *,
+    max_items: int = PERSONALITY_MEMORY_MAX_PROMPT_LINES,
+) -> list[SparkPersonalityMemoryPromptItem]:
+    items: list[SparkPersonalityMemoryPromptItem] = []
     for row in rows:
         raw_kind = str(row.get("kind") or "memory").strip().lower()
         if raw_kind not in PERSONALITY_MEMORY_DRAFT_KINDS:
             continue
-        kind = raw_kind.replace("_", " ")
         content = _clean_personality_memory_content(
             str(row.get("content") or ""),
             kind=raw_kind,
         )
         if not content:
             continue
-        lines.append(f"- {kind.title()}: {content}")
-        if len(lines) >= PERSONALITY_MEMORY_MAX_PROMPT_LINES:
+        evidence_ref_hash = row.get("evidence_ref_hash")
+        items.append(
+            SparkPersonalityMemoryPromptItem(
+                kind=raw_kind,
+                content=content,
+                source=str(row.get("source") or "unknown"),
+                evidence_ref_hash=(
+                    str(evidence_ref_hash).strip() if evidence_ref_hash else None
+                ),
+            )
+        )
+        if len(items) >= max_items:
             break
+    return items
+
+
+def _personality_memory_prompt(rows: list[dict[str, object]]) -> str:
+    lines: list[str] = []
+    for item in personality_memory_prompt_items(rows):
+        kind = item.kind.replace("_", " ")
+        lines.append(f"- {kind.title()}: {item.content}")
     return "\n".join(lines)
 
 
