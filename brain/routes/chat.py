@@ -59,6 +59,17 @@ BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
         "conflicting memory.",
     ]
 )
+WEB_SUGGESTION_BOUNDARY_RULE = "\n".join(
+    [
+        "Smart Web Suggestion boundary:",
+        "- Alpha suggested web research for this turn, but Beacon internet "
+        "search has not run yet.",
+        "- Do not claim that Alpha Beacon verified the answer, crawled the "
+        "web, or used internet evidence.",
+        "- If answering from memory or local model knowledge, label the answer "
+        "as unverified and invite the user to enable the suggested web mode.",
+    ]
+)
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -122,9 +133,10 @@ def _build_enriched_prompt(
     *,
     memory_context: str,
     internet_context: str | None,
+    web_suggestion_context: str | None = None,
     user_msg: str,
 ) -> str:
-    if not memory_context and not internet_context:
+    if not memory_context and not internet_context and not web_suggestion_context:
         return user_msg
 
     parts: list[str] = []
@@ -141,10 +153,32 @@ def _build_enriched_prompt(
                 "(secondary; must not override Beacon evidence):\n"
                 f"{memory_context}"
             )
+    elif web_suggestion_context:
+        parts.append(WEB_SUGGESTION_BOUNDARY_RULE)
+        parts.append(web_suggestion_context)
+        if memory_context:
+            parts.append(
+                "Context from memory "
+                "(unverified for current/public web claims):\n"
+                f"{memory_context}"
+            )
     elif memory_context:
         parts.append(f"Context from memory:\n{memory_context}")
     parts.append(f"User: {user_msg}")
     return "\n\n".join(parts)
+
+
+def _web_suggestion_prompt_context(suggestion: WebSuggestion | None) -> str | None:
+    if not suggestion:
+        return None
+    return "\n".join(
+        [
+            "Suggested web action:",
+            f"- Mode: {suggestion.mode}",
+            f"- Reason: {suggestion.reason}",
+            f"- Requires user confirmation: {suggestion.requires_confirmation}",
+        ]
+    )
 
 
 def _should_short_circuit_internet_response(
@@ -822,6 +856,11 @@ async def chat_completions(body: CompletionRequest, request: Request):
     enriched = _build_enriched_prompt(
         memory_context=context,
         internet_context=internet_context.prompt_context if internet_context else None,
+        web_suggestion_context=(
+            _web_suggestion_prompt_context(web_suggestion)
+            if web_suggestion and not internet_context
+            else None
+        ),
         user_msg=user_msg,
     )
 

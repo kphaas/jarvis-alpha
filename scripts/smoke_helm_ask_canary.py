@@ -20,6 +20,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from brain.services.internet_scout.ask_canary import (  # noqa: E402
     DEFAULT_CANARY_CASES,
+    EXTENDED_CANARY_CASES,
     AskCanaryCase,
     AskCanarySuiteEvaluation,
     evaluate_ask_canary,
@@ -30,6 +31,7 @@ from brain.services.internet_scout.ask_canary import (  # noqa: E402
 DEFAULT_BASE_URL = "https://jarvis-brain.tail40ed36.ts.net:8186"
 DEFAULT_TOKEN_SSH_TARGET = "jarvisbrain@jarvis-brain.tail40ed36.ts.net"
 DEFAULT_PROMPT = "Find the official OpenAI API reference URL."
+DEFAULT_CANARY_PROJECT_ID = 1644
 
 
 def main() -> int:
@@ -49,8 +51,38 @@ def main() -> int:
         help="run the default Beacon Ask canary suite",
     )
     parser.add_argument(
+        "--extended",
+        action="store_true",
+        default=os.getenv("HELM_ASK_SMOKE_EXTENDED", "").lower()
+        in {"1", "true", "yes"},
+        help="include slower multi-source research quality canaries",
+    )
+    parser.add_argument(
         "--token-ssh-target",
         default=os.getenv("HELM_ASK_SMOKE_TOKEN_SSH_TARGET", DEFAULT_TOKEN_SSH_TARGET),
+    )
+    parser.add_argument(
+        "--thread-id",
+        default=os.getenv("HELM_ASK_SMOKE_THREAD_ID"),
+        help="reuse a known Ask thread UUID",
+    )
+    parser.add_argument(
+        "--project-id",
+        type=_optional_int,
+        default=_optional_int(
+            os.getenv(
+                "HELM_ASK_SMOKE_PROJECT_ID",
+                str(DEFAULT_CANARY_PROJECT_ID),
+            )
+        ),
+        help="project scope for reusable canary threads; set to none to disable",
+    )
+    parser.add_argument(
+        "--keep-thread",
+        action="store_true",
+        default=os.getenv("HELM_ASK_SMOKE_KEEP_THREAD", "").lower()
+        in {"1", "true", "yes"},
+        help="keep the generated canary thread for manual inspection",
     )
     args = parser.parse_args()
 
@@ -60,13 +92,41 @@ def main() -> int:
         base_url=base_url,
         token_ssh_target=args.token_ssh_target,
     )
-    if args.suite:
-        evaluation = _run_suite(base_url=base_url, token=token)
+    if args.suite or args.extended:
+        cases = DEFAULT_CANARY_CASES + (EXTENDED_CANARY_CASES if args.extended else ())
+        suite_thread_id = args.thread_id
+        try:
+            evaluation, suite_thread_id = _run_suite(
+                base_url=base_url,
+                token=token,
+                cases=cases,
+                thread_id=suite_thread_id,
+                project_id=args.project_id,
+            )
+        finally:
+            if suite_thread_id and not args.thread_id and not args.keep_thread:
+                try:
+                    _archive_thread(
+                        base_url=base_url,
+                        token=token,
+                        thread_id=suite_thread_id,
+                    )
+                except Exception as exc:
+                    print(
+                        f"warning: failed to archive canary thread: {exc}",
+                        file=sys.stderr,
+                    )
         print(json.dumps(evaluation.as_dict(), sort_keys=True))
         return 0 if evaluation.passed else 2
 
     case = AskCanaryCase(name="custom", prompt=args.prompt)
-    payloads = _run_case(base_url=base_url, token=token, case=case)
+    payloads = _run_case(
+        base_url=base_url,
+        token=token,
+        case=case,
+        thread_id=args.thread_id,
+        project_id=args.project_id,
+    )
     evaluation = evaluate_ask_canary(payloads, case=case)
     print(json.dumps(evaluation.as_dict(), sort_keys=True))
     return 0 if evaluation.passed else 2
@@ -76,12 +136,23 @@ def _run_suite(
     *,
     base_url: str,
     token: str,
-) -> AskCanarySuiteEvaluation:
-    case_payloads = [
-        (case, _run_case(base_url=base_url, token=token, case=case))
-        for case in DEFAULT_CANARY_CASES
-    ]
-    return evaluate_ask_canary_suite(case_payloads)
+    cases: tuple[AskCanaryCase, ...],
+    thread_id: str | None,
+    project_id: int | None,
+) -> tuple[AskCanarySuiteEvaluation, str | None]:
+    case_payloads: list[tuple[AskCanaryCase, list[dict[str, object]]]] = []
+    current_thread_id = thread_id
+    for case in cases:
+        payloads = _run_case(
+            base_url=base_url,
+            token=token,
+            case=case,
+            thread_id=current_thread_id,
+            project_id=project_id,
+        )
+        current_thread_id = current_thread_id or _thread_id_from_payloads(payloads)
+        case_payloads.append((case, payloads))
+    return evaluate_ask_canary_suite(case_payloads), current_thread_id
 
 
 def _run_case(
@@ -89,18 +160,34 @@ def _run_case(
     base_url: str,
     token: str,
     case: AskCanaryCase,
+    thread_id: str | None,
+    project_id: int | None,
 ) -> list[dict[str, object]]:
+    body: dict[str, object] = {
+        "messages": [{"role": "user", "content": case.prompt}],
+        "model": "auto",
+        "internet_mode": case.request_mode,
+    }
+    if thread_id:
+        body["thread_id"] = thread_id
+    if project_id is not None:
+        body["project_id"] = project_id
+
     stream = _call_sse(
         base_url=base_url,
         path="/v1/chat/completions",
         token=token,
-        body={
-            "messages": [{"role": "user", "content": case.prompt}],
-            "model": "auto",
-            "internet_mode": "deep_research",
-        },
+        body=body,
     )
     return parse_sse_payloads(stream)
+
+
+def _thread_id_from_payloads(payloads: list[dict[str, object]]) -> str | None:
+    for payload in reversed(payloads):
+        thread_id = payload.get("thread_id")
+        if isinstance(thread_id, str) and thread_id:
+            return thread_id
+    return None
 
 
 def _smoke_token(
@@ -160,6 +247,37 @@ def _is_local_base_url(base_url: str) -> bool:
         or "://127.0.0.1" in base_url
         or "://[::1]" in base_url
     )
+
+
+def _optional_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    clean_value = value.strip().lower()
+    if clean_value in {"", "none", "null", "off", "false", "0"}:
+        return None
+    return int(clean_value)
+
+
+def _archive_thread(
+    *,
+    base_url: str,
+    token: str,
+    thread_id: str,
+) -> None:
+    request = urllib.request.Request(
+        f"{base_url}/v1/threads/{thread_id}",
+        method="DELETE",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(
+        request,
+        context=ssl._create_unverified_context(),
+        timeout=30,
+    ):
+        return
 
 
 def _call_sse(

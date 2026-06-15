@@ -1039,6 +1039,7 @@ async def test_chat_emits_web_suggestion_without_running_beacon(
 ) -> None:
     conn = FakeConn()
     beacon_called = False
+    routed_prompts: list[str] = []
 
     @asynccontextmanager
     async def fake_rls_connection(_request: object):
@@ -1059,7 +1060,8 @@ async def test_chat_emits_web_suggestion_without_running_beacon(
         beacon_called = True
         raise AssertionError("Beacon must not run for Smart Web Suggestion")
 
-    async def fake_route(*_args: object, **_kwargs: object):
+    async def fake_route(prompt: str, *_args: object, **_kwargs: object):
+        routed_prompts.append(prompt)
         return {
             "result": "I can answer generally, but current evidence may help.",
             "mode": "local",
@@ -1105,6 +1107,10 @@ async def test_chat_emits_web_suggestion_without_running_beacon(
     stream = "".join(chunks)
 
     assert beacon_called is False
+    assert routed_prompts
+    assert "Smart Web Suggestion boundary:" in routed_prompts[0]
+    assert "Beacon internet search has not run yet" in routed_prompts[0]
+    assert "Do not claim that Alpha Beacon verified the answer" in routed_prompts[0]
     suggestion_frames = [
         json.loads(frame.removeprefix("data: "))
         for frame in stream.split("\n\n")
