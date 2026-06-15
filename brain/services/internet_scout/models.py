@@ -203,6 +203,7 @@ class InternetScoutResearchStopCriteria(BaseModel):
     """Deterministic stop/coverage criteria for a Beacon research plan."""
 
     min_accepted_citations: int = Field(default=1, ge=0, le=10)
+    min_source_hosts: int = Field(default=1, ge=0, le=10)
     require_official_source: bool = False
     require_cross_check: bool = False
     max_searches: int = Field(default=1, ge=1, le=6)
@@ -427,17 +428,22 @@ class InternetScoutResearchReport(BaseModel):
     verified_claim_count: int = Field(default=0, ge=0, le=100)
     unsupported_claim_count: int = Field(default=0, ge=0, le=100)
     source_hosts: list[str] = Field(default_factory=list, max_length=25)
+    independent_source_count: int = Field(default=0, ge=0, le=25)
+    source_diversity_score: int = Field(default=0, ge=0, le=100)
     required_source_hosts: list[str] = Field(default_factory=list, max_length=20)
     expected_source_types: list[ResearchSourceType] = Field(
         default_factory=list,
         max_length=8,
     )
     subquestion_count: int = Field(default=0, ge=0, le=6)
+    planned_query_count: int = Field(default=0, ge=0, le=6)
     stop_criteria: InternetScoutResearchStopCriteria = Field(
         default_factory=InternetScoutResearchStopCriteria
     )
     verified_claims: list[str] = Field(default_factory=list, max_length=10)
     unsupported_claims: list[str] = Field(default_factory=list, max_length=10)
+    contradiction_count: int = Field(default=0, ge=0, le=20)
+    contradictions: list[str] = Field(default_factory=list, max_length=10)
     coverage_warnings: list[str] = Field(default_factory=list, max_length=20)
     source_rankings: list[InternetScoutSourceRanking] = Field(
         default_factory=list,

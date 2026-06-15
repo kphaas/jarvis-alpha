@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -14,6 +15,33 @@ def _load_script_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_quality_canary_runner_defaults_to_operator_secrets_file(
+    monkeypatch, tmp_path
+) -> None:
+    home = tmp_path / "home"
+    operator_secrets = home / "jarvis" / ".secrets"
+    operator_secrets.parent.mkdir(parents=True)
+    operator_secrets.write_text("ALPHA_DB_DSN=postgresql://user@localhost/db\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("SECRETS_FILE", raising=False)
+
+    _load_script_module()
+
+    assert os.environ["SECRETS_FILE"] == str(operator_secrets)
+
+
+def test_quality_canary_runner_respects_explicit_secrets_file(
+    monkeypatch, tmp_path
+) -> None:
+    explicit_secrets = tmp_path / "custom.secrets"
+    explicit_secrets.write_text("ALPHA_DB_DSN=postgresql://user@localhost/db\n")
+    monkeypatch.setenv("SECRETS_FILE", str(explicit_secrets))
+
+    _load_script_module()
+
+    assert os.environ["SECRETS_FILE"] == str(explicit_secrets)
 
 
 def test_quality_canary_runner_injects_writer_password(monkeypatch) -> None:

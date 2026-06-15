@@ -25,6 +25,7 @@ class FakeConn:
         suggestion_row: dict[str, int] | None = None,
         acceptance_row: dict[str, int] | None = None,
         quality_canary_row: dict[str, object] | None = None,
+        quality_canary_rows: list[dict[str, object]] | None = None,
         expired_request_ids: list[object] | None = None,
         delete_counts: dict[str, int] | None = None,
     ) -> None:
@@ -79,6 +80,7 @@ class FakeConn:
                 "status": "passed",
             },
         }
+        self.quality_canary_rows = quality_canary_rows or [self.quality_canary_row]
 
     async def fetchval(self, query: str, *args):
         if "to_regclass" in query:
@@ -91,6 +93,8 @@ class FakeConn:
         return 0
 
     async def fetch(self, query: str, *args):
+        if "quality_canary" in query:
+            return self.quality_canary_rows
         if "FROM public.alpha_internet_requests" in query:
             return [{"id": request_id} for request_id in self.expired_request_ids]
         return []
@@ -287,7 +291,22 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
         "failed": 0,
         "failure_names": [],
         "last_run_at": quality_canary["last_run_at"],
+        "age_hours": quality_canary["age_hours"],
+        "stale_after_hours": 26,
+        "alert": {
+            "status": "ok",
+            "reason": "quality_canary_fresh",
+            "severity": "info",
+        },
     }
+    assert response.checks["quality_canary"].ok is True
+    assert response.checks["quality_canary"].status == "ok"
+    assert (
+        response.checks["recent_evidence"].metadata["quality_canary_history"][0][
+            "passed"
+        ]
+        == 33
+    )
     assert response.retention.mode == "report_only"
 
 
@@ -306,12 +325,13 @@ async def test_health_parses_quality_canary_json_metadata(monkeypatch):
     )
     request_id = uuid4()
 
+    checked_at = datetime.now(UTC)
     response = await beacon_health.build_beacon_health(
         FakeConn(
             quality_canary_row={
                 "request_id": request_id,
                 "status": "succeeded",
-                "created_at": datetime(2026, 6, 15, 13, 42, tzinfo=UTC),
+                "created_at": checked_at,
                 "metadata": json.dumps(
                     {
                         "request_id": str(request_id),
@@ -339,8 +359,103 @@ async def test_health_parses_quality_canary_json_metadata(monkeypatch):
         "passed": 33,
         "failed": 0,
         "failure_names": [],
-        "last_run_at": "2026-06-15T13:42:00+00:00",
+        "last_run_at": checked_at.isoformat(),
+        "age_hours": 0,
+        "stale_after_hours": 26,
+        "alert": {
+            "status": "ok",
+            "reason": "quality_canary_fresh",
+            "severity": "info",
+        },
     }
+
+
+@pytest.mark.asyncio
+async def test_health_degrades_when_quality_canary_is_failed(monkeypatch):
+    monkeypatch.setattr(
+        beacon_health,
+        "browser_runtime_health",
+        lambda: {
+            "ok": True,
+            "runtime": "playwright",
+            "runtime_enabled": True,
+            "playwright_version_ok": True,
+            "screenshot_dir_writable": True,
+        },
+    )
+
+    response = await beacon_health.build_beacon_health(
+        FakeConn(
+            quality_canary_row={
+                "request_id": uuid4(),
+                "status": "succeeded",
+                "created_at": datetime.now(UTC),
+                "metadata": {
+                    "suite": "beacon_search_quality",
+                    "suite_version": 2,
+                    "case_count": 33,
+                    "passed": 32,
+                    "failed": 1,
+                    "failure_names": ["official_openai_source_beats_community"],
+                    "status": "failed",
+                },
+            }
+        ),
+        gateway_client=FakeGatewayClient(),
+    )
+
+    assert response.status == "degraded"
+    assert response.checks["quality_canary"].ok is False
+    assert response.checks["quality_canary"].metadata["alert_status"] == "failed"
+    assert response.checks["recent_evidence"].metadata["quality_canary"]["alert"] == {
+        "status": "failed",
+        "reason": "quality_canary_failed",
+        "severity": "warning",
+    }
+
+
+@pytest.mark.asyncio
+async def test_health_degrades_when_quality_canary_is_stale(monkeypatch):
+    monkeypatch.setenv("BEACON_QUALITY_CANARY_STALE_AFTER_HOURS", "24")
+    monkeypatch.setattr(
+        beacon_health,
+        "browser_runtime_health",
+        lambda: {
+            "ok": True,
+            "runtime": "playwright",
+            "runtime_enabled": True,
+            "playwright_version_ok": True,
+            "screenshot_dir_writable": True,
+        },
+    )
+
+    response = await beacon_health.build_beacon_health(
+        FakeConn(
+            quality_canary_row={
+                "request_id": uuid4(),
+                "status": "succeeded",
+                "created_at": datetime.now(UTC) - timedelta(hours=30),
+                "metadata": {
+                    "suite": "beacon_search_quality",
+                    "suite_version": 2,
+                    "case_count": 33,
+                    "passed": 33,
+                    "failed": 0,
+                    "failure_names": [],
+                    "status": "passed",
+                },
+            }
+        ),
+        gateway_client=FakeGatewayClient(),
+    )
+
+    assert response.status == "degraded"
+    assert response.checks["quality_canary"].ok is False
+    assert response.checks["quality_canary"].metadata["alert_status"] == "stale"
+    quality_canary = response.checks["recent_evidence"].metadata["quality_canary"]
+    assert quality_canary["alert"]["reason"] == "quality_canary_stale"
+    assert quality_canary["age_hours"] >= 30
+    assert quality_canary["stale_after_hours"] == 24
 
 
 @pytest.mark.asyncio
