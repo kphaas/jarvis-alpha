@@ -274,6 +274,41 @@
       "title": "HelmBeaconQualityCanaryAlert",
       "type": "object"
     },
+    "HelmBeaconQualityCanaryGroupSummary": {
+      "properties": {
+        "case_count": {
+          "default": 0,
+          "title": "Case Count",
+          "type": "integer"
+        },
+        "case_names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Case Names",
+          "type": "array"
+        },
+        "failed": {
+          "default": 0,
+          "title": "Failed",
+          "type": "integer"
+        },
+        "failure_names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Failure Names",
+          "type": "array"
+        },
+        "passed": {
+          "default": 0,
+          "title": "Passed",
+          "type": "integer"
+        }
+      },
+      "title": "HelmBeaconQualityCanaryGroupSummary",
+      "type": "object"
+    },
     "HelmBeaconQualityCanaryHistoryItem": {
       "properties": {
         "age_hours": {
@@ -285,6 +320,13 @@
           "default": 0,
           "title": "Case Count",
           "type": "integer"
+        },
+        "case_groups": {
+          "additionalProperties": {
+            "$ref": "#/$defs/HelmBeaconQualityCanaryGroupSummary"
+          },
+          "title": "Case Groups",
+          "type": "object"
         },
         "failed": {
           "default": 0,
@@ -360,6 +402,13 @@
           "default": 0,
           "title": "Case Count",
           "type": "integer"
+        },
+        "case_groups": {
+          "additionalProperties": {
+            "$ref": "#/$defs/HelmBeaconQualityCanaryGroupSummary"
+          },
+          "title": "Case Groups",
+          "type": "object"
         },
         "failed": {
           "default": 0,
