@@ -103,3 +103,36 @@ def test_orchestrator_plans_deep_official_research_queries():
     assert any(
         "site:platform.openai.com" in item.query for item in plan.research.searches
     )
+
+
+def test_orchestrator_plans_comparison_target_specific_source_searches():
+    plan = InternetScoutOrchestrator().plan(
+        InternetScoutRequest(
+            query=(
+                "Compare Brave Search API and Perplexity API for building an AI web "
+                "research agent. Cite independent sources."
+            ),
+            tool_hint=InternetTool.SEARCH,
+            max_pages=4,
+            requester="alpha_chat.deep_research",
+        )
+    )
+
+    queries = [item.query.lower() for item in plan.research.searches]
+    purposes = [item.purpose for item in plan.research.searches]
+
+    assert plan.research.intent == "comparison"
+    assert plan.research.max_searches == 4
+    assert plan.research.provider_strategy == "fanout"
+    assert purposes.count("comparison") >= 2
+    assert "cross_check" in purposes
+    assert any(
+        "brave search api official documentation" in query and "site:brave.com" in query
+        for query in queries
+    )
+    assert any(
+        "perplexity api official documentation" in query
+        and "site:perplexity.ai" in query
+        for query in queries
+    )
+    assert any(item.required for item in plan.research.searches[1:3])
