@@ -44,6 +44,7 @@ function textToList(value: string) {
 }
 
 function labelize(value: string) {
+  if (value.trim().toLowerCase() === 'minor') return 'child'
   return value.replace(/_/g, ' ')
 }
 

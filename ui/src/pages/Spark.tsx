@@ -6,27 +6,40 @@ import {
   CircleCheck,
   Copy,
   GitCompareArrows,
+  Heart,
+  Lightbulb,
+  ListChecks,
   LoaderCircle,
   Mail,
   MessagesSquare,
   MessageSquareText,
+  PanelTopOpen,
   RefreshCw,
+  Shield,
   ShieldCheck,
   Sparkles,
   ThumbsDown,
   ThumbsUp,
   UserRound,
+  UsersRound,
+  X,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { SparkGuardrailsPanel } from "../components/spark/SparkGuardrailsPanel";
 import { SparkMemoryReviewPanel } from "../components/spark/SparkMemoryReviewPanel";
-import { useSparkDraftReview } from "../hooks/useSparkDraftReview";
+import {
+  useSparkDraftReview,
+  useSparkIMessageDraftTargets,
+} from "../hooks/useSparkDraftReview";
+import { useSparkGuardrails } from "../hooks/useSparkGuardrails";
 import { useAppStore } from "../store";
 import type {
   SparkDraftFeedbackLabel,
   SparkIMessageDraftContextMessage,
   SparkIMessageDraftResponse,
+  SparkIMessageDraftTarget,
+  SparkProtectedRelationship,
 } from "../types/spark";
 
 const SPARK_PRINCIPALS = [
@@ -49,6 +62,62 @@ const FEEDBACK_BUTTONS: Array<{
   { label: "Too much policy", value: "too_much_policy", tone: "warn" },
 ];
 
+const DEFAULT_FAVORITE_TARGETS: SparkProtectedRelationship[] = [
+  {
+    id: "sweta",
+    label: "Sweta",
+    relationship: "partner",
+    sensitivity: "relationship",
+    default_mode: "hybrid_review",
+    approval_required: true,
+  },
+  {
+    id: "ryleigh",
+    label: "Ryleigh",
+    relationship: "child",
+    sensitivity: "minor",
+    default_mode: "draft_only",
+    approval_required: true,
+  },
+  {
+    id: "sloane",
+    label: "Sloane",
+    relationship: "child",
+    sensitivity: "minor",
+    default_mode: "draft_only",
+    approval_required: true,
+  },
+  {
+    id: "meagan",
+    label: "Meagan",
+    relationship: "co-parent",
+    sensitivity: "custody",
+    default_mode: "draft_only",
+    approval_required: true,
+  },
+  {
+    id: "mother",
+    label: "Mother",
+    relationship: "parent",
+    sensitivity: "family",
+    default_mode: "draft_only",
+    approval_required: true,
+  },
+];
+
+type DetailPanel = "thread" | "memory-debug" | "guardrails" | "memory-review";
+
+interface DraftTargetOption {
+  id: string;
+  label: string;
+  relationship: string;
+  sensitivity: string;
+  approvalId: string | null;
+  channel: string;
+  favorite: boolean;
+  ready: boolean;
+}
+
 function tone(isDark: boolean, variant: "ok" | "warn" | "error") {
   if (variant === "ok") {
     return isDark
@@ -67,6 +136,62 @@ function tone(isDark: boolean, variant: "ok" | "warn" | "error") {
 
 function shortHash(value: string) {
   return `${value.slice(0, 10)}...${value.slice(-8)}`;
+}
+
+function normalizedKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function displayLabel(value: string) {
+  if (value.trim().toLowerCase() === "minor") return "child";
+  return value.replace(/_/g, " ");
+}
+
+function buildDraftTargetOptions(
+  relationships: SparkProtectedRelationship[],
+  targets: SparkIMessageDraftTarget[],
+): DraftTargetOption[] {
+  const targetByLabel = new Map(
+    targets.map((target) => [normalizedKey(target.label), target]),
+  );
+  const usedApprovalIds = new Set<string>();
+  const options: DraftTargetOption[] = relationships.map((relationship) => {
+    const target =
+      targetByLabel.get(normalizedKey(relationship.label)) ??
+      targets.find((item) => normalizedKey(item.label) === normalizedKey(relationship.id));
+    if (target) {
+      usedApprovalIds.add(target.approval_id);
+    }
+    return {
+      id: relationship.id,
+      label: relationship.label,
+      relationship: relationship.relationship,
+      sensitivity: relationship.sensitivity,
+      approvalId: target?.approval_id ?? null,
+      channel: target?.channel ?? "iMessage",
+      favorite: true,
+      ready: Boolean(target?.approval_id),
+    };
+  });
+
+  for (const target of targets) {
+    if (usedApprovalIds.has(target.approval_id)) continue;
+    options.push({
+      id: `approval-${target.approval_id}`,
+      label: target.label,
+      relationship: target.relationship_marked ? "relationship" : "contact",
+      sensitivity: target.legal_marked
+        ? "custody/legal"
+        : target.relationship_marked
+          ? "relationship"
+          : "standard",
+      approvalId: target.approval_id,
+      channel: target.channel,
+      favorite: false,
+      ready: true,
+    });
+  }
+  return options;
 }
 
 function ErrorLine({ text, className }: { text: string; className: string }) {
@@ -120,7 +245,7 @@ function MetricRow({
 }
 
 function labelize(value: string) {
-  return value.replace(/_/g, " ");
+  return displayLabel(value);
 }
 
 function DraftMetadata({
@@ -178,6 +303,8 @@ function DraftMetadata({
 function ConversationBriefPanel({
   draft,
   selectedPrincipalLabel,
+  selectedTargetLabel,
+  selectedTargetReady,
   border,
   panel,
   muted,
@@ -186,6 +313,8 @@ function ConversationBriefPanel({
 }: {
   draft: SparkIMessageDraftResponse | null;
   selectedPrincipalLabel: string;
+  selectedTargetLabel: string | null;
+  selectedTargetReady: boolean;
   border: string;
   panel: string;
   muted: string;
@@ -205,13 +334,22 @@ function ConversationBriefPanel({
           <span
             className={`rounded-md border px-2 py-1 text-sm font-bold ${okClass}`}
           >
-            {summary?.reply_target_label ?? "Generate draft first"}
+            {summary?.reply_target_label ??
+              selectedTargetLabel ??
+              "Pick target first"}
           </span>
           <span
             className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${warnClass}`}
           >
             Voice: {summary?.voice_principal_label ?? selectedPrincipalLabel}
           </span>
+          {!summary && selectedTargetLabel && !selectedTargetReady && (
+            <span
+              className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${warnClass}`}
+            >
+              needs approved thread
+            </span>
+          )}
         </div>
         <div className={`min-w-0 rounded-lg border p-3 ${border}`}>
           <div className="flex flex-wrap items-center gap-2">
@@ -235,6 +373,98 @@ function ConversationBriefPanel({
           </p>
         </div>
       </div>
+    </section>
+  );
+}
+
+function DraftTargetPicker({
+  targets,
+  selectedTargetId,
+  loading,
+  onSelect,
+  border,
+  panel,
+  muted,
+  okClass,
+  warnClass,
+}: {
+  targets: DraftTargetOption[];
+  selectedTargetId: string | null;
+  loading: boolean;
+  onSelect: (targetId: string) => void;
+  border: string;
+  panel: string;
+  muted: string;
+  okClass: string;
+  warnClass: string;
+}) {
+  return (
+    <section className={`rounded-xl border ${border} ${panel} p-4`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <UsersRound className="h-4 w-4 text-emerald-400" />
+          <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>
+            Draft target
+          </h2>
+        </div>
+        <StatusChip
+          label={loading ? "loading approved threads" : "favorites"}
+          className={loading ? warnClass : okClass}
+        />
+      </div>
+
+      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+        {targets.map((target) => {
+          const selected = target.id === selectedTargetId;
+          return (
+            <button
+              key={target.id}
+              type="button"
+              onClick={() => onSelect(target.id)}
+              disabled={!target.ready}
+              className={`min-h-24 rounded-lg border p-3 text-left transition ${border} ${
+                selected
+                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-200"
+                  : ""
+              } ${target.ready ? "hover:border-emerald-400" : "opacity-55"}`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-bold">{target.label}</div>
+                  <div className={`mt-1 text-xs ${muted}`}>
+                    {displayLabel(target.relationship)}
+                  </div>
+                </div>
+                <Heart
+                  className={`h-4 w-4 shrink-0 ${
+                    target.favorite ? "fill-emerald-400 text-emerald-400" : muted
+                  }`}
+                />
+              </div>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                <span
+                  className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${
+                    target.ready ? okClass : warnClass
+                  }`}
+                >
+                  {target.ready ? "ready" : "needs source"}
+                </span>
+                <span
+                  className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${warnClass}`}
+                >
+                  {displayLabel(target.sensitivity)}
+                </span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {!targets.length && (
+        <div className={`mt-3 rounded-lg border p-3 text-sm ${border} ${muted}`}>
+          No favorite targets loaded yet.
+        </div>
+      )}
     </section>
   );
 }
@@ -576,12 +806,100 @@ function DraftMemoryDebugPanel({
   );
 }
 
+function DetailOverviewCard({
+  title,
+  detail,
+  metric,
+  icon,
+  onOpen,
+  border,
+  muted,
+  okClass,
+}: {
+  title: string;
+  detail: string;
+  metric: string;
+  icon: ReactNode;
+  onOpen: () => void;
+  border: string;
+  muted: string;
+  okClass: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className={`min-h-32 rounded-lg border p-4 text-left transition hover:border-emerald-400 ${border}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {icon}
+          <span className="text-sm font-bold">{title}</span>
+        </div>
+        <PanelTopOpen className="h-4 w-4 shrink-0 text-emerald-400" />
+      </div>
+      <p className={`mt-3 text-sm leading-relaxed ${muted}`}>{detail}</p>
+      <span
+        className={`mt-4 inline-flex rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${okClass}`}
+      >
+        {metric}
+      </span>
+    </button>
+  );
+}
+
+function DetailDialog({
+  title,
+  children,
+  onClose,
+  border,
+  panel,
+  muted,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+  border: string;
+  panel: string;
+  muted: string;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={`max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-xl border ${border} ${panel} p-4 shadow-xl`}
+      >
+        <div className="sticky top-0 z-10 mb-4 flex items-center justify-between gap-3 border-b border-current/10 pb-3 backdrop-blur">
+          <div>
+            <h2 className="text-lg font-bold">{title}</h2>
+            <p className={`text-xs ${muted}`}>Review detail, no send action.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-bold ${border}`}
+          >
+            <X className="h-4 w-4" />
+            Close
+          </button>
+        </div>
+        {children}
+      </section>
+    </div>
+  );
+}
+
 export default function Spark() {
   const { theme } = useAppStore();
   const [searchParams] = useSearchParams();
   const activeApproval = searchParams.get("approval");
   const [principalId, setPrincipalId] = useState("ken");
-  const state = useSparkDraftReview(principalId);
+  const [draftTargetId, setDraftTargetId] = useState<string | null>(null);
+  const [detailPanel, setDetailPanel] = useState<DetailPanel | null>(null);
+  const guardrailsState = useSparkGuardrails();
+  const targetState = useSparkIMessageDraftTargets(principalId);
   const isDark = theme === "dark";
   const border = isDark ? "border-white/10" : "border-[#141414]/10";
   const panel = isDark ? "bg-white/5" : "bg-[#141414]/5";
@@ -596,10 +914,36 @@ export default function Spark() {
   const selectedPrincipal =
     SPARK_PRINCIPALS.find((principal) => principal.id === principalId) ??
     SPARK_PRINCIPALS[0];
+  const favoriteRelationships =
+    guardrailsState.guardrails?.protected_relationships ?? DEFAULT_FAVORITE_TARGETS;
+  const draftTargets = useMemo(
+    () =>
+      buildDraftTargetOptions(
+        favoriteRelationships,
+        targetState.data?.targets ?? [],
+      ),
+    [favoriteRelationships, targetState.data?.targets],
+  );
+  const selectedDraftTarget =
+    draftTargets.find((target) => target.id === draftTargetId) ??
+    draftTargets.find((target) => target.ready) ??
+    draftTargets[0] ??
+    null;
+  const state = useSparkDraftReview(
+    principalId,
+    selectedDraftTarget?.approvalId ?? null,
+  );
+  const targetReady = draftTargets.length === 0 || Boolean(selectedDraftTarget?.ready);
 
   function selectPrincipal(nextPrincipalId: string) {
     state.resetDraftSurface();
+    setDraftTargetId(null);
     setPrincipalId(nextPrincipalId);
+  }
+
+  function selectDraftTarget(nextTargetId: string) {
+    state.resetDraftSurface();
+    setDraftTargetId(nextTargetId);
   }
 
   return (
@@ -633,7 +977,7 @@ export default function Spark() {
               <span
                 className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
               >
-                Spark user
+                Voice profile
               </span>
               {SPARK_PRINCIPALS.map((principal) => (
                 <button
@@ -662,9 +1006,23 @@ export default function Spark() {
         </div>
       </section>
 
+      <DraftTargetPicker
+        targets={draftTargets}
+        selectedTargetId={selectedDraftTarget?.id ?? null}
+        loading={targetState.isLoading}
+        onSelect={selectDraftTarget}
+        border={border}
+        panel={panel}
+        muted={muted}
+        okClass={okClass}
+        warnClass={warnClass}
+      />
+
       <ConversationBriefPanel
         draft={state.draft}
         selectedPrincipalLabel={selectedPrincipal.label}
+        selectedTargetLabel={selectedDraftTarget?.label ?? null}
+        selectedTargetReady={Boolean(selectedDraftTarget?.ready)}
         border={border}
         panel={panel}
         muted={muted}
@@ -735,11 +1093,17 @@ export default function Spark() {
                 />
               </div>
             </label>
+            {!targetReady && selectedDraftTarget && (
+              <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
+                {selectedDraftTarget.label} is in favorites, but no approved
+                iMessage source is connected yet.
+              </div>
+            )}
             <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
               <button
                 type="button"
                 onClick={state.generateDraft}
-                disabled={state.draftLoading}
+                disabled={state.draftLoading || !targetReady}
                 className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-45"
               >
                 {state.draftLoading ? (
@@ -747,7 +1111,9 @@ export default function Spark() {
                 ) : (
                   <RefreshCw className="h-4 w-4" />
                 )}
-                Generate draft
+                {selectedDraftTarget
+                  ? `Generate for ${selectedDraftTarget.label}`
+                  : "Generate draft"}
               </button>
               <button
                 type="button"
@@ -769,7 +1135,7 @@ export default function Spark() {
               <button
                 type="button"
                 onClick={state.generateComparisons}
-                disabled={state.comparisonLoading}
+                disabled={state.comparisonLoading || !targetReady}
                 className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-4 text-sm font-bold transition ${border}`}
               >
                 {state.comparisonLoading ? (
@@ -993,13 +1359,68 @@ export default function Spark() {
         </section>
       )}
 
-      <details className={`rounded-xl border ${border} ${panel} p-4`}>
-        <summary
-          className={`cursor-pointer text-xs font-mono uppercase tracking-widest ${muted}`}
+      <section className={`rounded-xl border ${border} ${panel} p-4`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <ListChecks className="h-4 w-4 text-emerald-400" />
+            <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>
+              Review details
+            </h2>
+          </div>
+          <StatusChip label="click to inspect" className={warnClass} />
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <DetailOverviewCard
+            title="Thread context"
+            detail="See the exact last messages Spark used for this draft."
+            metric={`${state.draft?.context_preview.length ?? 0} shown`}
+            icon={<MessagesSquare className="h-4 w-4 text-emerald-400" />}
+            onOpen={() => setDetailPanel("thread")}
+            border={border}
+            muted={muted}
+            okClass={okClass}
+          />
+          <DetailOverviewCard
+            title="Draft memory"
+            detail="Inspect reviewed personality memory used silently in the prompt."
+            metric={`${state.draft?.personality_memory_preview.length ?? 0} used`}
+            icon={<Brain className="h-4 w-4 text-emerald-400" />}
+            onOpen={() => setDetailPanel("memory-debug")}
+            border={border}
+            muted={muted}
+            okClass={okClass}
+          />
+          <DetailOverviewCard
+            title="Guardrails"
+            detail="Review protected topics, favorite relationships, and no-send posture."
+            metric={`${favoriteRelationships.length} relationships`}
+            icon={<Shield className="h-4 w-4 text-emerald-400" />}
+            onOpen={() => setDetailPanel("guardrails")}
+            border={border}
+            muted={muted}
+            okClass={okClass}
+          />
+          <DetailOverviewCard
+            title="Memory review"
+            detail="Open Buddy proposals, scorecards, approved memory, and archive controls."
+            metric={selectedPrincipal.label}
+            icon={<Lightbulb className="h-4 w-4 text-emerald-400" />}
+            onOpen={() => setDetailPanel("memory-review")}
+            border={border}
+            muted={muted}
+            okClass={okClass}
+          />
+        </div>
+      </section>
+
+      {detailPanel === "thread" && (
+        <DetailDialog
+          title="Thread context"
+          onClose={() => setDetailPanel(null)}
+          border={border}
+          panel={panel}
+          muted={muted}
         >
-          Advanced context
-        </summary>
-        <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <ThreadContextPanel
             draft={state.draft}
             border={border}
@@ -1008,6 +1429,17 @@ export default function Spark() {
             okClass={okClass}
             warnClass={warnClass}
           />
+        </DetailDialog>
+      )}
+
+      {detailPanel === "memory-debug" && (
+        <DetailDialog
+          title="Draft memory"
+          onClose={() => setDetailPanel(null)}
+          border={border}
+          panel={panel}
+          muted={muted}
+        >
           <DraftMemoryDebugPanel
             draft={state.draft}
             approval={state.approval}
@@ -1017,16 +1449,17 @@ export default function Spark() {
             okClass={okClass}
             warnClass={warnClass}
           />
-        </div>
-      </details>
+        </DetailDialog>
+      )}
 
-      <details className={`rounded-xl border ${border} ${panel} p-4`}>
-        <summary
-          className={`cursor-pointer text-xs font-mono uppercase tracking-widest ${muted}`}
+      {detailPanel === "guardrails" && (
+        <DetailDialog
+          title="Memory and guardrails"
+          onClose={() => setDetailPanel(null)}
+          border={border}
+          panel={panel}
+          muted={muted}
         >
-          Memory and guardrails
-        </summary>
-        <div className="mt-4 space-y-4">
           <SparkGuardrailsPanel
             border={border}
             panel={panel}
@@ -1036,7 +1469,17 @@ export default function Spark() {
             warnClass={warnClass}
             errorClass={errorClass}
           />
+        </DetailDialog>
+      )}
 
+      {detailPanel === "memory-review" && (
+        <DetailDialog
+          title="Memory review"
+          onClose={() => setDetailPanel(null)}
+          border={border}
+          panel={panel}
+          muted={muted}
+        >
           <SparkMemoryReviewPanel
             border={border}
             panel={panel}
@@ -1048,8 +1491,8 @@ export default function Spark() {
             principalId={principalId}
             principalLabel={selectedPrincipal.label}
           />
-        </div>
-      </details>
+        </DetailDialog>
+      )}
     </motion.div>
   );
 }

@@ -1,4 +1,4 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiJson } from "../lib/apiFetch";
 import type {
@@ -9,6 +9,7 @@ import type {
   SparkIMessageDraftFeedbackResponse,
   SparkIMessageDraftRequest,
   SparkIMessageDraftResponse,
+  SparkIMessageDraftTargetsResponse,
 } from "../types/spark";
 
 export const SPARK_COMPARISON_SCENARIOS = [
@@ -31,11 +32,13 @@ export const SPARK_COMPARISON_SCENARIOS = [
 
 function baseRequest(
   principalId: string,
+  approvalId: string | null,
   replyGoal: string,
   maxContextMessages: number,
 ): SparkIMessageDraftRequest {
   return {
     principal_id: principalId,
+    approval_id: approvalId,
     reply_goal: replyGoal.trim() || null,
     max_context_messages: maxContextMessages,
     include_context_preview: true,
@@ -44,7 +47,20 @@ function baseRequest(
   };
 }
 
-export function useSparkDraftReview(principalId = "ken") {
+export function useSparkIMessageDraftTargets(principalId = "ken") {
+  return useQuery({
+    queryKey: ["spark", "imessage-draft-targets", principalId],
+    queryFn: () => {
+      const params = new URLSearchParams({ principal_id: principalId });
+      return apiJson<SparkIMessageDraftTargetsResponse>(
+        `/v1/spark/drafts/imessage/targets?${params.toString()}`,
+      );
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useSparkDraftReview(principalId = "ken", approvalId: string | null = null) {
   const [replyGoal, setReplyGoal] = useState("");
   const [maxContextMessages, setMaxContextMessages] = useState(20);
   const [draftText, setDraftText] = useState("");
@@ -66,6 +82,7 @@ export function useSparkDraftReview(principalId = "ken") {
         SPARK_COMPARISON_SCENARIOS.map(async (scenario) => {
           const request = baseRequest(
             principalId,
+            approvalId,
             `${replyGoal.trim() || "Draft a reply."} ${scenario.goal}`,
             maxContextMessages,
           );
@@ -122,7 +139,7 @@ export function useSparkDraftReview(principalId = "ken") {
     approvalMutation.reset();
     feedbackMutation.reset();
     draftMutation.mutate(
-      baseRequest(principalId, replyGoal, maxContextMessages),
+      baseRequest(principalId, approvalId, replyGoal, maxContextMessages),
     );
   }
 
@@ -134,7 +151,7 @@ export function useSparkDraftReview(principalId = "ken") {
 
   function submitForApproval() {
     const request: SparkIMessageDraftApprovalRequest = {
-      ...baseRequest(principalId, replyGoal, maxContextMessages),
+      ...baseRequest(principalId, approvalId, replyGoal, maxContextMessages),
       draft_text_override: draftText.trim() || null,
     };
     approvalMutation.mutate(request);

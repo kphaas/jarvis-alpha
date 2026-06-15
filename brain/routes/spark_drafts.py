@@ -33,7 +33,11 @@ from brain.services.spark_voice_feedback import (
     record_spark_draft_edit_feedback,
     record_spark_draft_quality_feedback,
 )
-from brain.services.spark_voice_ingest import SparkVoiceIngestError
+from brain.services.spark_voice_ingest import (
+    SparkApprovedSourceRecord,
+    SparkVoiceIngestError,
+    load_approved_voice_sources,
+)
 from jarvis_common.logging_config import get_logger
 
 router = APIRouter(prefix="/v1/spark/drafts", tags=["spark-drafts"])
@@ -56,6 +60,21 @@ class SparkIMessageDraftRequest(BaseModel):
 
 class SparkIMessageDraftApprovalRequest(SparkIMessageDraftRequest):
     draft_text_override: str | None = Field(default=None, max_length=4000)
+
+
+class SparkIMessageDraftTargetOut(BaseModel):
+    approval_id: str
+    label: str
+    channel: str
+    thread_kind: str
+    relationship_marked: bool
+    relationship_approved: bool
+    legal_marked: bool
+
+
+class SparkIMessageDraftTargetsOut(BaseModel):
+    principal_id: str
+    targets: list[SparkIMessageDraftTargetOut]
 
 
 class SparkIMessageDraftOut(BaseModel):
@@ -274,6 +293,18 @@ def _proposal_payload(
     )
 
 
+def _draft_target(record: SparkApprovedSourceRecord) -> SparkIMessageDraftTargetOut:
+    return SparkIMessageDraftTargetOut(
+        approval_id=record.approval_id,
+        label=record.source_reference_label or "Approved iMessage thread",
+        channel="iMessage",
+        thread_kind=record.thread_kind,
+        relationship_marked=record.relationship_marked,
+        relationship_approved=record.relationship_approved,
+        legal_marked=record.legal_marked,
+    )
+
+
 def _log_approval_success(
     request: Request,
     proposal: SparkDraftProposal,
@@ -391,6 +422,40 @@ def _log_failure(
         logger.error(event, extra=extra)
         return
     logger.warning(event, extra=extra)
+
+
+@router.get("/imessage/targets", response_model=SparkIMessageDraftTargetsOut)
+async def spark_imessage_draft_targets(
+    request: Request,
+    principal_id: str = "ken",
+    _: str = Depends(require_auth),
+) -> SparkIMessageDraftTargetsOut:
+    _check_draft_scopes(request)
+    try:
+        records = load_approved_voice_sources(principal_id=principal_id)
+    except Exception as exc:
+        route_error = _route_error(exc)
+        _log_failure(request, exc=exc, status_code=route_error.status_code)
+        raise route_error from exc
+
+    targets = [
+        _draft_target(record)
+        for record in records
+        if record.source == "imessage" and record.decision_approved
+    ]
+    logger.info(
+        "spark_imessage_draft_targets_listed",
+        extra={
+            "event": "spark_imessage_draft_targets_listed",
+            "component": "spark_drafts",
+            "action": "imessage_draft_targets",
+            "body_access": False,
+            "principal_id": principal_id,
+            "target_count": len(targets),
+            **_safe_actor_fields(request),
+        },
+    )
+    return SparkIMessageDraftTargetsOut(principal_id=principal_id, targets=targets)
 
 
 @router.post("/imessage", response_model=SparkIMessageDraftOut)
