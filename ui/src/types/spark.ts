@@ -49,6 +49,37 @@ export interface SparkIMessageDraftMemoryDebugItem {
   evidence_ref_hash?: string | null;
 }
 
+export interface SparkIMessageDraftConversationSummary {
+  channel: string;
+  voice_principal_label: string;
+  reply_target_label: string;
+  reply_target_confidence: string;
+  context_order: string;
+  last_message_speaker?: string | null;
+  last_message_preview?: string | null;
+  last_message_ref_hash?: string | null;
+}
+
+export interface SparkIMessageDraftQualityCheck {
+  key: string;
+  label: string;
+  passed: boolean;
+  detail: string;
+}
+
+export interface SparkIMessageDraftQuality {
+  score: number;
+  verdict: "strong" | "review" | "needs_edit" | string;
+  checks: SparkIMessageDraftQualityCheck[];
+}
+
+export interface SparkIMessageDraftSourceReadiness {
+  source: string;
+  channel: string;
+  status: string;
+  detail: string;
+}
+
 export interface SparkIMessageDraftResponse {
   draft_version: string;
   principal_id: string;
@@ -67,6 +98,9 @@ export interface SparkIMessageDraftResponse {
   detected_sensitivity: string[];
   blocked_sensitivity: string[];
   draft_engine: string;
+  conversation_summary: SparkIMessageDraftConversationSummary;
+  draft_quality: SparkIMessageDraftQuality;
+  source_readiness: SparkIMessageDraftSourceReadiness[];
   context_preview: SparkIMessageDraftContextMessage[];
   personality_memory_preview: SparkIMessageDraftMemoryDebugItem[];
 }
@@ -166,11 +200,21 @@ export interface SparkPersonalityMemoryReviewResponse {
   principal_id: string;
   active: SparkPersonalityMemoryItem[];
   proposals: SparkPersonalityMemoryProposal[];
+  scorecard?: SparkPersonalityMemoryScorecard;
   buddy: {
     status: string;
     proposal_count: number;
     feedback_phrase_count: number;
   };
+}
+
+export interface SparkPersonalityMemoryScorecard {
+  active_count: number;
+  proposal_count: number;
+  feedback_phrase_count: number;
+  kinds_present: string[];
+  missing_core_kinds: string[];
+  readiness: "strong" | "needs_review" | "thin";
 }
 
 export interface SparkPersonalityMemoryProposeRequest {

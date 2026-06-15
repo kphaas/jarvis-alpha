@@ -11,8 +11,12 @@ from brain.middleware.approval_classes import classify_route, determine_risk_tie
 from brain.routes import spark_drafts
 from brain.services.spark_imessage_drafts import (
     SparkDraftContext,
+    SparkDraftConversationSummary,
+    SparkDraftQualityCheck,
+    SparkDraftQualityScorecard,
     SparkDraftContextError,
     SparkDraftProposal,
+    SparkDraftSourceReadiness,
     SparkRuntimeMessage,
 )
 from brain.services.spark_voice_feedback import SparkDraftEditFeedbackResult
@@ -151,6 +155,18 @@ async def test_spark_imessage_draft_returns_review_payload_and_safe_logs(
     assert payload["requires_human_approval"] is True
     assert payload["body_access"] is True
     assert payload["context_messages_read"] == 2
+    assert payload["conversation_summary"] == {
+        "channel": "iMessage",
+        "voice_principal_label": "Ken",
+        "reply_target_label": "Sweta",
+        "reply_target_confidence": "approved_source_label",
+        "context_order": "newest_first",
+        "last_message_speaker": None,
+        "last_message_preview": None,
+        "last_message_ref_hash": None,
+    }
+    assert payload["draft_quality"]["score"] == 100
+    assert payload["source_readiness"][0]["status"] == "live_runtime_context"
     assert payload["context_preview"] == []
     assert payload["personality_memory_preview"] == []
     assert fake_logger.infos == [
@@ -246,6 +262,11 @@ async def test_spark_imessage_draft_can_return_runtime_review_context(
             "body_text": "ken sent private body",
         },
     ]
+    assert payload["conversation_summary"]["reply_target_label"] == "Sweta"
+    assert payload["conversation_summary"]["last_message_speaker"] == "Other"
+    assert payload["conversation_summary"]["last_message_preview"] == (
+        "private inbound body"
+    )
     assert payload["personality_memory_preview"] == [
         {
             "kind": "style",
@@ -450,6 +471,32 @@ def _proposal() -> SparkDraftProposal:
                     is_from_me=True,
                     body_text="ken sent private body",
                 ),
+            ),
+        ),
+        conversation_summary=SparkDraftConversationSummary(
+            channel="iMessage",
+            voice_principal_label="Ken",
+            reply_target_label="Sweta",
+            reply_target_confidence="approved_source_label",
+        ),
+        draft_quality=SparkDraftQualityScorecard(
+            score=100,
+            verdict="strong",
+            checks=(
+                SparkDraftQualityCheck(
+                    key="length",
+                    label="Short enough",
+                    passed=True,
+                    detail="5 words; Spark should stay short to medium.",
+                ),
+            ),
+        ),
+        source_readiness=(
+            SparkDraftSourceReadiness(
+                source="imessage",
+                channel="Text",
+                status="live_runtime_context",
+                detail="Approved iMessage thread is feeding this draft at runtime.",
             ),
         ),
         warnings=("draft_only_no_send",),

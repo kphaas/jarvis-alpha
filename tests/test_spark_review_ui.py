@@ -168,11 +168,21 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Side-by-side" in source
     assert "Compare" in source
     assert "Thread context" in source
+    assert "Drafting to" in source
+    assert "Last thread message" in source
+    assert "Recent thread" in source
+    assert "Ken-like score" in source
+    assert "Channel parity" in source
     assert "Draft memory debug" in source
+    assert "Memory scorecard" in source
     assert "include_context_preview" in source
     assert "include_memory_preview" in source
     assert "context_preview" in source
     assert "personality_memory_preview" in source
+    assert "conversation_summary" in source
+    assert "draft_quality" in source
+    assert "source_readiness" in source
+    assert "scorecard" in source
     assert "runtime only" in source
     assert "newest first" in source
     assert "Edit learning" in source

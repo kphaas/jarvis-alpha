@@ -71,6 +71,14 @@ async def test_imessage_draft_uses_runtime_context_without_exposing_thread_text(
     assert payload["context_messages_read"] == 2
     assert payload["principal_sent_messages"] == 1
     assert payload["runtime_context_messages"] == 1
+    assert payload["conversation_summary"]["reply_target_label"] == "Sweta"
+    assert payload["conversation_summary"]["reply_target_confidence"] == (
+        "approved_source_label"
+    )
+    assert payload["conversation_summary"]["last_message_preview"] is None
+    assert payload["draft_quality"]["verdict"] in {"strong", "review"}
+    assert payload["source_readiness"][0]["status"] == "live_runtime_context"
+    assert any(item["source"] == "gmail" for item in payload["source_readiness"])
     assert payload["context_preview"] == []
     assert payload["personality_memory_preview"] == []
     assert fake_client.calls == [("approved-chat-guid", 10)]
@@ -131,6 +139,10 @@ async def test_imessage_draft_can_return_runtime_context_preview_when_requested(
             "body_text": "Ken sent body that stays runtime-only here",
         },
     ]
+    assert payload["conversation_summary"]["last_message_speaker"] == "Other"
+    assert payload["conversation_summary"]["last_message_preview"] == (
+        "private inbound body with sensitive details"
+    )
     assert payload["personality_memory_preview"] == [
         {
             "kind": "style",
@@ -394,7 +406,7 @@ Prefer:
 | Approval ID | ken-imessage-approved-20260605-001 |
 | Principal | ken |
 | Source | imessage |
-| Source reference | relationship-thread-label: approved-one-to-one |
+| Source reference | relationship-thread-label: sweta |
 | Thread kind | one_to_one |
 | Requested max messages | 200 |
 
