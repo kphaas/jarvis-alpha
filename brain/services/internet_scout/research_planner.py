@@ -504,6 +504,10 @@ def _official_hosts_for_target(target: str) -> list[str]:
         hosts.extend(["anthropic.com", "docs.anthropic.com"])
     if "github" in normalized:
         hosts.extend(["github.com", "docs.github.com"])
+    if "cloudflare" in normalized:
+        hosts.extend(["cloudflare.com", "developers.cloudflare.com"])
+    if "aws" in normalized or "lambda" in normalized:
+        hosts.extend(["aws.amazon.com", "docs.aws.amazon.com"])
     return _dedupe_strings(hosts)
 
 

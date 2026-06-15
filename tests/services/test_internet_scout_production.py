@@ -73,11 +73,27 @@ class FakeConn:
             "metadata": {
                 "suite": "beacon_search_quality",
                 "suite_version": 2,
-                "case_count": 33,
-                "passed": 33,
+                "case_count": 34,
+                "passed": 34,
                 "failed": 0,
                 "failure_names": [],
                 "status": "passed",
+                "case_groups": {
+                    "core": {
+                        "case_count": 30,
+                        "passed": 30,
+                        "failed": 0,
+                        "failure_names": [],
+                        "case_names": [],
+                    },
+                    "daily_use": {
+                        "case_count": 4,
+                        "passed": 4,
+                        "failed": 0,
+                        "failure_names": [],
+                        "case_names": [],
+                    },
+                },
             },
         }
         self.quality_canary_rows = quality_canary_rows or [self.quality_canary_row]
@@ -286,10 +302,26 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
         "status": "passed",
         "suite": "beacon_search_quality",
         "suite_version": 2,
-        "case_count": 33,
-        "passed": 33,
+        "case_count": 34,
+        "passed": 34,
         "failed": 0,
         "failure_names": [],
+        "case_groups": {
+            "core": {
+                "case_count": 30,
+                "passed": 30,
+                "failed": 0,
+                "failure_names": [],
+                "case_names": [],
+            },
+            "daily_use": {
+                "case_count": 4,
+                "passed": 4,
+                "failed": 0,
+                "failure_names": [],
+                "case_names": [],
+            },
+        },
         "last_run_at": quality_canary["last_run_at"],
         "age_hours": quality_canary["age_hours"],
         "stale_after_hours": 26,
@@ -305,7 +337,7 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
         response.checks["recent_evidence"].metadata["quality_canary_history"][0][
             "passed"
         ]
-        == 33
+        == 34
     )
     assert response.retention.mode == "report_only"
 
@@ -337,11 +369,20 @@ async def test_health_parses_quality_canary_json_metadata(monkeypatch):
                         "request_id": str(request_id),
                         "suite": "beacon_search_quality",
                         "suite_version": 2,
-                        "case_count": 33,
-                        "passed": 33,
+                        "case_count": 34,
+                        "passed": 34,
                         "failed": 0,
                         "failure_names": [],
                         "status": "passed",
+                        "case_groups": {
+                            "daily_use": {
+                                "case_count": 4,
+                                "passed": 4,
+                                "failed": 0,
+                                "failure_names": [],
+                                "case_names": [],
+                            }
+                        },
                     }
                 ),
             }
@@ -355,10 +396,19 @@ async def test_health_parses_quality_canary_json_metadata(monkeypatch):
         "status": "passed",
         "suite": "beacon_search_quality",
         "suite_version": 2,
-        "case_count": 33,
-        "passed": 33,
+        "case_count": 34,
+        "passed": 34,
         "failed": 0,
         "failure_names": [],
+        "case_groups": {
+            "daily_use": {
+                "case_count": 4,
+                "passed": 4,
+                "failed": 0,
+                "failure_names": [],
+                "case_names": [],
+            }
+        },
         "last_run_at": checked_at.isoformat(),
         "age_hours": 0,
         "stale_after_hours": 26,
@@ -393,8 +443,8 @@ async def test_health_degrades_when_quality_canary_is_failed(monkeypatch):
                 "metadata": {
                     "suite": "beacon_search_quality",
                     "suite_version": 2,
-                    "case_count": 33,
-                    "passed": 32,
+                    "case_count": 34,
+                    "passed": 33,
                     "failed": 1,
                     "failure_names": ["official_openai_source_beats_community"],
                     "status": "failed",
@@ -438,8 +488,8 @@ async def test_health_degrades_when_quality_canary_is_stale(monkeypatch):
                 "metadata": {
                     "suite": "beacon_search_quality",
                     "suite_version": 2,
-                    "case_count": 33,
-                    "passed": 33,
+                    "case_count": 34,
+                    "passed": 34,
                     "failed": 0,
                     "failure_names": [],
                     "status": "passed",

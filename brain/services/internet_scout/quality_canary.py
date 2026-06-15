@@ -62,9 +62,11 @@ def _quality_canary_metadata(
         "passed": len(results) - len(failed),
         "failed": len(failed),
         "failure_names": [result.name for result in failed[:20]],
+        "case_groups": _group_summary(results),
         "failures": [
             {
                 "name": result.name,
+                "group": result.eval_group,
                 "checks": list(result.failures),
             }
             for result in failed[:10]
@@ -81,6 +83,7 @@ def search_quality_eval_payload() -> dict[str, object]:
         "status": "failed" if failed else "passed",
         "passed": len(results) - len(failed),
         "failed": len(failed),
+        "case_groups": _group_summary(results),
         "results": [
             {
                 **asdict(result),
@@ -88,4 +91,20 @@ def search_quality_eval_payload() -> dict[str, object]:
             }
             for result in results
         ],
+    }
+
+
+def _group_summary(results: list[SearchQualityEvalResult]) -> dict[str, object]:
+    groups: dict[str, list[SearchQualityEvalResult]] = {}
+    for result in results:
+        groups.setdefault(result.eval_group, []).append(result)
+    return {
+        name: {
+            "case_count": len(items),
+            "passed": sum(1 for item in items if item.passed),
+            "failed": sum(1 for item in items if not item.passed),
+            "failure_names": [item.name for item in items if not item.passed],
+            "case_names": [item.name for item in items],
+        }
+        for name, items in sorted(groups.items())
     }

@@ -444,6 +444,7 @@ def _quality_canary_summary(
         "passed": _int_mapping(metadata, "passed"),
         "failed": _int_mapping(metadata, "failed"),
         "failure_names": _str_list(metadata.get("failure_names")),
+        "case_groups": _quality_canary_case_groups(metadata.get("case_groups")),
         "last_run_at": _datetime_metadata(created_at),
         "age_hours": age_hours,
         "stale_after_hours": _quality_canary_stale_after_hours(),
@@ -542,6 +543,27 @@ def _str_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value[:20]]
+
+
+def _quality_canary_case_groups(value: object) -> dict[str, dict[str, object]]:
+    if not isinstance(value, dict):
+        return {}
+
+    groups: dict[str, dict[str, object]] = {}
+    for raw_name, raw_group in sorted(value.items()):
+        if not isinstance(raw_group, dict):
+            continue
+        name = str(raw_name)
+        if not name:
+            continue
+        groups[name] = {
+            "case_count": _int_mapping(raw_group, "case_count"),
+            "passed": _int_mapping(raw_group, "passed"),
+            "failed": _int_mapping(raw_group, "failed"),
+            "failure_names": _str_list(raw_group.get("failure_names")),
+            "case_names": _str_list(raw_group.get("case_names")),
+        }
+    return groups
 
 
 def _datetime_metadata(value: object) -> str:

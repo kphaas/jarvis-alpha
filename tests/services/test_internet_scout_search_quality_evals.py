@@ -69,8 +69,24 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
 
     comparison = results["comparison_plan_requires_cross_check_and_two_sources"]
     assert comparison.details["status"] == "supported"
+    assert comparison.eval_group == "daily_use"
     assert comparison.details["research_stop_criteria"]["require_cross_check"] is True
     assert comparison.details["accepted_hosts"] == ["brave.com", "perplexity.ai"]
+
+    non_ai_comparison = results[
+        "non_ai_serverless_comparison_requires_independent_sources"
+    ]
+    assert non_ai_comparison.details["status"] == "supported"
+    assert non_ai_comparison.eval_group == "daily_use"
+    assert non_ai_comparison.details["research_intent"] == "comparison"
+    assert (
+        non_ai_comparison.details["research_stop_criteria"]["require_cross_check"]
+        is True
+    )
+    assert non_ai_comparison.details["accepted_hosts"] == [
+        "developers.cloudflare.com",
+        "docs.aws.amazon.com",
+    ]
 
     negated = results["negated_claim_mismatch_fails_closed"]
     assert negated.details["status"] == "insufficient"
