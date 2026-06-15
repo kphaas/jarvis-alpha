@@ -245,6 +245,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/spark/persona/guardrails": ["read", "security_read"],
     "GET /v1/spark/persona/memory": ["read", "security_read"],
     "PUT /v1/spark/persona/guardrails": ["write", "security_write"],
+    "POST /v1/spark/persona/memory/propose": ["write", "security_write"],
     "POST /v1/spark/persona/memory/approve": ["write", "security_write"],
     "POST /v1/spark/persona/memory/archive": ["write", "security_write"],
     "POST /v1/spark/persona/memory/reject": ["write", "security_write"],

@@ -150,6 +150,17 @@ export interface SparkPersonalityMemoryReviewResponse {
   };
 }
 
+export interface SparkPersonalityMemoryProposeRequest {
+  principal_id: string;
+  note: string;
+}
+
+export interface SparkPersonalityMemoryProposeResponse {
+  status: string;
+  proposal?: SparkPersonalityMemoryProposal | null;
+  reason?: string | null;
+}
+
 export interface SparkPersonalityMemoryApproveRequest {
   approved: true;
   proposal_id: string;

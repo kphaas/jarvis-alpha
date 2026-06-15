@@ -5,6 +5,8 @@ import type {
   SparkPersonalityMemoryApproveResponse,
   SparkPersonalityMemoryArchiveRequest,
   SparkPersonalityMemoryArchiveResponse,
+  SparkPersonalityMemoryProposeRequest,
+  SparkPersonalityMemoryProposeResponse,
   SparkPersonalityMemoryRejectRequest,
   SparkPersonalityMemoryRejectResponse,
   SparkPersonalityMemoryReviewResponse,
@@ -22,6 +24,17 @@ export function useSparkPersonalityMemory(principalId = "ken") {
     staleTime: 60_000,
   });
 
+  const proposeMutation = useMutation({
+    mutationFn: (request: SparkPersonalityMemoryProposeRequest) =>
+      apiJson<SparkPersonalityMemoryProposeResponse>(
+        "/v1/spark/persona/memory/propose",
+        {
+          method: "POST",
+          body: JSON.stringify(request),
+        },
+      ),
+  });
+
   const approveMutation = useMutation({
     mutationFn: (request: SparkPersonalityMemoryApproveRequest) =>
       apiJson<SparkPersonalityMemoryApproveResponse>(
@@ -32,6 +45,7 @@ export function useSparkPersonalityMemory(principalId = "ken") {
         },
       ),
     onSuccess: () => {
+      proposeMutation.reset();
       void queryClient.invalidateQueries({ queryKey });
     },
   });
@@ -69,6 +83,11 @@ export function useSparkPersonalityMemory(principalId = "ken") {
     memoryLoading: query.isLoading,
     memoryError: query.error,
     refreshMemory: query.refetch,
+    proposeMemory: proposeMutation.mutate,
+    proposeMemoryLoading: proposeMutation.isPending,
+    proposeMemoryError: proposeMutation.error,
+    proposeMemoryResult: proposeMutation.data ?? null,
+    clearProposedMemory: proposeMutation.reset,
     approveMemory: approveMutation.mutate,
     approveMemoryLoading: approveMutation.isPending,
     approveMemoryError: approveMutation.error,

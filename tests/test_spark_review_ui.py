@@ -49,6 +49,7 @@ def test_spark_review_ui_uses_draft_routes_and_api_wrapper() -> None:
     assert "/v1/spark/drafts/imessage/approval-request" in source
     assert "/v1/spark/persona/guardrails" in source
     assert "/v1/spark/persona/memory" in source
+    assert "/v1/spark/persona/memory/propose" in source
     assert "/v1/spark/persona/memory/approve" in source
     assert "/v1/spark/persona/memory/archive" in source
     assert "/v1/spark/persona/memory/reject" in source
@@ -133,6 +134,8 @@ def test_spark_memory_review_ui_exposes_approval_backlog_without_raw_threads() -
     )
 
     assert "SparkMemoryReviewPanel" in source
+    assert "Ask Buddy" in source
+    assert "Propose memory" in source
     assert "candidate_key_phrases" not in source
     assert "key phrases" in source
     assert "Approve" in source

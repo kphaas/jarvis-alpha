@@ -51,6 +51,9 @@ BLOCKED_CONTENT = re.compile(
     re.IGNORECASE,
 )
 PROPOSAL_ID = re.compile(r"^[a-f0-9]{8,64}$")
+RELATIONSHIP_NOTE = re.compile(
+    r"^(?P<label>[^:]{1,80}):\s*(?P<relationship>[^;]{1,80})(?:;.*)?$"
+)
 REJECTION_FILENAME = "rejected_proposals.jsonl"
 
 
@@ -344,6 +347,78 @@ def collect_spark_personality_memory_status(
         ),
         "active_count": len(existing_rows or []),
     }
+
+
+def propose_personality_memory_from_note(
+    *,
+    principal_id: str = "ken",
+    note: str,
+) -> SparkPersonalityMemoryProposal | None:
+    """Convert a Ken-authored memory note into a reviewed Buddy proposal.
+
+    This function never writes memory. The approval route remains the only
+    durable writer.
+    """
+
+    principal = safe_principal_id(principal_id) or "ken"
+    clean = _safe_content(note)
+    if not clean:
+        return None
+
+    kind = _infer_note_kind(clean)
+    content = _normalize_note_content(clean, kind=kind)
+    if not content:
+        return None
+
+    evidence_ref_hash = hashlib.sha256(
+        f"{principal}|{clean}".encode("utf-8")
+    ).hexdigest()
+    return SparkPersonalityMemoryProposal(
+        proposal_id=_proposal_id(principal, kind, content, "buddy_proposal"),
+        principal_id=principal,
+        kind=kind,
+        content=content,
+        source="buddy_proposal",
+        reason="Buddy proposal from reviewed memory note",
+        confidence=0.72,
+        evidence_ref_hash=evidence_ref_hash,
+    )
+
+
+def _infer_note_kind(content: str) -> PersonalityMemoryKind:
+    lowered = content.casefold()
+    if RELATIONSHIP_NOTE.match(content) or " is my " in lowered:
+        return "relationship"
+    if lowered.startswith(("avoid ", "do not ", "don't ", "dont ")):
+        return "avoid"
+    if "phrase" in lowered or '"' in content or "'" in content:
+        return "phrase"
+    if any(token in lowered for token in ("voice", "tone", "sound like")):
+        return "voice"
+    if any(token in lowered for token in ("value", "principle", "believe")):
+        return "value"
+    if any(token in lowered for token in ("style", "format", "bullets")):
+        return "style"
+    return "preference"
+
+
+def _normalize_note_content(
+    content: str,
+    *,
+    kind: PersonalityMemoryKind,
+) -> str:
+    clean = _safe_content(content)
+    if not clean:
+        return ""
+    if kind == "phrase" and not clean.casefold().startswith(
+        ("signature phrase:", "candidate phrase")
+    ):
+        quoted = re.search(r"[\"']([^\"']{2,120})[\"']", clean)
+        phrase = quoted.group(1).strip() if quoted else clean
+        clean = f"Signature phrase: {phrase}."
+    elif kind == "avoid" and clean.casefold().startswith(("don't ", "dont ")):
+        clean = "Avoid " + re.sub(r"^(don't|dont)\s+", "", clean, flags=re.I)
+    return _safe_content(clean)
 
 
 def _append_proposal(
