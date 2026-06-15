@@ -606,58 +606,61 @@ export default function Spark() {
     <motion.div
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
-      className="max-w-6xl space-y-6"
+      className="max-w-[1500px] space-y-4"
     >
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="flex items-center gap-3">
-          <div
-            className={`flex h-10 w-10 items-center justify-center rounded-lg border ${border} ${panel}`}
-          >
-            <Sparkles className="h-5 w-5 text-emerald-400" />
-          </div>
-          <div>
-            <h1 className={`font-serif italic text-3xl ${strong}`}>Spark</h1>
-            <p
-              className={`mt-1 text-[10px] font-mono uppercase tracking-widest ${muted}`}
+      <section className={`rounded-xl border ${border} ${panel} p-4`}>
+        <div className="grid gap-4 xl:grid-cols-[minmax(210px,0.8fr)_minmax(0,1.6fr)_minmax(250px,0.8fr)] xl:items-center">
+          <div className="flex items-center gap-3">
+            <div
+              className={`flex h-10 w-10 items-center justify-center rounded-lg border ${border} ${panel}`}
             >
-              iMessage draft review
-            </p>
-          </div>
-        </div>
-        <div
-          className={`grid min-w-64 grid-cols-3 overflow-hidden rounded-lg border text-center text-[10px] font-mono uppercase ${border}`}
-        >
-          <div className={`px-3 py-2 ${panel}`}>draft only</div>
-          <div className={`border-x px-3 py-2 ${border}`}>local</div>
-          <div className={`px-3 py-2 ${panel}`}>approval</div>
-        </div>
-      </div>
-
-      <div className={`rounded-xl border ${border} ${panel} p-4`}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <span
-            className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
-          >
-            Spark user
-          </span>
-          <div className="flex flex-wrap gap-2">
-            {SPARK_PRINCIPALS.map((principal) => (
-              <button
-                key={principal.id}
-                type="button"
-                onClick={() => selectPrincipal(principal.id)}
-                className={`min-h-10 rounded-lg border px-3 text-sm font-bold transition ${border} ${
-                  principal.id === principalId
-                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-                    : ""
-                }`}
+              <Sparkles className="h-5 w-5 text-emerald-400" />
+            </div>
+            <div>
+              <h1 className={`font-serif italic text-3xl ${strong}`}>
+                Spark
+              </h1>
+              <p
+                className={`mt-1 text-[10px] font-mono uppercase tracking-widest ${muted}`}
               >
-                {principal.label}
-              </button>
-            ))}
+                Review console
+              </p>
+            </div>
+          </div>
+
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+              >
+                Spark user
+              </span>
+              {SPARK_PRINCIPALS.map((principal) => (
+                <button
+                  key={principal.id}
+                  type="button"
+                  onClick={() => selectPrincipal(principal.id)}
+                  className={`min-h-9 rounded-lg border px-3 text-sm font-bold transition ${border} ${
+                    principal.id === principalId
+                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                      : ""
+                  }`}
+                >
+                  {principal.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div
+            className={`grid min-w-64 grid-cols-3 overflow-hidden rounded-lg border text-center text-[10px] font-mono uppercase ${border}`}
+          >
+            <div className={`px-3 py-2 ${panel}`}>draft only</div>
+            <div className={`border-x px-3 py-2 ${border}`}>local</div>
+            <div className={`px-3 py-2 ${panel}`}>approval</div>
           </div>
         </div>
-      </div>
+      </section>
 
       <ConversationBriefPanel
         draft={state.draft}
@@ -675,17 +678,20 @@ export default function Spark() {
         </div>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <section className={`rounded-xl border ${border} ${panel} p-5`}>
-          <div className="flex items-center gap-2">
-            <MessageSquareText className="h-4 w-4 text-emerald-400" />
-            <h2
-              className={`text-xs font-mono uppercase tracking-widest ${muted}`}
-            >
-              Request
-            </h2>
+      <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[320px_minmax(0,1fr)_340px]">
+        <section className={`rounded-xl border ${border} ${panel} p-4`}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <MessageSquareText className="h-4 w-4 text-emerald-400" />
+              <h2
+                className={`text-xs font-mono uppercase tracking-widest ${muted}`}
+              >
+                Request
+              </h2>
+            </div>
+            <StatusChip label="Thread preview" className={warnClass} />
           </div>
-          <div className="mt-4 space-y-4">
+          <div className="mt-4 space-y-3">
             <label className="block">
               <span
                 className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
@@ -695,7 +701,7 @@ export default function Spark() {
               <textarea
                 value={state.replyGoal}
                 onChange={(event) => state.setReplyGoal(event.target.value)}
-                rows={6}
+                rows={4}
                 maxLength={1000}
                 className={`mt-2 w-full resize-y rounded-lg border p-3 text-sm outline-none transition focus:border-emerald-400 ${input}`}
               />
@@ -729,7 +735,7 @@ export default function Spark() {
                 />
               </div>
             </label>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
               <button
                 type="button"
                 onClick={state.generateDraft}
@@ -774,6 +780,13 @@ export default function Spark() {
                 Compare
               </button>
             </div>
+            <RecentThreadStrip
+              context={state.draft?.context_preview ?? []}
+              border={border}
+              muted={muted}
+              okClass={okClass}
+              warnClass={warnClass}
+            />
             {state.draftError && (
               <ErrorLine
                 text="Draft route unavailable"
@@ -798,20 +811,10 @@ export default function Spark() {
                 className={errorClass}
               />
             )}
-            {state.approval && (
-              <div className={`rounded-lg border px-3 py-2 text-sm ${okClass}`}>
-                Approval queued {state.approval.queue_id}
-              </div>
-            )}
-            {state.feedback?.feedback_recorded && (
-              <div className={`rounded-lg border px-3 py-2 text-sm ${okClass}`}>
-                Feedback recorded
-              </div>
-            )}
           </div>
         </section>
 
-        <section className={`rounded-xl border ${border} ${panel} p-5`}>
+        <section className={`rounded-xl border ${border} ${panel} p-4`}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <Copy className="h-4 w-4 text-emerald-400" />
@@ -828,7 +831,7 @@ export default function Spark() {
             </div>
           </div>
 
-          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(260px,0.75fr)]">
+          <div className="mt-4 space-y-4">
             <label className="block">
               <span
                 className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
@@ -838,92 +841,112 @@ export default function Spark() {
               <textarea
                 value={state.draftText}
                 onChange={(event) => state.setDraftText(event.target.value)}
-                rows={14}
+                rows={16}
                 maxLength={4000}
-                className={`mt-2 w-full resize-y rounded-lg border p-3 text-sm outline-none transition focus:border-emerald-400 ${input}`}
+                className={`mt-2 min-h-[390px] w-full resize-y rounded-lg border p-3 text-sm outline-none transition focus:border-emerald-400 ${input}`}
               />
             </label>
-            <div className="space-y-4">
-              {state.draft ? (
-                <>
-                  <RecentThreadStrip
-                    context={state.draft.context_preview}
-                    border={border}
-                    muted={muted}
-                    okClass={okClass}
-                    warnClass={warnClass}
-                  />
-                  <DraftMetadata draft={state.draft} muted={muted} />
-                  <DraftQualityPanel
-                    draft={state.draft}
-                    border={border}
-                    muted={muted}
-                    okClass={okClass}
-                    warnClass={warnClass}
-                    errorClass={errorClass}
-                  />
-                  <SourceReadinessPanel
-                    draft={state.draft}
-                    border={border}
-                    muted={muted}
-                    okClass={okClass}
-                    warnClass={warnClass}
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    {state.draft.warnings.map((warning) => (
-                      <StatusChip
-                        key={warning}
-                        label={warning.replace(/_/g, " ")}
-                        className={warnClass}
-                      />
-                    ))}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {FEEDBACK_BUTTONS.map((feedback) => (
-                      <button
-                        key={feedback.value}
-                        type="button"
-                        onClick={() => state.recordFeedback(feedback.value)}
-                        disabled={state.feedbackLoading}
-                        className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-xs font-bold transition ${
-                          feedback.tone === "ok" ? okClass : warnClass
-                        }`}
-                      >
-                        {feedback.tone === "ok" ? (
-                          <ThumbsUp className="h-4 w-4" />
-                        ) : (
-                          <ThumbsDown className="h-4 w-4" />
-                        )}
-                        {feedback.label}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <div
-                  className={`flex min-h-40 items-center justify-center rounded-lg border ${border}`}
+            <div className="flex flex-wrap gap-2">
+              {FEEDBACK_BUTTONS.map((feedback) => (
+                <button
+                  key={feedback.value}
+                  type="button"
+                  onClick={() => state.recordFeedback(feedback.value)}
+                  disabled={!state.draft || state.feedbackLoading}
+                  className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-xs font-bold transition ${
+                    feedback.tone === "ok" ? okClass : warnClass
+                  } ${!state.draft ? "opacity-45" : ""}`}
                 >
-                  <span className={`text-sm ${muted}`}>No draft loaded</span>
-                </div>
-              )}
-              {state.approval && (
-                <div className={`space-y-2 rounded-lg border p-3 ${border}`}>
-                  <div className="flex items-center gap-2 text-sm">
-                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                    <span className="font-semibold">
-                      {state.approval.approval_status}
-                    </span>
-                  </div>
-                  <MetricRow
-                    label="Queue ID"
-                    value={state.approval.queue_id}
-                    muted={muted}
-                  />
-                </div>
-              )}
+                  {feedback.tone === "ok" ? (
+                    <ThumbsUp className="h-4 w-4" />
+                  ) : (
+                    <ThumbsDown className="h-4 w-4" />
+                  )}
+                  {feedback.label}
+                </button>
+              ))}
             </div>
+            {state.feedback?.feedback_recorded && (
+              <div className={`rounded-lg border px-3 py-2 text-sm ${okClass}`}>
+                Feedback recorded
+              </div>
+            )}
           </div>
         </section>
+
+        <aside
+          className={`rounded-xl border ${border} ${panel} p-4 xl:col-span-2 2xl:col-span-1`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <CircleCheck className="h-4 w-4 text-emerald-400" />
+              <h2
+                className={`text-xs font-mono uppercase tracking-widest ${muted}`}
+              >
+                Decision rail
+              </h2>
+            </div>
+            <StatusChip label={selectedPrincipal.label} className={okClass} />
+          </div>
+
+          <div className="mt-4 space-y-4">
+            {state.draft ? (
+              <>
+                <DraftQualityPanel
+                  draft={state.draft}
+                  border={border}
+                  muted={muted}
+                  okClass={okClass}
+                  warnClass={warnClass}
+                  errorClass={errorClass}
+                />
+                <SourceReadinessPanel
+                  draft={state.draft}
+                  border={border}
+                  muted={muted}
+                  okClass={okClass}
+                  warnClass={warnClass}
+                />
+                <DraftMetadata draft={state.draft} muted={muted} />
+                <div className="flex flex-wrap gap-2">
+                  {state.draft.warnings.map((warning) => (
+                    <StatusChip
+                      key={warning}
+                      label={warning.replace(/_/g, " ")}
+                      className={warnClass}
+                    />
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div
+                className={`flex min-h-40 items-center justify-center rounded-lg border ${border}`}
+              >
+                <span className={`text-sm ${muted}`}>No draft loaded</span>
+              </div>
+            )}
+            {state.approval && (
+              <div className={`space-y-2 rounded-lg border p-3 ${border}`}>
+                <div className="flex items-center gap-2 text-sm">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                  <span className="font-semibold">
+                    {state.approval.approval_status}
+                  </span>
+                </div>
+                <MetricRow
+                  label="Queue ID"
+                  value={state.approval.queue_id}
+                  muted={muted}
+                />
+              </div>
+            )}
+            {state.approval && (
+              <div className={`rounded-lg border px-3 py-2 text-sm ${okClass}`}>
+                Approval queued {state.approval.queue_id}
+              </div>
+            )}
+          </div>
+        </aside>
       </div>
 
       {state.comparisonDrafts.length > 0 && (
@@ -970,47 +993,63 @@ export default function Spark() {
         </section>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <ThreadContextPanel
-          draft={state.draft}
-          border={border}
-          panel={panel}
-          muted={muted}
-          okClass={okClass}
-          warnClass={warnClass}
-        />
-        <DraftMemoryDebugPanel
-          draft={state.draft}
-          approval={state.approval}
-          border={border}
-          panel={panel}
-          muted={muted}
-          okClass={okClass}
-          warnClass={warnClass}
-        />
-      </div>
+      <details className={`rounded-xl border ${border} ${panel} p-4`}>
+        <summary
+          className={`cursor-pointer text-xs font-mono uppercase tracking-widest ${muted}`}
+        >
+          Advanced context
+        </summary>
+        <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <ThreadContextPanel
+            draft={state.draft}
+            border={border}
+            panel={panel}
+            muted={muted}
+            okClass={okClass}
+            warnClass={warnClass}
+          />
+          <DraftMemoryDebugPanel
+            draft={state.draft}
+            approval={state.approval}
+            border={border}
+            panel={panel}
+            muted={muted}
+            okClass={okClass}
+            warnClass={warnClass}
+          />
+        </div>
+      </details>
 
-      <SparkGuardrailsPanel
-        border={border}
-        panel={panel}
-        input={input}
-        muted={muted}
-        okClass={okClass}
-        warnClass={warnClass}
-        errorClass={errorClass}
-      />
+      <details className={`rounded-xl border ${border} ${panel} p-4`}>
+        <summary
+          className={`cursor-pointer text-xs font-mono uppercase tracking-widest ${muted}`}
+        >
+          Memory and guardrails
+        </summary>
+        <div className="mt-4 space-y-4">
+          <SparkGuardrailsPanel
+            border={border}
+            panel={panel}
+            input={input}
+            muted={muted}
+            okClass={okClass}
+            warnClass={warnClass}
+            errorClass={errorClass}
+          />
 
-      <SparkMemoryReviewPanel
-        border={border}
-        panel={panel}
-        input={input}
-        muted={muted}
-        okClass={okClass}
-        warnClass={warnClass}
-        errorClass={errorClass}
-        principalId={principalId}
-        principalLabel={selectedPrincipal.label}
-      />
+          <SparkMemoryReviewPanel
+            border={border}
+            panel={panel}
+            input={input}
+            muted={muted}
+            okClass={okClass}
+            warnClass={warnClass}
+            errorClass={errorClass}
+            principalId={principalId}
+            principalLabel={selectedPrincipal.label}
+          />
+        </div>
+      </details>
     </motion.div>
   );
 }
