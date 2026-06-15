@@ -50,6 +50,8 @@ BLOCKED_CONTENT = re.compile(
     r"\b(password|token|secret|private key|raw thread|message body|phone number)\b",
     re.IGNORECASE,
 )
+PROPOSAL_ID = re.compile(r"^[a-f0-9]{8,64}$")
+REJECTION_FILENAME = "rejected_proposals.jsonl"
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +141,79 @@ async def save_personality_memory(
     if isinstance(payload, str):
         return dict(json.loads(payload))
     return dict(payload)
+
+
+async def archive_personality_memory(
+    conn: asyncpg.Connection,
+    *,
+    principal_id: str,
+    memory_id: str,
+    archived_by: str,
+) -> dict[str, object]:
+    payload = await conn.fetchval(
+        """
+        SELECT public.archive_spark_personality_memory(
+            $1, $2::uuid, $3
+        )
+        """,
+        principal_id,
+        memory_id,
+        archived_by,
+    )
+    if isinstance(payload, str):
+        return dict(json.loads(payload))
+    return dict(payload)
+
+
+def reject_personality_memory_proposal(
+    *,
+    principal_id: str,
+    proposal_id: str,
+    rejected_by: str,
+    feedback_root: str | Path | None = None,
+) -> dict[str, object]:
+    principal = safe_principal_id(principal_id)
+    clean_proposal_id = (proposal_id or "").strip().lower()
+    clean_rejected_by = _safe_reviewer(rejected_by)
+    if principal is None:
+        return {"rejected": False, "reason": "invalid_principal"}
+    if not PROPOSAL_ID.fullmatch(clean_proposal_id):
+        return {"rejected": False, "reason": "invalid_proposal"}
+    if not clean_rejected_by:
+        return {"rejected": False, "reason": "invalid_rejected_by"}
+
+    rejected = _rejected_proposal_ids(
+        principal_id=principal,
+        feedback_root=feedback_root,
+    )
+    if clean_proposal_id in rejected:
+        return {
+            "rejected": True,
+            "proposal_id": clean_proposal_id,
+            "principal_id": principal,
+            "already_rejected": True,
+        }
+
+    from datetime import UTC, datetime
+
+    record = {
+        "event": "spark_personality_memory_proposal_rejected",
+        "created_at": datetime.now(UTC).isoformat(),
+        "principal_id": principal,
+        "proposal_id": clean_proposal_id,
+        "rejected_by": clean_rejected_by,
+    }
+    path = _rejection_file_path(principal_id=principal, feedback_root=feedback_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")))
+        handle.write("\n")
+    return {
+        "rejected": True,
+        "proposal_id": clean_proposal_id,
+        "principal_id": principal,
+        "already_rejected": False,
+    }
 
 
 def build_personality_memory_proposals(
@@ -237,6 +312,15 @@ def build_personality_memory_proposals(
             existing=existing,
         )
 
+    rejected = _rejected_proposal_ids(
+        principal_id=principal,
+        feedback_root=feedback_root,
+    )
+    if rejected:
+        proposals = [
+            proposal for proposal in proposals if proposal.proposal_id not in rejected
+        ]
+
     return tuple(proposals[:40])
 
 
@@ -327,16 +411,7 @@ def _feedback_file_path(
     principal_id: str,
     feedback_root: str | Path | None,
 ) -> Path:
-    if feedback_root is not None:
-        root = Path(feedback_root)
-    else:
-        import os
-
-        root = Path(
-            os.environ.get(SPARK_FEEDBACK_ROOT_ENV)
-            or os.environ.get(JARVIS_FEEDBACK_ROOT_ENV)
-            or DEFAULT_FEEDBACK_ROOT
-        )
+    root = _feedback_root(feedback_root)
     return (
         root.expanduser()
         / "spark"
@@ -347,6 +422,60 @@ def _feedback_file_path(
     )
 
 
+def _rejection_file_path(
+    *,
+    principal_id: str,
+    feedback_root: str | Path | None,
+) -> Path:
+    root = _feedback_root(feedback_root)
+    return (
+        root.expanduser()
+        / "spark"
+        / "principals"
+        / principal_id
+        / "memory_review"
+        / REJECTION_FILENAME
+    )
+
+
+def _feedback_root(feedback_root: str | Path | None) -> Path:
+    if feedback_root is not None:
+        return Path(feedback_root)
+
+    import os
+
+    return Path(
+        os.environ.get(SPARK_FEEDBACK_ROOT_ENV)
+        or os.environ.get(JARVIS_FEEDBACK_ROOT_ENV)
+        or DEFAULT_FEEDBACK_ROOT
+    )
+
+
+def _rejected_proposal_ids(
+    *,
+    principal_id: str,
+    feedback_root: str | Path | None,
+) -> set[str]:
+    path = _rejection_file_path(
+        principal_id=principal_id,
+        feedback_root=feedback_root,
+    )
+    rejected: set[str] = set()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return rejected
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        proposal_id = str(row.get("proposal_id") or "").strip().lower()
+        if PROPOSAL_ID.fullmatch(proposal_id):
+            rejected.add(proposal_id)
+    return rejected
+
+
 def _safe_content(value: str) -> str:
     clean = re.sub(r"\s+", " ", value).strip().strip("\"'")
     if not clean or BLOCKED_CONTENT.search(clean):
@@ -354,6 +483,12 @@ def _safe_content(value: str) -> str:
     if len(clean) > 500:
         clean = clean[:497].rstrip() + "..."
     return clean
+
+
+def _safe_reviewer(value: str) -> str:
+    clean = re.sub(r"\s+", "-", value.strip().lower())
+    clean = re.sub(r"[^a-z0-9@._-]+", "", clean)
+    return clean[:128]
 
 
 def _proposal_id(

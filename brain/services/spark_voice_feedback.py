@@ -13,17 +13,24 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from brain.services.spark_imessage_drafts import SparkDraftProposal
 
 FEEDBACK_VERSION = "spark-draft-edit-feedback/v0.1"
+QUALITY_FEEDBACK_VERSION = "spark-draft-quality-feedback/v0.1"
 DEFAULT_FEEDBACK_ROOT = "~/jarvis-personality-feedback"
 SPARK_FEEDBACK_ROOT_ENV = "SPARK_VOICE_FEEDBACK_ROOT"
 JARVIS_FEEDBACK_ROOT_ENV = "JARVIS_PERSONALITY_FEEDBACK_ROOT"
 FEEDBACK_FILENAME = "imessage_draft_edits.jsonl"
 MAX_STORED_DRAFT_CHARS = 4000
 MAX_KEY_PHRASES = 8
+SparkDraftQualityFeedbackLabel = Literal[
+    "sounds_like_me",
+    "too_robotic",
+    "too_formal",
+    "too_much_policy",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +38,13 @@ class SparkDraftEditFeedbackResult:
     recorded: bool
     feedback_ref_hash: str | None
     candidate_key_phrases: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class SparkDraftQualityFeedbackResult:
+    recorded: bool
+    feedback_ref_hash: str | None
+    feedback_label: SparkDraftQualityFeedbackLabel | None = None
 
 
 def record_spark_draft_edit_feedback(
@@ -73,6 +87,76 @@ def record_spark_draft_edit_feedback(
         recorded=True,
         feedback_ref_hash=feedback_ref_hash,
         candidate_key_phrases=candidate_key_phrases,
+    )
+
+
+def record_spark_draft_quality_feedback(
+    *,
+    principal_id: str,
+    feedback_label: SparkDraftQualityFeedbackLabel,
+    draft_version: str,
+    approval_ref_hash: str,
+    source_reference_hash: str,
+    chat_guid_hash: str,
+    vault_root: str | Path | None = None,
+    created_at: datetime | None = None,
+) -> SparkDraftQualityFeedbackResult:
+    """Append a label-only quality signal without storing draft or thread text."""
+
+    if feedback_label not in {
+        "sounds_like_me",
+        "too_robotic",
+        "too_formal",
+        "too_much_policy",
+    }:
+        return SparkDraftQualityFeedbackResult(
+            recorded=False,
+            feedback_ref_hash=None,
+        )
+
+    safe_principal = _safe_token(principal_id, fallback="unknown", limit=64)
+    if safe_principal == "unknown":
+        return SparkDraftQualityFeedbackResult(
+            recorded=False,
+            feedback_ref_hash=None,
+        )
+
+    now = created_at or datetime.now(UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+
+    record = {
+        "feedback_version": QUALITY_FEEDBACK_VERSION,
+        "created_at": now.astimezone(UTC).isoformat(),
+        "principal_id": safe_principal,
+        "channel": "imessage",
+        "event": "draft_quality_feedback_submitted",
+        "feedback_label": feedback_label,
+        "draft_version": _safe_token(draft_version, fallback="unknown", limit=80),
+        "context_fingerprint": {
+            "approval_ref_hash": _safe_hashish(approval_ref_hash),
+            "source_reference_hash": _safe_hashish(source_reference_hash),
+            "chat_guid_hash": _safe_hashish(chat_guid_hash),
+        },
+        "guardrails": [
+            "no_inbound_runtime_context_stored",
+            "label_only_quality_signal",
+            "draft_only_no_send",
+        ],
+    }
+    feedback_ref_hash = _record_ref_hash(record)
+    record["feedback_ref_hash"] = feedback_ref_hash
+
+    path = _feedback_path(vault_root, safe_principal)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")))
+        handle.write("\n")
+
+    return SparkDraftQualityFeedbackResult(
+        recorded=True,
+        feedback_ref_hash=feedback_ref_hash,
+        feedback_label=feedback_label,
     )
 
 
@@ -175,6 +259,19 @@ def _phrase_candidate(value: str) -> str:
 
 def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _safe_hashish(value: str) -> str:
+    clean = _clean_text(value)
+    if re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", clean):
+        return clean
+    return hashlib.sha256(clean.encode("utf-8")).hexdigest()
+
+
+def _safe_token(value: str, *, fallback: str, limit: int) -> str:
+    clean = re.sub(r"\s+", "-", value.strip().lower())
+    clean = re.sub(r"[^a-z0-9._:@/-]+", "", clean)
+    return clean[:limit] or fallback
 
 
 def _record_ref_hash(record: dict[str, Any]) -> str:

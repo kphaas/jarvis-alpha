@@ -27,7 +27,10 @@ from brain.services.spark_draft_approvals import enqueue_spark_draft_approval
 from brain.services.spark_personality_memory import fetch_personality_memory
 from brain.services.spark_voice_feedback import (
     SparkDraftEditFeedbackResult,
+    SparkDraftQualityFeedbackLabel,
+    SparkDraftQualityFeedbackResult,
     record_spark_draft_edit_feedback,
+    record_spark_draft_quality_feedback,
 )
 from brain.services.spark_voice_ingest import SparkVoiceIngestError
 from jarvis_common.logging_config import get_logger
@@ -77,6 +80,24 @@ class SparkIMessageDraftApprovalOut(SparkIMessageDraftOut):
     voice_feedback_recorded: bool = False
     voice_feedback_ref_hash: str | None = None
     candidate_key_phrases: list[str] = Field(default_factory=list)
+
+
+class SparkIMessageDraftFeedbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    principal_id: str = Field(default="ken", min_length=1, max_length=64)
+    feedback_label: SparkDraftQualityFeedbackLabel
+    draft_version: str = Field(min_length=1, max_length=80)
+    approval_ref_hash: str = Field(min_length=1, max_length=160)
+    source_reference_hash: str = Field(min_length=1, max_length=160)
+    chat_guid_hash: str = Field(min_length=1, max_length=160)
+
+
+class SparkIMessageDraftFeedbackOut(BaseModel):
+    status: str
+    feedback_recorded: bool
+    feedback_ref_hash: str | None = None
+    feedback_label: SparkDraftQualityFeedbackLabel | None = None
 
 
 def _check_draft_scopes(request: Request) -> None:
@@ -229,6 +250,32 @@ def _log_feedback_failure(
     )
 
 
+def _log_quality_feedback_success(
+    request: Request,
+    payload: SparkIMessageDraftFeedbackRequest,
+    *,
+    feedback: SparkDraftQualityFeedbackResult,
+) -> None:
+    event = "spark_imessage_draft_quality_feedback_recorded"
+    logger.info(
+        event,
+        extra={
+            "event": event,
+            "component": "spark_drafts",
+            "action": "imessage_draft_quality_feedback",
+            "body_access": False,
+            "principal_id": payload.principal_id,
+            "feedback_label": payload.feedback_label,
+            "feedback_recorded": feedback.recorded,
+            "feedback_ref_hash": feedback.feedback_ref_hash or "",
+            "approval_ref_hash": payload.approval_ref_hash,
+            "source_reference_hash": payload.source_reference_hash,
+            "chat_guid_hash": payload.chat_guid_hash,
+            **_safe_actor_fields(request),
+        },
+    )
+
+
 def _log_failure(
     request: Request,
     *,
@@ -345,4 +392,35 @@ async def spark_imessage_draft_approval_request(
         voice_feedback_recorded=feedback.recorded,
         voice_feedback_ref_hash=feedback.feedback_ref_hash,
         candidate_key_phrases=list(feedback.candidate_key_phrases),
+    )
+
+
+@router.post("/imessage/feedback", response_model=SparkIMessageDraftFeedbackOut)
+async def spark_imessage_draft_feedback(
+    request: Request,
+    payload: SparkIMessageDraftFeedbackRequest,
+    _: str = Depends(require_auth),
+) -> SparkIMessageDraftFeedbackOut:
+    _check_draft_scopes(request)
+    try:
+        feedback = record_spark_draft_quality_feedback(
+            principal_id=payload.principal_id,
+            feedback_label=payload.feedback_label,
+            draft_version=payload.draft_version,
+            approval_ref_hash=payload.approval_ref_hash,
+            source_reference_hash=payload.source_reference_hash,
+            chat_guid_hash=payload.chat_guid_hash,
+        )
+    except Exception as exc:
+        _log_failure(request, exc=exc, status_code=500)
+        raise HTTPException(
+            status_code=500,
+            detail="spark_imessage_draft_feedback_failed",
+        ) from exc
+    _log_quality_feedback_success(request, payload, feedback=feedback)
+    return SparkIMessageDraftFeedbackOut(
+        status="recorded" if feedback.recorded else "not_recorded",
+        feedback_recorded=feedback.recorded,
+        feedback_ref_hash=feedback.feedback_ref_hash,
+        feedback_label=feedback.feedback_label,
     )

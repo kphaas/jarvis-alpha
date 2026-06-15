@@ -1,62 +1,93 @@
-import { motion } from "framer-motion"
+import { motion } from "framer-motion";
 import {
   AlertTriangle,
   CheckCircle2,
   Copy,
+  GitCompareArrows,
   LoaderCircle,
   MessageSquareText,
   RefreshCw,
   ShieldCheck,
   Sparkles,
-} from "lucide-react"
-import { useSearchParams } from "react-router-dom"
-import { SparkGuardrailsPanel } from "../components/spark/SparkGuardrailsPanel"
-import { SparkMemoryReviewPanel } from "../components/spark/SparkMemoryReviewPanel"
-import { useSparkDraftReview } from "../hooks/useSparkDraftReview"
-import { useAppStore } from "../store"
-import type { SparkIMessageDraftResponse } from "../types/spark"
+  ThumbsDown,
+  ThumbsUp,
+} from "lucide-react";
+import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { SparkGuardrailsPanel } from "../components/spark/SparkGuardrailsPanel";
+import { SparkMemoryReviewPanel } from "../components/spark/SparkMemoryReviewPanel";
+import { useSparkDraftReview } from "../hooks/useSparkDraftReview";
+import { useAppStore } from "../store";
+import type {
+  SparkDraftFeedbackLabel,
+  SparkIMessageDraftResponse,
+} from "../types/spark";
+
+const SPARK_PRINCIPALS = [
+  { id: "ken", label: "Ken" },
+  { id: "sweta", label: "Sweta" },
+  { id: "ryleigh", label: "Ryleigh" },
+  { id: "sloane", label: "Sloane" },
+  { id: "meagan", label: "Meagan" },
+  { id: "mother", label: "Mother" },
+];
+
+const FEEDBACK_BUTTONS: Array<{
+  label: string;
+  value: SparkDraftFeedbackLabel;
+  tone: "ok" | "warn";
+}> = [
+  { label: "Sounds like me", value: "sounds_like_me", tone: "ok" },
+  { label: "Too robotic", value: "too_robotic", tone: "warn" },
+  { label: "Too formal", value: "too_formal", tone: "warn" },
+  { label: "Too much policy", value: "too_much_policy", tone: "warn" },
+];
 
 function tone(isDark: boolean, variant: "ok" | "warn" | "error") {
   if (variant === "ok") {
     return isDark
       ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-      : "border-emerald-700/30 bg-emerald-50 text-emerald-800"
+      : "border-emerald-700/30 bg-emerald-50 text-emerald-800";
   }
   if (variant === "warn") {
     return isDark
       ? "border-amber-400/30 bg-amber-500/10 text-amber-200"
-      : "border-amber-700/30 bg-amber-50 text-amber-800"
+      : "border-amber-700/30 bg-amber-50 text-amber-800";
   }
   return isDark
     ? "border-rose-400/30 bg-rose-500/10 text-rose-200"
-    : "border-rose-700/30 bg-rose-50 text-rose-800"
+    : "border-rose-700/30 bg-rose-50 text-rose-800";
 }
 
 function shortHash(value: string) {
-  return `${value.slice(0, 10)}...${value.slice(-8)}`
+  return `${value.slice(0, 10)}...${value.slice(-8)}`;
 }
 
 function ErrorLine({ text, className }: { text: string; className: string }) {
   return (
-    <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${className}`}>
+    <div
+      className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${className}`}
+    >
       <AlertTriangle className="h-4 w-4 shrink-0" />
       <span>{text}</span>
     </div>
-  )
+  );
 }
 
 function StatusChip({
   label,
   className,
 }: {
-  label: string
-  className: string
+  label: string;
+  className: string;
 }) {
   return (
-    <span className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${className}`}>
+    <span
+      className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${className}`}
+    >
       {label}
     </span>
-  )
+  );
 }
 
 function MetricRow({
@@ -64,60 +95,101 @@ function MetricRow({
   value,
   muted,
 }: {
-  label: string
-  value: string | number
-  muted: string
+  label: string;
+  value: string | number;
+  muted: string;
 }) {
   return (
     <div className="flex min-h-11 items-center justify-between gap-3 border-b border-current/10 py-2 last:border-b-0">
-      <span className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+      <span
+        className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+      >
         {label}
       </span>
-      <span className="min-w-0 truncate text-right text-sm font-semibold">{value}</span>
+      <span className="min-w-0 truncate text-right text-sm font-semibold">
+        {value}
+      </span>
     </div>
-  )
+  );
 }
 
 function DraftMetadata({
   draft,
   muted,
 }: {
-  draft: SparkIMessageDraftResponse
-  muted: string
+  draft: SparkIMessageDraftResponse;
+  muted: string;
 }) {
   return (
     <div className="space-y-1">
-      <MetricRow label="Context read" value={draft.context_messages_read} muted={muted} />
-      <MetricRow label="Sent examples" value={draft.principal_sent_messages} muted={muted} />
-      <MetricRow label="Runtime context" value={draft.runtime_context_messages} muted={muted} />
-      <MetricRow label="Draft engine" value={draft.draft_engine.replace(/_/g, " ")} muted={muted} />
-      <MetricRow label="Approval hash" value={shortHash(draft.approval_ref_hash)} muted={muted} />
-      <MetricRow label="Thread hash" value={shortHash(draft.chat_guid_hash)} muted={muted} />
+      <MetricRow
+        label="Context read"
+        value={draft.context_messages_read}
+        muted={muted}
+      />
+      <MetricRow
+        label="Sent examples"
+        value={draft.principal_sent_messages}
+        muted={muted}
+      />
+      <MetricRow
+        label="Runtime context"
+        value={draft.runtime_context_messages}
+        muted={muted}
+      />
+      <MetricRow
+        label="Draft engine"
+        value={draft.draft_engine.replace(/_/g, " ")}
+        muted={muted}
+      />
+      <MetricRow
+        label="Approval hash"
+        value={shortHash(draft.approval_ref_hash)}
+        muted={muted}
+      />
+      <MetricRow
+        label="Thread hash"
+        value={shortHash(draft.chat_guid_hash)}
+        muted={muted}
+      />
       <MetricRow
         label="Sensitivity"
-        value={draft.detected_sensitivity.length ? draft.detected_sensitivity.join(", ") : "clear"}
+        value={
+          draft.detected_sensitivity.length
+            ? draft.detected_sensitivity.join(", ")
+            : "clear"
+        }
         muted={muted}
       />
     </div>
-  )
+  );
 }
 
 export default function Spark() {
-  const { theme } = useAppStore()
-  const [searchParams] = useSearchParams()
-  const activeApproval = searchParams.get("approval")
-  const state = useSparkDraftReview()
-  const isDark = theme === "dark"
-  const border = isDark ? "border-white/10" : "border-[#141414]/10"
-  const panel = isDark ? "bg-white/5" : "bg-[#141414]/5"
+  const { theme } = useAppStore();
+  const [searchParams] = useSearchParams();
+  const activeApproval = searchParams.get("approval");
+  const [principalId, setPrincipalId] = useState("ken");
+  const state = useSparkDraftReview(principalId);
+  const isDark = theme === "dark";
+  const border = isDark ? "border-white/10" : "border-[#141414]/10";
+  const panel = isDark ? "bg-white/5" : "bg-[#141414]/5";
   const input = isDark
     ? "bg-[#0A0A0A] border-white/10"
-    : "bg-[#E4E3E0] border-[#141414]/15"
-  const muted = isDark ? "text-white/45" : "text-[#141414]/50"
-  const strong = isDark ? "text-white" : "text-[#141414]"
-  const okClass = tone(isDark, "ok")
-  const warnClass = tone(isDark, "warn")
-  const errorClass = tone(isDark, "error")
+    : "bg-[#E4E3E0] border-[#141414]/15";
+  const muted = isDark ? "text-white/45" : "text-[#141414]/50";
+  const strong = isDark ? "text-white" : "text-[#141414]";
+  const okClass = tone(isDark, "ok");
+  const warnClass = tone(isDark, "warn");
+  const errorClass = tone(isDark, "error");
+  const selectedPrincipal =
+    SPARK_PRINCIPALS.find((principal) => principal.id === principalId) ??
+    SPARK_PRINCIPALS[0];
+
+  function selectPrincipal(nextPrincipalId: string) {
+    state.resetDraftSurface();
+    setPrincipalId(nextPrincipalId);
+  }
 
   return (
     <motion.div
@@ -134,7 +206,9 @@ export default function Spark() {
           </div>
           <div>
             <h1 className={`font-serif italic text-3xl ${strong}`}>Spark</h1>
-            <p className={`mt-1 text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+            <p
+              className={`mt-1 text-[10px] font-mono uppercase tracking-widest ${muted}`}
+            >
               iMessage draft review
             </p>
           </div>
@@ -148,6 +222,32 @@ export default function Spark() {
         </div>
       </div>
 
+      <div className={`rounded-xl border ${border} ${panel} p-4`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span
+            className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+          >
+            Spark user
+          </span>
+          <div className="flex flex-wrap gap-2">
+            {SPARK_PRINCIPALS.map((principal) => (
+              <button
+                key={principal.id}
+                type="button"
+                onClick={() => selectPrincipal(principal.id)}
+                className={`min-h-10 rounded-lg border px-3 text-sm font-bold transition ${border} ${
+                  principal.id === principalId
+                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                    : ""
+                }`}
+              >
+                {principal.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {activeApproval && (
         <div className={`rounded-lg border px-3 py-2 text-sm ${okClass}`}>
           Approval queue {activeApproval}
@@ -158,13 +258,17 @@ export default function Spark() {
         <section className={`rounded-xl border ${border} ${panel} p-5`}>
           <div className="flex items-center gap-2">
             <MessageSquareText className="h-4 w-4 text-emerald-400" />
-            <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>
+            <h2
+              className={`text-xs font-mono uppercase tracking-widest ${muted}`}
+            >
               Request
             </h2>
           </div>
           <div className="mt-4 space-y-4">
             <label className="block">
-              <span className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+              <span
+                className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+              >
                 Reply goal
               </span>
               <textarea
@@ -176,7 +280,9 @@ export default function Spark() {
               />
             </label>
             <label className="block">
-              <span className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+              <span
+                className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+              >
                 Context messages
               </span>
               <div className="mt-2 flex items-center gap-3">
@@ -185,7 +291,9 @@ export default function Spark() {
                   min={1}
                   max={50}
                   value={state.maxContextMessages}
-                  onChange={(event) => state.setMaxContextMessages(Number(event.target.value))}
+                  onChange={(event) =>
+                    state.setMaxContextMessages(Number(event.target.value))
+                  }
                   className="min-w-0 flex-1"
                 />
                 <input
@@ -193,7 +301,9 @@ export default function Spark() {
                   min={1}
                   max={50}
                   value={state.maxContextMessages}
-                  onChange={(event) => state.setMaxContextMessages(Number(event.target.value))}
+                  onChange={(event) =>
+                    state.setMaxContextMessages(Number(event.target.value))
+                  }
                   className={`h-11 w-20 rounded-lg border px-3 text-sm ${input}`}
                 />
               </div>
@@ -229,16 +339,52 @@ export default function Spark() {
                 )}
                 Submit approval
               </button>
+              <button
+                type="button"
+                onClick={state.generateComparisons}
+                disabled={state.comparisonLoading}
+                className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-4 text-sm font-bold transition ${border}`}
+              >
+                {state.comparisonLoading ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                ) : (
+                  <GitCompareArrows className="h-4 w-4" />
+                )}
+                Compare
+              </button>
             </div>
             {state.draftError && (
-              <ErrorLine text="Draft route unavailable" className={errorClass} />
+              <ErrorLine
+                text="Draft route unavailable"
+                className={errorClass}
+              />
+            )}
+            {state.comparisonError && (
+              <ErrorLine
+                text="Comparison route unavailable"
+                className={errorClass}
+              />
             )}
             {state.approvalError && (
-              <ErrorLine text="Approval handoff failed" className={errorClass} />
+              <ErrorLine
+                text="Approval handoff failed"
+                className={errorClass}
+              />
+            )}
+            {state.feedbackError && (
+              <ErrorLine
+                text="Feedback capture failed"
+                className={errorClass}
+              />
             )}
             {state.approval && (
               <div className={`rounded-lg border px-3 py-2 text-sm ${okClass}`}>
                 Approval queued {state.approval.queue_id}
+              </div>
+            )}
+            {state.feedback?.feedback_recorded && (
+              <div className={`rounded-lg border px-3 py-2 text-sm ${okClass}`}>
+                Feedback recorded
               </div>
             )}
           </div>
@@ -248,7 +394,9 @@ export default function Spark() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <Copy className="h-4 w-4 text-emerald-400" />
-              <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>
+              <h2
+                className={`text-xs font-mono uppercase tracking-widest ${muted}`}
+              >
                 Draft
               </h2>
             </div>
@@ -261,7 +409,9 @@ export default function Spark() {
 
           <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(260px,0.75fr)]">
             <label className="block">
-              <span className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+              <span
+                className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+              >
                 Draft text
               </span>
               <textarea
@@ -278,12 +428,38 @@ export default function Spark() {
                   <DraftMetadata draft={state.draft} muted={muted} />
                   <div className="flex flex-wrap gap-2">
                     {state.draft.warnings.map((warning) => (
-                      <StatusChip key={warning} label={warning.replace(/_/g, " ")} className={warnClass} />
+                      <StatusChip
+                        key={warning}
+                        label={warning.replace(/_/g, " ")}
+                        className={warnClass}
+                      />
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {FEEDBACK_BUTTONS.map((feedback) => (
+                      <button
+                        key={feedback.value}
+                        type="button"
+                        onClick={() => state.recordFeedback(feedback.value)}
+                        disabled={state.feedbackLoading}
+                        className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-xs font-bold transition ${
+                          feedback.tone === "ok" ? okClass : warnClass
+                        }`}
+                      >
+                        {feedback.tone === "ok" ? (
+                          <ThumbsUp className="h-4 w-4" />
+                        ) : (
+                          <ThumbsDown className="h-4 w-4" />
+                        )}
+                        {feedback.label}
+                      </button>
                     ))}
                   </div>
                 </>
               ) : (
-                <div className={`flex min-h-40 items-center justify-center rounded-lg border ${border}`}>
+                <div
+                  className={`flex min-h-40 items-center justify-center rounded-lg border ${border}`}
+                >
                   <span className={`text-sm ${muted}`}>No draft loaded</span>
                 </div>
               )}
@@ -291,15 +467,65 @@ export default function Spark() {
                 <div className={`space-y-2 rounded-lg border p-3 ${border}`}>
                   <div className="flex items-center gap-2 text-sm">
                     <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                    <span className="font-semibold">{state.approval.approval_status}</span>
+                    <span className="font-semibold">
+                      {state.approval.approval_status}
+                    </span>
                   </div>
-                  <MetricRow label="Queue ID" value={state.approval.queue_id} muted={muted} />
+                  <MetricRow
+                    label="Queue ID"
+                    value={state.approval.queue_id}
+                    muted={muted}
+                  />
                 </div>
               )}
             </div>
           </div>
         </section>
       </div>
+
+      {state.comparisonDrafts.length > 0 && (
+        <section className={`rounded-xl border ${border} ${panel} p-5`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <GitCompareArrows className="h-4 w-4 text-emerald-400" />
+              <h2
+                className={`text-xs font-mono uppercase tracking-widest ${muted}`}
+              >
+                Side-by-side
+              </h2>
+            </div>
+            <StatusChip label={selectedPrincipal.label} className={okClass} />
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            {state.comparisonDrafts.map((comparison) => (
+              <div
+                key={comparison.id}
+                className={`rounded-lg border p-3 ${border}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span
+                    className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+                  >
+                    {comparison.label}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      state.setDraftText(comparison.draft.draft_text)
+                    }
+                    className={`min-h-9 rounded-lg border px-3 text-xs font-bold ${border}`}
+                  >
+                    Use
+                  </button>
+                </div>
+                <p className="mt-3 text-sm leading-relaxed">
+                  {comparison.draft.draft_text}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <SparkGuardrailsPanel
         border={border}
@@ -319,7 +545,9 @@ export default function Spark() {
         okClass={okClass}
         warnClass={warnClass}
         errorClass={errorClass}
+        principalId={principalId}
+        principalLabel={selectedPrincipal.label}
       />
     </motion.div>
-  )
+  );
 }

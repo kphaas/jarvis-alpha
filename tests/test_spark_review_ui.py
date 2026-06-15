@@ -50,6 +50,9 @@ def test_spark_review_ui_uses_draft_routes_and_api_wrapper() -> None:
     assert "/v1/spark/persona/guardrails" in source
     assert "/v1/spark/persona/memory" in source
     assert "/v1/spark/persona/memory/approve" in source
+    assert "/v1/spark/persona/memory/archive" in source
+    assert "/v1/spark/persona/memory/reject" in source
+    assert "/v1/spark/drafts/imessage/feedback" in source
     assert "draft_text_override" in source
     assert "fetch(" not in source
     assert "XMLHttpRequest" not in source
@@ -133,7 +136,37 @@ def test_spark_memory_review_ui_exposes_approval_backlog_without_raw_threads() -
     assert "candidate_key_phrases" not in source
     assert "key phrases" in source
     assert "Approve" in source
+    assert "Archive" in source
+    assert "Reject" in source
     assert "proposals" in source
     assert "approved_by" in source
     assert "raw thread" not in source.lower()
     assert "message_body" not in source
+
+
+def test_spark_workbench_exposes_person_memory_comparisons_and_feedback() -> None:
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            SPARK_PAGE,
+            SPARK_HOOK,
+            SPARK_MEMORY_HOOK,
+            SPARK_MEMORY_PANEL,
+            SPARK_TYPES,
+        )
+    )
+
+    assert "SPARK_PRINCIPALS" in source
+    assert "sweta" in source
+    assert "ryleigh" in source
+    assert "sloane" in source
+    assert "meagan" in source
+    assert "mother" in source
+    assert "Side-by-side" in source
+    assert "Compare" in source
+    assert "Sounds like me" in source
+    assert "Too robotic" in source
+    assert "Too formal" in source
+    assert "Too much policy" in source
+    assert "spark.draft.send" not in source
+    assert "/message/text" not in source

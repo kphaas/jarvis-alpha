@@ -43,17 +43,23 @@ def test_spark_persona_routes_are_classified_t2_security_state() -> None:
     memory_read_classes = classify_route("GET", "/v1/spark/persona/memory")
     write_classes = classify_route("PUT", "/v1/spark/persona/guardrails")
     memory_write_classes = classify_route("POST", "/v1/spark/persona/memory/approve")
+    memory_archive_classes = classify_route("POST", "/v1/spark/persona/memory/archive")
+    memory_reject_classes = classify_route("POST", "/v1/spark/persona/memory/reject")
 
     assert read_classes == ["read", "security_read"]
     assert auto_context_classes == ["read", "security_read"]
     assert memory_read_classes == ["read", "security_read"]
     assert write_classes == ["write", "security_write"]
     assert memory_write_classes == ["write", "security_write"]
+    assert memory_archive_classes == ["write", "security_write"]
+    assert memory_reject_classes == ["write", "security_write"]
     assert determine_risk_tier(read_classes) == "T2"
     assert determine_risk_tier(auto_context_classes) == "T2"
     assert determine_risk_tier(memory_read_classes) == "T2"
     assert determine_risk_tier(write_classes) == "T2"
     assert determine_risk_tier(memory_write_classes) == "T2"
+    assert determine_risk_tier(memory_archive_classes) == "T2"
+    assert determine_risk_tier(memory_reject_classes) == "T2"
 
 
 @pytest.mark.asyncio
@@ -319,6 +325,95 @@ async def test_spark_memory_approval_calls_reviewed_writer(
     ]
     logs = json.dumps(fake_logger.infos)
     assert "Signature phrase: cheers." not in logs
+    assert "draft_text" not in logs
+
+
+@pytest.mark.asyncio
+async def test_spark_memory_archive_calls_reviewed_archiver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    archive_calls: list[dict[str, object]] = []
+
+    async def fake_archive(_conn: object, **kwargs: object) -> dict[str, object]:
+        archive_calls.append(kwargs)
+        return {
+            "archived": True,
+            "personality_id": kwargs["memory_id"],
+            "principal_id": kwargs["principal_id"],
+        }
+
+    monkeypatch.setattr(spark_persona, "logger", fake_logger)
+    monkeypatch.setattr(
+        spark_persona,
+        "rls_connection",
+        lambda _request: _AsyncConn(rows=[]),
+    )
+    monkeypatch.setattr(spark_persona, "archive_personality_memory", fake_archive)
+
+    response = await spark_persona.archive_spark_personality_memory(
+        _request(role="admin"),
+        spark_persona.SparkPersonalityMemoryArchiveRequest(
+            principal_id="ken",
+            memory_id="11111111-1111-4111-8111-111111111111",
+        ),
+        "user",
+    )
+
+    assert response.status == "archived"
+    assert archive_calls == [
+        {
+            "principal_id": "ken",
+            "memory_id": "11111111-1111-4111-8111-111111111111",
+            "archived_by": "ken",
+        }
+    ]
+    logs = json.dumps(fake_logger.infos)
+    assert "draft_text" not in logs
+    assert "private inbound body" not in logs
+
+
+@pytest.mark.asyncio
+async def test_spark_memory_reject_records_proposal_without_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    reject_calls: list[dict[str, object]] = []
+
+    def fake_reject(**kwargs: object) -> dict[str, object]:
+        reject_calls.append(kwargs)
+        return {
+            "rejected": True,
+            "proposal_id": kwargs["proposal_id"],
+            "principal_id": kwargs["principal_id"],
+        }
+
+    monkeypatch.setattr(spark_persona, "logger", fake_logger)
+    monkeypatch.setattr(
+        spark_persona,
+        "reject_personality_memory_proposal",
+        fake_reject,
+    )
+
+    response = await spark_persona.reject_spark_personality_memory(
+        _request(role="admin"),
+        spark_persona.SparkPersonalityMemoryRejectRequest(
+            principal_id="ken",
+            proposal_id="abcdef123456",
+        ),
+        "user",
+    )
+
+    assert response.status == "rejected"
+    assert reject_calls == [
+        {
+            "principal_id": "ken",
+            "proposal_id": "abcdef123456",
+            "rejected_by": "ken",
+        }
+    ]
+    logs = json.dumps(fake_logger.infos)
+    assert "Signature phrase" not in logs
     assert "draft_text" not in logs
 
 

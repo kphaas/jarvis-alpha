@@ -1,37 +1,41 @@
-import { useState } from 'react'
+import { useState } from "react";
 import {
   AlertTriangle,
   Brain,
   CheckCircle2,
+  Archive,
+  XCircle,
   LoaderCircle,
   RefreshCw,
   ShieldCheck,
-} from 'lucide-react'
-import { useSparkPersonalityMemory } from '../../hooks/useSparkPersonalityMemory'
+} from "lucide-react";
+import { useSparkPersonalityMemory } from "../../hooks/useSparkPersonalityMemory";
 import type {
   SparkPersonalityMemoryProposal,
   SparkPersonalityMemorySource,
-} from '../../types/spark'
+} from "../../types/spark";
 
 interface StyleProps {
-  border: string
-  panel: string
-  input: string
-  muted: string
-  okClass: string
-  warnClass: string
-  errorClass: string
+  border: string;
+  panel: string;
+  input: string;
+  muted: string;
+  okClass: string;
+  warnClass: string;
+  errorClass: string;
+  principalId: string;
+  principalLabel: string;
 }
 
 function labelize(value: string) {
-  return value.replace(/_/g, ' ')
+  return value.replace(/_/g, " ");
 }
 
 function sourceLabel(source: SparkPersonalityMemorySource) {
-  if (source === 'spark_feedback') return 'reviewed edit'
-  if (source === 'spark_vault') return 'guardrail'
-  if (source === 'buddy_proposal') return 'buddy'
-  return 'approved'
+  if (source === "spark_feedback") return "reviewed edit";
+  if (source === "spark_vault") return "guardrail";
+  if (source === "buddy_proposal") return "buddy";
+  return "approved";
 }
 
 export function SparkMemoryReviewPanel({
@@ -42,24 +46,26 @@ export function SparkMemoryReviewPanel({
   okClass,
   warnClass,
   errorClass,
+  principalId,
+  principalLabel,
 }: StyleProps) {
-  const state = useSparkPersonalityMemory()
-  const [edits, setEdits] = useState<Record<string, string>>({})
+  const state = useSparkPersonalityMemory(principalId);
+  const [edits, setEdits] = useState<Record<string, string>>({});
 
-  const proposals = state.memory?.proposals ?? []
-  const active = state.memory?.active ?? []
-  const feedbackPhraseCount = state.memory?.buddy.feedback_phrase_count ?? 0
+  const proposals = state.memory?.proposals ?? [];
+  const active = state.memory?.active ?? [];
+  const feedbackPhraseCount = state.memory?.buddy.feedback_phrase_count ?? 0;
   const pendingPhraseCount = proposals.filter(
-    (proposal) => proposal.kind === 'phrase',
-  ).length
+    (proposal) => proposal.kind === "phrase",
+  ).length;
 
   function editedContent(proposal: SparkPersonalityMemoryProposal) {
-    return edits[proposal.proposal_id] ?? proposal.content
+    return edits[proposal.proposal_id] ?? proposal.content;
   }
 
   function approve(proposal: SparkPersonalityMemoryProposal) {
-    const content = editedContent(proposal).trim()
-    if (!content || state.approveMemoryLoading) return
+    const content = editedContent(proposal).trim();
+    if (!content || state.approveMemoryLoading) return;
     state.approveMemory({
       approved: true,
       proposal_id: proposal.proposal_id,
@@ -69,7 +75,23 @@ export function SparkMemoryReviewPanel({
       source: proposal.source,
       evidence_ref_hash: proposal.evidence_ref_hash ?? null,
       importance_score: proposal.confidence,
-    })
+    });
+  }
+
+  function reject(proposal: SparkPersonalityMemoryProposal) {
+    if (state.rejectMemoryLoading) return;
+    state.rejectMemory({
+      principal_id: proposal.principal_id,
+      proposal_id: proposal.proposal_id,
+    });
+  }
+
+  function archive(memoryId: string) {
+    if (state.archiveMemoryLoading) return;
+    state.archiveMemory({
+      principal_id: principalId,
+      memory_id: memoryId,
+    });
   }
 
   if (state.memoryLoading) {
@@ -80,7 +102,7 @@ export function SparkMemoryReviewPanel({
           Loading memory review
         </div>
       </section>
-    )
+    );
   }
 
   if (state.memoryError || !state.memory) {
@@ -93,7 +115,7 @@ export function SparkMemoryReviewPanel({
           Memory review unavailable
         </div>
       </section>
-    )
+    );
   }
 
   return (
@@ -101,11 +123,18 @@ export function SparkMemoryReviewPanel({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Brain className="h-4 w-4 text-emerald-400" />
-          <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>
+          <h2
+            className={`text-xs font-mono uppercase tracking-widest ${muted}`}
+          >
             Memory review
           </h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${okClass}`}
+          >
+            {principalLabel}
+          </span>
           <span
             className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${okClass}`}
           >
@@ -130,16 +159,23 @@ export function SparkMemoryReviewPanel({
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(280px,0.9fr)]">
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
-              Proposed facts
+            <span
+              className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+            >
+              Proposed phrases/rules
             </span>
             <span className={`text-xs ${muted}`}>
-              {pendingPhraseCount} key phrases, {feedbackPhraseCount} from reviewed edits
+              {pendingPhraseCount} key phrases,{" "}
+              {proposals.length - pendingPhraseCount} rules,{" "}
+              {feedbackPhraseCount} from reviewed edits
             </span>
           </div>
           {proposals.length ? (
             proposals.map((proposal) => (
-              <div key={proposal.proposal_id} className={`rounded-lg border p-3 ${border}`}>
+              <div
+                key={proposal.proposal_id}
+                className={`rounded-lg border p-3 ${border}`}
+              >
                 <div className="flex flex-wrap items-center gap-2">
                   <span
                     className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${okClass}`}
@@ -168,26 +204,44 @@ export function SparkMemoryReviewPanel({
                   className={`mt-3 w-full resize-y rounded-lg border p-3 text-sm outline-none transition focus:border-emerald-400 ${input}`}
                 />
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                  <span className={`min-w-0 text-xs ${muted}`}>{proposal.reason}</span>
-                  <button
-                    type="button"
-                    onClick={() => approve(proposal)}
-                    disabled={
-                      state.approveMemoryLoading || !editedContent(proposal).trim()
-                    }
-                    className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-bold transition ${border} ${
-                      editedContent(proposal).trim()
-                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300'
-                        : 'opacity-45'
-                    }`}
-                  >
-                    {state.approveMemoryLoading ? (
-                      <LoaderCircle className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <ShieldCheck className="h-4 w-4" />
-                    )}
-                    Approve
-                  </button>
+                  <span className={`min-w-0 text-xs ${muted}`}>
+                    {proposal.reason}
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => reject(proposal)}
+                      disabled={state.rejectMemoryLoading}
+                      className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-bold transition ${border}`}
+                    >
+                      {state.rejectMemoryLoading ? (
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <XCircle className="h-4 w-4" />
+                      )}
+                      Reject
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => approve(proposal)}
+                      disabled={
+                        state.approveMemoryLoading ||
+                        !editedContent(proposal).trim()
+                      }
+                      className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-bold transition ${border} ${
+                        editedContent(proposal).trim()
+                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                          : "opacity-45"
+                      }`}
+                    >
+                      {state.approveMemoryLoading ? (
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <ShieldCheck className="h-4 w-4" />
+                      )}
+                      Approve
+                    </button>
+                  </div>
                 </div>
               </div>
             ))
@@ -199,7 +253,9 @@ export function SparkMemoryReviewPanel({
         </div>
 
         <div className="space-y-3">
-          <span className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+          <span
+            className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+          >
             Approved memory
           </span>
           {active.length ? (
@@ -216,6 +272,21 @@ export function SparkMemoryReviewPanel({
                   </span>
                 </div>
                 <p className="mt-2 text-sm leading-relaxed">{item.content}</p>
+                <div className="mt-3 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => archive(item.id)}
+                    disabled={state.archiveMemoryLoading}
+                    className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-bold transition ${border}`}
+                  >
+                    {state.archiveMemoryLoading ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Archive className="h-4 w-4" />
+                    )}
+                    Archive
+                  </button>
+                </div>
               </div>
             ))
           ) : (
@@ -231,7 +302,23 @@ export function SparkMemoryReviewPanel({
               Approval failed
             </div>
           )}
-          {state.approveMemoryResult?.status === 'saved' && (
+          {state.archiveMemoryError && (
+            <div
+              className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${errorClass}`}
+            >
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              Archive failed
+            </div>
+          )}
+          {state.rejectMemoryError && (
+            <div
+              className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${errorClass}`}
+            >
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              Reject failed
+            </div>
+          )}
+          {state.approveMemoryResult?.status === "saved" && (
             <div
               className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${okClass}`}
             >
@@ -239,8 +326,24 @@ export function SparkMemoryReviewPanel({
               Memory approved
             </div>
           )}
+          {state.archiveMemoryResult?.status === "archived" && (
+            <div
+              className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${okClass}`}
+            >
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              Memory archived
+            </div>
+          )}
+          {state.rejectMemoryResult?.status === "rejected" && (
+            <div
+              className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${okClass}`}
+            >
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              Proposal rejected
+            </div>
+          )}
         </div>
       </div>
     </section>
-  )
+  );
 }

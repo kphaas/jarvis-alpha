@@ -9,6 +9,7 @@ from brain.services.spark_personality_memory import (
     build_personality_memory_proposals,
     fetch_personality_memory,
     personality_memory_context,
+    reject_personality_memory_proposal,
 )
 from brain.services.spark_persona_guardrails import default_spark_guardrails
 from brain.services.spark_voice_feedback import FEEDBACK_FILENAME
@@ -59,6 +60,39 @@ def test_personality_memory_proposals_dedupe_active_rows() -> None:
     assert "Voice should feel optimistic." not in [
         proposal.content for proposal in proposals
     ]
+
+
+def test_rejected_personality_memory_proposal_is_filtered(tmp_path: Path) -> None:
+    proposals = build_personality_memory_proposals(
+        principal_id="ken",
+        guardrails=default_spark_guardrails(),
+        feedback_root=tmp_path,
+    )
+    target = proposals[0]
+
+    result = reject_personality_memory_proposal(
+        principal_id="ken",
+        proposal_id=target.proposal_id,
+        rejected_by="ken",
+        feedback_root=tmp_path,
+    )
+    filtered = build_personality_memory_proposals(
+        principal_id="ken",
+        guardrails=default_spark_guardrails(),
+        feedback_root=tmp_path,
+    )
+
+    assert result["rejected"] is True
+    assert target.proposal_id not in {proposal.proposal_id for proposal in filtered}
+    rejection_log = (
+        tmp_path
+        / "spark"
+        / "principals"
+        / "ken"
+        / "memory_review"
+        / "rejected_proposals.jsonl"
+    )
+    assert rejection_log.exists()
 
 
 def test_personality_memory_context_formats_bounded_rows() -> None:

@@ -241,12 +241,15 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/spark/persona/memory": ["read", "security_read"],
     "PUT /v1/spark/persona/guardrails": ["write", "security_write"],
     "POST /v1/spark/persona/memory/approve": ["write", "security_write"],
+    "POST /v1/spark/persona/memory/archive": ["write", "security_write"],
+    "POST /v1/spark/persona/memory/reject": ["write", "security_write"],
     # --- Spark drafts — local draft proposal, no external send ---
     "POST /v1/spark/drafts/imessage": ["write", "security_write"],
     "POST /v1/spark/drafts/imessage/approval-request": [
         "write",
         "security_write",
     ],
+    "POST /v1/spark/drafts/imessage/feedback": ["write", "security_write"],
     # --- MCP registry — T1 read, write T2 ---
     "GET /v1/mcp/registry": ["read"],
     "POST /v1/mcp/registry": ["write"],

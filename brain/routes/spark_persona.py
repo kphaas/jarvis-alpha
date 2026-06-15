@@ -18,8 +18,10 @@ from brain.services.auto_brain import (
 from brain.services.spark_personality_memory import (
     PersonalityMemoryKind,
     PersonalityMemorySource,
+    archive_personality_memory,
     build_personality_memory_proposals,
     fetch_personality_memory,
+    reject_personality_memory_proposal,
     save_personality_memory,
 )
 from brain.services.spark_persona_guardrails import (
@@ -79,6 +81,30 @@ class SparkPersonalityMemoryApproveRequest(BaseModel):
 
 
 class SparkPersonalityMemoryApproveResponse(BaseModel):
+    status: str
+    result: dict[str, object]
+
+
+class SparkPersonalityMemoryArchiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    principal_id: str = Field(default="ken", min_length=1, max_length=64)
+    memory_id: str = Field(min_length=8, max_length=64)
+
+
+class SparkPersonalityMemoryArchiveResponse(BaseModel):
+    status: str
+    result: dict[str, object]
+
+
+class SparkPersonalityMemoryRejectRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    principal_id: str = Field(default="ken", min_length=1, max_length=64)
+    proposal_id: str = Field(min_length=8, max_length=64)
+
+
+class SparkPersonalityMemoryRejectResponse(BaseModel):
     status: str
     result: dict[str, object]
 
@@ -245,6 +271,88 @@ async def approve_spark_personality_memory(
     )
     return SparkPersonalityMemoryApproveResponse(
         status="saved" if result.get("saved") else "not_saved",
+        result=result,
+    )
+
+
+@router.post("/memory/archive", response_model=SparkPersonalityMemoryArchiveResponse)
+async def archive_spark_personality_memory(
+    request: Request,
+    payload: SparkPersonalityMemoryArchiveRequest,
+    _: str = Depends(require_auth),
+) -> SparkPersonalityMemoryArchiveResponse:
+    check_scopes(request, "admin")
+    archived_by = str(
+        getattr(request.state, "user_sub", None)
+        or getattr(request.state, "user_id", None)
+        or "unknown"
+    )
+    try:
+        async with rls_connection(request) as conn:
+            result = await archive_personality_memory(
+                conn,
+                principal_id=payload.principal_id,
+                memory_id=payload.memory_id,
+                archived_by=archived_by,
+            )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail="spark_memory_archive_failed"
+        ) from exc
+    logger.info(
+        "spark_personality_memory_archived",
+        extra={
+            "event": "spark_personality_memory_archived",
+            "component": "spark_persona",
+            "principal_id": payload.principal_id,
+            "memory_id": payload.memory_id,
+            "archived": result.get("archived"),
+            "actor_sub": archived_by,
+            "actor_type": str(getattr(request.state, "actor_type", "unknown")),
+        },
+    )
+    return SparkPersonalityMemoryArchiveResponse(
+        status="archived" if result.get("archived") else "not_archived",
+        result=result,
+    )
+
+
+@router.post("/memory/reject", response_model=SparkPersonalityMemoryRejectResponse)
+async def reject_spark_personality_memory(
+    request: Request,
+    payload: SparkPersonalityMemoryRejectRequest,
+    _: str = Depends(require_auth),
+) -> SparkPersonalityMemoryRejectResponse:
+    check_scopes(request, "admin")
+    rejected_by = str(
+        getattr(request.state, "user_sub", None)
+        or getattr(request.state, "user_id", None)
+        or "unknown"
+    )
+    try:
+        result = reject_personality_memory_proposal(
+            principal_id=payload.principal_id,
+            proposal_id=payload.proposal_id,
+            rejected_by=rejected_by,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail="spark_memory_reject_failed"
+        ) from exc
+    logger.info(
+        "spark_personality_memory_proposal_rejected",
+        extra={
+            "event": "spark_personality_memory_proposal_rejected",
+            "component": "spark_persona",
+            "principal_id": payload.principal_id,
+            "proposal_id": payload.proposal_id,
+            "rejected": result.get("rejected"),
+            "actor_sub": rejected_by,
+            "actor_type": str(getattr(request.state, "actor_type", "unknown")),
+        },
+    )
+    return SparkPersonalityMemoryRejectResponse(
+        status="rejected" if result.get("rejected") else "not_rejected",
         result=result,
     )
 
