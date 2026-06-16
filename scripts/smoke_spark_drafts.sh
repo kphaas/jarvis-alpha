@@ -128,6 +128,82 @@ else:
 PY
 }
 
+get_json() {
+  local label="$1"
+  local path="$2"
+  local output_path="${TMP_DIR}/${label}.json"
+  local http_code
+
+  if ! http_code="$(
+    curl -skS \
+      --max-time "${TIMEOUT_SEC}" \
+      -o "${output_path}" \
+      -w "%{http_code}" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      "${BASE_URL}${path}"
+  )"; then
+    echo "FAIL ${label}: request failed" >&2
+    exit 1
+  fi
+
+  "${PYTHON_BIN}" - "${label}" "${output_path}" "${http_code}" "${ALLOW_UNCONFIGURED}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+label = sys.argv[1]
+payload_path = Path(sys.argv[2])
+http_code = sys.argv[3]
+allow_unconfigured = sys.argv[4].lower() == "true"
+
+if http_code == "503" and allow_unconfigured:
+    print(f"SKIP {label}: approved thread runtime config unavailable")
+    raise SystemExit(0)
+if http_code != "200":
+    raise SystemExit(f"FAIL {label}: HTTP {http_code}")
+
+payload = json.loads(payload_path.read_text(encoding="utf-8"))
+forbidden_keys = {"password", "chat_guid", "chatGuid", "phone_number", "display_name"}
+forbidden_values = ("private inbound body",)
+
+
+def check_no_forbidden_leaks(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in forbidden_keys:
+                raise SystemExit(f"FAIL {label}: forbidden field leaked: {key}")
+            check_no_forbidden_leaks(item)
+    elif isinstance(value, list):
+        for item in value:
+            check_no_forbidden_leaks(item)
+    elif isinstance(value, str):
+        lowered = value.lower()
+        for forbidden in forbidden_values:
+            if forbidden in lowered:
+                raise SystemExit(f"FAIL {label}: forbidden value leaked: {forbidden}")
+
+
+check_no_forbidden_leaks(payload)
+
+if label == "targets":
+    targets = payload.get("targets")
+    if not isinstance(targets, list):
+        raise SystemExit("FAIL targets: targets missing")
+    print(f"PASS targets: count={len(targets)}")
+elif label == "target_preview":
+    context_preview = payload.get("context_preview")
+    if not isinstance(context_preview, list):
+        raise SystemExit("FAIL target_preview: context_preview missing")
+    if len(context_preview) > 8:
+        raise SystemExit("FAIL target_preview: more than 8 messages returned")
+    if payload.get("durable_storage_allowed") is not False:
+        raise SystemExit("FAIL target_preview: durable storage was not false")
+    print(f"PASS target-preview: context={len(context_preview)}")
+else:
+    print(f"PASS {label}: reachable")
+PY
+}
+
 REQUEST_JSON="${TMP_DIR}/draft_request.json"
 "${PYTHON_BIN}" - "${REQUEST_JSON}" <<'PY'
 import json
@@ -146,6 +222,36 @@ Path(sys.argv[1]).write_text(
     encoding="utf-8",
 )
 PY
+
+TARGETS_PATH="/v1/spark/drafts/imessage/targets?principal_id=ken"
+get_json "targets" "${TARGETS_PATH}"
+
+TARGET_PREVIEW_PATH="$(
+  "${PYTHON_BIN}" - "${TMP_DIR}/targets.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+from urllib.parse import quote
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+targets = payload.get("targets") or []
+if not targets:
+    raise SystemExit(0)
+approval_id = str(targets[0].get("approval_id") or "")
+if not approval_id:
+    raise SystemExit(0)
+print(
+    "/v1/spark/drafts/imessage/target-preview"
+    f"?principal_id=ken&approval_id={quote(approval_id, safe='')}&limit=8"
+)
+PY
+)"
+
+if [ -n "${TARGET_PREVIEW_PATH}" ]; then
+  get_json "target_preview" "${TARGET_PREVIEW_PATH}"
+else
+  echo "SKIP target-preview: no approved iMessage target"
+fi
 
 post_json "draft" "/v1/spark/drafts/imessage" "${REQUEST_JSON}"
 

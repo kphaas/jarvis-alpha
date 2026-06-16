@@ -175,7 +175,10 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Review console" in source
     assert "Voice profile" in source
     assert "Draft target" in source
+    assert "Reply cockpit" in source
+    assert "approval before send" in source
     assert "Generate for" in source
+    assert "Refresh preview" in source
     assert "useSparkIMessageTargetPreview" in source
     assert "last 8 texts" in source
     assert "needs approved thread" in source
@@ -212,6 +215,8 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Too wordy" in source
     assert "Too much policy" in source
     assert "Make it sound more like me" in source
+    assert "Send only after approval passes" in source
+    assert "Send blocked until the outbox item is approved" in source
     assert "Happier" in source
     assert "Sweeter" in source
     assert "More relaxed" in source
