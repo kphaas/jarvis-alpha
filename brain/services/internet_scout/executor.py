@@ -152,7 +152,13 @@ class InternetScoutExecutor:
             )
         ]
         per_query_count = (
-            3 if (len(searches) > 1 or research.provider_strategy == "fanout") else 5
+            5
+            if research.intent == "comparison"
+            else (
+                3
+                if (len(searches) > 1 or research.provider_strategy == "fanout")
+                else 5
+            )
         )
         runs: list[SearchRun] = []
         for search in searches[: research.max_searches]:

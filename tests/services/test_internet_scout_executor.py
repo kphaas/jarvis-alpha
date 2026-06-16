@@ -177,6 +177,96 @@ class ComparisonCoverageGatewayClient(FakeGatewayClient):
         )
 
 
+class MultiSourceComparisonCoverageGatewayClient(FakeGatewayClient):
+    async def search(
+        self,
+        *,
+        query: str,
+        count: int = 5,
+        provider: str = "auto",
+    ) -> GatewaySearchResponse:
+        self.search_calls.append({"query": query, "count": count, "provider": provider})
+        normalized = query.lower()
+        if "brave search api" in normalized:
+            results = [
+                {
+                    "title": "Brave Search pricing",
+                    "url": "https://brave.com/search/api/pricing",
+                    "host": "brave.com",
+                    "description": "Brave Search API pricing.",
+                    "risk_markers": [],
+                },
+                {
+                    "title": "Brave overview",
+                    "url": "https://brave.com/search/api",
+                    "host": "brave.com",
+                    "description": "Brave Search API overview.",
+                    "risk_markers": [],
+                },
+                {
+                    "title": "Firecrawl comparison",
+                    "url": "https://www.firecrawl.dev/blog/brave-vs-perplexity",
+                    "host": "www.firecrawl.dev",
+                    "description": "Third-party comparison of Brave and Perplexity APIs.",
+                    "risk_markers": [],
+                },
+            ]
+        elif "perplexity api" in normalized:
+            results = [
+                {
+                    "title": "Firecrawl comparison",
+                    "url": "https://www.firecrawl.dev/blog/brave-vs-perplexity",
+                    "host": "www.firecrawl.dev",
+                    "description": "Third-party comparison of Brave and Perplexity APIs.",
+                    "risk_markers": [],
+                },
+                {
+                    "title": "Perplexity marketing",
+                    "url": "https://www.perplexity.ai/hub/blog/search-api",
+                    "host": "www.perplexity.ai",
+                    "description": "Perplexity Search API blog overview.",
+                    "risk_markers": [],
+                },
+                {
+                    "title": "General roundup",
+                    "url": "https://example.test/perplexity-roundup",
+                    "host": "example.test",
+                    "description": "Third-party roundup mentioning Perplexity.",
+                    "risk_markers": [],
+                },
+                {
+                    "title": "Perplexity Search API docs",
+                    "url": "https://docs.perplexity.ai/guides/search-api",
+                    "host": "docs.perplexity.ai",
+                    "description": "Perplexity Search API documentation.",
+                    "risk_markers": [],
+                },
+            ]
+        else:
+            results = [
+                {
+                    "title": "Brave Search API",
+                    "url": "https://brave.com/search/api",
+                    "host": "brave.com",
+                    "description": "Brave Search API overview.",
+                    "risk_markers": [],
+                },
+                {
+                    "title": "Perplexity Search API",
+                    "url": "https://docs.perplexity.ai/guides/search-api",
+                    "host": "docs.perplexity.ai",
+                    "description": "Perplexity Search API documentation.",
+                    "risk_markers": [],
+                },
+            ]
+        return GatewaySearchResponse(
+            provider=provider,
+            query_hash="b" * 64,
+            fetched_at=datetime(2026, 6, 16, 13, 0, tzinfo=UTC),
+            results=results[:count],
+        )
+
+
 @pytest.mark.asyncio
 async def test_executor_uses_extract_gateway_path_for_extract_tool():
     gateway = FakeGatewayClient()
@@ -257,6 +347,33 @@ async def test_executor_extracts_official_comparison_vendor_coverage():
     assert "platform.openai.com" in extracted_hosts
     assert "docs.anthropic.com" in extracted_hosts
     assert {"platform.openai.com", "docs.anthropic.com"} <= {
+        source.host for source in packet.sources
+    }
+
+
+@pytest.mark.asyncio
+async def test_executor_uses_deeper_result_window_for_multi_source_comparison():
+    gateway = MultiSourceComparisonCoverageGatewayClient()
+    executor = InternetScoutExecutor(gateway_client=gateway)
+    request = InternetScoutRequest(
+        query=(
+            "Compare Brave Search API and Perplexity API for building an AI web "
+            "research agent. Cite independent sources."
+        ),
+        tool_hint=InternetTool.SEARCH,
+        max_pages=4,
+        requester="alpha_chat.deep_research",
+    )
+    plan = InternetScoutOrchestrator().plan(request)
+
+    decision, packet = await executor.execute(request, plan=plan)
+
+    assert decision.tool == InternetTool.SEARCH
+    assert plan.research.intent == "comparison"
+    assert all(call["count"] == 5 for call in gateway.search_calls)
+    extracted_hosts = {urlparse(call["url"]).hostname for call in gateway.extract_calls}
+    assert "docs.perplexity.ai" in extracted_hosts
+    assert {"brave.com", "docs.perplexity.ai"} <= {
         source.host for source in packet.sources
     }
 
