@@ -646,7 +646,7 @@ async def test_spark_imessage_draft_feedback_records_label_only(
         return spark_drafts.SparkDraftQualityFeedbackResult(
             recorded=True,
             feedback_ref_hash="feedback-hash",
-            feedback_label="too_wordy",
+            feedback_label="out_of_context",
         )
 
     monkeypatch.setattr(
@@ -659,7 +659,7 @@ async def test_spark_imessage_draft_feedback_records_label_only(
         _request(),
         spark_drafts.SparkIMessageDraftFeedbackRequest(
             principal_id="ken",
-            feedback_label="too_wordy",
+            feedback_label="out_of_context",
             draft_version="spark-imessage-draft/v0",
             approval_ref_hash="approval-hash",
             source_reference_hash="source-hash",
@@ -670,11 +670,11 @@ async def test_spark_imessage_draft_feedback_records_label_only(
 
     assert response.status == "recorded"
     assert response.feedback_recorded is True
-    assert response.feedback_label == "too_wordy"
+    assert response.feedback_label == "out_of_context"
     assert feedback_calls == [
         {
             "principal_id": "ken",
-            "feedback_label": "too_wordy",
+            "feedback_label": "out_of_context",
             "draft_version": "spark-imessage-draft/v0",
             "approval_ref_hash": "approval-hash",
             "source_reference_hash": "source-hash",
@@ -682,7 +682,7 @@ async def test_spark_imessage_draft_feedback_records_label_only(
         }
     ]
     logs = json.dumps(fake_logger.infos).lower()
-    assert "too_wordy" in logs
+    assert "out_of_context" in logs
     assert "draft_text" not in logs
     assert "private inbound body" not in logs
 

@@ -1,4 +1,4 @@
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
   Brain,
@@ -26,7 +26,7 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { SparkGuardrailsPanel } from "../components/spark/SparkGuardrailsPanel";
 import { SparkMemoryReviewPanel } from "../components/spark/SparkMemoryReviewPanel";
@@ -64,21 +64,28 @@ const FEEDBACK_BUTTONS: Array<{
   tone: "ok" | "warn";
 }> = [
   { label: "Sounds like me", value: "sounds_like_me", tone: "ok" },
+  { label: "Out of context", value: "out_of_context", tone: "warn" },
   { label: "Too robotic", value: "too_robotic", tone: "warn" },
   { label: "Too formal", value: "too_formal", tone: "warn" },
   { label: "Too wordy", value: "too_wordy", tone: "warn" },
   { label: "Too much policy", value: "too_much_policy", tone: "warn" },
 ];
 
-const STYLE_ADJUSTMENTS = [
+const TONE_OPTIONS = [
   { label: "Happier", value: "Make the reply a little happier." },
   { label: "Sweeter", value: "Make the reply sweeter and more affectionate." },
-  { label: "More relaxed", value: "Make the reply sound more relaxed and natural." },
+  { label: "Relaxed", value: "Make the reply sound relaxed and natural." },
+  { label: "Smart", value: "Make the reply sharper and more thoughtful." },
+  { label: "Blunt", value: "Make the reply direct and blunt, but still respectful." },
+  { label: "Concise", value: "Make the reply concise and tighter." },
+  { label: "Confused", value: "Make the reply sound honestly confused and ask for clarity." },
 ];
 
-function feedbackDisplayLabel(value: SparkDraftFeedbackLabel | null) {
-  if (!value) return null;
-  return FEEDBACK_BUTTONS.find((item) => item.value === value)?.label ?? value;
+function feedbackDisplayLabels(values: SparkDraftFeedbackLabel[]) {
+  if (!values.length) return null;
+  return values
+    .map((value) => FEEDBACK_BUTTONS.find((item) => item.value === value)?.label ?? value)
+    .join(" + ");
 }
 
 const DEFAULT_FAVORITE_TARGETS: SparkProtectedRelationship[] = [
@@ -1230,31 +1237,138 @@ function DetailDialog({
   panel: string;
   muted: string;
 }) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
-      <section
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/55 px-4 py-6 backdrop-blur-sm md:px-6 md:py-10"
+    >
+      <div className="flex min-h-full items-start justify-center">
+        <motion.section
+          initial={{ opacity: 0, y: 18, scale: 0.985 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 12, scale: 0.99 }}
+          transition={{ duration: 0.18, ease: "easeOut" }}
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-xl border ${border} ${panel} p-4 shadow-xl`}
+          className={`grid w-full max-w-6xl grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-2xl border ${border} ${panel} shadow-2xl`}
       >
-        <div className="sticky top-0 z-10 mb-4 flex items-center justify-between gap-3 border-b border-current/10 pb-3 backdrop-blur">
-          <div>
-            <h2 className="text-lg font-bold">{title}</h2>
-            <p className={`text-xs ${muted}`}>Review detail, no send action.</p>
+          <div className={`border-b ${border} px-4 py-4 md:px-5 md:py-5`}>
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-2">
+                <span className={`text-[10px] font-mono uppercase tracking-[0.24em] ${muted}`}>
+                  Review detail
+                </span>
+                <div>
+                  <h2 className="text-xl font-bold">{title}</h2>
+                  <p className={`mt-1 text-sm ${muted}`}>
+                    Review safely, inspect context, and keep send actions outside this panel.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-bold transition hover:border-emerald-400 ${border}`}
+              >
+                <X className="h-4 w-4" />
+                Close
+              </button>
+            </div>
           </div>
+          <div className="min-h-0 overflow-y-auto px-4 pb-4 pt-4 md:px-5 md:pb-5">
+            {children}
+          </div>
+        </motion.section>
+      </div>
+    </motion.div>
+  );
+}
+
+function ToneSelect({
+  border,
+  input,
+  muted,
+  value,
+  onChange,
+}: {
+  border: string;
+  input: string;
+  muted: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span
+        className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+      >
+        Tone
+      </span>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <select
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className={`h-11 min-w-0 flex-1 rounded-lg border px-3 text-sm outline-none transition focus:border-emerald-400 ${input}`}
+        >
+          <option value="">Default</option>
+          {TONE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        {value && (
           <button
             type="button"
-            onClick={onClose}
-            className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-bold ${border}`}
+            onClick={() => onChange("")}
+            className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm font-bold transition hover:border-emerald-400 ${border}`}
           >
-            <X className="h-4 w-4" />
-            Close
+            Clear
           </button>
-        </div>
-        {children}
-      </section>
-    </div>
+        )}
+      </div>
+      <p className={`mt-2 text-xs ${muted}`}>
+        Optional tone nudge for the next draft.
+      </p>
+    </label>
+  );
+}
+
+function FeedbackSelectionHint({
+  muted,
+  selectedCount,
+}: {
+  muted: string;
+  selectedCount: number;
+}) {
+  const remaining = Math.max(0, 2 - selectedCount);
+  return (
+    <p className={`text-xs ${muted}`}>
+      {selectedCount
+        ? `${selectedCount} selected, ${remaining} slot${remaining === 1 ? "" : "s"} left.`
+        : "Pick up to 2 signals before retrying."}
+    </p>
   );
 }
 
@@ -1312,11 +1426,15 @@ export default function Spark() {
     state.draft?.context_preview ?? targetPreviewState.data?.context_preview ?? [];
   const previewContextCount = targetPreviewState.data?.context_preview.length ?? 0;
   const hasDraftText = Boolean(state.draftText.trim());
-  const hasRecordedFeedback = Boolean(state.feedback?.feedback_recorded);
-  const selectedFeedbackLabel = feedbackDisplayLabel(state.lastFeedbackLabel);
+  const hasRecordedFeedback = state.feedbackRecorded;
+  const selectedFeedbackLabel = feedbackDisplayLabels(state.selectedFeedbackLabels);
+  const recordedFeedbackLabel = feedbackDisplayLabels(
+    state.lastSubmittedFeedbackLabels,
+  );
   const hasApproval = Boolean(state.approval?.queue_id);
   const hasOutbox = Boolean(state.approval?.outbox_id);
   const hasSendResult = Boolean(state.approvedSend);
+  const selectedTone = state.styleAdjustments[0] ?? "";
   const workflowSteps: CockpitStep[] = [
     {
       id: "target",
@@ -1403,14 +1521,6 @@ export default function Spark() {
             : "blocked",
     },
   ];
-
-  function toggleStyleAdjustment(adjustment: string) {
-    state.setStyleAdjustments((current) =>
-      current.includes(adjustment)
-        ? current.filter((item) => item !== adjustment)
-        : [...current, adjustment].slice(0, 3),
-    );
-  }
 
   function selectPrincipal(nextPrincipalId: string) {
     state.resetDraftSurface();
@@ -1586,33 +1696,15 @@ export default function Spark() {
                 />
               </div>
             </label>
-            <div>
-              <span
-                className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
-              >
-                Make it sound more like me
-              </span>
-              <div className="mt-2 grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
-                {STYLE_ADJUSTMENTS.map((adjustment) => {
-                  const selected = state.styleAdjustments.includes(adjustment.value);
-                  return (
-                    <button
-                      key={adjustment.value}
-                      type="button"
-                      onClick={() => toggleStyleAdjustment(adjustment.value)}
-                      className={`inline-flex min-h-10 items-center justify-between gap-2 rounded-lg border px-3 text-sm font-bold transition ${border} ${
-                        selected
-                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-                          : ""
-                      }`}
-                    >
-                      <span>{adjustment.label}</span>
-                      {selected && <CheckCircle2 className="h-4 w-4" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            <ToneSelect
+              border={border}
+              input={input}
+              muted={muted}
+              value={selectedTone}
+              onChange={(value) =>
+                state.setStyleAdjustments(value ? [value] : [])
+              }
+            />
             {!targetReady && selectedDraftTarget && (
               <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
                 {selectedDraftTarget.label} is in favorites, but no approved
@@ -1752,10 +1844,19 @@ export default function Spark() {
                 <button
                   key={feedback.value}
                   type="button"
-                  onClick={() => state.recordFeedback(feedback.value)}
-                  disabled={!state.draft || state.feedbackLoading}
+                  onClick={() => state.toggleFeedbackLabel(feedback.value)}
+                  disabled={
+                    !state.draft ||
+                    state.feedbackLoading ||
+                    (!state.selectedFeedbackLabels.includes(feedback.value) &&
+                      !state.canSelectMoreFeedback)
+                  }
                   className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-xs font-bold transition ${
                     feedback.tone === "ok" ? okClass : warnClass
+                  } ${
+                    state.selectedFeedbackLabels.includes(feedback.value)
+                      ? "ring-2 ring-emerald-400/60"
+                      : ""
                   } ${!state.draft ? "opacity-45" : ""}`}
                 >
                   {feedback.tone === "ok" ? (
@@ -1767,9 +1868,14 @@ export default function Spark() {
                 </button>
               ))}
             </div>
-            {state.feedback?.feedback_recorded && (
+            <FeedbackSelectionHint
+              muted={muted}
+              selectedCount={state.selectedFeedbackLabels.length}
+            />
+            {hasRecordedFeedback && (
               <div className={`rounded-lg border px-3 py-2 text-sm ${okClass}`}>
-                Feedback recorded
+                Feedback captured
+                {recordedFeedbackLabel ? `, ${recordedFeedbackLabel}` : ""}
               </div>
             )}
             <div className={`rounded-lg border p-3 ${border}`}>
@@ -2060,113 +2166,115 @@ export default function Spark() {
         </div>
       </section>
 
-      {detailPanel === "thread" && (
-        <DetailDialog
-          title="Thread context"
-          onClose={() => setDetailPanel(null)}
-          border={border}
-          panel={panel}
-          muted={muted}
-        >
-          <ThreadContextPanel
-            draft={state.draft}
-            preview={targetPreviewState.data ?? null}
-            previewLoading={targetPreviewState.isLoading}
-            previewError={targetPreviewState.error}
+      <AnimatePresence>
+        {detailPanel === "thread" && (
+          <DetailDialog
+            title="Thread context"
+            onClose={() => setDetailPanel(null)}
             border={border}
             panel={panel}
             muted={muted}
-            okClass={okClass}
-            warnClass={warnClass}
-          />
-        </DetailDialog>
-      )}
+          >
+            <ThreadContextPanel
+              draft={state.draft}
+              preview={targetPreviewState.data ?? null}
+              previewLoading={targetPreviewState.isLoading}
+              previewError={targetPreviewState.error}
+              border={border}
+              panel={panel}
+              muted={muted}
+              okClass={okClass}
+              warnClass={warnClass}
+            />
+          </DetailDialog>
+        )}
 
-      {detailPanel === "memory-debug" && (
-        <DetailDialog
-          title="Draft memory"
-          onClose={() => setDetailPanel(null)}
-          border={border}
-          panel={panel}
-          muted={muted}
-        >
-          <DraftMemoryDebugPanel
-            draft={state.draft}
-            approval={state.approval}
+        {detailPanel === "memory-debug" && (
+          <DetailDialog
+            title="Draft memory"
+            onClose={() => setDetailPanel(null)}
             border={border}
             panel={panel}
             muted={muted}
-            okClass={okClass}
-            warnClass={warnClass}
-          />
-        </DetailDialog>
-      )}
+          >
+            <DraftMemoryDebugPanel
+              draft={state.draft}
+              approval={state.approval}
+              border={border}
+              panel={panel}
+              muted={muted}
+              okClass={okClass}
+              warnClass={warnClass}
+            />
+          </DetailDialog>
+        )}
 
-      {detailPanel === "target-memory" && (
-        <DetailDialog
-          title="Target memory"
-          onClose={() => setDetailPanel(null)}
-          border={border}
-          panel={panel}
-          muted={muted}
-        >
-          <SparkTargetMemoryPanel
+        {detailPanel === "target-memory" && (
+          <DetailDialog
+            title="Target memory"
+            onClose={() => setDetailPanel(null)}
             border={border}
             panel={panel}
-            input={input}
             muted={muted}
-            okClass={okClass}
-            warnClass={warnClass}
-            errorClass={errorClass}
-            principalId={principalId}
-            approvalId={selectedDraftTarget?.approvalId ?? null}
-            targetLabel={selectedDraftTarget?.label ?? null}
-            preview={targetPreviewState.data ?? null}
-          />
-        </DetailDialog>
-      )}
+          >
+            <SparkTargetMemoryPanel
+              border={border}
+              panel={panel}
+              input={input}
+              muted={muted}
+              okClass={okClass}
+              warnClass={warnClass}
+              errorClass={errorClass}
+              principalId={principalId}
+              approvalId={selectedDraftTarget?.approvalId ?? null}
+              targetLabel={selectedDraftTarget?.label ?? null}
+              preview={targetPreviewState.data ?? null}
+            />
+          </DetailDialog>
+        )}
 
-      {detailPanel === "guardrails" && (
-        <DetailDialog
-          title="Memory and guardrails"
-          onClose={() => setDetailPanel(null)}
-          border={border}
-          panel={panel}
-          muted={muted}
-        >
-          <SparkGuardrailsPanel
+        {detailPanel === "guardrails" && (
+          <DetailDialog
+            title="Memory and guardrails"
+            onClose={() => setDetailPanel(null)}
             border={border}
             panel={panel}
-            input={input}
             muted={muted}
-            okClass={okClass}
-            warnClass={warnClass}
-            errorClass={errorClass}
-          />
-        </DetailDialog>
-      )}
+          >
+            <SparkGuardrailsPanel
+              border={border}
+              panel={panel}
+              input={input}
+              muted={muted}
+              okClass={okClass}
+              warnClass={warnClass}
+              errorClass={errorClass}
+            />
+          </DetailDialog>
+        )}
 
-      {detailPanel === "memory-review" && (
-        <DetailDialog
-          title="Memory review"
-          onClose={() => setDetailPanel(null)}
-          border={border}
-          panel={panel}
-          muted={muted}
-        >
-          <SparkMemoryReviewPanel
+        {detailPanel === "memory-review" && (
+          <DetailDialog
+            title="Memory review"
+            onClose={() => setDetailPanel(null)}
             border={border}
             panel={panel}
-            input={input}
             muted={muted}
-            okClass={okClass}
-            warnClass={warnClass}
-            errorClass={errorClass}
-            principalId={principalId}
-            principalLabel={selectedPrincipal.label}
-          />
-        </DetailDialog>
-      )}
+          >
+            <SparkMemoryReviewPanel
+              border={border}
+              panel={panel}
+              input={input}
+              muted={muted}
+              okClass={okClass}
+              warnClass={warnClass}
+              errorClass={errorClass}
+              principalId={principalId}
+              principalLabel={selectedPrincipal.label}
+            />
+          </DetailDialog>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
