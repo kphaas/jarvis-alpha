@@ -154,7 +154,7 @@ async def test_spark_guardrails_read_returns_state(
     )
 
     assert response.auto_send_enabled is False
-    assert response.protected_relationships[0].id == "ryleigh"
+    assert response.protected_relationships[0].id == "sweta"
 
 
 @pytest.mark.asyncio
@@ -195,7 +195,7 @@ async def test_spark_guardrails_write_logs_only_safe_metadata(
                 "active_mode": "draft_only",
                 "auto_send_enabled": False,
                 "protected_topic_count": 7,
-                "protected_relationship_count": 5,
+                "protected_relationship_count": 3,
                 "actor_sub": "ken",
                 "actor_type": "user",
             },

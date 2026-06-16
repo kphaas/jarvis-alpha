@@ -195,6 +195,22 @@ async def test_spark_imessage_draft_targets_list_approved_threads_safely(
                 legal_marked=False,
                 decision_approved=True,
             ),
+            SparkApprovedSourceRecord(
+                principal_id=principal_id,
+                source="imessage",
+                approval_id="ken-imessage-approved-20260605-002",
+                source_reference_hash="mother-hash",
+                source_reference_label="Mother",
+                source_reference_path=None,
+                source_sha256=None,
+                thread_kind="one_to_one",
+                requested_max_messages=200,
+                requested_date_window=None,
+                relationship_marked=True,
+                relationship_approved=True,
+                legal_marked=False,
+                decision_approved=True,
+            ),
         ),
     )
 

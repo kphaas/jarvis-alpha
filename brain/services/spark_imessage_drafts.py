@@ -38,12 +38,16 @@ from brain.services.spark_voice_ingest import (
     load_approved_voice_sources,
     load_spark_voice_guidance,
 )
-from brain.services.spark_persona_guardrails import load_spark_guardrails
+from brain.services.spark_persona_guardrails import (
+    is_core_family_target_label,
+    load_spark_guardrails,
+)
 from brain.services.spark_sensitivity import scan_spark_draft_sensitivity
 from brain.services.spark_target_memory import (
     target_memory_prompt_context,
     target_memory_prompt_items,
 )
+from brain.services.spark_voice_feedback import load_recent_feedback_lessons
 
 DRAFT_VERSION = "spark-imessage-draft/v0.2"
 DEFAULT_MAX_CONTEXT_MESSAGES = 20
@@ -58,6 +62,10 @@ PERSONALITY_MEMORY_DRAFT_KINDS = frozenset(
         "style",
         "preference",
     }
+)
+TARGET_CONTEXT_REQUEST_PATTERN = re.compile(
+    r"\b(what|when|where|why|how|can|could|would|will|do|did|are|is|please|need)\b",
+    re.IGNORECASE,
 )
 PERSONALITY_MEMORY_BLOCKED = re.compile(
     r"\b(password|token|secret|private key|raw thread|message body|phone number)\b",
@@ -302,6 +310,7 @@ async def create_imessage_draft_proposal(
     records = load_approved_voice_sources(root, principal_id)
     guidance = load_spark_voice_guidance(root, principal_id)
     auto_context = _load_auto_prompt_context(root)
+    recent_feedback_lessons = load_recent_feedback_lessons(principal_id=principal_id)
     record = _select_approved_imessage_record(records, approval_id=approval_id)
     context = await load_approved_imessage_context(
         record=record,
@@ -331,6 +340,7 @@ async def create_imessage_draft_proposal(
             auto_context=auto_context,
             personality_memory_rows=personality_memory_rows or [],
             target_memory_rows=target_memory_rows or [],
+            recent_feedback_lessons=recent_feedback_lessons,
             context=context,
             sensitivity_warnings=sensitivity.warnings,
             style_adjustments=_clean_style_adjustments(style_adjustments),
@@ -511,7 +521,12 @@ def _select_approved_imessage_record(
     *,
     approval_id: str | None,
 ) -> SparkApprovedSourceRecord:
-    candidates = [record for record in records if record.source == "imessage"]
+    candidates = [
+        record
+        for record in records
+        if record.source == "imessage"
+        and is_core_family_target_label(record.source_reference_label)
+    ]
     if approval_id:
         for record in candidates:
             if record.approval_id == approval_id:
@@ -760,6 +775,7 @@ async def _draft_from_context(
     auto_context: AutoSparkPromptContext,
     personality_memory_rows: list[dict[str, object]],
     target_memory_rows: list[dict[str, object]],
+    recent_feedback_lessons: tuple[str, ...],
     context: SparkDraftContext,
     sensitivity_warnings: tuple[str, ...],
     style_adjustments: tuple[str, ...],
@@ -779,6 +795,7 @@ async def _draft_from_context(
             auto_context=auto_context,
             personality_memory_rows=personality_memory_rows,
             target_memory_rows=target_memory_rows,
+            recent_feedback_lessons=recent_feedback_lessons,
             context=context,
             sensitivity_warnings=sensitivity_warnings,
             style_adjustments=style_adjustments,
@@ -805,6 +822,7 @@ async def _call_spark_llm(
     auto_context: AutoSparkPromptContext,
     personality_memory_rows: list[dict[str, object]],
     target_memory_rows: list[dict[str, object]],
+    recent_feedback_lessons: tuple[str, ...],
     context: SparkDraftContext,
     sensitivity_warnings: tuple[str, ...],
     style_adjustments: tuple[str, ...],
@@ -822,6 +840,7 @@ async def _call_spark_llm(
             auto_context,
             personality_memory_rows,
             target_memory_rows,
+            recent_feedback_lessons,
         ),
         user_message=_spark_draft_user_message(
             reply_goal=reply_goal,
@@ -838,6 +857,7 @@ async def _call_spark_llm(
             auto_context,
             personality_memory_rows,
             target_memory_rows,
+            recent_feedback_lessons,
             style_adjustments,
         ),
     )
@@ -901,6 +921,7 @@ def _spark_draft_system_prompt(
     auto_context: AutoSparkPromptContext,
     personality_memory_rows: list[dict[str, object]],
     target_memory_rows: list[dict[str, object]],
+    recent_feedback_lessons: tuple[str, ...],
 ) -> str:
     lines = [
         "You draft iMessage replies for Ken.",
@@ -909,6 +930,10 @@ def _spark_draft_system_prompt(
         "Do not quote the other person's private text unless Ken explicitly asks.",
         "Keep it short or medium length.",
         "Sound like Ken's best edited self.",
+        "Anchor the reply to the latest inbound thread context, not a generic travel or logistics script.",
+        "Do not invent or swap concrete facts like transport mode, timing, place, or plans unless the runtime thread context states them.",
+        "If the other person asked a direct question or made a request, answer that before branching into anything else.",
+        "Stay inside the active thread topic unless Ken explicitly wants to pivot.",
         f"Target voice: {', '.join(guidance.voice_markers)}.",
         f"Avoid: {', '.join(guidance.avoid_markers)}.",
         f"Recurring phrases, used sparingly: {', '.join(guidance.recurring_phrases)}.",
@@ -948,6 +973,21 @@ def _spark_draft_system_prompt(
                 "Reviewed edit lessons (apply silently before drafting):",
                 edit_lessons,
                 "Use these lessons to improve phrasing, but do not mention feedback or calibration.",
+            ]
+        )
+    if recent_feedback_lessons:
+        lines.extend(
+            [
+                "",
+                "Recent retry lessons from Spark feedback (apply silently):",
+                *[
+                    f"- {line}"
+                    for line in _bounded_prompt_lines(
+                        recent_feedback_lessons,
+                        max_lines=6,
+                    )
+                ],
+                "Use these lessons to avoid repeating the latest misses, but do not mention feedback or retry state.",
             ]
         )
     target_memory_context = target_memory_prompt_context(target_memory_rows)
@@ -994,13 +1034,29 @@ def _spark_draft_user_message(
     sensitivity_warnings: tuple[str, ...],
     style_adjustments: tuple[str, ...] = (),
 ) -> str:
+    latest_inbound = _latest_inbound_message(context)
+    latest_question_or_request = _latest_question_or_request(context)
     lines = [
         f"Principal: {context.principal_id}",
         f"Reply goal: {_clean_reply_goal(reply_goal) or 'Draft the next useful reply.'}",
         "Channel: iMessage text",
         "Context order: newest first",
         f"Sensitivity labels: {', '.join(sensitivity_warnings) or 'none'}",
+        "Use the reply goal only as a drafting objective. Do not let it override the actual thread facts.",
+        "Answer the newest inbound text first before adding extra explanation.",
     ]
+    if latest_inbound:
+        lines.extend(
+            [
+                f"Latest inbound message to answer: {_clip_context_message(latest_inbound, limit=320)}",
+                "Ground the reply in that latest inbound message. Do not change transport mode, place, timing, or the concrete ask.",
+            ]
+        )
+    if latest_question_or_request:
+        lines.append(
+            "Latest direct question or request: "
+            + _clip_context_message(latest_question_or_request, limit=220)
+        )
     if style_adjustments:
         lines.extend(
             [
@@ -1026,6 +1082,25 @@ def _spark_draft_user_message(
         ]
     )
     return "\n".join(lines)
+
+
+def _latest_inbound_message(context: SparkDraftContext) -> str:
+    for message in context.messages:
+        if not message.is_from_me and message.body_text.strip():
+            return message.body_text.strip()
+    return ""
+
+
+def _latest_question_or_request(context: SparkDraftContext) -> str:
+    for message in context.messages:
+        if message.is_from_me:
+            continue
+        body = message.body_text.strip()
+        if not body:
+            continue
+        if "?" in body or TARGET_CONTEXT_REQUEST_PATTERN.search(body):
+            return body
+    return ""
 
 
 def _scan_context_sensitivity(
@@ -1192,6 +1267,7 @@ def _draft_idempotency_key(
     auto_context: AutoSparkPromptContext,
     personality_memory_rows: list[dict[str, object]],
     target_memory_rows: list[dict[str, object]],
+    recent_feedback_lessons: tuple[str, ...],
     style_adjustments: tuple[str, ...] = (),
 ) -> str:
     personality_hash = _sha256_text(
@@ -1216,6 +1292,7 @@ def _draft_idempotency_key(
             _sha256_text(_clean_reply_goal(reply_goal)),
             personality_hash,
             target_hash,
+            _sha256_text("|".join(recent_feedback_lessons)),
             _sha256_text("|".join(style_adjustments)),
         ]
     )
