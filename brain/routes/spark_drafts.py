@@ -32,6 +32,7 @@ from brain.services.spark_outbox import (
     SparkOutboxCreateResult,
     SparkOutboxStoreError,
     create_spark_outbox_item,
+    list_spark_outbox_items,
     load_spark_outbox_crypto,
 )
 from brain.services.spark_outbox_send import (
@@ -231,6 +232,25 @@ class SparkIMessageApprovedSendOut(BaseModel):
     approval_status: str
     message_ref_hash: str | None = None
     send_attempt_count: int
+
+
+class SparkIMessageOutboxItemOut(BaseModel):
+    outbox_id: str
+    channel: str
+    principal_id: str
+    target_label: str
+    approval_queue_id: str
+    draft_text_hash: str
+    status: str
+    send_attempt_count: int
+    created_at: str
+    updated_at: str
+    sent_at: str | None = None
+
+
+class SparkIMessageOutboxListOut(BaseModel):
+    principal_id: str
+    items: list[SparkIMessageOutboxItemOut] = Field(default_factory=list)
 
 
 def _check_draft_scopes(request: Request) -> None:
@@ -899,6 +919,61 @@ async def spark_imessage_draft_feedback(
         feedback_recorded=feedback.recorded,
         feedback_ref_hash=feedback.feedback_ref_hash,
         feedback_label=feedback.feedback_label,
+    )
+
+
+@router.get("/imessage/outbox", response_model=SparkIMessageOutboxListOut)
+async def spark_imessage_outbox_items(
+    request: Request,
+    principal_id: str = "ken",
+    limit: int = 25,
+    _: str = Depends(require_auth),
+) -> SparkIMessageOutboxListOut:
+    _check_draft_scopes(request)
+    bounded_limit = max(1, min(limit, 50))
+    try:
+        async with rls_connection(request) as conn:
+            items = await list_spark_outbox_items(
+                conn,
+                principal_id=principal_id,
+                limit=bounded_limit,
+            )
+    except Exception as exc:
+        _log_failure(request, exc=exc, status_code=500)
+        raise HTTPException(
+            status_code=500,
+            detail="spark_imessage_outbox_list_failed",
+        ) from exc
+    logger.info(
+        "spark_imessage_outbox_listed",
+        extra={
+            "event": "spark_imessage_outbox_listed",
+            "component": "spark_drafts",
+            "action": "imessage_outbox_list",
+            "body_access": False,
+            "principal_id": principal_id,
+            "item_count": len(items),
+            **_safe_actor_fields(request),
+        },
+    )
+    return SparkIMessageOutboxListOut(
+        principal_id=principal_id,
+        items=[
+            SparkIMessageOutboxItemOut(
+                outbox_id=item.outbox_id,
+                channel=item.channel,
+                principal_id=item.principal_id,
+                target_label=item.target_label,
+                approval_queue_id=item.approval_queue_id,
+                draft_text_hash=item.draft_text_hash,
+                status=item.status,
+                send_attempt_count=item.send_attempt_count,
+                created_at=item.created_at.isoformat(),
+                updated_at=item.updated_at.isoformat(),
+                sent_at=item.sent_at.isoformat() if item.sent_at else None,
+            )
+            for item in items
+        ],
     )
 
 

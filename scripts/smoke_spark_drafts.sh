@@ -199,6 +199,11 @@ elif label == "target_preview":
     if payload.get("durable_storage_allowed") is not False:
         raise SystemExit("FAIL target_preview: durable storage was not false")
     print(f"PASS target-preview: context={len(context_preview)}")
+elif label == "outbox":
+    items = payload.get("items")
+    if not isinstance(items, list):
+        raise SystemExit("FAIL outbox: items missing")
+    print(f"PASS outbox: count={len(items)}")
 else:
     print(f"PASS {label}: reachable")
 PY
@@ -252,6 +257,8 @@ if [ -n "${TARGET_PREVIEW_PATH}" ]; then
 else
   echo "SKIP target-preview: no approved iMessage target"
 fi
+
+get_json "outbox" "/v1/spark/drafts/imessage/outbox?principal_id=ken&limit=5"
 
 post_json "draft" "/v1/spark/drafts/imessage" "${REQUEST_JSON}"
 
