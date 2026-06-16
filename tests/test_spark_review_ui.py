@@ -49,6 +49,7 @@ def test_spark_review_ui_uses_draft_routes_and_api_wrapper() -> None:
     assert "/v1/spark/drafts/imessage/target-preview" in source
     assert "/v1/spark/drafts/imessage" in source
     assert "/v1/spark/drafts/imessage/approval-request" in source
+    assert "/v1/spark/drafts/imessage/outbox?" in source
     assert "/v1/spark/drafts/imessage/outbox/" in source
     assert "/v1/spark/persona/guardrails" in source
     assert "/v1/spark/persona/memory" in source
@@ -184,6 +185,9 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "needs approved thread" in source
     assert "Thread preview" in source
     assert "Decision rail" in source
+    assert "Outbox cockpit" in source
+    assert "metadata only" in source
+    assert "Refresh outbox" in source
     assert "Review details" in source
     assert "Memory and guardrails" in source
     assert "Guardrails" in source
@@ -214,6 +218,10 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Too formal" in source
     assert "Too wordy" in source
     assert "Too much policy" in source
+    assert "Feedback retry" in source
+    assert "Try again with feedback" in source
+    assert "regenerateWithFeedback" in source
+    assert "Make the reply shorter and less wordy" in source
     assert "Make it sound more like me" in source
     assert "Send only after approval passes" in source
     assert "Send blocked until the outbox item is approved" in source

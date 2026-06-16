@@ -32,6 +32,7 @@ import { SparkMemoryReviewPanel } from "../components/spark/SparkMemoryReviewPan
 import {
   useSparkDraftReview,
   useSparkIMessageDraftTargets,
+  useSparkIMessageOutbox,
   useSparkIMessageTargetPreview,
 } from "../hooks/useSparkDraftReview";
 import { useSparkGuardrails } from "../hooks/useSparkGuardrails";
@@ -40,6 +41,7 @@ import type {
   SparkDraftFeedbackLabel,
   SparkIMessageDraftContextMessage,
   SparkIMessageDraftResponse,
+  SparkIMessageOutboxItem,
   SparkIMessageDraftTarget,
   SparkIMessageTargetPreviewResponse,
   SparkProtectedRelationship,
@@ -71,6 +73,11 @@ const STYLE_ADJUSTMENTS = [
   { label: "Sweeter", value: "Make the reply sweeter and more affectionate." },
   { label: "More relaxed", value: "Make the reply sound more relaxed and natural." },
 ];
+
+function feedbackDisplayLabel(value: SparkDraftFeedbackLabel | null) {
+  if (!value) return null;
+  return FEEDBACK_BUTTONS.find((item) => item.value === value)?.label ?? value;
+}
 
 const DEFAULT_FAVORITE_TARGETS: SparkProtectedRelationship[] = [
   {
@@ -279,6 +286,27 @@ function MetricRow({
 
 function labelize(value: string) {
   return displayLabel(value);
+}
+
+function formatTimestamp(value: string | null | undefined) {
+  if (!value) return "not yet";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "unknown";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function outboxHint(item: SparkIMessageOutboxItem) {
+  if (item.status === "sent") return "Sent and recorded";
+  if (item.status === "send_failed") return "Last send attempt failed";
+  if (item.status === "sending") return "Send in progress";
+  if (item.status === "pending_approval") return "Waiting for approval before send";
+  if (item.status === "cancelled") return "Final, cancelled";
+  return "Review status before action";
 }
 
 function DraftMetadata({
@@ -980,6 +1008,125 @@ function DraftMemoryDebugPanel({
   );
 }
 
+function OutboxCockpitPanel({
+  items,
+  loading,
+  error,
+  onRefresh,
+  border,
+  panel,
+  muted,
+  okClass,
+  warnClass,
+  errorClass,
+}: {
+  items: SparkIMessageOutboxItem[];
+  loading: boolean;
+  error: unknown;
+  onRefresh: () => void;
+  border: string;
+  panel: string;
+  muted: string;
+  okClass: string;
+  warnClass: string;
+  errorClass: string;
+}) {
+  return (
+    <section className={`rounded-xl border ${border} ${panel} p-4`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Send className="h-4 w-4 text-emerald-400" />
+          <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>
+            Outbox cockpit
+          </h2>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusChip label="metadata only" className={okClass} />
+          <button
+            type="button"
+            onClick={onRefresh}
+            className={`inline-flex min-h-9 items-center gap-2 rounded-lg border px-3 text-xs font-bold ${border}`}
+          >
+            <RefreshCw className="h-4 w-4" />
+            Refresh outbox
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="mt-4 grid gap-3 lg:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div
+              key={index}
+              className={`h-32 animate-pulse rounded-lg border ${border}`}
+            />
+          ))}
+        </div>
+      ) : error ? (
+        <div className={`mt-4 rounded-lg border px-3 py-2 text-sm ${errorClass}`}>
+          Outbox metadata is unavailable
+        </div>
+      ) : items.length ? (
+        <div className="mt-4 grid gap-3 lg:grid-cols-3">
+          {items.map((item) => {
+            const statusClass =
+              item.status === "sent"
+                ? okClass
+                : item.status === "send_failed"
+                  ? errorClass
+                  : warnClass;
+            return (
+              <article key={item.outbox_id} className={`rounded-lg border p-3 ${border}`}>
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-bold">
+                      {item.target_label}
+                    </div>
+                    <div className={`mt-1 text-xs ${muted}`}>
+                      {formatTimestamp(item.updated_at)}
+                    </div>
+                  </div>
+                  <StatusChip label={labelize(item.status)} className={statusClass} />
+                </div>
+                <p className={`mt-3 text-xs leading-relaxed ${muted}`}>
+                  {outboxHint(item)}
+                </p>
+                <div className="mt-3 space-y-1">
+                  <MetricRow
+                    label="Attempts"
+                    value={item.send_attempt_count}
+                    muted={muted}
+                  />
+                  <MetricRow
+                    label="Approval"
+                    value={shortHash(item.approval_queue_id)}
+                    muted={muted}
+                  />
+                  <MetricRow
+                    label="Draft hash"
+                    value={shortHash(item.draft_text_hash)}
+                    muted={muted}
+                  />
+                  <MetricRow
+                    label="Sent"
+                    value={formatTimestamp(item.sent_at)}
+                    muted={muted}
+                  />
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div className={`mt-4 rounded-lg border p-4 text-sm ${border} ${muted}`}>
+          No Spark outbox records yet. Submit approval to create the first
+          metadata-only outbox item.
+        </div>
+      )}
+    </section>
+  );
+}
+
 function DetailOverviewCard({
   title,
   detail,
@@ -1074,6 +1221,7 @@ export default function Spark() {
   const [detailPanel, setDetailPanel] = useState<DetailPanel | null>(null);
   const guardrailsState = useSparkGuardrails();
   const targetState = useSparkIMessageDraftTargets(principalId);
+  const outboxState = useSparkIMessageOutbox(principalId);
   const isDark = theme === "dark";
   const border = isDark ? "border-white/10" : "border-[#141414]/10";
   const panel = isDark ? "bg-white/5" : "bg-[#141414]/5";
@@ -1112,12 +1260,14 @@ export default function Spark() {
     selectedDraftTarget?.approvalId ?? null,
   );
   const reloadTargetPreview = targetPreviewState.refetch;
+  const reloadOutbox = outboxState.refetch;
   const targetReady = draftTargets.length === 0 || Boolean(selectedDraftTarget?.ready);
   const displayContext =
     state.draft?.context_preview ?? targetPreviewState.data?.context_preview ?? [];
   const previewContextCount = targetPreviewState.data?.context_preview.length ?? 0;
   const hasDraftText = Boolean(state.draftText.trim());
   const hasRecordedFeedback = Boolean(state.feedback?.feedback_recorded);
+  const selectedFeedbackLabel = feedbackDisplayLabel(state.lastFeedbackLabel);
   const hasApproval = Boolean(state.approval?.queue_id);
   const hasOutbox = Boolean(state.approval?.outbox_id);
   const hasSendResult = Boolean(state.approvedSend);
@@ -1167,6 +1317,8 @@ export default function Spark() {
       label: "Rate or edit",
       detail: hasRecordedFeedback
         ? "Feedback recorded"
+        : selectedFeedbackLabel
+          ? `${selectedFeedbackLabel} selected`
         : hasDraftText
           ? "Rate it or edit the text"
           : "Generate a draft first",
@@ -1561,6 +1713,39 @@ export default function Spark() {
                 Feedback recorded
               </div>
             )}
+            <div className={`rounded-lg border p-3 ${border}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div
+                    className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+                  >
+                    Feedback retry
+                  </div>
+                  <p className={`mt-1 text-xs ${muted}`}>
+                    {selectedFeedbackLabel
+                      ? `${selectedFeedbackLabel} will shape the next draft`
+                      : "Rate the draft, then regenerate with that feedback"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={state.regenerateWithFeedback}
+                  disabled={!state.canRegenerateWithFeedback}
+                  className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-xs font-bold transition ${border} ${
+                    state.canRegenerateWithFeedback
+                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                      : "opacity-45"
+                  }`}
+                >
+                  {state.draftLoading ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                  Try again with feedback
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -1692,6 +1877,21 @@ export default function Spark() {
           </div>
         </aside>
       </div>
+
+      <OutboxCockpitPanel
+        items={outboxState.data?.items ?? []}
+        loading={outboxState.isLoading}
+        error={outboxState.error}
+        onRefresh={() => {
+          void reloadOutbox();
+        }}
+        border={border}
+        panel={panel}
+        muted={muted}
+        okClass={okClass}
+        warnClass={warnClass}
+        errorClass={errorClass}
+      />
 
       {state.comparisonDrafts.length > 0 && (
         <section className={`rounded-xl border ${border} ${panel} p-5`}>

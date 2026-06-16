@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -19,6 +20,7 @@ from brain.services.spark_imessage_drafts import (
     SparkDraftSourceReadiness,
     SparkRuntimeMessage,
 )
+from brain.services.spark_outbox import SparkOutboxListItem
 from brain.services.spark_voice_feedback import SparkDraftEditFeedbackResult
 from brain.services.spark_voice_ingest import SparkApprovedSourceRecord
 
@@ -74,10 +76,13 @@ def _stub_personality_memory(
 def test_spark_imessage_draft_route_is_classified_t2_write() -> None:
     target_classes = classify_route("GET", "/v1/spark/drafts/imessage/targets")
     preview_classes = classify_route("GET", "/v1/spark/drafts/imessage/target-preview")
+    outbox_classes = classify_route("GET", "/v1/spark/drafts/imessage/outbox")
     assert target_classes == ["read", "security_read"]
     assert determine_risk_tier(target_classes) == "T2"
     assert preview_classes == ["read", "security_read"]
     assert determine_risk_tier(preview_classes) == "T2"
+    assert outbox_classes == ["read", "security_read"]
+    assert determine_risk_tier(outbox_classes) == "T2"
 
     classes = classify_route("POST", "/v1/spark/drafts/imessage")
 
@@ -673,6 +678,59 @@ async def test_spark_imessage_draft_feedback_records_label_only(
     logs = json.dumps(fake_logger.infos).lower()
     assert "too_wordy" in logs
     assert "draft_text" not in logs
+    assert "private inbound body" not in logs
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_outbox_lists_metadata_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    fake_conn = object()
+    monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+    monkeypatch.setattr(
+        spark_drafts,
+        "rls_connection",
+        lambda request: _AsyncContext(fake_conn),
+    )
+
+    async def fake_list(conn, **kwargs):
+        assert conn is fake_conn
+        assert kwargs == {"principal_id": "ken", "limit": 25}
+        return (
+            SparkOutboxListItem(
+                outbox_id="22222222-2222-4222-8222-222222222222",
+                channel="imessage",
+                principal_id="ken",
+                target_label="Sweta",
+                approval_queue_id="11111111-1111-4111-8111-111111111111",
+                draft_text_hash="hmac-sha256:" + "a" * 64,
+                status="pending_approval",
+                send_attempt_count=0,
+                created_at=datetime.fromisoformat("2026-06-15T20:00:00+00:00"),
+                updated_at=datetime.fromisoformat("2026-06-15T20:01:00+00:00"),
+                sent_at=None,
+            ),
+        )
+
+    monkeypatch.setattr(spark_drafts, "list_spark_outbox_items", fake_list)
+
+    response = await spark_drafts.spark_imessage_outbox_items(
+        _request(),
+        principal_id="ken",
+        limit=25,
+    )
+
+    payload = response.model_dump()
+    assert payload["principal_id"] == "ken"
+    assert payload["items"][0]["target_label"] == "Sweta"
+    assert payload["items"][0]["draft_text_hash"].startswith("hmac-sha256:")
+    serialized = json.dumps(payload).lower()
+    assert '"draft_text":' not in serialized
+    assert "private inbound body" not in serialized
+    logs = json.dumps(fake_logger.infos).lower()
+    assert "spark_imessage_outbox_listed" in logs
+    assert "body_access" in logs
     assert "private inbound body" not in logs
 
 

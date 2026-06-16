@@ -252,6 +252,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Spark drafts — local draft proposal, no external send ---
     "GET /v1/spark/drafts/imessage/targets": ["read", "security_read"],
     "GET /v1/spark/drafts/imessage/target-preview": ["read", "security_read"],
+    "GET /v1/spark/drafts/imessage/outbox": ["read", "security_read"],
     "POST /v1/spark/drafts/imessage": ["write", "security_write"],
     "POST /v1/spark/drafts/imessage/approval-request": [
         "write",

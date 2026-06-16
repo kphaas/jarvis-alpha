@@ -163,6 +163,25 @@ export interface SparkIMessageApprovedSendResponse {
   send_attempt_count: number;
 }
 
+export interface SparkIMessageOutboxItem {
+  outbox_id: string;
+  channel: string;
+  principal_id: string;
+  target_label: string;
+  approval_queue_id: string;
+  draft_text_hash: string;
+  status: string;
+  send_attempt_count: number;
+  created_at: string;
+  updated_at: string;
+  sent_at?: string | null;
+}
+
+export interface SparkIMessageOutboxListResponse {
+  principal_id: string;
+  items: SparkIMessageOutboxItem[];
+}
+
 export type SparkMode = "draft_only" | "hybrid_review" | "auto_guarded";
 
 export type SparkSensitivity =
