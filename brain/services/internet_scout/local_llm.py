@@ -87,6 +87,7 @@ def _synthesis_contract(
         accepted_count=citation_count,
         stop_criteria=stop_criteria,
         contradiction_count=0,
+        blocking_only=True,
     )
     minimum_citations_met = (
         quality.status == "supported"
@@ -175,6 +176,7 @@ def _research_report(
         accepted_count=len(citations),
         stop_criteria=plan.stop_criteria,
         contradiction_count=len(contradictions),
+        blocking_only=True,
     )
     answerability = _report_answerability(synthesis)
     if stop_criteria_warnings and answerability == "answerable":
@@ -448,6 +450,7 @@ def _stop_criteria_warnings(
     accepted_count: int,
     stop_criteria: InternetScoutResearchStopCriteria,
     contradiction_count: int,
+    blocking_only: bool = False,
 ) -> list[str]:
     warnings: list[str] = []
     if accepted_count < stop_criteria.min_accepted_citations:
@@ -456,7 +459,9 @@ def _stop_criteria_warnings(
         warnings.append("Required official source evidence was not accepted.")
     if stop_criteria.require_cross_check and len(source_hosts) < 2:
         warnings.append("Cross-check coverage is below the research stop criteria.")
-    if len(source_hosts) < stop_criteria.min_source_hosts:
+    if len(source_hosts) < stop_criteria.min_source_hosts and (
+        stop_criteria.require_cross_check or not blocking_only
+    ):
         warnings.append("Source diversity is below the research stop criteria.")
     if quality.unsupported_claim_count:
         warnings.append("Unsupported claims violate the research stop criteria.")
