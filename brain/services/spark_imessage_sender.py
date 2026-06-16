@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -76,7 +77,11 @@ class SparkIMessageSendClient:
         payload = await self._request(
             "POST",
             "/api/v1/message/text",
-            json_body={"chatGuid": clean_guid, "text": clean_text},
+            json_body={
+                "chatGuid": clean_guid,
+                "message": clean_text,
+                "tempGuid": _temp_guid(),
+            },
         )
         data = _dict(payload.get("data"))
         raw_ref = data.get("guid") or data.get("id") or data.get("messageGuid")
@@ -169,3 +174,7 @@ def _int(value: Any) -> int:
 
 def _hash_ref(value: object) -> str:
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+
+
+def _temp_guid() -> str:
+    return f"temp-{uuid.uuid4().hex}"

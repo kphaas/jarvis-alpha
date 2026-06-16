@@ -66,7 +66,12 @@ async def test_send_client_posts_exact_text_to_bluebubbles() -> None:
     assert seen == [
         (
             "/api/v1/message/text",
-            {"chatGuid": "approved-chat-guid", "text": "Approved text"},
+            {
+                "chatGuid": "approved-chat-guid",
+                "message": "Approved text",
+                "tempGuid": seen[0][1]["tempGuid"],
+            },
             "b'password=secret'",
         )
     ]
+    assert str(seen[0][1]["tempGuid"]).startswith("temp-")
