@@ -40,8 +40,16 @@ class SparkProtectedRelationship(BaseModel):
     notes: str | None = Field(default=None, max_length=240)
 
 
-CORE_FAMILY_TARGET_ORDER = ("sweta", "ryleigh", "sloane")
+CORE_FAMILY_TARGET_ORDER = ("ken", "sweta", "ryleigh", "sloane")
 CORE_FAMILY_TARGET_DEFAULTS = {
+    "ken": SparkProtectedRelationship(
+        id="ken",
+        label="Ken",
+        relationship="family",
+        sensitivity="family",
+        default_mode="draft_only",
+        notes="Core family target for partner and child voice profiles.",
+    ),
     "sweta": SparkProtectedRelationship(
         id="sweta",
         label="Sweta",
@@ -160,6 +168,7 @@ def default_spark_guardrails() -> SparkGuardrailState:
             "security",
         ],
         protected_relationships=[
+            CORE_FAMILY_TARGET_DEFAULTS["ken"],
             CORE_FAMILY_TARGET_DEFAULTS["sweta"],
             CORE_FAMILY_TARGET_DEFAULTS["ryleigh"],
             CORE_FAMILY_TARGET_DEFAULTS["sloane"],
