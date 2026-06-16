@@ -212,6 +212,62 @@ def test_local_llm_prefers_official_source_for_official_docs_query():
     assert response.quality.verified_claim_count == 1
 
 
+def test_local_llm_downgrades_supported_evidence_when_research_coverage_is_missing():
+    request = InternetScoutRequest(
+        query=(
+            "Compare the official OpenAI and Anthropic pricing source pages. "
+            "Cross-check both source-of-truth URLs."
+        ),
+    )
+    openai_source = build_source_reference(
+        url="https://openai.com/api/pricing/",
+        content="OpenAI API pricing source page: https://openai.com/api/pricing/.",
+    )
+    packet = build_evidence_packet(
+        request=request,
+        sources=[openai_source],
+        claims=[
+            EvidenceClaim(
+                claim="OpenAI pricing source page is https://openai.com/api/pricing/.",
+                source_url=openai_source.url,
+                citation_text="OpenAI API pricing source page: https://openai.com/api/pricing/.",
+                confidence="high",
+            ),
+        ],
+    )
+    plan = InternetScoutOrchestrator().plan(request)
+    plan.research.stop_criteria.require_cross_check = True
+    plan.research.stop_criteria.min_source_hosts = 2
+    plan.research.stop_criteria.stop_when = [
+        "accepted_citations>=1",
+        "source_hosts>=2",
+        "cross_check_query_executed",
+    ]
+    stored = InternetScoutStoredResponse(
+        request_id=uuid4(),
+        plan=plan,
+        evidence=packet,
+    )
+
+    response = build_local_llm_response(stored)
+
+    assert stored.plan.research.stop_criteria.require_cross_check is True
+    assert stored.plan.research.stop_criteria.min_source_hosts == 2
+    assert response.quality.status == "supported"
+    assert response.synthesis.status == "weak"
+    assert response.synthesis.answerable is True
+    assert response.synthesis.required_behavior == "answer_with_limitations"
+    assert response.research_report.source_quality_status == "weak"
+    assert response.research_report.answerability == "limited"
+    assert response.research_report.source_hosts == ["openai.com"]
+    assert "Cross-check coverage is below the research stop criteria." in (
+        response.research_report.coverage_warnings
+    )
+    assert "Source diversity is below the research stop criteria." in (
+        response.research_report.coverage_warnings
+    )
+
+
 def test_local_llm_guides_docs_url_answers_to_cited_source_url():
     request = InternetScoutRequest(
         query=(

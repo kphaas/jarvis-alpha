@@ -42,8 +42,13 @@ from jarvis_common.logging_config import get_logger
 router = APIRouter(tags=["chat"])
 logger = get_logger("alpha_brain")
 
-MAX_PERSONAL_THREADS = 20
-MAX_PROJECT_THREADS = 10
+MAX_PERSONAL_THREADS = 30
+MAX_PROJECT_THREADS = 15
+THREAD_CAP_RETENTION_DAYS = 30
+THREAD_CAP_ACTIVE_FILTER = (
+    "archived_at IS NULL "
+    f"AND (pinned = TRUE OR updated_at >= now() - INTERVAL '{THREAD_CAP_RETENTION_DAYS} days')"
+)
 InternetMode = Literal["none", "web_search", "deep_research"]
 BEACON_INSUFFICIENT_MODEL = "beacon/insufficient-evidence"
 BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
@@ -105,7 +110,8 @@ class CompletionRequest(BaseModel):
 
 
 class ThreadPatch(BaseModel):
-    title: str
+    title: str | None = None
+    pinned: bool | None = None
 
 
 class EscalateRequest(BaseModel):
@@ -525,7 +531,8 @@ async def _get_or_create_thread(
 
         if project_id:
             count = await conn.fetchval(
-                "SELECT COUNT(*) FROM chat_threads WHERE user_id=$1 AND project_id=$2 AND archived_at IS NULL",
+                f"""SELECT COUNT(*) FROM chat_threads
+                   WHERE user_id=$1 AND project_id=$2 AND {THREAD_CAP_ACTIVE_FILTER}""",
                 user_id,
                 project_id,
             )
@@ -536,7 +543,8 @@ async def _get_or_create_thread(
                 )
         else:
             count = await conn.fetchval(
-                "SELECT COUNT(*) FROM chat_threads WHERE user_id=$1 AND project_id IS NULL AND archived_at IS NULL",
+                f"""SELECT COUNT(*) FROM chat_threads
+                   WHERE user_id=$1 AND project_id IS NULL AND {THREAD_CAP_ACTIVE_FILTER}""",
                 user_id,
             )
             if count >= MAX_PERSONAL_THREADS:
@@ -986,7 +994,7 @@ async def list_threads(request: Request):
     rows = []
     async with rls_connection(request) as conn:
         rows = await conn.fetch(
-            """SELECT id, title, mode, model_used, project_id, created_at, updated_at
+            """SELECT id, title, mode, model_used, project_id, pinned, created_at, updated_at
                FROM chat_threads
                WHERE user_id=$1 AND archived_at IS NULL
                ORDER BY updated_at DESC LIMIT 50""",
@@ -998,13 +1006,31 @@ async def list_threads(request: Request):
 @router.patch("/v1/threads/{thread_id}")
 async def rename_thread(thread_id: str, body: ThreadPatch, request: Request):
     user_id = _user_id(request)
+    title = body.title.strip()[:80] if body.title is not None else None
+    if title == "":
+        raise HTTPException(400, "Thread title cannot be blank")
+    if title is None and body.pinned is None:
+        raise HTTPException(400, "Thread patch requires title or pinned")
+
+    set_clauses = ["updated_at=now()"]
+    values: list[object] = []
+    if title is not None:
+        values.append(title)
+        set_clauses.append(f"title=${len(values)}")
+    if body.pinned is not None:
+        values.append(body.pinned)
+        set_clauses.append(f"pinned=${len(values)}")
+    values.extend([UUID(thread_id), user_id])
+    thread_id_param = len(values) - 1
+    user_id_param = len(values)
+
     result = ""
     async with rls_connection(request) as conn:
         result = await conn.execute(
-            "UPDATE chat_threads SET title=$1, updated_at=now() WHERE id=$2 AND user_id=$3",
-            body.title[:80],
-            UUID(thread_id),
-            user_id,
+            f"""UPDATE chat_threads
+               SET {", ".join(set_clauses)}
+               WHERE id=${thread_id_param} AND user_id=${user_id_param}""",
+            *values,
         )
     if result == "UPDATE 0":
         raise HTTPException(404, "Thread not found")

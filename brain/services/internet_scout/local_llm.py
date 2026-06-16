@@ -48,6 +48,7 @@ def build_local_llm_response(
     synthesis = _synthesis_contract(
         citations=citations,
         quality=evaluation.summary,
+        stop_criteria=stored.plan.research.stop_criteria,
     )
     memory_boundary = InternetScoutMemoryBoundary()
     research_report = _research_report(
@@ -76,23 +77,49 @@ def _synthesis_contract(
     *,
     citations: list[InternetScoutLocalLLMCitation],
     quality: InternetScoutCitationQualitySummary,
+    stop_criteria: InternetScoutResearchStopCriteria,
 ) -> InternetScoutSynthesisContract:
     citation_count = len(citations)
-    if quality.status == "supported":
+    source_hosts = _citation_source_hosts(citations)
+    stop_warnings = _stop_criteria_warnings(
+        quality=quality,
+        source_hosts=source_hosts,
+        accepted_count=citation_count,
+        stop_criteria=stop_criteria,
+        contradiction_count=0,
+    )
+    minimum_citations_met = (
+        quality.status == "supported"
+        and citation_count >= stop_criteria.min_accepted_citations
+    )
+    if quality.status == "supported" and not stop_warnings:
         return InternetScoutSynthesisContract(
             answerable=True,
             status=quality.status,
             citation_count=citation_count,
-            minimum_citations_met=True,
+            minimum_citations_met=minimum_citations_met,
             required_behavior="answer_with_citations",
             limitations=quality.warnings[:10],
+        )
+    if quality.status == "supported":
+        return InternetScoutSynthesisContract(
+            answerable=True,
+            status="weak",
+            citation_count=citation_count,
+            minimum_citations_met=minimum_citations_met,
+            required_behavior="answer_with_limitations",
+            limitations=[
+                *quality.warnings[:5],
+                *stop_warnings[:4],
+                "State that Beacon did not meet all research coverage criteria.",
+            ][:10],
         )
     if quality.status == "weak":
         return InternetScoutSynthesisContract(
             answerable=True,
             status=quality.status,
             citation_count=citation_count,
-            minimum_citations_met=False,
+            minimum_citations_met=minimum_citations_met,
             required_behavior="answer_with_limitations",
             limitations=[
                 *quality.warnings[:9],
@@ -123,8 +150,7 @@ def _research_report(
 ) -> InternetScoutResearchReport:
     query = (stored.evidence.request.query or "Beacon research").strip()
     plan = stored.plan.research
-    answerability = _report_answerability(synthesis)
-    source_hosts = list(dict.fromkeys(citation.host for citation in citations))
+    source_hosts = _citation_source_hosts(citations)
     independent_source_count = len(source_hosts)
     source_diversity_score = _source_diversity_score(
         source_hosts=source_hosts,
@@ -136,10 +162,6 @@ def _research_report(
     verified_claims = _verified_claims(citations)
     unsupported_claims = _unsupported_claims(evaluation)
     contradictions = _contradictions(evaluation)
-    limitations = [
-        *synthesis.limitations[:5],
-        *quality.warnings[:5],
-    ][:10]
     coverage_warnings = _coverage_warnings(
         quality=quality,
         source_hosts=source_hosts,
@@ -147,6 +169,21 @@ def _research_report(
         stop_criteria=plan.stop_criteria,
         contradiction_count=len(contradictions),
     )
+    stop_criteria_warnings = _stop_criteria_warnings(
+        quality=quality,
+        source_hosts=source_hosts,
+        accepted_count=len(citations),
+        stop_criteria=plan.stop_criteria,
+        contradiction_count=len(contradictions),
+    )
+    answerability = _report_answerability(synthesis)
+    if stop_criteria_warnings and answerability == "answerable":
+        answerability = "limited"
+    limitations = [
+        *synthesis.limitations[:5],
+        *quality.warnings[:5],
+        *coverage_warnings[:5],
+    ][:10]
     summary = _report_summary(
         answerability=answerability,
         citation_count=len(citations),
@@ -179,7 +216,7 @@ def _research_report(
         answerability=answerability,
         plan_id=plan.plan_id or None,
         research_intent=plan.intent,
-        source_quality_status=quality.status,
+        source_quality_status=synthesis.status,
         title=query[:200],
         summary=summary,
         key_findings=findings,
@@ -392,6 +429,27 @@ def _coverage_warnings(
     contradiction_count: int,
 ) -> list[str]:
     warnings = list(quality.warnings[:10])
+    warnings.extend(
+        _stop_criteria_warnings(
+            quality=quality,
+            source_hosts=source_hosts,
+            accepted_count=accepted_count,
+            stop_criteria=stop_criteria,
+            contradiction_count=contradiction_count,
+        )
+    )
+    return list(dict.fromkeys(warnings))[:20]
+
+
+def _stop_criteria_warnings(
+    *,
+    quality: InternetScoutCitationQualitySummary,
+    source_hosts: list[str],
+    accepted_count: int,
+    stop_criteria: InternetScoutResearchStopCriteria,
+    contradiction_count: int,
+) -> list[str]:
+    warnings: list[str] = []
     if accepted_count < stop_criteria.min_accepted_citations:
         warnings.append("Accepted citations are below the research stop criteria.")
     if stop_criteria.require_official_source and quality.official_source_count == 0:
@@ -400,9 +458,15 @@ def _coverage_warnings(
         warnings.append("Cross-check coverage is below the research stop criteria.")
     if len(source_hosts) < stop_criteria.min_source_hosts:
         warnings.append("Source diversity is below the research stop criteria.")
+    if quality.unsupported_claim_count:
+        warnings.append("Unsupported claims violate the research stop criteria.")
     if contradiction_count:
         warnings.append("Potential contradictory claim evidence was detected.")
     return list(dict.fromkeys(warnings))[:20]
+
+
+def _citation_source_hosts(citations: list[InternetScoutLocalLLMCitation]) -> list[str]:
+    return list(dict.fromkeys(citation.host for citation in citations if citation.host))
 
 
 def _source_diversity_score(
