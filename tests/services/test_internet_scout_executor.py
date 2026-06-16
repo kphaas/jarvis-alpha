@@ -253,9 +253,7 @@ async def test_executor_extracts_official_comparison_vendor_coverage():
     decision, packet = await executor.execute(request, plan=plan)
 
     assert decision.tool == InternetTool.SEARCH
-    extracted_hosts = {
-        urlparse(call["url"]).hostname for call in gateway.extract_calls
-    }
+    extracted_hosts = {urlparse(call["url"]).hostname for call in gateway.extract_calls}
     assert "platform.openai.com" in extracted_hosts
     assert "docs.anthropic.com" in extracted_hosts
     assert {"platform.openai.com", "docs.anthropic.com"} <= {
