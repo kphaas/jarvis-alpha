@@ -87,6 +87,33 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
     assert comparison.details["research_stop_criteria"]["require_cross_check"] is True
     assert comparison.details["accepted_hosts"] == ["brave.com", "perplexity.ai"]
 
+    # Official vendor comparisons should retain the vendor docs host in coverage.
+    official_vendor_comparison = results[
+        "official_vendor_comparison_prefers_provider_docs"
+    ]
+    assert official_vendor_comparison.details["status"] == "supported"
+    assert official_vendor_comparison.eval_group == "daily_use"
+    assert official_vendor_comparison.details["official_source_count"] == 2
+    assert official_vendor_comparison.details["accepted_hosts"] == [
+        "brave.com",
+        "docs.perplexity.ai",
+    ]
+    assert official_vendor_comparison.details["research_intent"] == "comparison"
+    assert (
+        official_vendor_comparison.details["research_stop_criteria"][
+            "require_cross_check"
+        ]
+        is True
+    )
+    assert official_vendor_comparison.details["synthesis_required_behavior"] == (
+        "answer_with_citations"
+    )
+    assert official_vendor_comparison.details["research_expected_source_types"] == [
+        "official_docs",
+        "primary_source",
+        "trusted_secondary",
+    ]
+
     non_ai_comparison = results[
         "non_ai_serverless_comparison_requires_independent_sources"
     ]
