@@ -32,6 +32,31 @@ export const SPARK_COMPARISON_SCENARIOS = [
   },
 ] as const;
 
+const FEEDBACK_RETRY_ADJUSTMENTS: Record<SparkDraftFeedbackLabel, string> = {
+  sounds_like_me:
+    "Keep this direction, but make the reply a little more natural and specific.",
+  too_robotic:
+    "Make the reply less robotic, less assistant-like, and more like Ken texting.",
+  too_formal:
+    "Make the reply more casual and less formal.",
+  too_much_policy:
+    "Remove policy-like language and keep the reply personal and concrete.",
+  too_wordy:
+    "Make the reply shorter and less wordy while preserving the useful answer.",
+};
+
+function mergeStyleAdjustments(
+  selected: string[],
+  feedbackLabel: SparkDraftFeedbackLabel | null,
+) {
+  const feedbackAdjustment = feedbackLabel
+    ? FEEDBACK_RETRY_ADJUSTMENTS[feedbackLabel]
+    : null;
+  return [...(feedbackAdjustment ? [feedbackAdjustment] : []), ...selected]
+    .filter((item, index, all) => item.trim() && all.indexOf(item) === index)
+    .slice(0, 3);
+}
+
 function baseRequest(
   principalId: string,
   approvalId: string | null,
@@ -90,6 +115,8 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
   const [maxContextMessages, setMaxContextMessages] = useState(8);
   const [styleAdjustments, setStyleAdjustments] = useState<string[]>([]);
   const [draftText, setDraftText] = useState("");
+  const [lastFeedbackLabel, setLastFeedbackLabel] =
+    useState<SparkDraftFeedbackLabel | null>(null);
 
   const draftMutation = useMutation({
     mutationFn: (request: SparkIMessageDraftRequest) =>
@@ -176,6 +203,7 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     approvalMutation.reset();
     feedbackMutation.reset();
     approvedSendMutation.reset();
+    setLastFeedbackLabel(null);
     draftMutation.mutate(
       baseRequest(
         principalId,
@@ -183,6 +211,23 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
         replyGoal,
         maxContextMessages,
         styleAdjustments,
+      ),
+    );
+  }
+
+  function regenerateWithFeedback() {
+    if (!lastFeedbackLabel) {
+      throw new Error("no_feedback_for_retry");
+    }
+    approvalMutation.reset();
+    approvedSendMutation.reset();
+    draftMutation.mutate(
+      baseRequest(
+        principalId,
+        approvalId,
+        replyGoal,
+        maxContextMessages,
+        mergeStyleAdjustments(styleAdjustments, lastFeedbackLabel),
       ),
     );
   }
@@ -209,6 +254,7 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
   }
 
   function recordFeedback(feedbackLabel: SparkDraftFeedbackLabel) {
+    setLastFeedbackLabel(feedbackLabel);
     feedbackMutation.mutate(feedbackLabel);
   }
 
@@ -223,6 +269,7 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
   function resetDraftSurface() {
     setDraftText("");
     setStyleAdjustments([]);
+    setLastFeedbackLabel(null);
     draftMutation.reset();
     comparisonMutation.reset();
     approvalMutation.reset();
@@ -243,6 +290,9 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     draftLoading: draftMutation.isPending,
     draftError: draftMutation.error,
     generateDraft,
+    regenerateWithFeedback,
+    canRegenerateWithFeedback:
+      Boolean(lastFeedbackLabel) && Boolean(draftText.trim()) && !draftMutation.isPending,
     comparisonDrafts: comparisonMutation.data ?? [],
     comparisonLoading: comparisonMutation.isPending,
     comparisonError: comparisonMutation.error,
@@ -255,6 +305,7 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
       Boolean(draftText.trim()) && !approvalMutation.isPending,
     recordFeedback,
     feedback: feedbackMutation.data ?? null,
+    lastFeedbackLabel,
     feedbackLoading: feedbackMutation.isPending,
     feedbackError: feedbackMutation.error,
     approvedSend: approvedSendMutation.data ?? null,
