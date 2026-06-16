@@ -650,6 +650,117 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
 
 
 @pytest.mark.asyncio
+async def test_spark_imessage_draft_approval_fails_closed_when_outbox_crypto_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    fake_conn = _stub_personality_memory(monkeypatch)
+    enqueue_calls: list[dict[str, object]] = []
+    create_outbox_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+
+    async def fake_create(**kwargs):
+        return _proposal()
+
+    async def fake_enqueue(conn, **kwargs):
+        assert conn is fake_conn
+        enqueue_calls.append(kwargs)
+        return UUID("11111111-1111-4111-8111-111111111111")
+
+    async def fake_create_outbox(conn, **kwargs):
+        create_outbox_calls.append(kwargs)
+        return spark_drafts.SparkOutboxCreateResult(
+            outbox_id="22222222-2222-4222-8222-222222222222",
+            status="pending_approval",
+            draft_text_hash="hmac-sha256:" + "a" * 64,
+            created=True,
+        )
+
+    monkeypatch.setattr(spark_drafts, "create_imessage_draft_proposal", fake_create)
+    monkeypatch.setattr(spark_drafts, "enqueue_spark_draft_approval", fake_enqueue)
+    monkeypatch.setattr(spark_drafts, "create_spark_outbox_item", fake_create_outbox)
+    monkeypatch.setattr(
+        spark_drafts,
+        "load_spark_outbox_crypto",
+        lambda: (_ for _ in ()).throw(
+            spark_drafts.SparkOutboxConfigError("spark_outbox_config_missing")
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await spark_drafts.spark_imessage_draft_approval_request(
+            _request(),
+            spark_drafts.SparkIMessageDraftApprovalRequest(
+                reply_goal="Tell her I am on it",
+                max_context_messages=10,
+            ),
+            "user",
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "spark_imessage_outbox_unavailable"
+    assert enqueue_calls == []
+    assert create_outbox_calls == []
+    warnings = json.dumps(fake_logger.warnings).lower()
+    assert "spark_outbox_record_failed" in warnings
+    assert "config_missing" in warnings
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_draft_approval_fails_closed_when_outbox_not_persisted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    fake_conn = _stub_personality_memory(monkeypatch)
+    enqueue_calls: list[dict[str, object]] = []
+    outbox_calls: list[dict[str, object]] = []
+    crypto_token = object()
+    monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+
+    async def fake_create(**kwargs):
+        return _proposal()
+
+    async def fake_enqueue(conn, **kwargs):
+        assert conn is fake_conn
+        enqueue_calls.append(kwargs)
+        return UUID("11111111-1111-4111-8111-111111111111")
+
+    async def fake_create_outbox(conn, **kwargs):
+        assert conn is fake_conn
+        outbox_calls.append(kwargs)
+        return spark_drafts.SparkOutboxCreateResult(
+            outbox_id=None,
+            status="unknown",
+            draft_text_hash="hmac-sha256:" + "a" * 64,
+            created=False,
+            reason="approval_not_found",
+        )
+
+    monkeypatch.setattr(spark_drafts, "create_imessage_draft_proposal", fake_create)
+    monkeypatch.setattr(spark_drafts, "enqueue_spark_draft_approval", fake_enqueue)
+    monkeypatch.setattr(spark_drafts, "load_spark_outbox_crypto", lambda: crypto_token)
+    monkeypatch.setattr(spark_drafts, "create_spark_outbox_item", fake_create_outbox)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await spark_drafts.spark_imessage_draft_approval_request(
+            _request(),
+            spark_drafts.SparkIMessageDraftApprovalRequest(
+                reply_goal="Tell her I am on it",
+                max_context_messages=10,
+            ),
+            "user",
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "spark_imessage_outbox_unavailable"
+    assert len(enqueue_calls) == 1
+    assert len(outbox_calls) == 1
+    warnings = json.dumps(fake_logger.warnings).lower()
+    assert "spark_outbox_record_failed" in warnings
+    assert "store_failed" in warnings
+
+
+@pytest.mark.asyncio
 async def test_spark_imessage_draft_feedback_records_label_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

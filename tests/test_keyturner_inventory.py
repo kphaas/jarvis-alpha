@@ -41,6 +41,10 @@ def test_keyturner_inventory_covers_security_operational_keys():
         "PUSHOVER_APP_TOKEN",
         "JARVIS_FAMILY_SMOKE_PIN",
         "JARVIS_FAMILY_EXTERNAL_SMOKE_PIN",
+        "SPARK_OUTBOX_DIGEST_KEY",
+        "SPARK_OUTBOX_DIGEST_KEY_VERSION",
+        "SPARK_OUTBOX_PAYLOAD_KEY",
+        "SPARK_OUTBOX_PAYLOAD_KEY_VERSION",
     }
 
     missing = expected - set(secrets)

@@ -381,6 +381,11 @@ def _route_error(exc: Exception) -> HTTPException:
             status_code=502,
             detail="spark_imessage_context_load_failed",
         )
+    if isinstance(exc, (SparkOutboxConfigError, SparkOutboxStoreError)):
+        return HTTPException(
+            status_code=503,
+            detail="spark_imessage_outbox_unavailable",
+        )
     return HTTPException(status_code=500, detail="spark_imessage_draft_error")
 
 
@@ -912,6 +917,16 @@ async def spark_imessage_draft_approval_request(
         )
         actor_sub = str(getattr(request.state, "user_id", "unknown"))
         actor_type = str(getattr(request.state, "actor_type", "unknown"))
+        try:
+            crypto = load_spark_outbox_crypto()
+        except SparkOutboxConfigError as outbox_exc:
+            _log_outbox_failure(
+                request,
+                proposal,
+                exc=outbox_exc,
+                reason="config_missing",
+            )
+            raise
         outbox: SparkOutboxCreateResult | None = None
         async with rls_connection(request) as conn:
             queue_id = await enqueue_spark_draft_approval(
@@ -928,8 +943,12 @@ async def spark_imessage_draft_approval_request(
                     approval_queue_id=queue_id,
                     actor_sub=actor_sub,
                     actor_type=actor_type,
-                    crypto=load_spark_outbox_crypto(),
+                    crypto=crypto,
                 )
+                if not outbox.created or not outbox.outbox_id:
+                    raise SparkOutboxStoreError(
+                        outbox.reason or "spark_outbox_record_failed"
+                    )
             except SparkOutboxConfigError as outbox_exc:
                 _log_outbox_failure(
                     request,
@@ -937,6 +956,7 @@ async def spark_imessage_draft_approval_request(
                     exc=outbox_exc,
                     reason="config_missing",
                 )
+                raise
             except Exception as outbox_exc:
                 _log_outbox_failure(
                     request,
@@ -944,6 +964,7 @@ async def spark_imessage_draft_approval_request(
                     exc=outbox_exc,
                     reason="store_failed",
                 )
+                raise
         try:
             feedback = record_spark_draft_edit_feedback(
                 original_proposal=original_proposal,
