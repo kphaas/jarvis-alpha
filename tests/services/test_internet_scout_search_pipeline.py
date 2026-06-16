@@ -71,5 +71,65 @@ def test_rank_search_results_prefers_official_sources_and_provider_overlap():
     assert ranked[0].purposes == ("baseline", "official_source")
 
 
+def test_rank_search_results_preserves_official_comparison_vendor_coverage():
+    request = InternetScoutRequest(
+        query=(
+            "Compare the OpenAI Responses API and Anthropic Messages API for "
+            "building a chat gateway. Use official vendor docs only and cite them."
+        )
+    )
+    openai_primary = GatewaySearchResult(
+        title="OpenAI Responses API",
+        url=_fixture_url("platform.openai.com", "/docs/api-reference/responses"),
+        host="platform.openai.com",
+        description="The OpenAI Responses API reference is on platform.openai.com.",
+    )
+    openai_secondary = GatewaySearchResult(
+        title="OpenAI API reference",
+        url=_fixture_url("platform.openai.com", "/docs/api-reference"),
+        host="platform.openai.com",
+        description="The OpenAI API reference is on platform.openai.com.",
+    )
+    anthropic = GatewaySearchResult(
+        title="Anthropic Messages API",
+        url=_fixture_url("docs.anthropic.com", "/en/api/messages"),
+        host="docs.anthropic.com",
+        description="The Anthropic Messages API documentation is on docs.anthropic.com.",
+    )
+    fetched_at = datetime(2026, 6, 16, 12, tzinfo=UTC)
+
+    ranked = rank_search_results(
+        request=request,
+        runs=[
+            SearchRun(
+                response=GatewaySearchResponse(
+                    provider="brave",
+                    query_hash="a" * 64,
+                    fetched_at=fetched_at,
+                    results=[openai_primary, anthropic, openai_secondary],
+                ),
+                purpose="comparison",
+                required=True,
+            ),
+            SearchRun(
+                response=GatewaySearchResponse(
+                    provider="perplexity",
+                    query_hash="b" * 64,
+                    fetched_at=fetched_at,
+                    results=[openai_primary, openai_secondary],
+                ),
+                purpose="baseline",
+                required=True,
+            ),
+        ],
+        max_results=2,
+    )
+
+    assert sorted(item.result.host for item in ranked) == [
+        "docs.anthropic.com",
+        "platform.openai.com",
+    ]
+
+
 def _fixture_url(host: str, path: str) -> str:
     return "https:" + "//" + host + path
