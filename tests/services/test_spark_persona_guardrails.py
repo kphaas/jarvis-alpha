@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from brain.services.spark_persona_guardrails import (
     SparkGuardrailState,
     default_spark_guardrails,
+    is_core_family_target_label,
     load_spark_guardrails,
     save_spark_guardrails,
 )
@@ -22,6 +23,7 @@ def test_default_spark_guardrails_start_draft_only_and_no_auto_send() -> None:
     assert "medical" in state.protected_topics
     assert "minor" in state.protected_topics
     assert [item.id for item in state.protected_relationships] == [
+        "ken",
         "sweta",
         "ryleigh",
         "sloane",
@@ -77,6 +79,7 @@ def test_spark_guardrails_strip_non_core_relationships_on_load(tmp_path) -> None
     loaded = load_spark_guardrails(path=path)
 
     assert [item.id for item in loaded.protected_relationships] == [
+        "ken",
         "sweta",
         "ryleigh",
         "sloane",
@@ -88,3 +91,8 @@ def test_spark_guardrails_load_missing_path_returns_default(tmp_path) -> None:
 
     assert state.principal_id == "ken"
     assert state.auto_send_enabled is False
+
+
+def test_core_family_target_labels_include_ken_and_exclude_non_family() -> None:
+    assert is_core_family_target_label("Ken") is True
+    assert is_core_family_target_label("Mother") is False
