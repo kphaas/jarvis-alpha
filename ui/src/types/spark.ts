@@ -83,6 +83,7 @@ export interface SparkIMessageDraftMemoryDebugItem {
   content: string;
   source: string;
   evidence_ref_hash?: string | null;
+  reason?: string | null;
 }
 
 export interface SparkIMessageDraftConversationSummary {
@@ -139,6 +140,7 @@ export interface SparkIMessageDraftResponse {
   source_readiness: SparkIMessageDraftSourceReadiness[];
   context_preview: SparkIMessageDraftContextMessage[];
   personality_memory_preview: SparkIMessageDraftMemoryDebugItem[];
+  target_memory_preview: SparkIMessageDraftMemoryDebugItem[];
 }
 
 export interface SparkIMessageDraftApprovalResponse extends SparkIMessageDraftResponse {
@@ -349,6 +351,139 @@ export interface SparkPersonalityMemoryRejectResponse {
     reason?: string;
     proposal_id?: string;
     principal_id?: string;
+    already_rejected?: boolean;
+  };
+}
+
+export type SparkTargetMemoryKind =
+  | "profile_fact"
+  | "preference"
+  | "open_loop";
+
+export type SparkTargetMemorySource = "thread_mark";
+
+export interface SparkTargetMemoryItem {
+  id: string;
+  principal_id: string;
+  target_ref_hash: string;
+  target_label: string;
+  kind: SparkTargetMemoryKind;
+  content: string;
+  source: SparkTargetMemorySource;
+  evidence_ref_hash?: string | null;
+  importance_score: number;
+  approved_by: string;
+  approved_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface SparkTargetMemoryProposal {
+  proposal_id: string;
+  principal_id: string;
+  approval_id: string;
+  target_ref_hash: string;
+  target_label: string;
+  kind: SparkTargetMemoryKind;
+  content: string;
+  source: SparkTargetMemorySource;
+  reason: string;
+  confidence: number;
+  evidence_ref_hash?: string | null;
+  approval_ref_hash?: string | null;
+  source_reference_hash?: string | null;
+  chat_guid_hash?: string | null;
+}
+
+export interface SparkTargetMemoryScorecard {
+  active_count: number;
+  proposal_count: number;
+  open_loop_count: number;
+  preference_count: number;
+  profile_fact_count: number;
+  readiness: "strong" | "needs_review" | "thin" | string;
+}
+
+export interface SparkTargetMemoryReviewResponse {
+  principal_id: string;
+  approval_id: string;
+  target_ref_hash: string;
+  target_label: string;
+  active: SparkTargetMemoryItem[];
+  proposals: SparkTargetMemoryProposal[];
+  scorecard: SparkTargetMemoryScorecard;
+}
+
+export interface SparkTargetMemoryProposeRequest {
+  principal_id: string;
+  approval_id: string;
+  kind: SparkTargetMemoryKind;
+  note: string;
+  chat_guid_hash: string;
+}
+
+export interface SparkTargetMemoryProposeResponse {
+  status: string;
+  proposal?: SparkTargetMemoryProposal | null;
+  reason?: string | null;
+}
+
+export interface SparkTargetMemoryApproveRequest {
+  approved: true;
+  proposal_id: string;
+  principal_id: string;
+  target_ref_hash: string;
+  target_label: string;
+  kind: SparkTargetMemoryKind;
+  content: string;
+  source: SparkTargetMemorySource;
+  evidence_ref_hash?: string | null;
+  importance_score: number;
+}
+
+export interface SparkTargetMemoryApproveResponse {
+  status: string;
+  result: {
+    saved?: boolean;
+    reason?: string;
+    target_memory_id?: string;
+    principal_id?: string;
+    target_ref_hash?: string;
+    kind?: SparkTargetMemoryKind;
+    source?: SparkTargetMemorySource;
+  };
+}
+
+export interface SparkTargetMemoryArchiveRequest {
+  principal_id: string;
+  memory_id: string;
+}
+
+export interface SparkTargetMemoryArchiveResponse {
+  status: string;
+  result: {
+    archived?: boolean;
+    reason?: string;
+    target_memory_id?: string;
+    principal_id?: string;
+    archived_by?: string;
+  };
+}
+
+export interface SparkTargetMemoryRejectRequest {
+  principal_id: string;
+  target_ref_hash: string;
+  proposal_id: string;
+}
+
+export interface SparkTargetMemoryRejectResponse {
+  status: string;
+  result: {
+    rejected?: boolean;
+    reason?: string;
+    proposal_id?: string;
+    principal_id?: string;
+    target_ref_hash?: string;
     already_rejected?: boolean;
   };
 }

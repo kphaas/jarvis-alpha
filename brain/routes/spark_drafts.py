@@ -41,6 +41,10 @@ from brain.services.spark_outbox_send import (
     send_approved_spark_imessage_outbox,
 )
 from brain.services.spark_personality_memory import fetch_personality_memory
+from brain.services.spark_target_memory import (
+    fetch_target_memory,
+    target_memory_prompt_items,
+)
 from brain.services.spark_voice_feedback import (
     SparkDraftEditFeedbackResult,
     SparkDraftQualityFeedbackLabel,
@@ -146,6 +150,9 @@ class SparkIMessageDraftOut(BaseModel):
     personality_memory_preview: list["SparkIMessageDraftMemoryDebugOut"] = Field(
         default_factory=list
     )
+    target_memory_preview: list["SparkIMessageDraftMemoryDebugOut"] = Field(
+        default_factory=list
+    )
 
 
 class SparkIMessageDraftContextMessageOut(BaseModel):
@@ -192,6 +199,7 @@ class SparkIMessageDraftMemoryDebugOut(BaseModel):
     content: str
     source: str
     evidence_ref_hash: str | None = None
+    reason: str | None = None
 
 
 class SparkIMessageDraftApprovalOut(SparkIMessageDraftOut):
@@ -300,6 +308,54 @@ async def _load_personality_memory_rows(
         return []
 
 
+def _approved_imessage_record(
+    principal_id: str,
+    approval_id: str | None,
+) -> SparkApprovedSourceRecord | None:
+    if not approval_id:
+        return None
+    records = load_approved_voice_sources(principal_id=principal_id)
+    for record in records:
+        if (
+            record.source == "imessage"
+            and record.decision_approved
+            and record.approval_id == approval_id
+        ):
+            return record
+    return None
+
+
+async def _load_target_memory_rows(
+    request: Request,
+    principal_id: str,
+    approval_id: str | None,
+) -> list[dict[str, object]]:
+    if not approval_id:
+        return []
+    try:
+        record = _approved_imessage_record(principal_id, approval_id)
+        if record is None:
+            return []
+        async with rls_connection(request) as conn:
+            return await fetch_target_memory(
+                conn,
+                principal_id,
+                record.source_reference_hash,
+            )
+    except Exception as exc:
+        logger.warning(
+            "spark_target_memory_load_failed",
+            extra={
+                "event": "spark_target_memory_load_failed",
+                "component": "spark_drafts",
+                "principal_id": principal_id,
+                "error_class": exc.__class__.__name__,
+                **_safe_actor_fields(request),
+            },
+        )
+        return []
+
+
 def _route_error(exc: Exception) -> HTTPException:
     if isinstance(exc, SparkDraftPolicyError):
         return HTTPException(
@@ -382,22 +438,36 @@ def _proposal_payload(
     proposal: SparkDraftProposal,
     request_payload: SparkIMessageDraftRequest,
     personality_memory_rows: list[dict[str, object]],
+    target_memory_rows: list[dict[str, object]],
 ) -> dict[str, object]:
-    memory_preview: list[dict[str, object]] = []
+    personality_preview: list[dict[str, object]] = []
+    target_preview: list[dict[str, object]] = []
     if request_payload.include_memory_preview:
-        memory_preview = [
+        personality_preview = [
             {
                 "kind": item.kind,
                 "content": item.content,
                 "source": item.source,
                 "evidence_ref_hash": item.evidence_ref_hash,
+                "reason": None,
             }
             for item in personality_memory_prompt_items(personality_memory_rows)
+        ]
+        target_preview = [
+            {
+                "kind": item.kind,
+                "content": item.content,
+                "source": item.source,
+                "evidence_ref_hash": item.evidence_ref_hash,
+                "reason": item.reason,
+            }
+            for item in target_memory_prompt_items(target_memory_rows)
         ]
     return proposal.to_payload(
         include_context_preview=request_payload.include_context_preview,
         context_preview_limit=request_payload.context_preview_limit,
-        personality_memory_preview=memory_preview,
+        personality_memory_preview=personality_preview,
+        target_memory_preview=target_preview,
     )
 
 
@@ -777,6 +847,11 @@ async def spark_imessage_draft(
         request,
         payload.principal_id,
     )
+    target_memory_rows = await _load_target_memory_rows(
+        request,
+        payload.principal_id,
+        payload.approval_id,
+    )
     try:
         proposal = await create_imessage_draft_proposal(
             principal_id=payload.principal_id,
@@ -785,6 +860,7 @@ async def spark_imessage_draft(
             max_context_messages=payload.max_context_messages,
             style_adjustments=payload.style_adjustments,
             personality_memory_rows=personality_memory_rows,
+            target_memory_rows=target_memory_rows,
         )
     except Exception as exc:
         route_error = _route_error(exc)
@@ -792,7 +868,12 @@ async def spark_imessage_draft(
         raise route_error from exc
     _log_success(request, proposal, payload)
     return SparkIMessageDraftOut(
-        **_proposal_payload(proposal, payload, personality_memory_rows)
+        **_proposal_payload(
+            proposal,
+            payload,
+            personality_memory_rows,
+            target_memory_rows,
+        )
     )
 
 
@@ -807,6 +888,11 @@ async def spark_imessage_draft_approval_request(
         request,
         payload.principal_id,
     )
+    target_memory_rows = await _load_target_memory_rows(
+        request,
+        payload.principal_id,
+        payload.approval_id,
+    )
     try:
         original_proposal = await create_imessage_draft_proposal(
             principal_id=payload.principal_id,
@@ -815,6 +901,7 @@ async def spark_imessage_draft_approval_request(
             max_context_messages=payload.max_context_messages,
             style_adjustments=payload.style_adjustments,
             personality_memory_rows=personality_memory_rows,
+            target_memory_rows=target_memory_rows,
         )
         proposal = apply_draft_text_override(
             original_proposal,
@@ -877,7 +964,12 @@ async def spark_imessage_draft_approval_request(
         outbox=outbox,
     )
     return SparkIMessageDraftApprovalOut(
-        **_proposal_payload(proposal, payload, personality_memory_rows),
+        **_proposal_payload(
+            proposal,
+            payload,
+            personality_memory_rows,
+            target_memory_rows,
+        ),
         queue_id=str(queue_id),
         approval_status="pending",
         outbox_id=outbox.outbox_id if outbox else None,

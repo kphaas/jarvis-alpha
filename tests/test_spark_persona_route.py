@@ -41,28 +41,53 @@ def test_spark_persona_routes_are_classified_t2_security_state() -> None:
     read_classes = classify_route("GET", "/v1/spark/persona/guardrails")
     auto_context_classes = classify_route("GET", "/v1/spark/persona/auto-context")
     memory_read_classes = classify_route("GET", "/v1/spark/persona/memory")
+    target_memory_read_classes = classify_route(
+        "GET", "/v1/spark/persona/target-memory"
+    )
     write_classes = classify_route("PUT", "/v1/spark/persona/guardrails")
     memory_propose_classes = classify_route("POST", "/v1/spark/persona/memory/propose")
     memory_write_classes = classify_route("POST", "/v1/spark/persona/memory/approve")
     memory_archive_classes = classify_route("POST", "/v1/spark/persona/memory/archive")
     memory_reject_classes = classify_route("POST", "/v1/spark/persona/memory/reject")
+    target_memory_propose_classes = classify_route(
+        "POST", "/v1/spark/persona/target-memory/propose"
+    )
+    target_memory_write_classes = classify_route(
+        "POST", "/v1/spark/persona/target-memory/approve"
+    )
+    target_memory_archive_classes = classify_route(
+        "POST", "/v1/spark/persona/target-memory/archive"
+    )
+    target_memory_reject_classes = classify_route(
+        "POST", "/v1/spark/persona/target-memory/reject"
+    )
 
     assert read_classes == ["read", "security_read"]
     assert auto_context_classes == ["read", "security_read"]
     assert memory_read_classes == ["read", "security_read"]
+    assert target_memory_read_classes == ["read", "security_read"]
     assert write_classes == ["write", "security_write"]
     assert memory_propose_classes == ["write", "security_write"]
     assert memory_write_classes == ["write", "security_write"]
     assert memory_archive_classes == ["write", "security_write"]
     assert memory_reject_classes == ["write", "security_write"]
+    assert target_memory_propose_classes == ["write", "security_write"]
+    assert target_memory_write_classes == ["write", "security_write"]
+    assert target_memory_archive_classes == ["write", "security_write"]
+    assert target_memory_reject_classes == ["write", "security_write"]
     assert determine_risk_tier(read_classes) == "T2"
     assert determine_risk_tier(auto_context_classes) == "T2"
     assert determine_risk_tier(memory_read_classes) == "T2"
+    assert determine_risk_tier(target_memory_read_classes) == "T2"
     assert determine_risk_tier(write_classes) == "T2"
     assert determine_risk_tier(memory_propose_classes) == "T2"
     assert determine_risk_tier(memory_write_classes) == "T2"
     assert determine_risk_tier(memory_archive_classes) == "T2"
     assert determine_risk_tier(memory_reject_classes) == "T2"
+    assert determine_risk_tier(target_memory_propose_classes) == "T2"
+    assert determine_risk_tier(target_memory_write_classes) == "T2"
+    assert determine_risk_tier(target_memory_archive_classes) == "T2"
+    assert determine_risk_tier(target_memory_reject_classes) == "T2"
 
 
 @pytest.mark.asyncio
@@ -470,6 +495,124 @@ async def test_spark_memory_reject_records_proposal_without_content(
     logs = json.dumps(fake_logger.infos)
     assert "Signature phrase" not in logs
     assert "draft_text" not in logs
+
+
+@pytest.mark.asyncio
+async def test_spark_target_memory_read_returns_active_and_proposals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    rows = [
+        {
+            "id": "memory-1",
+            "principal_id": "ken",
+            "target_ref_hash": "a" * 64,
+            "target_label": "Sweta",
+            "kind": "open_loop",
+            "content": "Send the waiver tonight.",
+            "source": "thread_mark",
+            "evidence_ref_hash": "d" * 64,
+            "importance_score": 0.92,
+            "approved_by": "ken",
+            "approved_at": None,
+            "created_at": None,
+            "updated_at": None,
+        }
+    ]
+    proposal = spark_persona.SparkTargetMemoryProposal(
+        proposal_id="proposal-123",
+        principal_id="ken",
+        approval_id="ken-imessage-approved-20260605-001",
+        target_ref_hash="a" * 64,
+        target_label="Sweta",
+        kind="preference",
+        content="She prefers quick confirmation texts.",
+        source="thread_mark",
+        reason="Marked preference from selected target thread preview",
+        confidence=0.82,
+        evidence_ref_hash="e" * 64,
+        approval_ref_hash="b" * 64,
+        source_reference_hash="a" * 64,
+        chat_guid_hash="c" * 64,
+    )
+    record = SimpleNamespace(
+        approval_id="ken-imessage-approved-20260605-001",
+        approval_ref_hash="b" * 64,
+        source_reference_hash="a" * 64,
+        source_reference_label="Sweta",
+    )
+    monkeypatch.setattr(spark_persona, "logger", fake_logger)
+    monkeypatch.setattr(
+        spark_persona,
+        "_approved_imessage_record",
+        lambda **_kwargs: record,
+    )
+    monkeypatch.setattr(
+        spark_persona,
+        "rls_connection",
+        lambda _request: _AsyncConn(rows=rows),
+    )
+    monkeypatch.setattr(spark_persona, "fetch_target_memory", _async_return(rows))
+    monkeypatch.setattr(
+        spark_persona,
+        "list_target_memory_proposals",
+        lambda **_kwargs: (proposal,),
+    )
+
+    response = await spark_persona.get_spark_target_memory(
+        _request(role="admin"),
+        "ken",
+        "ken-imessage-approved-20260605-001",
+        "user",
+    )
+
+    assert response.target_label == "Sweta"
+    assert response.active[0].content == "Send the waiver tonight."
+    assert response.proposals[0].content == "She prefers quick confirmation texts."
+    assert response.scorecard.active_count == 1
+    assert response.scorecard.proposal_count == 1
+    logs = json.dumps(fake_logger.infos)
+    assert "Send the waiver tonight." not in logs
+    assert "She prefers quick confirmation texts." not in logs
+
+
+@pytest.mark.asyncio
+async def test_spark_target_memory_propose_logs_hashes_not_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    record = SimpleNamespace(
+        approval_id="ken-imessage-approved-20260605-001",
+        approval_ref_hash="b" * 64,
+        source_reference_hash="a" * 64,
+        source_reference_label="Sweta",
+    )
+    monkeypatch.setattr(spark_persona, "logger", fake_logger)
+    monkeypatch.setattr(
+        spark_persona,
+        "_approved_imessage_record",
+        lambda **_kwargs: record,
+    )
+
+    response = await spark_persona.propose_spark_target_memory(
+        _request(role="admin"),
+        spark_persona.SparkTargetMemoryProposeRequest(
+            principal_id="ken",
+            approval_id="ken-imessage-approved-20260605-001",
+            kind="open_loop",
+            note="Send the waiver tonight",
+            chat_guid_hash="c" * 64,
+        ),
+        "user",
+    )
+
+    assert response.status == "proposed"
+    assert response.proposal is not None
+    assert response.proposal.target_label == "Sweta"
+    logs = json.dumps(fake_logger.infos)
+    assert "Send the waiver tonight" not in logs
+    assert "Sweta" not in logs
+    assert "approval_ref_hash" in logs
 
 
 class _AsyncConn:

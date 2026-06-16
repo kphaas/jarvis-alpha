@@ -331,6 +331,7 @@ async def test_spark_imessage_draft_returns_review_payload_and_safe_logs(
             "max_context_messages": 10,
             "style_adjustments": [],
             "personality_memory_rows": personality_rows,
+            "target_memory_rows": [],
         }
         return _proposal()
 
@@ -365,6 +366,7 @@ async def test_spark_imessage_draft_returns_review_payload_and_safe_logs(
     assert payload["source_readiness"][0]["status"] == "live_runtime_context"
     assert payload["context_preview"] == []
     assert payload["personality_memory_preview"] == []
+    assert payload["target_memory_preview"] == []
     assert fake_logger.infos == [
         (
             "spark_imessage_draft_proposed",
@@ -427,6 +429,7 @@ async def test_spark_imessage_draft_can_return_runtime_review_context(
             "max_context_messages": 10,
             "style_adjustments": [],
             "personality_memory_rows": personality_rows,
+            "target_memory_rows": [],
         }
         return _proposal()
 
@@ -471,8 +474,10 @@ async def test_spark_imessage_draft_can_return_runtime_review_context(
             "content": "Ken prefers short bullets when timing matters.",
             "source": "spark_approved",
             "evidence_ref_hash": "memory-hash",
+            "reason": None,
         }
     ]
+    assert payload["target_memory_preview"] == []
     logs = json.dumps(fake_logger.infos).lower()
     assert "private inbound body" not in logs
     assert "ken sent private body" not in logs
@@ -542,6 +547,7 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
             "max_context_messages": 10,
             "style_adjustments": [],
             "personality_memory_rows": [],
+            "target_memory_rows": [],
         }
         return _proposal()
 

@@ -40,6 +40,10 @@ from brain.services.spark_voice_ingest import (
 )
 from brain.services.spark_persona_guardrails import load_spark_guardrails
 from brain.services.spark_sensitivity import scan_spark_draft_sensitivity
+from brain.services.spark_target_memory import (
+    target_memory_prompt_context,
+    target_memory_prompt_items,
+)
 
 DRAFT_VERSION = "spark-imessage-draft/v0.2"
 DEFAULT_MAX_CONTEXT_MESSAGES = 20
@@ -190,6 +194,7 @@ class SparkDraftProposal:
         include_context_preview: bool = False,
         context_preview_limit: int = 10,
         personality_memory_preview: list[dict[str, object]] | None = None,
+        target_memory_preview: list[dict[str, object]] | None = None,
     ) -> dict[str, Any]:
         payload = {
             "draft_version": self.draft_version,
@@ -243,6 +248,7 @@ class SparkDraftProposal:
             ],
             "context_preview": [],
             "personality_memory_preview": personality_memory_preview or [],
+            "target_memory_preview": target_memory_preview or [],
         }
         if include_context_preview:
             if self.context.messages:
@@ -287,6 +293,7 @@ async def create_imessage_draft_proposal(
     approved_chat_guid: str | None = None,
     draft_text_override: str | None = None,
     personality_memory_rows: list[dict[str, object]] | None = None,
+    target_memory_rows: list[dict[str, object]] | None = None,
     llm_call: SparkLLMCall | None = None,
 ) -> SparkDraftProposal:
     """Create a human-reviewable draft from approved iMessage runtime context."""
@@ -323,6 +330,7 @@ async def create_imessage_draft_proposal(
             guidance=guidance,
             auto_context=auto_context,
             personality_memory_rows=personality_memory_rows or [],
+            target_memory_rows=target_memory_rows or [],
             context=context,
             sensitivity_warnings=sensitivity.warnings,
             style_adjustments=_clean_style_adjustments(style_adjustments),
@@ -342,6 +350,7 @@ async def create_imessage_draft_proposal(
             draft_text=draft_text,
             guidance=guidance,
             personality_memory_rows=personality_memory_rows or [],
+            target_memory_rows=target_memory_rows or [],
         ),
         source_readiness=_source_readiness(records=records, selected_record=record),
         warnings=(
@@ -420,6 +429,7 @@ def apply_draft_text_override(
             draft_text=override,
             guidance=None,
             personality_memory_rows=[],
+            target_memory_rows=[],
         ),
         source_readiness=proposal.source_readiness,
         warnings=tuple(dict.fromkeys(warnings)),
@@ -631,12 +641,14 @@ def _draft_quality_scorecard(
     draft_text: str,
     guidance: SparkVoiceGuidance | None,
     personality_memory_rows: list[dict[str, object]],
+    target_memory_rows: list[dict[str, object]],
 ) -> SparkDraftQualityScorecard:
     text = draft_text.strip()
     lower = text.lower()
     words = re.findall(r"\b[\w']+\b", text)
     recurring_phrases = tuple(guidance.recurring_phrases if guidance else ())
     memory_items = personality_memory_prompt_items(personality_memory_rows)
+    target_memory_items = target_memory_prompt_items(target_memory_rows)
 
     checks = (
         SparkDraftQualityCheck(
@@ -675,9 +687,9 @@ def _draft_quality_scorecard(
         ),
         SparkDraftQualityCheck(
             key="voice_memory_used",
-            label="Voice memory available",
-            passed=bool(memory_items or recurring_phrases),
-            detail="Reviewed voice memory or recurring phrases were available to the prompt.",
+            label="Reviewed memory available",
+            passed=bool(memory_items or target_memory_items or recurring_phrases),
+            detail="Reviewed voice or selected-target memory was available to the prompt.",
         ),
     )
     score = round(sum(1 for check in checks if check.passed) / len(checks) * 100)
@@ -747,6 +759,7 @@ async def _draft_from_context(
     guidance: SparkVoiceGuidance,
     auto_context: AutoSparkPromptContext,
     personality_memory_rows: list[dict[str, object]],
+    target_memory_rows: list[dict[str, object]],
     context: SparkDraftContext,
     sensitivity_warnings: tuple[str, ...],
     style_adjustments: tuple[str, ...],
@@ -765,6 +778,7 @@ async def _draft_from_context(
             guidance=guidance,
             auto_context=auto_context,
             personality_memory_rows=personality_memory_rows,
+            target_memory_rows=target_memory_rows,
             context=context,
             sensitivity_warnings=sensitivity_warnings,
             style_adjustments=style_adjustments,
@@ -790,6 +804,7 @@ async def _call_spark_llm(
     guidance: SparkVoiceGuidance,
     auto_context: AutoSparkPromptContext,
     personality_memory_rows: list[dict[str, object]],
+    target_memory_rows: list[dict[str, object]],
     context: SparkDraftContext,
     sensitivity_warnings: tuple[str, ...],
     style_adjustments: tuple[str, ...],
@@ -806,6 +821,7 @@ async def _call_spark_llm(
             guidance,
             auto_context,
             personality_memory_rows,
+            target_memory_rows,
         ),
         user_message=_spark_draft_user_message(
             reply_goal=reply_goal,
@@ -820,6 +836,8 @@ async def _call_spark_llm(
             context,
             reply_goal,
             auto_context,
+            personality_memory_rows,
+            target_memory_rows,
             style_adjustments,
         ),
     )
@@ -882,6 +900,7 @@ def _spark_draft_system_prompt(
     guidance: SparkVoiceGuidance,
     auto_context: AutoSparkPromptContext,
     personality_memory_rows: list[dict[str, object]],
+    target_memory_rows: list[dict[str, object]],
 ) -> str:
     lines = [
         "You draft iMessage replies for Ken.",
@@ -929,6 +948,18 @@ def _spark_draft_system_prompt(
                 "Reviewed edit lessons (apply silently before drafting):",
                 edit_lessons,
                 "Use these lessons to improve phrasing, but do not mention feedback or calibration.",
+            ]
+        )
+    target_memory_context = target_memory_prompt_context(target_memory_rows)
+    if target_memory_context:
+        lines.extend(
+            [
+                "",
+                "Selected-target memory (reviewed; use only if relevant to this exact thread):",
+                target_memory_context,
+                "Use only the selected target's active open loops, preferences, and profile facts.",
+                "Prioritize active open loops before preferences or stable facts.",
+                "Do not borrow memory from other people and do not mention memory or review state in the draft.",
             ]
         )
     lines.extend(
@@ -1159,8 +1190,22 @@ def _draft_idempotency_key(
     context: SparkDraftContext,
     reply_goal: str | None,
     auto_context: AutoSparkPromptContext,
+    personality_memory_rows: list[dict[str, object]],
+    target_memory_rows: list[dict[str, object]],
     style_adjustments: tuple[str, ...] = (),
 ) -> str:
+    personality_hash = _sha256_text(
+        "|".join(
+            f"{item.kind}:{item.content}:{item.source}"
+            for item in personality_memory_prompt_items(personality_memory_rows)
+        )
+    )
+    target_hash = _sha256_text(
+        "|".join(
+            f"{item.kind}:{item.content}:{item.source}:{item.reason}"
+            for item in target_memory_prompt_items(target_memory_rows)
+        )
+    )
     raw = "|".join(
         [
             "spark-draft-v0.2",
@@ -1169,6 +1214,8 @@ def _draft_idempotency_key(
             context.chat_guid_hash,
             auto_context.prompt_sha256,
             _sha256_text(_clean_reply_goal(reply_goal)),
+            personality_hash,
+            target_hash,
             _sha256_text("|".join(style_adjustments)),
         ]
     )

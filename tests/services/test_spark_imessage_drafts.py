@@ -81,6 +81,7 @@ async def test_imessage_draft_uses_runtime_context_without_exposing_thread_text(
     assert any(item["source"] == "gmail" for item in payload["source_readiness"])
     assert payload["context_preview"] == []
     assert payload["personality_memory_preview"] == []
+    assert payload["target_memory_preview"] == []
     assert fake_client.calls == [("approved-chat-guid", 10)]
     for forbidden in (
         "private inbound body",
@@ -121,6 +122,15 @@ async def test_imessage_draft_can_return_runtime_context_preview_when_requested(
                 "evidence_ref_hash": "memory-hash",
             }
         ],
+        target_memory_preview=[
+            {
+                "kind": "open_loop",
+                "content": "Send the waiver tonight.",
+                "source": "thread_mark",
+                "evidence_ref_hash": "target-hash",
+                "reason": "active open loop for selected target",
+            }
+        ],
     )
 
     assert payload["context_preview"] == [
@@ -149,6 +159,15 @@ async def test_imessage_draft_can_return_runtime_context_preview_when_requested(
             "content": "Ken prefers short bullets for urgent decisions.",
             "source": "spark_approved",
             "evidence_ref_hash": "memory-hash",
+        }
+    ]
+    assert payload["target_memory_preview"] == [
+        {
+            "kind": "open_loop",
+            "content": "Send the waiver tonight.",
+            "source": "thread_mark",
+            "evidence_ref_hash": "target-hash",
+            "reason": "active open loop for selected target",
         }
     ]
 
@@ -218,6 +237,22 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
                 "evidence_ref_hash": "feedback-hash",
             },
         ],
+        target_memory_rows=[
+            {
+                "kind": "open_loop",
+                "content": "Send the waiver tonight.",
+                "source": "thread_mark",
+                "evidence_ref_hash": "target-hash",
+                "importance_score": 0.92,
+            },
+            {
+                "kind": "preference",
+                "content": "She prefers quick confirmation texts.",
+                "source": "thread_mark",
+                "evidence_ref_hash": "pref-hash",
+                "importance_score": 0.8,
+            },
+        ],
         llm_call=fake_llm_call,
     )
 
@@ -236,13 +271,20 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
     assert "Principal voice files win" in system_prompt
     assert "Approved Spark personality memory" in system_prompt
     assert "Reviewed edit lessons" in system_prompt
+    assert "Selected-target memory" in system_prompt
     assert "Prefer shorter text drafts when Spark over-explains." in system_prompt
     assert "Sweta is Ken's partner." in system_prompt
+    assert "Send the waiver tonight." in system_prompt
+    assert "She prefers quick confirmation texts." in system_prompt
     assert "default hybrid_review" not in system_prompt
     assert "approval required" not in system_prompt
     assert "require Spark review" not in system_prompt
     assert "Never mention memory, sensitivity labels" in system_prompt
     assert "do not mention feedback or calibration" in system_prompt
+    assert (
+        "Prioritize active open loops before preferences or stable facts."
+        in system_prompt
+    )
     llm_message = str(calls[0]["user_message"])
     assert "Style adjustments Ken selected" in llm_message
     assert "Make the reply a little happier." in llm_message
