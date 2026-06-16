@@ -312,12 +312,17 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     });
   }
 
-  function sendApprovedOutbox() {
-    const outboxId = approvalMutation.data?.outbox_id;
-    if (!outboxId) {
+  function sendApprovedOutbox(outboxId?: string | null) {
+    const resolvedOutboxId = outboxId ?? approvalMutation.data?.outbox_id;
+    if (!resolvedOutboxId) {
       throw new Error("no_outbox_for_send");
     }
-    approvedSendMutation.mutate(outboxId);
+    approvedSendMutation.mutate(resolvedOutboxId);
+  }
+
+  function hasSendableOutbox(outboxId?: string | null) {
+    const resolvedOutboxId = outboxId ?? approvalMutation.data?.outbox_id;
+    return Boolean(resolvedOutboxId) && !approvedSendMutation.isPending;
   }
 
   function resetDraftSurface() {
@@ -371,6 +376,7 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     approvedSendLoading: approvedSendMutation.isPending,
     approvedSendError: approvedSendMutation.error,
     sendApprovedOutbox,
+    hasSendableOutbox,
     canSendApprovedOutbox:
       Boolean(approvalMutation.data?.outbox_id) && !approvedSendMutation.isPending,
     resetDraftSurface,

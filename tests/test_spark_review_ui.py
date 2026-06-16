@@ -112,10 +112,15 @@ def test_spark_approval_handoff_ui_links_to_spark_review() -> None:
     spark_source = SPARK_PAGE.read_text(encoding="utf-8")
 
     assert "spark_draft_handoff" in approvals_source
-    assert "/spark?approval=" in approvals_source
+    assert "new URLSearchParams({ approval: item.id })" in approvals_source
+    assert "buildSparkReviewUrl" in approvals_source
     assert "Review Spark" in approvals_source
+    assert "Return to Spark send" in approvals_source
     assert "useSearchParams" in spark_source
     assert "Approval queue" in spark_source
+    assert 'searchParams.get("principal")' in spark_source
+    assert 'searchParams.get("target")' in spark_source
+    assert "approval_queue_id === activeApproval" in spark_source
 
 
 def test_spark_guardrail_ui_is_editable_without_message_content() -> None:
@@ -205,6 +210,7 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Voice profile" in source
     assert "Draft target" in source
     assert "core family" in source
+    assert "Approved-thread onboarding" in source
     assert "Relationships" in source
     assert "Reply cockpit" in source
     assert "approval before send" in source
@@ -257,7 +263,8 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Pick up to 2 signals before retrying." in source
     assert "Tone direction" in source
     assert "Send only after approval passes" in source
-    assert "Send blocked until the outbox item is approved" in source
+    assert "Send can resume from the persisted outbox" in source
+    assert "Send blocked until the outbox item is approved and persisted" in source
     assert "Happier" in source
     assert "Sweeter" in source
     assert "Relaxed" in source

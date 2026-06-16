@@ -127,7 +127,11 @@ async def test_pending_approvals_include_spark_draft_context(monkeypatch) -> Non
     queue_id = uuid4()
 
     class FakeConn:
+        def __init__(self) -> None:
+            self.query = ""
+
         async def fetch(self, query, *args):
+            self.query = query
             return [
                 {
                     "id": queue_id,
@@ -143,23 +147,35 @@ async def test_pending_approvals_include_spark_draft_context(monkeypatch) -> Non
                     "privacy_case_id": None,
                     "privacy_action_count": None,
                     "privacy_action_statuses": None,
+                    "spark_principal_id": None,
+                    "spark_target_label": None,
+                    "spark_outbox_id": None,
+                    "spark_outbox_status": None,
                 }
             ]
 
+    conn = FakeConn()
+
     @asynccontextmanager
     async def fake_rls_connection(request):
-        yield FakeConn()
+        yield conn
 
     monkeypatch.setattr(approvals, "rls_connection", fake_rls_connection)
 
     response = await approvals.list_pending(_request())
 
+    assert "spark_context" in conn.query
     assert response["count"] == 1
     assert response["pending"][0]["privacy"] is None
     assert response["pending"][0]["spark"] == {
         "kind": "imessage_draft",
         "can_send": False,
         "requires_human_approval": True,
+        "principal_id": None,
+        "target_label": None,
+        "outbox_id": None,
+        "outbox_status": None,
+        "outbox_recorded": False,
     }
 
 

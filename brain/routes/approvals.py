@@ -111,15 +111,39 @@ async def list_pending(request: Request):
                 FROM public.alpha_privacy_actions
                 WHERE approval_queue_id IS NOT NULL
                 GROUP BY approval_queue_id
+            ),
+            spark_context AS (
+                SELECT
+                    ranked.approval_queue_id,
+                    ranked.principal_id AS spark_principal_id,
+                    ranked.target_label AS spark_target_label,
+                    ranked.id AS spark_outbox_id,
+                    ranked.status AS spark_outbox_status
+                FROM (
+                    SELECT
+                        o.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY o.approval_queue_id
+                            ORDER BY o.created_at DESC, o.id DESC
+                        ) AS row_rank
+                    FROM public.alpha_spark_outbox AS o
+                ) AS ranked
+                WHERE ranked.row_rank = 1
             )
             SELECT q.id, q.action_class, q.risk_tier, q.actor_sub, q.actor_type,
                    q.description, q.status, q.requested_at, q.expires_at,
                    q.overnight, pc.case_draft_id AS privacy_case_id,
                    pc.action_count AS privacy_action_count,
-                   pc.action_statuses AS privacy_action_statuses
+                   pc.action_statuses AS privacy_action_statuses,
+                   sc.spark_principal_id,
+                   sc.spark_target_label,
+                   sc.spark_outbox_id,
+                   sc.spark_outbox_status
             FROM public.alpha_approval_queue q
             LEFT JOIN privacy_context pc
               ON pc.approval_queue_id = q.id
+            LEFT JOIN spark_context sc
+              ON sc.approval_queue_id = q.id
             WHERE q.status = 'pending'
               AND q.expires_at > NOW()
             ORDER BY q.requested_at ASC
@@ -248,4 +272,9 @@ def _spark_context_out(row) -> dict[str, object] | None:
         "kind": "imessage_draft",
         "can_send": False,
         "requires_human_approval": True,
+        "principal_id": row["spark_principal_id"],
+        "target_label": row["spark_target_label"],
+        "outbox_id": str(row["spark_outbox_id"]) if row["spark_outbox_id"] else None,
+        "outbox_status": row["spark_outbox_status"],
+        "outbox_recorded": bool(row["spark_outbox_id"]),
     }
