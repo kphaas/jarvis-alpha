@@ -76,7 +76,7 @@ class SparkIMessageSendClient:
         payload = await self._request(
             "POST",
             "/api/v1/message/text",
-            json_body={"chatGuid": clean_guid, "text": clean_text},
+            json_body={"chatGuid": clean_guid, "message": clean_text},
         )
         data = _dict(payload.get("data"))
         raw_ref = data.get("guid") or data.get("id") or data.get("messageGuid")
