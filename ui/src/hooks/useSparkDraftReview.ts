@@ -35,17 +35,17 @@ export const SPARK_COMPARISON_SCENARIOS = [
 
 const FEEDBACK_RETRY_ADJUSTMENTS: Record<SparkDraftFeedbackLabel, string> = {
   sounds_like_me:
-    "Keep this direction, but make the reply a little more natural and specific.",
+    "Keep this direction. Stay natural, specific, and in the same thread.",
   out_of_context:
-    "The previous draft missed the thread context. Re-anchor on the last few texts and answer what was actually said.",
+    "The previous draft missed the thread context. Answer only the latest inbound ask first, stay on the same subject, and do not introduce any new logistics or facts unless they were already in the thread.",
   too_robotic:
-    "Make the reply less robotic, less assistant-like, and more like Ken texting.",
+    "Make the reply less robotic and more like Ken texting. Use plain spoken language, contractions, and no assistant wrap-up.",
   too_formal:
-    "Make the reply more casual and less formal.",
+    "Make the reply more casual and text-message natural. No email phrasing.",
   too_much_policy:
-    "Remove policy-like language and keep the reply personal and concrete.",
+    "Strip policy or process language. Keep the reply personal, concrete, and human.",
   too_wordy:
-    "Make the reply shorter and less wordy while preserving the useful answer.",
+    "Cut this down to one or two short text-message sentences while preserving the useful answer.",
 };
 
 function mergeStyleAdjustments(
