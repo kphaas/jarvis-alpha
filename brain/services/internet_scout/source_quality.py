@@ -16,6 +16,11 @@ from brain.services.internet_scout.models import (
     SourceQualityLevel,
     SourceQualityStatus,
 )
+from brain.services.internet_scout.official_hosts import (
+    covered_official_host_groups,
+    required_official_host_groups,
+    required_official_hosts,
+)
 from brain.services.internet_scout.sanitizer import sanitize_untrusted_text
 
 _OFFICIAL_QUERY_MARKERS = (
@@ -31,20 +36,6 @@ _OFFICIAL_QUERY_MARKERS = (
     "terms of service",
     "privacy policy",
 )
-_OFFICIAL_HOSTS_BY_TERM: dict[str, tuple[str, ...]] = {
-    "openai": ("openai.com", "platform.openai.com", "docs.openai.com"),
-    "github": ("github.com", "docs.github.com"),
-    "stripe": ("stripe.com", "docs.stripe.com"),
-    "anthropic": ("anthropic.com", "docs.anthropic.com"),
-    "brave": ("brave.com", "search.brave.com", "api.search.brave.com"),
-    "google": ("google.com", "developers.google.com", "cloud.google.com"),
-    "microsoft": ("microsoft.com", "learn.microsoft.com"),
-    "apple": ("apple.com", "developer.apple.com"),
-    "aws": ("aws.amazon.com", "docs.aws.amazon.com"),
-    "amazon": ("amazon.com", "aws.amazon.com", "docs.aws.amazon.com"),
-    "cloudflare": ("cloudflare.com", "developers.cloudflare.com"),
-    "perplexity": ("perplexity.ai", "docs.perplexity.ai"),
-}
 _LOW_CONFIDENCE_HOSTS = (
     "community.openai.com",
     "community.anthropic.com",
@@ -101,6 +92,7 @@ class CitationQualityEvaluation:
 class _Policy:
     official_source_required: bool
     required_source_hosts: tuple[str, ...]
+    required_source_host_groups: tuple[tuple[str, ...], ...]
 
 
 def evaluate_citation_quality(
@@ -214,14 +206,11 @@ def _policy_for_query(query: str | None) -> _Policy:
     official_source_required = any(
         marker in normalized for marker in _OFFICIAL_QUERY_MARKERS
     )
-    hosts: list[str] = []
-    for term, official_hosts in _OFFICIAL_HOSTS_BY_TERM.items():
-        if term in normalized:
-            hosts.extend(official_hosts)
-    hosts.extend(_domain_tokens(normalized))
+    host_groups = [tuple(group) for group in required_official_host_groups(query)]
     return _Policy(
         official_source_required=official_source_required,
-        required_source_hosts=tuple(dict.fromkeys(hosts)),
+        required_source_hosts=tuple(required_official_hosts(query)),
+        required_source_host_groups=tuple(host_groups),
     )
 
 
@@ -297,6 +286,16 @@ def _summary(
     rejected_count = len(evaluated) - accepted_count
     injection_rejected = sum(1 for item in evaluated if item.prompt_injection_rejected)
     unsupported_count = sum(1 for item in evaluated if item.unsupported_claim)
+    accepted_official_hosts = [
+        item.citation.host
+        for item in evaluated
+        if item.accepted and item.citation.source_quality == "official"
+    ]
+    required_target_count = len(policy.required_source_host_groups)
+    covered_target_count = covered_official_host_groups(
+        accepted_hosts=accepted_official_hosts,
+        required_groups=[list(group) for group in policy.required_source_host_groups],
+    )
     warnings: list[str] = []
 
     if (
@@ -307,6 +306,10 @@ def _summary(
         warnings.append("No official source matched the source policy for this query.")
     elif policy.official_source_required and not policy.required_source_hosts:
         warnings.append("No official source host could be inferred for this query.")
+    if required_target_count and covered_target_count < required_target_count:
+        warnings.append(
+            "Official comparison coverage is missing for one or more compared targets."
+        )
     if rejected_count:
         warnings.append(
             f"{rejected_count} citation(s) were excluded by source quality."
@@ -325,6 +328,8 @@ def _summary(
     if accepted_count == 0:
         status = "insufficient"
         warnings.append("No acceptable citations are available for a sourced answer.")
+    elif required_target_count and covered_target_count < required_target_count:
+        status = "weak"
     elif accepted_count == 1 and not (
         policy.official_source_required and quality_counts["official"] >= 1
     ):
@@ -336,6 +341,8 @@ def _summary(
         accepted_citation_count=accepted_count,
         rejected_citation_count=rejected_count,
         official_source_count=quality_counts["official"],
+        required_official_target_count=required_target_count,
+        covered_official_target_count=covered_target_count,
         verified_claim_count=accepted_count,
         unsupported_claim_count=unsupported_count,
         prompt_injection_rejection_count=injection_rejected,

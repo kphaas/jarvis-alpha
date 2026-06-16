@@ -136,3 +136,35 @@ def test_orchestrator_plans_comparison_target_specific_source_searches():
         for query in queries
     )
     assert any(item.required for item in plan.research.searches[1:3])
+
+
+def test_orchestrator_keeps_both_official_comparison_targets_inside_search_budget():
+    plan = InternetScoutOrchestrator().plan(
+        InternetScoutRequest(
+            query=(
+                "Compare the OpenAI Responses API and Anthropic Messages API for "
+                "building a chat gateway. Use official vendor docs only and cite them."
+            ),
+            tool_hint=InternetTool.SEARCH,
+            max_pages=4,
+            requester="alpha_chat.deep_research",
+        )
+    )
+
+    queries = [item.query.lower() for item in plan.research.searches]
+    purposes = [item.purpose for item in plan.research.searches]
+
+    assert plan.research.intent == "comparison"
+    assert plan.research.max_searches == 4
+    assert len(plan.research.searches) == 4
+    assert purposes == ["baseline", "comparison", "comparison", "cross_check"]
+    assert any(
+        "openai responses api official documentation" in query
+        and "site:platform.openai.com" in query
+        for query in queries
+    )
+    assert any(
+        "anthropic messages api official documentation" in query
+        and "site:docs.anthropic.com" in query
+        for query in queries
+    )

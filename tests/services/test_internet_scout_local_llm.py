@@ -253,13 +253,19 @@ def test_local_llm_downgrades_supported_evidence_when_research_coverage_is_missi
 
     assert stored.plan.research.stop_criteria.require_cross_check is True
     assert stored.plan.research.stop_criteria.min_source_hosts == 2
-    assert response.quality.status == "supported"
+    assert response.quality.status == "weak"
+    assert response.quality.required_official_target_count == 2
+    assert response.quality.covered_official_target_count == 1
     assert response.synthesis.status == "weak"
     assert response.synthesis.answerable is True
     assert response.synthesis.required_behavior == "answer_with_limitations"
     assert response.research_report.source_quality_status == "weak"
     assert response.research_report.answerability == "limited"
     assert response.research_report.source_hosts == ["openai.com"]
+    assert (
+        "Official comparison coverage is missing for one or more compared targets."
+        in (response.research_report.coverage_warnings)
+    )
     assert "Cross-check coverage is below the research stop criteria." in (
         response.research_report.coverage_warnings
     )

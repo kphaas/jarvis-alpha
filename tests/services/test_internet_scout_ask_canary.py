@@ -194,6 +194,92 @@ def test_ask_canary_accepts_host_alias_and_research_report_minimums() -> None:
     assert evaluation.checks["independent_source_count"] is True
 
 
+def test_ask_canary_requires_all_official_host_groups_for_comparison_case() -> None:
+    payloads = [
+        {
+            "internet_mode": "deep_research",
+            "internet_source_quality_status": "supported",
+            "internet_accepted_citation_count": 2,
+            "internet_synthesis_required_behavior": "answer_with_citations",
+            "internet_automatic_memory_write_allowed": False,
+            "internet_memory_promotion_review_required": True,
+            "internet_research_report_planned_query_count": 4,
+            "internet_research_report_independent_source_count": 2,
+            "raw_web_content_is_untrusted": True,
+            "citations": [
+                {
+                    "source_url": "https://platform.openai.com/docs/api-reference/responses",
+                    "host": "platform.openai.com",
+                },
+                {
+                    "source_url": "https://docs.anthropic.com/en/api/messages",
+                    "host": "docs.anthropic.com",
+                },
+            ],
+        },
+        {"delta": "Compare platform.openai.com and docs.anthropic.com."},
+    ]
+    case = AskCanaryCase(
+        name="official_compare",
+        prompt="Compare OpenAI and Anthropic official docs.",
+        expected_any_hosts=("platform.openai.com", "docs.anthropic.com"),
+        required_host_groups=(
+            ("openai.com", "platform.openai.com", "docs.openai.com"),
+            ("anthropic.com", "docs.anthropic.com"),
+        ),
+        min_accepted_citations=2,
+        min_planned_query_count=2,
+        min_independent_source_count=2,
+    )
+
+    evaluation = evaluate_ask_canary(payloads, case=case)
+
+    assert evaluation.passed is True
+    assert evaluation.checks["required_host_groups_present"] is True
+
+
+def test_ask_canary_fails_when_one_official_comparison_vendor_is_missing() -> None:
+    payloads = [
+        {
+            "internet_mode": "deep_research",
+            "internet_source_quality_status": "supported",
+            "internet_accepted_citation_count": 1,
+            "internet_synthesis_required_behavior": "answer_with_limitations",
+            "internet_automatic_memory_write_allowed": False,
+            "internet_memory_promotion_review_required": True,
+            "internet_research_report_planned_query_count": 4,
+            "internet_research_report_independent_source_count": 1,
+            "raw_web_content_is_untrusted": True,
+            "citations": [
+                {
+                    "source_url": "https://platform.openai.com/docs/api-reference/responses",
+                    "host": "platform.openai.com",
+                }
+            ],
+        },
+        {"delta": "OpenAI docs found; Anthropic official docs not located."},
+    ]
+    case = AskCanaryCase(
+        name="official_compare_gap",
+        prompt="Compare OpenAI and Anthropic official docs.",
+        expected_any_hosts=("platform.openai.com", "docs.anthropic.com"),
+        required_host_groups=(
+            ("openai.com", "platform.openai.com", "docs.openai.com"),
+            ("anthropic.com", "docs.anthropic.com"),
+        ),
+        min_accepted_citations=1,
+        min_planned_query_count=2,
+        min_independent_source_count=2,
+        require_supported_evidence=False,
+        require_synthesis_behavior="answer_with_limitations",
+    )
+
+    evaluation = evaluate_ask_canary(payloads, case=case)
+
+    assert evaluation.passed is False
+    assert "required_host_groups_present" in evaluation.failures
+
+
 def test_ask_canary_suite_aggregates_case_results() -> None:
     supported_payloads = [
         {
@@ -242,3 +328,5 @@ def test_extended_canary_cases_stay_out_of_default_suite() -> None:
     assert default_names.isdisjoint(extended_names)
     assert any(case.min_independent_source_count > 0 for case in EXTENDED_CANARY_CASES)
     assert "multi_source_non_ai_serverless_comparison" in extended_names
+    assert "official_openai_anthropic_api_comparison" in extended_names
+    assert "official_cloudflare_aws_serverless_comparison" in extended_names

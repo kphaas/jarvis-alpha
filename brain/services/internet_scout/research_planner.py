@@ -7,6 +7,10 @@ import json
 import re
 from urllib.parse import urlparse
 
+from brain.services.internet_scout.official_hosts import (
+    comparison_targets,
+    official_hosts_for_target,
+)
 from brain.services.internet_scout.models import (
     InternetScoutResearchPlan,
     InternetScoutResearchQuery,
@@ -46,14 +50,6 @@ _FRESHNESS_MARKERS = (
     "pricing",
 )
 _COMPARISON_MARKERS = ("compare", "comparison", " vs ", " versus ", "better than")
-_COMPARISON_SPLIT_RE = re.compile(
-    r"\s+(?:vs\.?|versus|and|against|to)\s+",
-    flags=re.IGNORECASE,
-)
-_COMPARISON_SCOPE_RE = re.compile(
-    r"\b(?:for|when|while|with|using)\b|[.?!]",
-    flags=re.IGNORECASE,
-)
 _TROUBLESHOOTING_MARKERS = (
     "error",
     "exception",
@@ -238,7 +234,14 @@ def _queries_for_intent(
         )
     ]
 
-    if authority_required:
+    comparison_queries = (
+        _comparison_target_queries(query) if intent == "comparison" else []
+    )
+
+    # Official comparisons need explicit per-target vendor coverage first.
+    comparison_covers_authority = authority_required and len(comparison_queries) >= 2
+
+    if authority_required and not comparison_covers_authority:
         planned.append(
             InternetScoutResearchQuery(
                 query=_bounded_query(f"{query} official documentation"),
@@ -268,7 +271,7 @@ def _queries_for_intent(
         )
 
     if intent == "comparison":
-        planned.extend(_comparison_target_queries(query))
+        planned.extend(comparison_queries)
         if not any(item.purpose == "comparison" for item in planned):
             planned.append(
                 InternetScoutResearchQuery(
@@ -419,8 +422,8 @@ def _plan_id(
 
 def _official_site_query(*, query: str, normalized_query: str) -> str | None:
     hosts = _hosts_from_query(normalized_query)
-    for target in _comparison_targets(query):
-        hosts.extend(_official_hosts_for_target(target))
+    for target in comparison_targets(query):
+        hosts.extend(official_hosts_for_target(target))
     if "openai" in normalized_query:
         hosts.extend(["platform.openai.com", "docs.openai.com"])
     if "github" in normalized_query:
@@ -436,7 +439,7 @@ def _official_site_query(*, query: str, normalized_query: str) -> str | None:
 
 
 def _comparison_target_queries(query: str) -> list[InternetScoutResearchQuery]:
-    targets = _comparison_targets(query)
+    targets = comparison_targets(query)
     if len(targets) < 2:
         return [
             InternetScoutResearchQuery(
@@ -448,7 +451,7 @@ def _comparison_target_queries(query: str) -> list[InternetScoutResearchQuery]:
     searches: list[InternetScoutResearchQuery] = []
     for target in targets[:3]:
         target_query = f"{target} official documentation"
-        hosts = _official_hosts_for_target(target)
+        hosts = official_hosts_for_target(target)
         if hosts:
             site_filter = " OR ".join(f"site:{host}" for host in hosts[:3])
             target_query = f"{target_query} ({site_filter})"
@@ -460,55 +463,6 @@ def _comparison_target_queries(query: str) -> list[InternetScoutResearchQuery]:
             )
         )
     return searches
-
-
-def _comparison_targets(query: str) -> list[str]:
-    scoped = re.sub(
-        r"^\s*(?:compare|comparison\s+of)\s+",
-        "",
-        query,
-        count=1,
-        flags=re.IGNORECASE,
-    )
-    scoped = _COMPARISON_SCOPE_RE.split(scoped, maxsplit=1)[0]
-    parts = _COMPARISON_SPLIT_RE.split(scoped)
-    targets: list[str] = []
-    for part in parts:
-        target = _clean_comparison_target(part)
-        if target:
-            targets.append(target)
-    if len(targets) < 2:
-        return []
-    return _dedupe_strings(targets)[:3]
-
-
-def _clean_comparison_target(value: str) -> str:
-    return re.sub(
-        r"\b(?:cite|cited|independent|sources?|official|documentation|docs)\b",
-        "",
-        value,
-        flags=re.IGNORECASE,
-    ).strip(" ,;:-")
-
-
-def _official_hosts_for_target(target: str) -> list[str]:
-    normalized = _normalize(target)
-    hosts: list[str] = []
-    if "brave" in normalized:
-        hosts.extend(["brave.com", "api-dashboard.search.brave.com", "docs.brave.com"])
-    if "perplexity" in normalized:
-        hosts.extend(["perplexity.ai", "docs.perplexity.ai"])
-    if "openai" in normalized:
-        hosts.extend(["openai.com", "platform.openai.com", "docs.openai.com"])
-    if "anthropic" in normalized:
-        hosts.extend(["anthropic.com", "docs.anthropic.com"])
-    if "github" in normalized:
-        hosts.extend(["github.com", "docs.github.com"])
-    if "cloudflare" in normalized:
-        hosts.extend(["cloudflare.com", "developers.cloudflare.com"])
-    if "aws" in normalized or "lambda" in normalized:
-        hosts.extend(["aws.amazon.com", "docs.aws.amazon.com"])
-    return _dedupe_strings(hosts)
 
 
 def _intent_for_query(query: str) -> ResearchIntent:
