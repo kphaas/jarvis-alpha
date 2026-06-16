@@ -255,6 +255,11 @@ def _eval_cases() -> tuple[SearchQualityEvalCase, ...]:
         "/hub/blog/search-api",
         "Perplexity Search API",
     )
+    perplexity_docs = _fixture_source(
+        "docs.perplexity.ai",
+        "/guides/search-api",
+        "Perplexity Search API docs",
+    )
     example_source = _fixture_source(
         "example.com",
         "/beacon",
@@ -432,6 +437,55 @@ def _eval_cases() -> tuple[SearchQualityEvalCase, ...]:
             expected_accepted_hosts=("brave.com", "perplexity.ai"),
             expected_plan_purposes=("baseline", "comparison", "cross_check"),
             expected_source_types=("general_web", "trusted_secondary"),
+            min_subquestions=3,
+        ),
+        SearchQualityEvalCase(
+            name="official_vendor_comparison_prefers_provider_docs",
+            request=InternetScoutRequest(
+                query=(
+                    "Find official documentation pages for Brave Search API and "
+                    "Perplexity API, then compare them for building an AI web "
+                    "research agent."
+                ),
+                tool_hint=InternetTool.SEARCH,
+                max_pages=4,
+                requester="alpha_chat.deep_research",
+            ),
+            sources=(brave_source, perplexity_docs),
+            claims=(
+                EvidenceClaim(
+                    claim="Brave Search provides a Search API for web results.",
+                    source_url=brave_source.url,
+                    citation_text=(
+                        "Brave Search provides a Search API for web results."
+                    ),
+                    confidence="high",
+                ),
+                EvidenceClaim(
+                    claim="Perplexity provides a Search API for web research.",
+                    source_url=perplexity_docs.url,
+                    citation_text=(
+                        "Perplexity provides a Search API for web research."
+                    ),
+                    confidence="high",
+                ),
+            ),
+            expected_status="supported",
+            eval_group="daily_use",
+            min_accepted_citations=2,
+            min_official_sources=2,
+            expected_accepted_hosts=("brave.com", "docs.perplexity.ai"),
+            expected_plan_purposes=(
+                "baseline",
+                "official_source",
+                "comparison",
+                "cross_check",
+            ),
+            expected_source_types=(
+                "official_docs",
+                "primary_source",
+                "trusted_secondary",
+            ),
             min_subquestions=3,
         ),
         SearchQualityEvalCase(
