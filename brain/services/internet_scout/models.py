@@ -366,6 +366,8 @@ class InternetScoutCitationQualitySummary(BaseModel):
     accepted_citation_count: int = 0
     rejected_citation_count: int = 0
     official_source_count: int = 0
+    required_official_target_count: int = 0
+    covered_official_target_count: int = 0
     verified_claim_count: int = 0
     unsupported_claim_count: int = 0
     prompt_injection_rejection_count: int = 0

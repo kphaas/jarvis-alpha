@@ -99,6 +99,8 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
         "docs.perplexity.ai",
     ]
     assert official_vendor_comparison.details["research_intent"] == "comparison"
+    assert official_vendor_comparison.details["required_official_target_count"] == 2
+    assert official_vendor_comparison.details["covered_official_target_count"] == 2
     assert (
         official_vendor_comparison.details["research_stop_criteria"][
             "require_cross_check"
@@ -113,6 +115,40 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
         "primary_source",
         "trusted_secondary",
     ]
+    assert official_vendor_comparison.details["research_query_purposes"] == [
+        "baseline",
+        "comparison",
+        "comparison",
+        "cross_check",
+    ]
+
+    official_openai_anthropic = results[
+        "official_openai_anthropic_comparison_requires_both_vendor_docs"
+    ]
+    assert official_openai_anthropic.details["status"] == "supported"
+    assert sorted(official_openai_anthropic.details["accepted_hosts"]) == [
+        "docs.anthropic.com",
+        "platform.openai.com",
+    ]
+    assert official_openai_anthropic.details["required_official_target_count"] == 2
+    assert official_openai_anthropic.details["covered_official_target_count"] == 2
+
+    official_openai_anthropic_gap = results[
+        "official_openai_anthropic_comparison_downgrades_when_vendor_missing"
+    ]
+    assert official_openai_anthropic_gap.details["status"] == "weak"
+    assert official_openai_anthropic_gap.details["accepted_hosts"] == [
+        "platform.openai.com"
+    ]
+    assert official_openai_anthropic_gap.details["required_official_target_count"] == 2
+    assert official_openai_anthropic_gap.details["covered_official_target_count"] == 1
+    assert official_openai_anthropic_gap.details["synthesis_required_behavior"] == (
+        "answer_with_limitations"
+    )
+    assert (
+        "Official comparison coverage is missing for one or more compared targets."
+        in official_openai_anthropic_gap.details["research_report_coverage_warnings"]
+    )
 
     non_ai_comparison = results[
         "non_ai_serverless_comparison_requires_independent_sources"
@@ -128,6 +164,26 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
         "developers.cloudflare.com",
         "docs.aws.amazon.com",
     ]
+
+    official_cloudflare_aws = results[
+        "official_cloudflare_aws_comparison_requires_both_vendor_docs"
+    ]
+    assert official_cloudflare_aws.details["status"] == "supported"
+    assert official_cloudflare_aws.details["required_official_target_count"] == 2
+    assert official_cloudflare_aws.details["covered_official_target_count"] == 2
+
+    official_cloudflare_aws_gap = results[
+        "official_cloudflare_aws_comparison_downgrades_when_vendor_missing"
+    ]
+    assert official_cloudflare_aws_gap.details["status"] == "weak"
+    assert official_cloudflare_aws_gap.details["accepted_hosts"] == [
+        "developers.cloudflare.com"
+    ]
+    assert official_cloudflare_aws_gap.details["required_official_target_count"] == 2
+    assert official_cloudflare_aws_gap.details["covered_official_target_count"] == 1
+    assert official_cloudflare_aws_gap.details["synthesis_required_behavior"] == (
+        "answer_with_limitations"
+    )
 
     negated = results["negated_claim_mismatch_fails_closed"]
     assert negated.details["status"] == "insufficient"

@@ -457,6 +457,14 @@ def _stop_criteria_warnings(
         warnings.append("Accepted citations are below the research stop criteria.")
     if stop_criteria.require_official_source and quality.official_source_count == 0:
         warnings.append("Required official source evidence was not accepted.")
+    if (
+        quality.required_official_target_count > 0
+        and quality.covered_official_target_count
+        < quality.required_official_target_count
+    ):
+        warnings.append(
+            "Official comparison coverage is missing for one or more compared targets."
+        )
     if stop_criteria.require_cross_check and len(source_hosts) < 2:
         warnings.append("Cross-check coverage is below the research stop criteria.")
     if len(source_hosts) < stop_criteria.min_source_hosts and (
