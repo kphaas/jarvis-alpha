@@ -32,6 +32,7 @@ import { SparkMemoryReviewPanel } from "../components/spark/SparkMemoryReviewPan
 import {
   useSparkDraftReview,
   useSparkIMessageDraftTargets,
+  useSparkIMessageTargetPreview,
 } from "../hooks/useSparkDraftReview";
 import { useSparkGuardrails } from "../hooks/useSparkGuardrails";
 import { useAppStore } from "../store";
@@ -40,6 +41,7 @@ import type {
   SparkIMessageDraftContextMessage,
   SparkIMessageDraftResponse,
   SparkIMessageDraftTarget,
+  SparkIMessageTargetPreviewResponse,
   SparkProtectedRelationship,
 } from "../types/spark";
 
@@ -60,7 +62,14 @@ const FEEDBACK_BUTTONS: Array<{
   { label: "Sounds like me", value: "sounds_like_me", tone: "ok" },
   { label: "Too robotic", value: "too_robotic", tone: "warn" },
   { label: "Too formal", value: "too_formal", tone: "warn" },
+  { label: "Too wordy", value: "too_wordy", tone: "warn" },
   { label: "Too much policy", value: "too_much_policy", tone: "warn" },
+];
+
+const STYLE_ADJUSTMENTS = [
+  { label: "Happier", value: "Make the reply a little happier." },
+  { label: "Sweeter", value: "Make the reply sweeter and more affectionate." },
+  { label: "More relaxed", value: "Make the reply sound more relaxed and natural." },
 ];
 
 const DEFAULT_FAVORITE_TARGETS: SparkProtectedRelationship[] = [
@@ -303,6 +312,9 @@ function DraftMetadata({
 
 function ConversationBriefPanel({
   draft,
+  preview,
+  previewLoading,
+  previewError,
   selectedPrincipalLabel,
   selectedTargetLabel,
   selectedTargetReady,
@@ -313,6 +325,9 @@ function ConversationBriefPanel({
   warnClass,
 }: {
   draft: SparkIMessageDraftResponse | null;
+  preview: SparkIMessageTargetPreviewResponse | null;
+  previewLoading: boolean;
+  previewError: unknown;
   selectedPrincipalLabel: string;
   selectedTargetLabel: string | null;
   selectedTargetReady: boolean;
@@ -322,7 +337,14 @@ function ConversationBriefPanel({
   okClass: string;
   warnClass: string;
 }) {
-  const summary = draft?.conversation_summary;
+  const summary = draft?.conversation_summary ?? preview?.conversation_summary;
+  const statusLabel = draft
+    ? "draft context"
+    : previewLoading
+      ? "loading thread"
+      : preview
+        ? "target preview"
+        : "pick target";
 
   return (
     <section className={`rounded-xl border ${border} ${panel} p-4`}>
@@ -343,6 +365,13 @@ function ConversationBriefPanel({
             className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${warnClass}`}
           >
             Voice: {summary?.voice_principal_label ?? selectedPrincipalLabel}
+          </span>
+          <span
+            className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${
+              previewError ? warnClass : okClass
+            }`}
+          >
+            {statusLabel}
           </span>
           {!summary && selectedTargetLabel && !selectedTargetReady && (
             <span
@@ -369,8 +398,10 @@ function ConversationBriefPanel({
             )}
           </div>
           <p className="mt-2 line-clamp-3 text-sm leading-relaxed">
-            {summary?.last_message_preview ??
-              "Generate a draft to see the last message Spark is replying to."}
+            {previewError
+              ? "Thread preview is unavailable for this target."
+              : summary?.last_message_preview ??
+                "Pick a ready target to load the last 8 texts before drafting."}
           </p>
         </div>
       </div>
@@ -472,18 +503,22 @@ function DraftTargetPicker({
 
 function RecentThreadStrip({
   context,
+  loading,
+  error,
   border,
   muted,
   okClass,
   warnClass,
 }: {
   context: SparkIMessageDraftContextMessage[];
+  loading: boolean;
+  error: unknown;
   border: string;
   muted: string;
   okClass: string;
   warnClass: string;
 }) {
-  const recent = context.slice(0, 5);
+  const recent = context.slice(0, 8);
   return (
     <div className={`rounded-lg border p-3 ${border}`}>
       <div className="flex items-center justify-between gap-3">
@@ -491,10 +526,23 @@ function RecentThreadStrip({
           Recent thread
         </span>
         <span className={`text-[10px] font-mono uppercase ${muted}`}>
-          newest first
+          last {recent.length || 8} texts
         </span>
       </div>
-      {recent.length ? (
+      {loading ? (
+        <div className="mt-3 space-y-2">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div
+              key={index}
+              className={`h-14 animate-pulse rounded-lg border ${border}`}
+            />
+          ))}
+        </div>
+      ) : error ? (
+        <p className={`mt-3 text-sm ${muted}`}>
+          Thread preview is unavailable for this target.
+        </p>
+      ) : recent.length ? (
         <div className="mt-3 space-y-2">
           {recent.map((message) => (
             <div key={`${message.message_ref_hash}-brief`}>
@@ -518,7 +566,7 @@ function RecentThreadStrip({
         </div>
       ) : (
         <p className={`mt-3 text-sm ${muted}`}>
-          Generate a draft to see the last 5 messages here.
+          Click a ready draft target to load the last 8 texts here.
         </p>
       )}
     </div>
@@ -630,6 +678,9 @@ function SourceReadinessPanel({
 
 function ThreadContextPanel({
   draft,
+  preview,
+  previewLoading,
+  previewError,
   border,
   panel,
   muted,
@@ -637,13 +688,16 @@ function ThreadContextPanel({
   warnClass,
 }: {
   draft: SparkIMessageDraftResponse | null;
+  preview: SparkIMessageTargetPreviewResponse | null;
+  previewLoading: boolean;
+  previewError: unknown;
   border: string;
   panel: string;
   muted: string;
   okClass: string;
   warnClass: string;
 }) {
-  const context = draft?.context_preview ?? [];
+  const context = draft?.context_preview ?? preview?.context_preview ?? [];
 
   return (
     <section className={`rounded-xl border ${border} ${panel} p-5`}>
@@ -662,7 +716,24 @@ function ThreadContextPanel({
         </div>
       </div>
 
-      {context.length ? (
+      {previewLoading ? (
+        <div className="mt-4 space-y-3">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div
+              key={index}
+              className={`h-20 animate-pulse rounded-lg border ${border}`}
+            />
+          ))}
+        </div>
+      ) : previewError ? (
+        <div
+          className={`mt-4 flex min-h-28 items-center justify-center rounded-lg border ${border}`}
+        >
+          <span className={`text-sm ${muted}`}>
+            Thread preview is unavailable for this target.
+          </span>
+        </div>
+      ) : context.length ? (
         <div className="mt-4 space-y-3">
           {context.map((message) => (
             <div
@@ -692,7 +763,7 @@ function ThreadContextPanel({
           className={`mt-4 flex min-h-28 items-center justify-center rounded-lg border ${border}`}
         >
           <span className={`text-sm ${muted}`}>
-            Generate a draft to view the last thread messages
+            Click a ready draft target to view the last 8 texts.
           </span>
         </div>
       )}
@@ -943,11 +1014,25 @@ export default function Spark() {
     draftTargets.find((target) => target.ready) ??
     draftTargets[0] ??
     null;
+  const targetPreviewState = useSparkIMessageTargetPreview(
+    principalId,
+    selectedDraftTarget?.approvalId ?? null,
+  );
   const state = useSparkDraftReview(
     principalId,
     selectedDraftTarget?.approvalId ?? null,
   );
   const targetReady = draftTargets.length === 0 || Boolean(selectedDraftTarget?.ready);
+  const displayContext =
+    state.draft?.context_preview ?? targetPreviewState.data?.context_preview ?? [];
+
+  function toggleStyleAdjustment(adjustment: string) {
+    state.setStyleAdjustments((current) =>
+      current.includes(adjustment)
+        ? current.filter((item) => item !== adjustment)
+        : [...current, adjustment].slice(0, 3),
+    );
+  }
 
   function selectPrincipal(nextPrincipalId: string) {
     state.resetDraftSurface();
@@ -1034,6 +1119,9 @@ export default function Spark() {
 
       <ConversationBriefPanel
         draft={state.draft}
+        preview={targetPreviewState.data ?? null}
+        previewLoading={targetPreviewState.isLoading}
+        previewError={targetPreviewState.error}
         selectedPrincipalLabel={selectedPrincipal.label}
         selectedTargetLabel={selectedDraftTarget?.label ?? null}
         selectedTargetReady={Boolean(selectedDraftTarget?.ready)}
@@ -1107,6 +1195,33 @@ export default function Spark() {
                 />
               </div>
             </label>
+            <div>
+              <span
+                className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+              >
+                Make it sound more like me
+              </span>
+              <div className="mt-2 grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
+                {STYLE_ADJUSTMENTS.map((adjustment) => {
+                  const selected = state.styleAdjustments.includes(adjustment.value);
+                  return (
+                    <button
+                      key={adjustment.value}
+                      type="button"
+                      onClick={() => toggleStyleAdjustment(adjustment.value)}
+                      className={`inline-flex min-h-10 items-center justify-between gap-2 rounded-lg border px-3 text-sm font-bold transition ${border} ${
+                        selected
+                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                          : ""
+                      }`}
+                    >
+                      <span>{adjustment.label}</span>
+                      {selected && <CheckCircle2 className="h-4 w-4" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             {!targetReady && selectedDraftTarget && (
               <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
                 {selectedDraftTarget.label} is in favorites, but no approved
@@ -1161,7 +1276,9 @@ export default function Spark() {
               </button>
             </div>
             <RecentThreadStrip
-              context={state.draft?.context_preview ?? []}
+              context={displayContext}
+              loading={targetPreviewState.isLoading}
+              error={targetPreviewState.error}
               border={border}
               muted={muted}
               okClass={okClass}
@@ -1441,7 +1558,7 @@ export default function Spark() {
           <DetailOverviewCard
             title="Thread context"
             detail="See the exact last messages Spark used for this draft."
-            metric={`${state.draft?.context_preview.length ?? 0} shown`}
+            metric={`${displayContext.length} shown`}
             icon={<MessagesSquare className="h-4 w-4 text-emerald-400" />}
             onOpen={() => setDetailPanel("thread")}
             border={border}
@@ -1491,6 +1608,9 @@ export default function Spark() {
         >
           <ThreadContextPanel
             draft={state.draft}
+            preview={targetPreviewState.data ?? null}
+            previewLoading={targetPreviewState.isLoading}
+            previewError={targetPreviewState.error}
             border={border}
             panel={panel}
             muted={muted}

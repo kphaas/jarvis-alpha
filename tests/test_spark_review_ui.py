@@ -46,6 +46,7 @@ def test_spark_review_ui_uses_draft_routes_and_api_wrapper() -> None:
 
     assert "apiJson" in source
     assert "/v1/spark/drafts/imessage/targets" in source
+    assert "/v1/spark/drafts/imessage/target-preview" in source
     assert "/v1/spark/drafts/imessage" in source
     assert "/v1/spark/drafts/imessage/approval-request" in source
     assert "/v1/spark/drafts/imessage/outbox/" in source
@@ -175,6 +176,8 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Voice profile" in source
     assert "Draft target" in source
     assert "Generate for" in source
+    assert "useSparkIMessageTargetPreview" in source
+    assert "last 8 texts" in source
     assert "needs approved thread" in source
     assert "Thread preview" in source
     assert "Decision rail" in source
@@ -206,6 +209,12 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Sounds like me" in source
     assert "Too robotic" in source
     assert "Too formal" in source
+    assert "Too wordy" in source
     assert "Too much policy" in source
+    assert "Make it sound more like me" in source
+    assert "Happier" in source
+    assert "Sweeter" in source
+    assert "More relaxed" in source
+    assert "style_adjustments" in source
     assert "spark.draft.send" not in source
     assert "/message/text" not in source

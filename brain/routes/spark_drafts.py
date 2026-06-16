@@ -20,8 +20,10 @@ from brain.services.spark_imessage_drafts import (
     SparkDraftContextError,
     SparkDraftPolicyError,
     SparkDraftProposal,
+    SparkIMessageTargetPreview,
     apply_draft_text_override,
     create_imessage_draft_proposal,
+    load_imessage_target_preview,
     personality_memory_prompt_items,
 )
 from brain.services.spark_draft_approvals import enqueue_spark_draft_approval
@@ -66,6 +68,7 @@ class SparkIMessageDraftRequest(BaseModel):
     approval_id: str | None = Field(default=None, min_length=1, max_length=160)
     reply_goal: str | None = Field(default=None, max_length=1000)
     max_context_messages: int = Field(default=20, ge=1, le=50)
+    style_adjustments: list[str] = Field(default_factory=list, max_length=3)
     include_context_preview: bool = False
     context_preview_limit: int = Field(default=10, ge=1, le=10)
     include_memory_preview: bool = False
@@ -88,6 +91,29 @@ class SparkIMessageDraftTargetOut(BaseModel):
 class SparkIMessageDraftTargetsOut(BaseModel):
     principal_id: str
     targets: list[SparkIMessageDraftTargetOut]
+
+
+class SparkIMessageTargetPreviewOut(BaseModel):
+    principal_id: str
+    approval_id: str
+    label: str
+    channel: str
+    body_access: bool
+    durable_storage_allowed: bool
+    context_order: str
+    context_messages_read: int
+    principal_sent_messages: int
+    runtime_context_messages: int
+    approval_ref_hash: str
+    source_reference_hash: str
+    chat_guid_hash: str
+    context_preview: list["SparkIMessageDraftContextMessageOut"] = Field(
+        default_factory=list
+    )
+    conversation_summary: "SparkIMessageDraftConversationSummaryOut"
+    source_readiness: list["SparkIMessageDraftSourceReadinessOut"] = Field(
+        default_factory=list
+    )
 
 
 class SparkIMessageDraftOut(BaseModel):
@@ -301,7 +327,11 @@ def _send_route_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="spark_imessage_send_error")
 
 
-def _log_success(request: Request, proposal: SparkDraftProposal) -> None:
+def _log_success(
+    request: Request,
+    proposal: SparkDraftProposal,
+    request_payload: SparkIMessageDraftRequest,
+) -> None:
     event = "spark_imessage_draft_proposed"
     payload = proposal.to_payload()
     logger.info(
@@ -320,6 +350,7 @@ def _log_success(request: Request, proposal: SparkDraftProposal) -> None:
             "source_reference_hash": payload["source_reference_hash"],
             "chat_guid_hash": payload["chat_guid_hash"],
             "draft_engine": payload["draft_engine"],
+            "style_adjustment_count": len(request_payload.style_adjustments),
             "detected_sensitivity": payload["detected_sensitivity"],
             "blocked_sensitivity_count": len(payload["blocked_sensitivity"]),
             **_safe_actor_fields(request),
@@ -360,6 +391,70 @@ def _draft_target(record: SparkApprovedSourceRecord) -> SparkIMessageDraftTarget
         relationship_approved=record.relationship_approved,
         legal_marked=record.legal_marked,
     )
+
+
+def _preview_payload(
+    preview: SparkIMessageTargetPreview,
+    *,
+    context_preview_limit: int,
+) -> dict[str, object]:
+    summary = preview.conversation_summary
+    if preview.context.messages:
+        last_message = preview.context.messages[0]
+        last_message_speaker = "Ken" if last_message.is_from_me else "Other"
+        last_message_preview = last_message.body_text[:280]
+        last_message_ref_hash = last_message.message_ref_hash
+    else:
+        last_message_speaker = None
+        last_message_preview = None
+        last_message_ref_hash = None
+    return {
+        "principal_id": preview.context.principal_id,
+        "approval_id": preview.record.approval_id,
+        "label": preview.record.source_reference_label or "Approved iMessage thread",
+        "channel": "iMessage",
+        "body_access": preview.context.body_access,
+        "durable_storage_allowed": preview.context.durable_storage_allowed,
+        "context_order": summary.context_order,
+        "context_messages_read": len(preview.context.messages),
+        "principal_sent_messages": preview.context.principal_sent_messages,
+        "runtime_context_messages": preview.context.runtime_context_messages,
+        "approval_ref_hash": preview.context.approval_ref_hash,
+        "source_reference_hash": preview.context.source_reference_hash,
+        "chat_guid_hash": preview.context.chat_guid_hash,
+        "conversation_summary": {
+            "channel": summary.channel,
+            "voice_principal_label": summary.voice_principal_label,
+            "reply_target_label": summary.reply_target_label,
+            "reply_target_confidence": summary.reply_target_confidence,
+            "context_order": summary.context_order,
+            "last_message_speaker": last_message_speaker,
+            "last_message_preview": last_message_preview,
+            "last_message_ref_hash": last_message_ref_hash,
+        },
+        "source_readiness": [
+            {
+                "source": item.source,
+                "channel": item.channel,
+                "status": item.status,
+                "detail": item.detail,
+            }
+            for item in preview.source_readiness
+        ],
+        "context_preview": [
+            {
+                "index": index,
+                "speaker": "Ken" if message.is_from_me else "Other",
+                "is_from_me": message.is_from_me,
+                "message_ref_hash": message.message_ref_hash,
+                "body_text": message.body_text[:900],
+            }
+            for index, message in enumerate(
+                preview.context.messages[:context_preview_limit],
+                start=1,
+            )
+        ],
+    }
 
 
 def _log_approval_success(
@@ -602,6 +697,55 @@ async def spark_imessage_draft_targets(
     return SparkIMessageDraftTargetsOut(principal_id=principal_id, targets=targets)
 
 
+@router.get("/imessage/target-preview", response_model=SparkIMessageTargetPreviewOut)
+async def spark_imessage_target_preview(
+    request: Request,
+    principal_id: str = "ken",
+    approval_id: str | None = None,
+    limit: int = 8,
+    _: str = Depends(require_auth),
+) -> SparkIMessageTargetPreviewOut:
+    _check_draft_scopes(request)
+    if not approval_id:
+        raise HTTPException(status_code=422, detail="approval_id_required")
+    bounded_limit = max(1, min(limit, 8))
+    personality_memory_rows = await _load_personality_memory_rows(
+        request,
+        principal_id,
+    )
+    try:
+        preview = await load_imessage_target_preview(
+            principal_id=principal_id,
+            approval_id=approval_id,
+            max_context_messages=bounded_limit,
+            personality_memory_rows=personality_memory_rows,
+        )
+    except Exception as exc:
+        route_error = _route_error(exc)
+        _log_failure(request, exc=exc, status_code=route_error.status_code)
+        raise route_error from exc
+    logger.info(
+        "spark_imessage_target_preview_loaded",
+        extra={
+            "event": "spark_imessage_target_preview_loaded",
+            "component": "spark_drafts",
+            "action": "imessage_target_preview",
+            "body_access": True,
+            "principal_id": principal_id,
+            "context_messages_read": len(preview.context.messages),
+            "principal_sent_messages": preview.context.principal_sent_messages,
+            "runtime_context_messages": preview.context.runtime_context_messages,
+            "approval_ref_hash": preview.context.approval_ref_hash,
+            "source_reference_hash": preview.context.source_reference_hash,
+            "chat_guid_hash": preview.context.chat_guid_hash,
+            **_safe_actor_fields(request),
+        },
+    )
+    return SparkIMessageTargetPreviewOut(
+        **_preview_payload(preview, context_preview_limit=bounded_limit)
+    )
+
+
 @router.post("/imessage", response_model=SparkIMessageDraftOut)
 async def spark_imessage_draft(
     request: Request,
@@ -619,13 +763,14 @@ async def spark_imessage_draft(
             approval_id=payload.approval_id,
             reply_goal=payload.reply_goal,
             max_context_messages=payload.max_context_messages,
+            style_adjustments=payload.style_adjustments,
             personality_memory_rows=personality_memory_rows,
         )
     except Exception as exc:
         route_error = _route_error(exc)
         _log_failure(request, exc=exc, status_code=route_error.status_code)
         raise route_error from exc
-    _log_success(request, proposal)
+    _log_success(request, proposal, payload)
     return SparkIMessageDraftOut(
         **_proposal_payload(proposal, payload, personality_memory_rows)
     )
@@ -648,6 +793,7 @@ async def spark_imessage_draft_approval_request(
             approval_id=payload.approval_id,
             reply_goal=payload.reply_goal,
             max_context_messages=payload.max_context_messages,
+            style_adjustments=payload.style_adjustments,
             personality_memory_rows=personality_memory_rows,
         )
         proposal = apply_draft_text_override(

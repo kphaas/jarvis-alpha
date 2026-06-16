@@ -101,7 +101,7 @@ def test_draft_edit_feedback_skips_unchanged_text(tmp_path: Path) -> None:
 def test_draft_quality_feedback_records_label_only(tmp_path: Path) -> None:
     result = record_spark_draft_quality_feedback(
         principal_id="ken",
-        feedback_label="too_robotic",
+        feedback_label="too_wordy",
         draft_version="spark-imessage-draft/v0",
         approval_ref_hash="approval-hash",
         source_reference_hash="source-hash",
@@ -122,7 +122,7 @@ def test_draft_quality_feedback_records_label_only(tmp_path: Path) -> None:
     )
     row = json.loads(feedback_path.read_text(encoding="utf-8").strip())
     assert row["feedback_version"] == "spark-draft-quality-feedback/v0.1"
-    assert row["feedback_label"] == "too_robotic"
+    assert row["feedback_label"] == "too_wordy"
     serialized = json.dumps(row).lower()
     assert "draft_text" not in serialized
     assert "private inbound body" not in serialized

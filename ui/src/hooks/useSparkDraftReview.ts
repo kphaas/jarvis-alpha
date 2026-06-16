@@ -11,6 +11,7 @@ import type {
   SparkIMessageDraftRequest,
   SparkIMessageDraftResponse,
   SparkIMessageDraftTargetsResponse,
+  SparkIMessageTargetPreviewResponse,
 } from "../types/spark";
 
 export const SPARK_COMPARISON_SCENARIOS = [
@@ -36,12 +37,14 @@ function baseRequest(
   approvalId: string | null,
   replyGoal: string,
   maxContextMessages: number,
+  styleAdjustments: string[],
 ): SparkIMessageDraftRequest {
   return {
     principal_id: principalId,
     approval_id: approvalId,
     reply_goal: replyGoal.trim() || null,
     max_context_messages: maxContextMessages,
+    style_adjustments: styleAdjustments,
     include_context_preview: true,
     context_preview_limit: Math.min(maxContextMessages, 10),
     include_memory_preview: true,
@@ -61,9 +64,31 @@ export function useSparkIMessageDraftTargets(principalId = "ken") {
   });
 }
 
+export function useSparkIMessageTargetPreview(
+  principalId = "ken",
+  approvalId: string | null = null,
+) {
+  return useQuery({
+    queryKey: ["spark", "imessage-target-preview", principalId, approvalId],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        principal_id: principalId,
+        approval_id: approvalId ?? "",
+        limit: "8",
+      });
+      return apiJson<SparkIMessageTargetPreviewResponse>(
+        `/v1/spark/drafts/imessage/target-preview?${params.toString()}`,
+      );
+    },
+    enabled: Boolean(approvalId),
+    staleTime: 30_000,
+  });
+}
+
 export function useSparkDraftReview(principalId = "ken", approvalId: string | null = null) {
   const [replyGoal, setReplyGoal] = useState("");
-  const [maxContextMessages, setMaxContextMessages] = useState(20);
+  const [maxContextMessages, setMaxContextMessages] = useState(8);
+  const [styleAdjustments, setStyleAdjustments] = useState<string[]>([]);
   const [draftText, setDraftText] = useState("");
 
   const draftMutation = useMutation({
@@ -86,6 +111,7 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
             approvalId,
             `${replyGoal.trim() || "Draft a reply."} ${scenario.goal}`,
             maxContextMessages,
+            styleAdjustments,
           );
           const draft = await apiJson<SparkIMessageDraftResponse>(
             "/v1/spark/drafts/imessage",
@@ -151,7 +177,13 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     feedbackMutation.reset();
     approvedSendMutation.reset();
     draftMutation.mutate(
-      baseRequest(principalId, approvalId, replyGoal, maxContextMessages),
+      baseRequest(
+        principalId,
+        approvalId,
+        replyGoal,
+        maxContextMessages,
+        styleAdjustments,
+      ),
     );
   }
 
@@ -164,7 +196,13 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
 
   function submitForApproval() {
     const request: SparkIMessageDraftApprovalRequest = {
-      ...baseRequest(principalId, approvalId, replyGoal, maxContextMessages),
+      ...baseRequest(
+        principalId,
+        approvalId,
+        replyGoal,
+        maxContextMessages,
+        styleAdjustments,
+      ),
       draft_text_override: draftText.trim() || null,
     };
     approvalMutation.mutate(request);
@@ -184,6 +222,7 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
 
   function resetDraftSurface() {
     setDraftText("");
+    setStyleAdjustments([]);
     draftMutation.reset();
     comparisonMutation.reset();
     approvalMutation.reset();
@@ -196,6 +235,8 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     setReplyGoal,
     maxContextMessages,
     setMaxContextMessages,
+    styleAdjustments,
+    setStyleAdjustments,
     draftText,
     setDraftText,
     draft: draftMutation.data ?? null,
