@@ -863,8 +863,10 @@ def _latest_inbound_anchor_check(
         )
 
     has_acknowledgement = _starts_with_acknowledgement(draft_lower)
-    if _latest_question_or_request(context) and has_acknowledgement and _has_concrete_next_beat(
-        draft_lower
+    if (
+        _latest_question_or_request(context)
+        and has_acknowledgement
+        and _has_concrete_next_beat(draft_lower)
     ):
         return SparkDraftQualityCheck(
             key="latest_inbound_anchor",

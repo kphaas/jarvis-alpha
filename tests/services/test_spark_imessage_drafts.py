@@ -46,7 +46,8 @@ class FakeBodyClient:
             BlueBubblesMessageBody(
                 message_ref_hash=hashlib.sha256(b"sent-1").hexdigest(),
                 is_from_me=True,
-                body_text=self.outbound_body or "Ken sent body that stays runtime-only here",
+                body_text=self.outbound_body
+                or "Ken sent body that stays runtime-only here",
             ),
         )
 
@@ -381,9 +382,7 @@ async def test_imessage_draft_flags_invented_logistics_and_context_drift(
     )
 
     payload = proposal.to_payload()
-    quality_checks = {
-        item["key"]: item for item in payload["draft_quality"]["checks"]
-    }
+    quality_checks = {item["key"]: item for item in payload["draft_quality"]["checks"]}
 
     assert quality_checks["latest_inbound_anchor"]["passed"] is False
     assert quality_checks["no_invented_logistics"]["passed"] is False
