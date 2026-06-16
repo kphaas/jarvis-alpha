@@ -195,6 +195,7 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     )
 
     assert "SPARK_PRINCIPALS" in source
+    assert "ken" in source
     assert "sweta" in source
     assert "ryleigh" in source
     assert "sloane" in source
@@ -203,6 +204,8 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Review console" in source
     assert "Voice profile" in source
     assert "Draft target" in source
+    assert "core family" in source
+    assert "Relationships" in source
     assert "Reply cockpit" in source
     assert "approval before send" in source
     assert "Generate for" in source
@@ -210,14 +213,14 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "useSparkIMessageTargetPreview" in source
     assert "last 8 texts" in source
     assert "needs approved thread" in source
+    assert ".filter((targetId) => targetId !== principalId)" in source
     assert "Thread preview" in source
     assert "Decision rail" in source
     assert "Outbox cockpit" in source
     assert "metadata only" in source
     assert "Refresh outbox" in source
     assert "Review details" in source
-    assert "Memory and guardrails" in source
-    assert "Guardrails" in source
+    assert "Relationships and guardrails" in source
     assert "Side-by-side" in source
     assert "Compare" in source
     assert "Thread context" in source

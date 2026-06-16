@@ -56,6 +56,15 @@ const SPARK_PRINCIPALS = [
   { id: "sloane", label: "Sloane" },
 ];
 
+type SparkPrincipalId = "ken" | "sweta" | "ryleigh" | "sloane";
+
+const SPARK_PRINCIPAL_LABELS: Record<SparkPrincipalId, string> = {
+  ken: "Ken",
+  sweta: "Sweta",
+  ryleigh: "Ryleigh",
+  sloane: "Sloane",
+};
+
 const FEEDBACK_BUTTONS: Array<{
   label: string;
   value: SparkDraftFeedbackLabel;
@@ -87,6 +96,14 @@ function feedbackDisplayLabels(values: SparkDraftFeedbackLabel[]) {
 }
 
 const DEFAULT_FAVORITE_TARGETS: SparkProtectedRelationship[] = [
+  {
+    id: "ken",
+    label: "Ken",
+    relationship: "family",
+    sensitivity: "family",
+    default_mode: "draft_only",
+    approval_required: true,
+  },
   {
     id: "sweta",
     label: "Sweta",
@@ -169,51 +186,71 @@ function displayLabel(value: string) {
   return value.replace(/_/g, " ");
 }
 
+function isChildPrincipal(principalId: SparkPrincipalId) {
+  return principalId === "ryleigh" || principalId === "sloane";
+}
+
+function pairRelationship(
+  principalId: SparkPrincipalId,
+  targetId: SparkPrincipalId,
+) {
+  const principalIsChild = isChildPrincipal(principalId);
+  const targetIsChild = isChildPrincipal(targetId);
+  if (!principalIsChild && !targetIsChild) return "partner";
+  if (principalIsChild && targetIsChild) return "sibling";
+  return targetIsChild ? "child" : "parent";
+}
+
+function fallbackSensitivity(
+  principalId: SparkPrincipalId,
+  targetId: SparkPrincipalId,
+) {
+  if (isChildPrincipal(targetId)) return "minor";
+  if (pairRelationship(principalId, targetId) === "partner") return "relationship";
+  return "family";
+}
+
 function buildDraftTargetOptions(
+  principalId: SparkPrincipalId,
   relationships: SparkProtectedRelationship[],
   targets: SparkIMessageDraftTarget[],
 ): DraftTargetOption[] {
+  const relationshipById = new Map(
+    relationships.map((relationship) => [
+      normalizedKey(relationship.id),
+      relationship,
+    ]),
+  );
   const targetByLabel = new Map(
     targets.map((target) => [normalizedKey(target.label), target]),
   );
-  const usedApprovalIds = new Set<string>();
-  const options: DraftTargetOption[] = relationships.map((relationship) => {
+  const candidateIds = SPARK_PRINCIPALS.map(
+    (principal) => principal.id as SparkPrincipalId,
+  ).filter((targetId) => targetId !== principalId);
+
+  return candidateIds.map((targetId) => {
+    const configuredRelationship =
+      relationshipById.get(normalizedKey(targetId)) ??
+      DEFAULT_FAVORITE_TARGETS.find((relationship) => relationship.id === targetId) ??
+      null;
+    const label =
+      configuredRelationship?.label ?? SPARK_PRINCIPAL_LABELS[targetId];
     const target =
-      targetByLabel.get(normalizedKey(relationship.label)) ??
-      targets.find((item) => normalizedKey(item.label) === normalizedKey(relationship.id));
-    if (target) {
-      usedApprovalIds.add(target.approval_id);
-    }
+      targetByLabel.get(normalizedKey(label)) ??
+      targets.find((item) => normalizedKey(item.label) === normalizedKey(targetId));
     return {
-      id: relationship.id,
-      label: relationship.label,
-      relationship: relationship.relationship,
-      sensitivity: relationship.sensitivity,
+      id: targetId,
+      label,
+      relationship: pairRelationship(principalId, targetId),
+      sensitivity:
+        configuredRelationship?.sensitivity ??
+        fallbackSensitivity(principalId, targetId),
       approvalId: target?.approval_id ?? null,
       channel: target?.channel ?? "iMessage",
       favorite: true,
       ready: Boolean(target?.approval_id),
     };
   });
-
-  for (const target of targets) {
-    if (usedApprovalIds.has(target.approval_id)) continue;
-    options.push({
-      id: `approval-${target.approval_id}`,
-      label: target.label,
-      relationship: target.relationship_marked ? "relationship" : "contact",
-      sensitivity: target.legal_marked
-        ? "custody/legal"
-        : target.relationship_marked
-          ? "relationship"
-          : "standard",
-      approvalId: target.approval_id,
-      channel: target.channel,
-      favorite: false,
-      ready: true,
-    });
-  }
-  return options;
 }
 
 function ErrorLine({ text, className }: { text: string; className: string }) {
@@ -527,6 +564,7 @@ function DraftTargetPicker({
   selectedTargetId,
   loading,
   onSelect,
+  onManageRelationships,
   border,
   panel,
   muted,
@@ -537,6 +575,7 @@ function DraftTargetPicker({
   selectedTargetId: string | null;
   loading: boolean;
   onSelect: (targetId: string) => void;
+  onManageRelationships: () => void;
   border: string;
   panel: string;
   muted: string;
@@ -552,11 +591,23 @@ function DraftTargetPicker({
             Draft target
           </h2>
         </div>
-        <StatusChip
-          label={loading ? "loading approved threads" : "favorites"}
-          className={loading ? warnClass : okClass}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusChip
+            label={loading ? "loading approved threads" : "core family"}
+            className={loading ? warnClass : okClass}
+          />
+          <button
+            type="button"
+            onClick={onManageRelationships}
+            className={`inline-flex min-h-9 items-center gap-2 rounded-lg border px-3 text-xs font-bold transition hover:border-emerald-400 ${border}`}
+          >
+            Relationships
+          </button>
+        </div>
       </div>
+      <p className={`mt-3 text-xs ${muted}`}>
+        Spark hides the active voice profile here and only shows the other core-family targets.
+      </p>
 
       <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
         {targets.map((target) => {
@@ -566,12 +617,11 @@ function DraftTargetPicker({
               key={target.id}
               type="button"
               onClick={() => onSelect(target.id)}
-              disabled={!target.ready}
               className={`min-h-24 rounded-lg border p-3 text-left transition ${border} ${
                 selected
                   ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-200"
                   : ""
-              } ${target.ready ? "hover:border-emerald-400" : "opacity-55"}`}
+              } hover:border-emerald-400 ${target.ready ? "" : "opacity-70"}`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
@@ -592,7 +642,7 @@ function DraftTargetPicker({
                     target.ready ? okClass : warnClass
                   }`}
                 >
-                  {target.ready ? "ready" : "needs source"}
+                  {target.ready ? "ready" : "needs approved thread"}
                 </span>
                 <span
                   className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${warnClass}`}
@@ -1368,7 +1418,7 @@ export default function Spark() {
   const { theme } = useAppStore();
   const [searchParams] = useSearchParams();
   const activeApproval = searchParams.get("approval");
-  const [principalId, setPrincipalId] = useState("ken");
+  const [principalId, setPrincipalId] = useState<SparkPrincipalId>("ken");
   const [draftTargetId, setDraftTargetId] = useState<string | null>(null);
   const [detailPanel, setDetailPanel] = useState<DetailPanel | null>(null);
   const guardrailsState = useSparkGuardrails();
@@ -1393,10 +1443,11 @@ export default function Spark() {
   const draftTargets = useMemo(
     () =>
       buildDraftTargetOptions(
+        principalId,
         favoriteRelationships,
         targetState.data?.targets ?? [],
       ),
-    [favoriteRelationships, targetState.data?.targets],
+    [principalId, favoriteRelationships, targetState.data?.targets],
   );
   const selectedDraftTarget =
     draftTargets.find((target) => target.id === draftTargetId) ??
@@ -1434,7 +1485,7 @@ export default function Spark() {
       detail: selectedDraftTarget?.ready
         ? `${selectedDraftTarget.label} is selected`
         : selectedDraftTarget
-          ? `${selectedDraftTarget.label} needs an approved source`
+          ? `${selectedDraftTarget.label} needs an approved thread`
           : "Choose who this reply is for",
       status: selectedDraftTarget?.ready ? "complete" : "active",
     },
@@ -1514,7 +1565,7 @@ export default function Spark() {
     },
   ];
 
-  function selectPrincipal(nextPrincipalId: string) {
+  function selectPrincipal(nextPrincipalId: SparkPrincipalId) {
     state.resetDraftSurface();
     setDraftTargetId(null);
     setPrincipalId(nextPrincipalId);
@@ -1562,7 +1613,9 @@ export default function Spark() {
                 <button
                   key={principal.id}
                   type="button"
-                  onClick={() => selectPrincipal(principal.id)}
+                  onClick={() =>
+                    selectPrincipal(principal.id as SparkPrincipalId)
+                  }
                   className={`min-h-9 rounded-lg border px-3 text-sm font-bold transition ${border} ${
                     principal.id === principalId
                       ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
@@ -1590,6 +1643,7 @@ export default function Spark() {
         selectedTargetId={selectedDraftTarget?.id ?? null}
         loading={targetState.isLoading}
         onSelect={selectDraftTarget}
+        onManageRelationships={() => setDetailPanel("guardrails")}
         border={border}
         panel={panel}
         muted={muted}
@@ -1702,8 +1756,8 @@ export default function Spark() {
             />
             {!targetReady && selectedDraftTarget && (
               <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
-                {selectedDraftTarget.label} is in favorites, but no approved
-                iMessage source is connected yet.
+                {selectedDraftTarget.label} is in the core-family roster, but no
+                approved iMessage thread is connected yet.
               </div>
             )}
             <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
@@ -2139,9 +2193,9 @@ export default function Spark() {
             okClass={okClass}
           />
           <DetailOverviewCard
-            title="Guardrails"
-            detail="Review protected topics, favorite relationships, and no-send posture."
-            metric={`${favoriteRelationships.length} relationships`}
+            title="Relationships"
+            detail="Review the core-family target roster, protected topics, and no-send posture."
+            metric={`${favoriteRelationships.length} core family`}
             icon={<Shield className="h-4 w-4 text-emerald-400" />}
             onOpen={() => setDetailPanel("guardrails")}
             border={border}
@@ -2230,7 +2284,7 @@ export default function Spark() {
 
         {detailPanel === "guardrails" && (
           <DetailDialog
-            title="Memory and guardrails"
+            title="Relationships and guardrails"
             onClose={() => setDetailPanel(null)}
             border={border}
             panel={panel}
