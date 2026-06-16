@@ -23,6 +23,7 @@ def test_spark_drafts_smoke_script_checks_draft_only_contract() -> None:
     assert "spark.draft,imessage.read" in text
     assert "/v1/spark/drafts/imessage/targets" in text
     assert "/v1/spark/drafts/imessage/target-preview" in text
+    assert "/v1/spark/drafts/imessage/outbox?principal_id=ken&limit=5" in text
     assert "/v1/spark/drafts/imessage" in text
     assert "/v1/spark/drafts/imessage/approval-request" in text
     assert "SPARK_DRAFT_SMOKE_QUEUE_APPROVAL" in text

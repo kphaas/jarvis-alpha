@@ -62,6 +62,21 @@ class SparkOutboxCreateResult:
 
 
 @dataclass(frozen=True, slots=True)
+class SparkOutboxListItem:
+    outbox_id: str
+    channel: str
+    principal_id: str
+    target_label: str
+    approval_queue_id: str
+    draft_text_hash: str
+    status: str
+    send_attempt_count: int
+    created_at: datetime
+    updated_at: datetime
+    sent_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
 class SparkOutboxSendItem:
     outbox_id: UUID
     channel: str
@@ -231,6 +246,38 @@ async def create_spark_outbox_item(
         draft_text_hash=encrypted.draft_text_hash,
         created=bool(result.get("created")),
         reason=_string_or_none(result.get("reason")),
+    )
+
+
+async def list_spark_outbox_items(
+    conn: asyncpg.Connection,
+    *,
+    principal_id: str,
+    limit: int = 25,
+) -> tuple[SparkOutboxListItem, ...]:
+    rows = await conn.fetch(
+        """
+        SELECT *
+        FROM public.list_spark_outbox_items($1, $2)
+        """,
+        principal_id,
+        limit,
+    )
+    return tuple(
+        SparkOutboxListItem(
+            outbox_id=str(row["id"]),
+            channel=str(row["channel"]),
+            principal_id=str(row["principal_id"]),
+            target_label=str(row["target_label"]),
+            approval_queue_id=str(row["approval_queue_id"]),
+            draft_text_hash=str(row["draft_text_hash"]),
+            status=str(row["status"]),
+            send_attempt_count=int(row["send_attempt_count"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            sent_at=row["sent_at"],
+        )
+        for row in rows
     )
 
 
