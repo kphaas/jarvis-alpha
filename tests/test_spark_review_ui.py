@@ -214,6 +214,10 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Too formal" in source
     assert "Too wordy" in source
     assert "Too much policy" in source
+    assert "Feedback retry" in source
+    assert "Try again with feedback" in source
+    assert "regenerateWithFeedback" in source
+    assert "Make the reply shorter and less wordy" in source
     assert "Make it sound more like me" in source
     assert "Send only after approval passes" in source
     assert "Send blocked until the outbox item is approved" in source
