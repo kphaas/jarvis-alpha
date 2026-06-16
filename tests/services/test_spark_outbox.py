@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from uuid import UUID
+from datetime import UTC, datetime
 
 import pytest
 
@@ -20,6 +21,7 @@ from brain.services.spark_outbox import (
     SparkOutboxCryptoConfig,
     SparkOutboxEncryptedDraft,
     create_spark_outbox_item,
+    list_spark_outbox_items,
 )
 
 
@@ -38,6 +40,25 @@ class FakeConn:
                 "status": "pending_approval",
             }
         )
+
+    async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+        self.query = query
+        self.args = args
+        return [
+            {
+                "id": "22222222-2222-4222-8222-222222222222",
+                "channel": "imessage",
+                "principal_id": "ken",
+                "target_label": "Sweta",
+                "approval_queue_id": "11111111-1111-4111-8111-111111111111",
+                "draft_text_hash": "hmac-sha256:" + "a" * 64,
+                "status": "pending_approval",
+                "send_attempt_count": 0,
+                "created_at": datetime(2026, 6, 15, 20, 0, tzinfo=UTC),
+                "updated_at": datetime(2026, 6, 15, 20, 1, tzinfo=UTC),
+                "sent_at": None,
+            }
+        ]
 
 
 def test_spark_outbox_crypto_encrypts_exact_text_without_plaintext() -> None:
@@ -144,6 +165,37 @@ def test_spark_outbox_decrypt_rejects_wrong_envelope() -> None:
                 payload_key_version="payload-v1",
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_list_spark_outbox_items_returns_metadata_only() -> None:
+    conn = FakeConn()
+
+    items = await list_spark_outbox_items(
+        conn,  # type: ignore[arg-type]
+        principal_id="ken",
+        limit=25,
+    )
+
+    assert "list_spark_outbox_items" in conn.query
+    assert conn.args == ("ken", 25)
+    assert len(items) == 1
+    item = items[0]
+    assert item.outbox_id == "22222222-2222-4222-8222-222222222222"
+    assert item.target_label == "Sweta"
+    assert item.status == "pending_approval"
+    serialized = json.dumps(
+        {
+            "outbox_id": item.outbox_id,
+            "target_label": item.target_label,
+            "approval_queue_id": item.approval_queue_id,
+            "draft_text_hash": item.draft_text_hash,
+            "status": item.status,
+            "send_attempt_count": item.send_attempt_count,
+        }
+    ).lower()
+    assert '"draft_text":' not in serialized
+    assert "private inbound body" not in serialized
 
 
 def _crypto() -> SparkOutboxCrypto:
