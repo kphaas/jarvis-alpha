@@ -190,6 +190,25 @@ function isChildPrincipal(principalId: SparkPrincipalId) {
   return principalId === "ryleigh" || principalId === "sloane";
 }
 
+function parseSparkPrincipalId(value: string | null): SparkPrincipalId | null {
+  if (!value) return null;
+  const match = SPARK_PRINCIPALS.find(
+    (principal) => principal.id === normalizedKey(value),
+  );
+  return (match?.id as SparkPrincipalId | undefined) ?? null;
+}
+
+function targetIdFromLabel(value: string | null): SparkPrincipalId | null {
+  if (!value) return null;
+  const normalized = normalizedKey(value);
+  const match = SPARK_PRINCIPALS.find(
+    (principal) =>
+      normalizedKey(principal.id) === normalized ||
+      normalizedKey(principal.label) === normalized,
+  );
+  return (match?.id as SparkPrincipalId | undefined) ?? null;
+}
+
 function pairRelationship(
   principalId: SparkPrincipalId,
   targetId: SparkPrincipalId,
@@ -658,6 +677,75 @@ function DraftTargetPicker({
       {!targets.length && (
         <div className={`mt-3 rounded-lg border p-3 text-sm ${border} ${muted}`}>
           No favorite targets loaded yet.
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ApprovedThreadOnboardingPanel({
+  principalLabel,
+  targets,
+  border,
+  panel,
+  muted,
+  okClass,
+  warnClass,
+}: {
+  principalLabel: string;
+  targets: DraftTargetOption[];
+  border: string;
+  panel: string;
+  muted: string;
+  okClass: string;
+  warnClass: string;
+}) {
+  const readyTargets = targets.filter((target) => target.ready);
+  const missingTargets = targets.filter((target) => !target.ready);
+
+  return (
+    <section className={`rounded-xl border ${border} ${panel} p-4`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Shield className="h-4 w-4 text-emerald-400" />
+          <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>
+            Approved-thread onboarding
+          </h2>
+        </div>
+        <StatusChip
+          label={`${readyTargets.length}/${targets.length || 1} ready`}
+          className={missingTargets.length ? warnClass : okClass}
+        />
+      </div>
+      <p className={`mt-3 text-sm leading-relaxed ${muted}`}>
+        Favorites and relationship labels shape the roster. Spark can only draft
+        against approved iMessage threads for the active voice profile.
+      </p>
+
+      {missingTargets.length ? (
+        <div className="mt-4 grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
+          {missingTargets.map((target) => (
+            <article key={`${target.id}-onboarding`} className={`rounded-lg border p-3 ${border}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="text-sm font-bold">{target.label}</div>
+                  <div className={`mt-1 text-xs ${muted}`}>
+                    {principalLabel} to {target.label} · {displayLabel(target.relationship)}
+                  </div>
+                </div>
+                <StatusChip label="needs thread" className={warnClass} />
+              </div>
+              <p className={`mt-3 text-xs leading-relaxed ${muted}`}>
+                Approve one iMessage source record for this pair, then refresh Spark
+                to unlock thread preview, drafting, and approved send.
+              </p>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className={`mt-4 rounded-lg border px-3 py-3 text-sm ${okClass}`}>
+          All core-family targets for {principalLabel} already have approved iMessage
+          threads.
         </div>
       )}
     </section>
@@ -1418,7 +1506,12 @@ export default function Spark() {
   const { theme } = useAppStore();
   const [searchParams] = useSearchParams();
   const activeApproval = searchParams.get("approval");
-  const [principalId, setPrincipalId] = useState<SparkPrincipalId>("ken");
+  const requestedPrincipalId =
+    parseSparkPrincipalId(searchParams.get("principal")) ?? "ken";
+  const requestedTargetId = targetIdFromLabel(searchParams.get("target"));
+  const [principalId, setPrincipalId] = useState<SparkPrincipalId>(
+    requestedPrincipalId,
+  );
   const [draftTargetId, setDraftTargetId] = useState<string | null>(null);
   const [detailPanel, setDetailPanel] = useState<DetailPanel | null>(null);
   const guardrailsState = useSparkGuardrails();
@@ -1449,8 +1542,23 @@ export default function Spark() {
       ),
     [principalId, favoriteRelationships, targetState.data?.targets],
   );
+  const activeApprovalOutbox = useMemo(
+    () =>
+      activeApproval
+        ? (outboxState.data?.items.find(
+            (item) => item.approval_queue_id === activeApproval,
+          ) ?? null)
+        : null,
+    [activeApproval, outboxState.data?.items],
+  );
+  const activeApprovalTargetId = useMemo(
+    () => targetIdFromLabel(activeApprovalOutbox?.target_label ?? null),
+    [activeApprovalOutbox?.target_label],
+  );
+  const anchoredTargetId =
+    activeApprovalTargetId ?? requestedTargetId ?? draftTargetId;
   const selectedDraftTarget =
-    draftTargets.find((target) => target.id === draftTargetId) ??
+    draftTargets.find((target) => target.id === anchoredTargetId) ??
     draftTargets.find((target) => target.ready) ??
     draftTargets[0] ??
     null;
@@ -1474,8 +1582,23 @@ export default function Spark() {
   const recordedFeedbackLabel = feedbackDisplayLabels(
     state.lastSubmittedFeedbackLabels,
   );
-  const hasApproval = Boolean(state.approval?.queue_id);
-  const hasOutbox = Boolean(state.approval?.outbox_id);
+  const approvalQueueId =
+    state.approval?.queue_id ??
+    activeApprovalOutbox?.approval_queue_id ??
+    activeApproval;
+  const resolvedOutboxId =
+    state.approval?.outbox_id ?? activeApprovalOutbox?.outbox_id ?? null;
+  const resolvedOutboxStatus =
+    state.approval?.outbox_status ?? activeApprovalOutbox?.status ?? null;
+  const resolvedOutboxTextHash =
+    state.approval?.outbox_text_hash ??
+    activeApprovalOutbox?.draft_text_hash ??
+    null;
+  const resolvedOutboxRecorded =
+    state.approval?.outbox_recorded ?? Boolean(activeApprovalOutbox);
+  const canSendResolvedOutbox = state.hasSendableOutbox(resolvedOutboxId);
+  const hasApproval = Boolean(approvalQueueId);
+  const hasOutbox = Boolean(resolvedOutboxId);
   const hasSendResult = Boolean(state.approvedSend);
   const selectedTone = state.styleAdjustments[0] ?? "";
   const workflowSteps: CockpitStep[] = [
@@ -1539,7 +1662,11 @@ export default function Spark() {
       id: "approval",
       label: "Approval",
       detail: hasApproval
-        ? `Queued ${state.approval?.approval_status ?? "pending"}`
+        ? state.approval
+          ? `Queued ${state.approval.approval_status ?? "pending"}`
+          : activeApprovalOutbox
+            ? "Approval handoff loaded from outbox"
+            : "Approval queue linked"
         : hasDraftText
           ? "Submit approval to create outbox"
           : "Draft text required",
@@ -1551,7 +1678,9 @@ export default function Spark() {
       detail: hasSendResult
         ? `Send result: ${state.approvedSend?.outbox_status ?? "done"}`
         : hasOutbox
-          ? "Send only after approval passes"
+          ? activeApprovalOutbox
+            ? "Send can resume from the persisted outbox"
+            : "Send only after approval passes"
           : hasApproval
             ? "Outbox not recorded"
             : "Approval required first",
@@ -1651,6 +1780,16 @@ export default function Spark() {
         warnClass={warnClass}
       />
 
+      <ApprovedThreadOnboardingPanel
+        principalLabel={selectedPrincipal.label}
+        targets={draftTargets}
+        border={border}
+        panel={panel}
+        muted={muted}
+        okClass={okClass}
+        warnClass={warnClass}
+      />
+
       <ConversationBriefPanel
         draft={state.draft}
         preview={targetPreviewState.data ?? null}
@@ -1672,6 +1811,9 @@ export default function Spark() {
       {activeApproval && (
         <div className={`rounded-lg border px-3 py-2 text-sm ${okClass}`}>
           Approval queue {activeApproval}
+          {activeApprovalOutbox
+            ? ` · ${selectedPrincipal.label} -> ${activeApprovalOutbox.target_label} · outbox ${labelize(activeApprovalOutbox.status)}`
+            : " · waiting for outbox metadata"}
         </div>
       )}
 
@@ -2014,49 +2156,46 @@ export default function Spark() {
                 <span className={`text-sm ${muted}`}>No draft loaded</span>
               </div>
             )}
-            {state.approval && (
+            {approvalQueueId && (
               <div className={`space-y-2 rounded-lg border p-3 ${border}`}>
                 <div className="flex items-center gap-2 text-sm">
                   <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                   <span className="font-semibold">
-                    {state.approval.approval_status}
+                    {state.approval?.approval_status ??
+                      (activeApprovalOutbox ? "handoff_loaded" : "pending")}
                   </span>
                 </div>
                 <MetricRow
                   label="Queue ID"
-                  value={state.approval.queue_id}
+                  value={approvalQueueId}
                   muted={muted}
                 />
                 <MetricRow
                   label="Outbox"
-                  value={
-                    state.approval.outbox_recorded
-                      ? (state.approval.outbox_status ?? "recorded")
-                      : "not recorded"
-                  }
+                  value={resolvedOutboxRecorded ? resolvedOutboxStatus ?? "recorded" : "not recorded"}
                   muted={muted}
                 />
-                {state.approval.outbox_id && (
+                {resolvedOutboxId && (
                   <MetricRow
                     label="Outbox ID"
-                    value={state.approval.outbox_id}
+                    value={resolvedOutboxId}
                     muted={muted}
                   />
                 )}
-                {state.approval.outbox_text_hash && (
+                {resolvedOutboxTextHash && (
                   <MetricRow
                     label="Draft hash"
-                    value={shortHash(state.approval.outbox_text_hash)}
+                    value={shortHash(resolvedOutboxTextHash)}
                     muted={muted}
                   />
                 )}
-                {state.approval.outbox_id && (
+                {resolvedOutboxId && (
                   <button
                     type="button"
-                    onClick={state.sendApprovedOutbox}
-                    disabled={!state.canSendApprovedOutbox}
+                    onClick={() => state.sendApprovedOutbox(resolvedOutboxId)}
+                    disabled={!canSendResolvedOutbox}
                     className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${border} ${
-                      state.canSendApprovedOutbox
+                      canSendResolvedOutbox
                         ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
                         : "opacity-45"
                     }`}
@@ -2069,6 +2208,11 @@ export default function Spark() {
                     Send approved
                   </button>
                 )}
+                {activeApproval && !activeApprovalOutbox && !outboxState.isLoading && (
+                  <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
+                    Approval handoff exists, but no persisted outbox metadata was found yet.
+                  </div>
+                )}
                 {state.approvedSend && (
                   <MetricRow
                     label="Send"
@@ -2078,14 +2222,14 @@ export default function Spark() {
                 )}
                 {state.approvedSendError && (
                   <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
-                    Send blocked until the outbox item is approved
+                    Send blocked until the outbox item is approved and persisted
                   </div>
                 )}
               </div>
             )}
-            {state.approval && (
+            {approvalQueueId && (
               <div className={`rounded-lg border px-3 py-2 text-sm ${okClass}`}>
-                Approval queued {state.approval.queue_id}
+                Approval queued {approvalQueueId}
               </div>
             )}
           </div>

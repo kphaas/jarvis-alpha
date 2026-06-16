@@ -15,6 +15,11 @@ interface SparkApprovalContext {
   kind: string
   can_send: boolean
   requires_human_approval: boolean
+  principal_id?: string | null
+  target_label?: string | null
+  outbox_id?: string | null
+  outbox_status?: string | null
+  outbox_recorded?: boolean
 }
 
 interface QueueItem {
@@ -98,6 +103,17 @@ function timeLeft(expiresAt: string): string {
   return `${mins}m ${secs}s left`
 }
 
+function buildSparkReviewUrl(item: QueueItem): string {
+  const params = new URLSearchParams({ approval: item.id })
+  if (item.spark?.principal_id) {
+    params.set('principal', item.spark.principal_id)
+  }
+  if (item.spark?.target_label) {
+    params.set('target', item.spark.target_label)
+  }
+  return `/spark?${params.toString()}`
+}
+
 export default function Approvals() {
   const { theme } = useAppStore()
   const isDark = theme === 'dark'
@@ -113,7 +129,11 @@ export default function Approvals() {
   const [pinInput, setPinInput] = useState('')
   const [showPinModal, setShowPinModal] = useState(false)
   const [pinError, setPinError] = useState<string | null>(null)
-  const [actionResult, setActionResult] = useState<{ id: string; decision: string } | null>(null)
+  const [actionResult, setActionResult] = useState<{
+    id: string
+    decision: string
+    sparkReturnUrl?: string | null
+  } | null>(null)
 
   const isUnlocked = approvalToken && Date.now() < tokenExpiry
 
@@ -155,16 +175,16 @@ export default function Approvals() {
     }
   }
 
-  const handleDecide = async (queueId: string, decision: 'approved' | 'denied') => {
+  const handleDecide = async (item: QueueItem, decision: 'approved' | 'denied') => {
     if (!isUnlocked) {
       setShowPinModal(true)
       return
     }
-    setActing(queueId)
+    setActing(item.id)
     setActionResult(null)
     try {
       const res = await apiJson<DecideResponse>(
-        `/v1/approvals/${queueId}/decide`,
+        `/v1/approvals/${item.id}/decide`,
         {
           method: 'POST',
           headers: {
@@ -174,7 +194,12 @@ export default function Approvals() {
           body: JSON.stringify({ decision }),
         }
       )
-      setActionResult({ id: queueId, decision: res.decision })
+      setActionResult({
+        id: item.id,
+        decision: res.decision,
+        sparkReturnUrl:
+          res.decision === 'approved' && item.spark ? buildSparkReviewUrl(item) : null,
+      })
       await load()
     } catch (e) {
       if (e instanceof Error && e.message.includes('403')) {
@@ -264,6 +289,14 @@ export default function Approvals() {
         >
           {actionResult.decision === 'approved' ? <ShieldCheck className="w-4 h-4" /> : <ShieldX className="w-4 h-4" />}
           Request {actionResult.decision}
+          {actionResult.sparkReturnUrl && (
+            <Link
+              to={actionResult.sparkReturnUrl}
+              className="ml-2 inline-flex items-center gap-1 rounded-md border border-current/30 px-2 py-1 text-xs font-bold hover:opacity-80"
+            >
+              Return to Spark send
+            </Link>
+          )}
         </motion.div>
       )}
 
@@ -326,7 +359,9 @@ export default function Approvals() {
               <div className="flex items-start gap-2 opacity-80">
                 <Sparkles className="w-3 h-3 mt-0.5 shrink-0 text-emerald-400" />
                 <span>
-                  <strong>spark draft:</strong> {item.spark.kind.replace('_', ' ')} · no send
+                  <strong>spark draft:</strong> {item.spark.kind.replace('_', ' ')}
+                  {item.spark.target_label ? ` · ${item.spark.target_label}` : ''}
+                  {item.spark.outbox_recorded ? ` · outbox ${item.spark.outbox_status ?? 'recorded'}` : ' · no outbox'}
                 </span>
               </div>
             )}
@@ -353,7 +388,7 @@ export default function Approvals() {
               )}
               {item.spark && (
                 <Link
-                  to={`/spark?approval=${item.id}`}
+                  to={buildSparkReviewUrl(item)}
                   className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg border text-xs font-bold transition-colors ${border} hover:opacity-80`}
                 >
                   <Sparkles className="w-3.5 h-3.5" />
@@ -362,7 +397,7 @@ export default function Approvals() {
               )}
               <button
                 disabled={acting === item.id}
-                onClick={() => handleDecide(item.id, 'approved')}
+                onClick={() => handleDecide(item, 'approved')}
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-40"
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
@@ -370,7 +405,7 @@ export default function Approvals() {
               </button>
               <button
                 disabled={acting === item.id}
-                onClick={() => handleDecide(item.id, 'denied')}
+                onClick={() => handleDecide(item, 'denied')}
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition-colors disabled:opacity-40"
               >
                 <ShieldX className="w-3.5 h-3.5" />
