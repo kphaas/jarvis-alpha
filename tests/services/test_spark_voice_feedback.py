@@ -129,6 +129,32 @@ def test_draft_quality_feedback_records_label_only(tmp_path: Path) -> None:
     assert "ken sent private body" not in serialized
 
 
+def test_draft_quality_feedback_accepts_out_of_context(tmp_path: Path) -> None:
+    result = record_spark_draft_quality_feedback(
+        principal_id="ken",
+        feedback_label="out_of_context",
+        draft_version="spark-imessage-draft/v0",
+        approval_ref_hash="approval-hash",
+        source_reference_hash="source-hash",
+        chat_guid_hash="chat-hash",
+        vault_root=tmp_path,
+        created_at=datetime(2026, 6, 15, 9, 5, tzinfo=UTC),
+    )
+
+    assert result.recorded is True
+    assert result.feedback_ref_hash
+    feedback_path = (
+        tmp_path
+        / "spark"
+        / "principals"
+        / "ken"
+        / "feedback"
+        / "imessage_draft_edits.jsonl"
+    )
+    row = json.loads(feedback_path.read_text(encoding="utf-8").strip())
+    assert row["feedback_label"] == "out_of_context"
+
+
 def test_feedback_default_root_is_not_personality_git_checkout() -> None:
     from brain.services import spark_voice_feedback as feedback
 

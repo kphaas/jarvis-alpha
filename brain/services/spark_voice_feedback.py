@@ -27,6 +27,7 @@ MAX_STORED_DRAFT_CHARS = 4000
 MAX_KEY_PHRASES = 8
 SparkDraftQualityFeedbackLabel = Literal[
     "sounds_like_me",
+    "out_of_context",
     "too_robotic",
     "too_formal",
     "too_much_policy",
@@ -113,6 +114,7 @@ def record_spark_draft_quality_feedback(
 
     if feedback_label not in {
         "sounds_like_me",
+        "out_of_context",
         "too_robotic",
         "too_formal",
         "too_much_policy",
