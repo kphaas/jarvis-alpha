@@ -74,6 +74,57 @@ PERSONALITY_MEMORY_BLOCKED = re.compile(
 RELATIONSHIP_MEMORY = re.compile(
     r"^(?P<label>[^:]{1,80}):\s*(?P<relationship>[^;]{1,80})(?:;.*)?$"
 )
+ANCHOR_STOPWORDS = frozenset(
+    {
+        "about",
+        "after",
+        "also",
+        "because",
+        "been",
+        "being",
+        "from",
+        "have",
+        "just",
+        "need",
+        "really",
+        "should",
+        "that",
+        "their",
+        "them",
+        "there",
+        "they",
+        "this",
+        "what",
+        "when",
+        "where",
+        "which",
+        "with",
+        "would",
+        "your",
+    }
+)
+LOGISTICS_GUARD_PATTERNS = (
+    ("drive", re.compile(r"\bdriv(?:e|ing)\b", re.IGNORECASE)),
+    ("pickup", re.compile(r"\bpick[\s-]?up\b", re.IGNORECASE)),
+    ("dropoff", re.compile(r"\bdrop[\s-]?off\b", re.IGNORECASE)),
+    ("uber", re.compile(r"\buber\b", re.IGNORECASE)),
+    ("walk", re.compile(r"\bwalk(?:ing)?\b", re.IGNORECASE)),
+    ("flight", re.compile(r"\bflight\b", re.IGNORECASE)),
+    ("fly", re.compile(r"\bfly(?:ing)?\b", re.IGNORECASE)),
+    ("plane", re.compile(r"\bplane\b", re.IGNORECASE)),
+    ("airport", re.compile(r"\bairport\b", re.IGNORECASE)),
+    ("train", re.compile(r"\btrain\b", re.IGNORECASE)),
+    ("tonight", re.compile(r"\btonight\b", re.IGNORECASE)),
+    ("tomorrow", re.compile(r"\btomorrow\b", re.IGNORECASE)),
+    ("today", re.compile(r"\btoday\b", re.IGNORECASE)),
+    ("morning", re.compile(r"\bmorning\b", re.IGNORECASE)),
+    ("afternoon", re.compile(r"\bafternoon\b", re.IGNORECASE)),
+    ("evening", re.compile(r"\bevening\b", re.IGNORECASE)),
+    ("midday", re.compile(r"\bmidday\b", re.IGNORECASE)),
+    ("noon", re.compile(r"\bnoon\b", re.IGNORECASE)),
+    ("early", re.compile(r"\bearly\b", re.IGNORECASE)),
+    ("late", re.compile(r"\blate\b", re.IGNORECASE)),
+)
 MAX_CONTEXT_MESSAGES = 50
 APPROVED_CHAT_GUID_ENV = "SPARK_IMESSAGE_APPROVED_CHAT_GUID"
 SPARK_DRAFT_LLM_PROVIDER_ENV = "SPARK_DRAFT_LLM_PROVIDER"
@@ -347,6 +398,14 @@ async def create_imessage_draft_proposal(
             llm_call=llm_call,
         )
 
+    draft_quality = _draft_quality_scorecard(
+        draft_text=draft_text,
+        guidance=guidance,
+        personality_memory_rows=personality_memory_rows or [],
+        target_memory_rows=target_memory_rows or [],
+        context=context,
+    )
+
     return SparkDraftProposal(
         principal_id=principal_id,
         draft_text=draft_text,
@@ -356,12 +415,7 @@ async def create_imessage_draft_proposal(
             context=context,
             personality_memory_rows=personality_memory_rows or [],
         ),
-        draft_quality=_draft_quality_scorecard(
-            draft_text=draft_text,
-            guidance=guidance,
-            personality_memory_rows=personality_memory_rows or [],
-            target_memory_rows=target_memory_rows or [],
-        ),
+        draft_quality=draft_quality,
         source_readiness=_source_readiness(records=records, selected_record=record),
         warnings=(
             "draft_only_no_send",
@@ -369,6 +423,7 @@ async def create_imessage_draft_proposal(
             "runtime_context_not_stored",
             *sensitivity.warnings,
             *engine_warnings,
+            *_quality_warning_codes(draft_quality),
         ),
         detected_sensitivity=tuple(sensitivity.detected_topics),
         blocked_sensitivity=tuple(sensitivity.blocked_topics),
@@ -440,6 +495,7 @@ def apply_draft_text_override(
             guidance=None,
             personality_memory_rows=[],
             target_memory_rows=[],
+            context=proposal.context,
         ),
         source_readiness=proposal.source_readiness,
         warnings=tuple(dict.fromkeys(warnings)),
@@ -657,6 +713,7 @@ def _draft_quality_scorecard(
     guidance: SparkVoiceGuidance | None,
     personality_memory_rows: list[dict[str, object]],
     target_memory_rows: list[dict[str, object]],
+    context: SparkDraftContext,
 ) -> SparkDraftQualityScorecard:
     text = draft_text.strip()
     lower = text.lower()
@@ -694,6 +751,15 @@ def _draft_quality_scorecard(
             and not re.search(r"\b(sincerely|best regards|dear\s+\w+)\b", lower),
             detail="Reads like a text, not an email template.",
         ),
+        _latest_inbound_anchor_check(
+            draft_text=text,
+            context=context,
+        ),
+        _no_invented_logistics_check(
+            draft_text=text,
+            context=context,
+            target_memory_rows=target_memory_rows,
+        ),
         SparkDraftQualityCheck(
             key="actionable",
             label="Clear next beat",
@@ -715,6 +781,20 @@ def _draft_quality_scorecard(
     else:
         verdict = "needs_edit"
     return SparkDraftQualityScorecard(score=score, verdict=verdict, checks=checks)
+
+
+def _quality_warning_codes(
+    scorecard: SparkDraftQualityScorecard,
+) -> tuple[str, ...]:
+    warning_codes: list[str] = []
+    for check in scorecard.checks:
+        if check.passed:
+            continue
+        if check.key == "latest_inbound_anchor":
+            warning_codes.append("review_latest_inbound_anchor")
+        elif check.key == "no_invented_logistics":
+            warning_codes.append("review_invented_logistics")
+    return tuple(warning_codes)
 
 
 def _robotic_wrapup(lower_text: str) -> bool:
@@ -750,6 +830,94 @@ def _has_concrete_next_beat(lower_text: str) -> bool:
             r")\b",
             lower_text,
         )
+    )
+
+
+def _latest_inbound_anchor_check(
+    *,
+    draft_text: str,
+    context: SparkDraftContext,
+) -> SparkDraftQualityCheck:
+    latest_inbound = _latest_inbound_message(context)
+    if not latest_inbound:
+        return SparkDraftQualityCheck(
+            key="latest_inbound_anchor",
+            label="Anchored to latest inbound",
+            passed=True,
+            detail="No inbound message was available, so Spark relied on the approved thread context.",
+        )
+
+    draft_lower = draft_text.casefold()
+    anchor_terms = _salient_anchor_terms(latest_inbound)
+    matched = [
+        term
+        for term in anchor_terms
+        if re.search(rf"\b{re.escape(term)}\b", draft_lower)
+    ]
+    if matched:
+        return SparkDraftQualityCheck(
+            key="latest_inbound_anchor",
+            label="Anchored to latest inbound",
+            passed=True,
+            detail=f"Carries forward latest inbound terms: {', '.join(matched[:3])}.",
+        )
+
+    has_acknowledgement = _starts_with_acknowledgement(draft_lower)
+    if _latest_question_or_request(context) and has_acknowledgement and _has_concrete_next_beat(
+        draft_lower
+    ):
+        return SparkDraftQualityCheck(
+            key="latest_inbound_anchor",
+            label="Anchored to latest inbound",
+            passed=True,
+            detail="Acknowledges the latest ask and gives a concrete next step.",
+        )
+
+    return SparkDraftQualityCheck(
+        key="latest_inbound_anchor",
+        label="Anchored to latest inbound",
+        passed=False,
+        detail="Latest inbound details do not clearly carry into the draft; review for context drift.",
+    )
+
+
+def _no_invented_logistics_check(
+    *,
+    draft_text: str,
+    context: SparkDraftContext,
+    target_memory_rows: list[dict[str, object]],
+) -> SparkDraftQualityCheck:
+    allowed_source = "\n".join(
+        [
+            *(message.body_text for message in context.messages),
+            *(
+                item.content
+                for item in target_memory_prompt_items(target_memory_rows)
+                if item.kind == "open_loop"
+            ),
+        ]
+    )
+    draft_terms = _present_logistics_terms(draft_text)
+    allowed_terms = _present_logistics_terms(allowed_source)
+    invented_terms = tuple(
+        term for term in draft_terms if term not in set(allowed_terms)
+    )
+    if not invented_terms:
+        return SparkDraftQualityCheck(
+            key="no_invented_logistics",
+            label="No invented logistics",
+            passed=True,
+            detail="Avoids introducing new transport or timing facts outside the reviewed thread.",
+        )
+    return SparkDraftQualityCheck(
+        key="no_invented_logistics",
+        label="No invented logistics",
+        passed=False,
+        detail=(
+            "Introduced logistics terms not found in the reviewed thread or target memory: "
+            + ", ".join(invented_terms[:4])
+            + "."
+        ),
     )
 
 
@@ -934,6 +1102,8 @@ def _spark_draft_system_prompt(
         "Do not invent or swap concrete facts like transport mode, timing, place, or plans unless the runtime thread context states them.",
         "If the other person asked a direct question or made a request, answer that before branching into anything else.",
         "Stay inside the active thread topic unless Ken explicitly wants to pivot.",
+        "Before finalizing, silently check that the draft still matches the latest inbound subject and concrete ask.",
+        "If you mention timing or transport, those details must already exist in the reviewed thread or selected-target memory.",
         f"Target voice: {', '.join(guidance.voice_markers)}.",
         f"Avoid: {', '.join(guidance.avoid_markers)}.",
         f"Recurring phrases, used sparingly: {', '.join(guidance.recurring_phrases)}.",
@@ -1255,6 +1425,38 @@ def _bounded_prompt_lines(
         if len(lines) >= max_lines:
             break
     return lines
+
+
+def _salient_anchor_terms(value: str, *, max_terms: int = 6) -> tuple[str, ...]:
+    terms: list[str] = []
+    seen: set[str] = set()
+    for raw in re.findall(r"\b[\w']+\b", value.casefold()):
+        if raw in seen or raw in ANCHOR_STOPWORDS:
+            continue
+        if len(raw) < 4 and not any(char.isdigit() for char in raw):
+            continue
+        seen.add(raw)
+        terms.append(raw)
+        if len(terms) >= max_terms:
+            break
+    return tuple(terms)
+
+
+def _starts_with_acknowledgement(value: str) -> bool:
+    return bool(
+        re.match(
+            r"(?i)^\s*(yep|yeah|yes|got it|okay|ok|fair enough|sounds good|for sure|no worries|no problem|perfect)\b",
+            value,
+        )
+    )
+
+
+def _present_logistics_terms(value: str) -> tuple[str, ...]:
+    present: list[str] = []
+    for label, pattern in LOGISTICS_GUARD_PATTERNS:
+        if pattern.search(value):
+            present.append(label)
+    return tuple(present)
 
 
 def _sha256_text(value: str) -> str:

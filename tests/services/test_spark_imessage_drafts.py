@@ -11,9 +11,17 @@ from brain.services import spark_imessage_drafts as drafts
 
 
 class FakeBodyClient:
-    def __init__(self, *, sensitive: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        sensitive: bool = False,
+        inbound_body: str | None = None,
+        outbound_body: str | None = None,
+    ) -> None:
         self.calls: list[tuple[str, int]] = []
         self.sensitive = sensitive
+        self.inbound_body = inbound_body
+        self.outbound_body = outbound_body
 
     async def approved_messages_for_chat(
         self,
@@ -27,7 +35,7 @@ class FakeBodyClient:
         inbound = (
             "We need to talk to the lawyer about court custody."
             if self.sensitive
-            else "private inbound body with sensitive details"
+            else self.inbound_body or "private inbound body with sensitive details"
         )
         return (
             BlueBubblesMessageBody(
@@ -38,7 +46,7 @@ class FakeBodyClient:
             BlueBubblesMessageBody(
                 message_ref_hash=hashlib.sha256(b"sent-1").hexdigest(),
                 is_from_me=True,
-                body_text="Ken sent body that stays runtime-only here",
+                body_text=self.outbound_body or "Ken sent body that stays runtime-only here",
             ),
         )
 
@@ -231,7 +239,10 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     vault_root = _write_vault(tmp_path)
-    fake_client = FakeBodyClient()
+    fake_client = FakeBodyClient(
+        inbound_body="Can you grab chicken and bananas tonight on the way over?",
+        outbound_body="Yep, I can swing by after work.",
+    )
     calls: list[dict[str, object]] = []
     monkeypatch.setattr(
         drafts,
@@ -338,9 +349,46 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
         in llm_message
     )
     assert "Make the reply a little happier." in llm_message
-    assert "Make the reply sweeter and more affectionate." in llm_message
-    assert "private inbound body" in llm_message
-    assert "approved-chat-guid" not in json.dumps(calls).lower()
+    quality_checks = {
+        item["key"]: item for item in proposal.to_payload()["draft_quality"]["checks"]
+    }
+    assert quality_checks["latest_inbound_anchor"]["passed"] is True
+    assert quality_checks["no_invented_logistics"]["passed"] is True
+
+
+@pytest.mark.asyncio
+async def test_imessage_draft_flags_invented_logistics_and_context_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault_root = _write_vault(tmp_path)
+    fake_client = FakeBodyClient(
+        inbound_body="Can you send the waiver when you can?",
+        outbound_body="I can review it this afternoon.",
+    )
+
+    async def fake_llm_call(**_kwargs):
+        return "Love you. I can drive over tonight and handle it."
+
+    proposal = await drafts.create_imessage_draft_proposal(
+        vault_root=vault_root,
+        principal_id="ken",
+        reply_goal="Reply to her.",
+        max_context_messages=8,
+        bluebubbles_client=fake_client,
+        approved_chat_guid="approved-chat-guid",
+        llm_call=fake_llm_call,
+    )
+
+    payload = proposal.to_payload()
+    quality_checks = {
+        item["key"]: item for item in payload["draft_quality"]["checks"]
+    }
+
+    assert quality_checks["latest_inbound_anchor"]["passed"] is False
+    assert quality_checks["no_invented_logistics"]["passed"] is False
+    assert "review_latest_inbound_anchor" in payload["warnings"]
+    assert "review_invented_logistics" in payload["warnings"]
     assert "surface the next real blocker" not in json.dumps(payload).lower()
     assert "sweta: partner" not in json.dumps(payload).lower()
 

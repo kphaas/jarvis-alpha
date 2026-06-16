@@ -298,6 +298,7 @@ def _quality_feedback_lessons(label: str) -> tuple[str, ...]:
         return (
             "Answer the latest inbound text before adding a new topic or explanation.",
             "Stay tightly grounded in the active thread subject instead of guessing at a different need.",
+            "Reuse the concrete ask or noun from the latest inbound text before pivoting.",
         )
     if label == "too_robotic":
         return ("Avoid assistant-like transitions and polished wrap-up language.",)
@@ -306,7 +307,10 @@ def _quality_feedback_lessons(label: str) -> tuple[str, ...]:
     if label == "too_much_policy":
         return ("Keep the reply personal and concrete, not process-heavy.",)
     if label == "too_wordy":
-        return ("Use fewer words and stop after the useful answer.",)
+        return (
+            "Use fewer words and stop after the useful answer.",
+            "Default to one or two short text-message sentences unless the thread truly needs more.",
+        )
     return ()
 
 
