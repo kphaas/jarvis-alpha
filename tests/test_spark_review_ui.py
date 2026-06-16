@@ -198,8 +198,8 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "sweta" in source
     assert "ryleigh" in source
     assert "sloane" in source
-    assert "meagan" in source
-    assert "mother" in source
+    assert "meagan" not in source
+    assert "mother" not in source
     assert "Review console" in source
     assert "Voice profile" in source
     assert "Draft target" in source
@@ -228,7 +228,6 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Recent thread" in source
     assert "Ken-like score" in source
     assert "Channel parity" in source
-    assert "Draft memory debug" in source
     assert "Memory scorecard" in source
     assert "include_context_preview" in source
     assert "include_memory_preview" in source
@@ -242,8 +241,8 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "runtime only" in source
     assert "newest first" in source
     assert "Edit learning" in source
-    assert "Sounds like me" in source
-    assert "Out of context" in source
+    assert "Keep this direction" in source
+    assert "Wrong context" in source
     assert "Too robotic" in source
     assert "Too formal" in source
     assert "Too wordy" in source
@@ -253,16 +252,16 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "regenerateWithFeedback" in source
     assert "Make the reply shorter and less wordy" in source
     assert "Pick up to 2 signals before retrying." in source
-    assert "Tone" in source
+    assert "Tone direction" in source
     assert "Send only after approval passes" in source
     assert "Send blocked until the outbox item is approved" in source
     assert "Happier" in source
     assert "Sweeter" in source
     assert "Relaxed" in source
+    assert "Serious" in source
+    assert "Confident" in source
     assert "Smart" in source
     assert "Blunt" in source
-    assert "Concise" in source
-    assert "Confused" in source
     assert "style_adjustments" in source
     assert "spark.draft.send" not in source
     assert "/message/text" not in source

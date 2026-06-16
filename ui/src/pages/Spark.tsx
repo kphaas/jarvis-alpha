@@ -54,8 +54,6 @@ const SPARK_PRINCIPALS = [
   { id: "sweta", label: "Sweta" },
   { id: "ryleigh", label: "Ryleigh" },
   { id: "sloane", label: "Sloane" },
-  { id: "meagan", label: "Meagan" },
-  { id: "mother", label: "Mother" },
 ];
 
 const FEEDBACK_BUTTONS: Array<{
@@ -63,8 +61,8 @@ const FEEDBACK_BUTTONS: Array<{
   value: SparkDraftFeedbackLabel;
   tone: "ok" | "warn";
 }> = [
-  { label: "Sounds like me", value: "sounds_like_me", tone: "ok" },
-  { label: "Out of context", value: "out_of_context", tone: "warn" },
+  { label: "Keep this direction", value: "sounds_like_me", tone: "ok" },
+  { label: "Wrong context", value: "out_of_context", tone: "warn" },
   { label: "Too robotic", value: "too_robotic", tone: "warn" },
   { label: "Too formal", value: "too_formal", tone: "warn" },
   { label: "Too wordy", value: "too_wordy", tone: "warn" },
@@ -75,10 +73,10 @@ const TONE_OPTIONS = [
   { label: "Happier", value: "Make the reply a little happier." },
   { label: "Sweeter", value: "Make the reply sweeter and more affectionate." },
   { label: "Relaxed", value: "Make the reply sound relaxed and natural." },
+  { label: "Serious", value: "Make the reply more serious and grounded." },
+  { label: "Confident", value: "Make the reply more confident and decisive." },
   { label: "Smart", value: "Make the reply sharper and more thoughtful." },
   { label: "Blunt", value: "Make the reply direct and blunt, but still respectful." },
-  { label: "Concise", value: "Make the reply concise and tighter." },
-  { label: "Confused", value: "Make the reply sound honestly confused and ask for clarity." },
 ];
 
 function feedbackDisplayLabels(values: SparkDraftFeedbackLabel[]) {
@@ -110,22 +108,6 @@ const DEFAULT_FAVORITE_TARGETS: SparkProtectedRelationship[] = [
     label: "Sloane",
     relationship: "child",
     sensitivity: "minor",
-    default_mode: "draft_only",
-    approval_required: true,
-  },
-  {
-    id: "meagan",
-    label: "Meagan",
-    relationship: "co-parent",
-    sensitivity: "custody",
-    default_mode: "draft_only",
-    approval_required: true,
-  },
-  {
-    id: "mother",
-    label: "Mother",
-    relationship: "parent",
-    sensitivity: "family",
     default_mode: "draft_only",
     approval_required: true,
   },
@@ -932,7 +914,7 @@ function DraftMemoryDebugPanel({
           <h2
             className={`text-xs font-mono uppercase tracking-widest ${muted}`}
           >
-            Draft memory debug
+            Draft memory
           </h2>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -1260,29 +1242,39 @@ function DetailDialog({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 overflow-y-auto bg-black/55 px-4 py-6 backdrop-blur-sm md:px-6 md:py-10"
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/65 px-4 py-6 backdrop-blur-md md:px-6 md:py-10"
     >
-      <div className="flex min-h-full items-start justify-center">
+      <div className="flex min-h-full items-start justify-center md:items-center">
         <motion.section
           initial={{ opacity: 0, y: 18, scale: 0.985 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 12, scale: 0.99 }}
           transition={{ duration: 0.18, ease: "easeOut" }}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-          className={`grid w-full max-w-6xl grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-2xl border ${border} ${panel} shadow-2xl`}
-      >
-          <div className={`border-b ${border} px-4 py-4 md:px-5 md:py-5`}>
-            <div className="flex items-start justify-between gap-4">
+          role="dialog"
+          aria-modal="true"
+          aria-label={title}
+          className={`grid w-full max-w-6xl grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[26px] border ${border} ${panel} shadow-[0_28px_90px_-28px_rgba(0,0,0,0.85)]`}
+        >
+          <div className={`border-b ${border}`}>
+            <div
+              className={`flex items-center justify-between gap-4 border-b px-4 py-3 ${border} md:px-5`}
+            >
+              <div className="flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-full bg-rose-400/80" />
+                <span className="h-2.5 w-2.5 rounded-full bg-amber-300/80" />
+                <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/80" />
+              </div>
+              <span className={`text-[10px] font-mono uppercase tracking-[0.24em] ${muted}`}>
+                Spark detail window
+              </span>
+              <div className="w-14 shrink-0" />
+            </div>
+            <div className="flex items-start justify-between gap-4 px-4 py-4 md:px-5 md:py-5">
               <div className="space-y-2">
-                <span className={`text-[10px] font-mono uppercase tracking-[0.24em] ${muted}`}>
-                  Review detail
-                </span>
                 <div>
                   <h2 className="text-xl font-bold">{title}</h2>
                   <p className={`mt-1 text-sm ${muted}`}>
-                    Review safely, inspect context, and keep send actions outside this panel.
+                    Review context and memory here. Keep send actions outside this window.
                   </p>
                 </div>
               </div>
@@ -1323,7 +1315,7 @@ function ToneSelect({
       <span
         className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
       >
-        Tone
+        Tone direction
       </span>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <select
@@ -1349,7 +1341,7 @@ function ToneSelect({
         )}
       </div>
       <p className={`mt-2 text-xs ${muted}`}>
-        Optional tone nudge for the next draft.
+        Optional adjustment for the next draft.
       </p>
     </label>
   );
@@ -1695,6 +1687,9 @@ export default function Spark() {
                   className={`h-11 w-20 rounded-lg border px-3 text-sm ${input}`}
                 />
               </div>
+              <p className={`mt-2 text-xs ${muted}`}>
+                Default to 8. Use 12 for messy logistics, 15 only when the thread spans multiple beats.
+              </p>
             </label>
             <ToneSelect
               border={border}

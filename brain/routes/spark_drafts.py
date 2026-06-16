@@ -41,6 +41,7 @@ from brain.services.spark_outbox_send import (
     send_approved_spark_imessage_outbox,
 )
 from brain.services.spark_personality_memory import fetch_personality_memory
+from brain.services.spark_persona_guardrails import is_core_family_target_label
 from brain.services.spark_target_memory import (
     fetch_target_memory,
     target_memory_prompt_items,
@@ -770,7 +771,9 @@ async def spark_imessage_draft_targets(
     targets = [
         _draft_target(record)
         for record in records
-        if record.source == "imessage" and record.decision_approved
+        if record.source == "imessage"
+        and record.decision_approved
+        and is_core_family_target_label(record.source_reference_label)
     ]
     logger.info(
         "spark_imessage_draft_targets_listed",
