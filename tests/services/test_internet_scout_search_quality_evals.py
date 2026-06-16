@@ -87,6 +87,7 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
     assert comparison.details["research_stop_criteria"]["require_cross_check"] is True
     assert comparison.details["accepted_hosts"] == ["brave.com", "perplexity.ai"]
 
+    # Official vendor comparisons should retain the vendor docs host in coverage.
     official_vendor_comparison = results[
         "official_vendor_comparison_prefers_provider_docs"
     ]
