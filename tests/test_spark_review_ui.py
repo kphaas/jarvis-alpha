@@ -14,6 +14,12 @@ SPARK_MEMORY_HOOK = REPO_ROOT / "ui" / "src" / "hooks" / "useSparkPersonalityMem
 SPARK_MEMORY_PANEL = (
     REPO_ROOT / "ui" / "src" / "components" / "spark" / "SparkMemoryReviewPanel.tsx"
 )
+SPARK_TARGET_MEMORY_HOOK = (
+    REPO_ROOT / "ui" / "src" / "hooks" / "useSparkTargetMemory.ts"
+)
+SPARK_TARGET_MEMORY_PANEL = (
+    REPO_ROOT / "ui" / "src" / "components" / "spark" / "SparkTargetMemoryPanel.tsx"
+)
 SPARK_TYPES = REPO_ROOT / "ui" / "src" / "types" / "spark.ts"
 APP_PAGE = REPO_ROOT / "ui" / "src" / "App.tsx"
 LAYOUT = REPO_ROOT / "ui" / "src" / "components" / "Layout.tsx"
@@ -40,6 +46,8 @@ def test_spark_review_ui_uses_draft_routes_and_api_wrapper() -> None:
             SPARK_GUARDRAIL_PANEL,
             SPARK_MEMORY_HOOK,
             SPARK_MEMORY_PANEL,
+            SPARK_TARGET_MEMORY_HOOK,
+            SPARK_TARGET_MEMORY_PANEL,
             SPARK_TYPES,
         )
     )
@@ -57,6 +65,11 @@ def test_spark_review_ui_uses_draft_routes_and_api_wrapper() -> None:
     assert "/v1/spark/persona/memory/approve" in source
     assert "/v1/spark/persona/memory/archive" in source
     assert "/v1/spark/persona/memory/reject" in source
+    assert "/v1/spark/persona/target-memory" in source
+    assert "/v1/spark/persona/target-memory/propose" in source
+    assert "/v1/spark/persona/target-memory/approve" in source
+    assert "/v1/spark/persona/target-memory/archive" in source
+    assert "/v1/spark/persona/target-memory/reject" in source
     assert "/v1/spark/drafts/imessage/feedback" in source
     assert "draft_text_override" in source
     assert "fetch(" not in source
@@ -73,6 +86,8 @@ def test_spark_review_ui_keeps_send_out_of_phase() -> None:
             SPARK_GUARDRAIL_PANEL,
             SPARK_MEMORY_HOOK,
             SPARK_MEMORY_PANEL,
+            SPARK_TARGET_MEMORY_HOOK,
+            SPARK_TARGET_MEMORY_PANEL,
             SPARK_TYPES,
         )
     )
@@ -112,6 +127,8 @@ def test_spark_guardrail_ui_is_editable_without_message_content() -> None:
             SPARK_GUARDRAIL_PANEL,
             SPARK_MEMORY_HOOK,
             SPARK_MEMORY_PANEL,
+            SPARK_TARGET_MEMORY_HOOK,
+            SPARK_TARGET_MEMORY_PANEL,
             SPARK_TYPES,
         )
     )
@@ -135,13 +152,21 @@ def test_spark_memory_review_ui_exposes_approval_backlog_without_raw_threads() -
             SPARK_PAGE,
             SPARK_MEMORY_HOOK,
             SPARK_MEMORY_PANEL,
+            SPARK_TARGET_MEMORY_HOOK,
+            SPARK_TARGET_MEMORY_PANEL,
             SPARK_TYPES,
         )
     )
 
     assert "SparkMemoryReviewPanel" in source
+    assert "SparkTargetMemoryPanel" in source
     assert "Ask Buddy" in source
     assert "Propose memory" in source
+    assert "Mark for memory update" in source
+    assert "Evidence hashes only" in source
+    assert "Open loop" in source
+    assert "Preference" in source
+    assert "Profile fact" in source
     assert "candidate_key_phrases" in source
     assert "calibration_lessons" in source
     assert "Edit lessons" in source
@@ -163,6 +188,8 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
             SPARK_HOOK,
             SPARK_MEMORY_HOOK,
             SPARK_MEMORY_PANEL,
+            SPARK_TARGET_MEMORY_HOOK,
+            SPARK_TARGET_MEMORY_PANEL,
             SPARK_TYPES,
         )
     )
@@ -195,6 +222,7 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Compare" in source
     assert "Thread context" in source
     assert "Draft memory" in source
+    assert "Target memory" in source
     assert "Drafting to" in source
     assert "Last thread message" in source
     assert "Recent thread" in source
@@ -206,6 +234,7 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "include_memory_preview" in source
     assert "context_preview" in source
     assert "personality_memory_preview" in source
+    assert "target_memory_preview" in source
     assert "conversation_summary" in source
     assert "draft_quality" in source
     assert "source_readiness" in source

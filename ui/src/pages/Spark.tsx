@@ -19,6 +19,7 @@ import {
   Shield,
   ShieldCheck,
   Sparkles,
+  StickyNote,
   ThumbsDown,
   ThumbsUp,
   UserRound,
@@ -29,6 +30,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { SparkGuardrailsPanel } from "../components/spark/SparkGuardrailsPanel";
 import { SparkMemoryReviewPanel } from "../components/spark/SparkMemoryReviewPanel";
+import { SparkTargetMemoryPanel } from "../components/spark/SparkTargetMemoryPanel";
 import {
   useSparkDraftReview,
   useSparkIMessageDraftTargets,
@@ -122,7 +124,12 @@ const DEFAULT_FAVORITE_TARGETS: SparkProtectedRelationship[] = [
   },
 ];
 
-type DetailPanel = "thread" | "memory-debug" | "guardrails" | "memory-review";
+type DetailPanel =
+  | "thread"
+  | "memory-debug"
+  | "guardrails"
+  | "memory-review"
+  | "target-memory";
 
 interface DraftTargetOption {
   id: string;
@@ -905,7 +912,8 @@ function DraftMemoryDebugPanel({
   okClass: string;
   warnClass: string;
 }) {
-  const memory = draft?.personality_memory_preview ?? [];
+  const voiceMemory = draft?.personality_memory_preview ?? [];
+  const targetMemory = draft?.target_memory_preview ?? [];
   const phrases = approval?.candidate_key_phrases ?? [];
   const lessons = approval?.calibration_lessons ?? [];
 
@@ -921,42 +929,80 @@ function DraftMemoryDebugPanel({
           </h2>
         </div>
         <div className="flex flex-wrap gap-2">
-          <StatusChip label={`${memory.length} used`} className={okClass} />
+          <StatusChip label={`${voiceMemory.length} voice`} className={okClass} />
+          <StatusChip label={`${targetMemory.length} target`} className={okClass} />
           <StatusChip label="silent in draft" className={warnClass} />
         </div>
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
         <div className="space-y-3">
-          <span
-            className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
-          >
-            Reviewed memory used
-          </span>
-          {memory.length ? (
-            memory.map((item, index) => (
-              <div
-                key={`${item.kind}-${item.evidence_ref_hash ?? index}`}
-                className={`rounded-lg border p-3 ${border}`}
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span
-                    className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${okClass}`}
-                  >
-                    {labelize(item.kind)}
-                  </span>
-                  <span className={`text-[10px] font-mono uppercase ${muted}`}>
-                    {labelize(item.source)}
-                  </span>
+          <div className="space-y-3">
+            <span
+              className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+            >
+              Voice profile memory
+            </span>
+            {voiceMemory.length ? (
+              voiceMemory.map((item, index) => (
+                <div
+                  key={`voice-${item.kind}-${item.evidence_ref_hash ?? index}`}
+                  className={`rounded-lg border p-3 ${border}`}
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${okClass}`}
+                    >
+                      {labelize(item.kind)}
+                    </span>
+                    <span className={`text-[10px] font-mono uppercase ${muted}`}>
+                      {labelize(item.source)}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm leading-relaxed">{item.content}</p>
                 </div>
-                <p className="mt-2 text-sm leading-relaxed">{item.content}</p>
+              ))
+            ) : (
+              <div className={`rounded-lg border p-4 text-sm ${border} ${muted}`}>
+                No reviewed voice memory attached to this draft yet
               </div>
-            ))
-          ) : (
-            <div className={`rounded-lg border p-4 text-sm ${border} ${muted}`}>
-              No reviewed memory attached to this draft yet
-            </div>
-          )}
+            )}
+          </div>
+
+          <div className="space-y-3">
+            <span
+              className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+            >
+              Selected target memory
+            </span>
+            {targetMemory.length ? (
+              targetMemory.map((item, index) => (
+                <div
+                  key={`target-${item.kind}-${item.evidence_ref_hash ?? index}`}
+                  className={`rounded-lg border p-3 ${border}`}
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${warnClass}`}
+                    >
+                      {labelize(item.kind)}
+                    </span>
+                    <span className={`text-[10px] font-mono uppercase ${muted}`}>
+                      {labelize(item.source)}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm leading-relaxed">{item.content}</p>
+                  {item.reason && (
+                    <p className={`mt-2 text-xs ${muted}`}>{item.reason}</p>
+                  )}
+                </div>
+              ))
+            ) : (
+              <div className={`rounded-lg border p-4 text-sm ${border} ${muted}`}>
+                No selected-target memory was used for this draft
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="space-y-3">
@@ -1629,6 +1675,19 @@ export default function Spark() {
               okClass={okClass}
               warnClass={warnClass}
             />
+            <button
+              type="button"
+              onClick={() => setDetailPanel("target-memory")}
+              disabled={!selectedDraftTarget?.ready}
+              className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-4 text-sm font-bold transition ${border} ${
+                selectedDraftTarget?.ready
+                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                  : "opacity-45"
+              }`}
+            >
+              <StickyNote className="h-4 w-4" />
+              Mark for memory update
+            </button>
             {state.draftError && (
               <ErrorLine
                 text="Draft route unavailable"
@@ -1947,7 +2006,7 @@ export default function Spark() {
           </div>
           <StatusChip label="click to inspect" className={warnClass} />
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <DetailOverviewCard
             title="Thread context"
             detail="See the exact last messages Spark used for this draft."
@@ -1960,10 +2019,20 @@ export default function Spark() {
           />
           <DetailOverviewCard
             title="Draft memory"
-            detail="Inspect reviewed personality memory used silently in the prompt."
-            metric={`${state.draft?.personality_memory_preview.length ?? 0} used`}
+            detail="Inspect reviewed voice memory and selected-target memory used silently in the prompt."
+            metric={`${state.draft?.personality_memory_preview.length ?? 0} voice / ${state.draft?.target_memory_preview.length ?? 0} target`}
             icon={<Brain className="h-4 w-4 text-emerald-400" />}
             onOpen={() => setDetailPanel("memory-debug")}
+            border={border}
+            muted={muted}
+            okClass={okClass}
+          />
+          <DetailOverviewCard
+            title="Target memory"
+            detail="Review open loops, preferences, and profile facts for the selected recipient."
+            metric={selectedDraftTarget?.label ?? "pick target"}
+            icon={<StickyNote className="h-4 w-4 text-emerald-400" />}
+            onOpen={() => setDetailPanel("target-memory")}
             border={border}
             muted={muted}
             okClass={okClass}
@@ -2029,6 +2098,30 @@ export default function Spark() {
             muted={muted}
             okClass={okClass}
             warnClass={warnClass}
+          />
+        </DetailDialog>
+      )}
+
+      {detailPanel === "target-memory" && (
+        <DetailDialog
+          title="Target memory"
+          onClose={() => setDetailPanel(null)}
+          border={border}
+          panel={panel}
+          muted={muted}
+        >
+          <SparkTargetMemoryPanel
+            border={border}
+            panel={panel}
+            input={input}
+            muted={muted}
+            okClass={okClass}
+            warnClass={warnClass}
+            errorClass={errorClass}
+            principalId={principalId}
+            approvalId={selectedDraftTarget?.approvalId ?? null}
+            targetLabel={selectedDraftTarget?.label ?? null}
+            preview={targetPreviewState.data ?? null}
           />
         </DetailDialog>
       )}
