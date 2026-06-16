@@ -512,10 +512,10 @@ def _official_hosts_for_target(target: str) -> list[str]:
 
 
 def _intent_for_query(query: str) -> ResearchIntent:
-    if any(marker in query for marker in _OFFICIAL_MARKERS):
-        return "official_docs"
     if any(marker in query for marker in _COMPARISON_MARKERS):
         return "comparison"
+    if any(marker in query for marker in _OFFICIAL_MARKERS):
+        return "official_docs"
     if any(marker in query for marker in _TROUBLESHOOTING_MARKERS):
         return "troubleshooting"
     if any(marker in query for marker in _FRESHNESS_MARKERS):
@@ -524,8 +524,10 @@ def _intent_for_query(query: str) -> ResearchIntent:
 
 
 def _authority_required(*, query: str, intent: ResearchIntent) -> bool:
-    return intent in {"official_docs", "current_fact"} or any(
-        marker in query for marker in _PRIMARY_SOURCE_MARKERS
+    return (
+        intent in {"official_docs", "current_fact"}
+        or any(marker in query for marker in _OFFICIAL_MARKERS)
+        or any(marker in query for marker in _PRIMARY_SOURCE_MARKERS)
     )
 
 

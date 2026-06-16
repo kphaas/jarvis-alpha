@@ -388,6 +388,72 @@ def test_local_llm_rejects_claim_not_supported_by_citation_text():
     assert response.research_report.unsupported_claims == [
         "The official OpenAI API reference says the monthly price is $20."
     ]
+
+
+def test_local_llm_accepts_official_vendor_docs_for_comparison_query():
+    request = InternetScoutRequest(
+        query=(
+            "Find official documentation pages for Brave Search API and "
+            "Perplexity API, then compare them for building an AI web research agent."
+        ),
+    )
+    brave_source = build_source_reference(
+        url="https://brave.com/search/api",
+        content="Brave Search API documentation.",
+    )
+    perplexity_source = build_source_reference(
+        url="https://docs.perplexity.ai/guides/search-api",
+        content="Perplexity Search API documentation.",
+    )
+    packet = build_evidence_packet(
+        request=request,
+        sources=[brave_source, perplexity_source],
+        claims=[
+            EvidenceClaim(
+                claim="Brave Search provides a Search API for web results.",
+                source_url=brave_source.url,
+                citation_text="Brave Search provides a Search API for web results.",
+                confidence="high",
+            ),
+            EvidenceClaim(
+                claim="Perplexity provides a Search API for web research.",
+                source_url=perplexity_source.url,
+                citation_text="Perplexity provides a Search API for web research.",
+                confidence="high",
+            ),
+        ],
+    )
+    stored = InternetScoutStoredResponse(
+        request_id=uuid4(),
+        plan=InternetScoutOrchestrator().plan(request),
+        evidence=packet,
+    )
+
+    response = build_local_llm_response(stored)
+
+    assert [citation.host for citation in response.citations] == [
+        "brave.com",
+        "docs.perplexity.ai",
+    ]
+    assert [citation.source_quality for citation in response.citations] == [
+        "official",
+        "official",
+    ]
+    assert response.quality.status == "supported"
+    assert response.quality.official_source_required is True
+    assert response.quality.official_source_count == 2
+    assert response.synthesis.answerable is True
+    assert response.synthesis.required_behavior == "answer_with_citations"
+    assert response.research_report.answerability == "answerable"
+    assert response.research_report.source_hosts == [
+        "brave.com",
+        "docs.perplexity.ai",
+    ]
+    assert set(response.research_report.required_source_hosts) >= {
+        "brave.com",
+        "perplexity.ai",
+        "docs.perplexity.ai",
+    }
     assert response.research_report.contradiction_count == 0
 
 

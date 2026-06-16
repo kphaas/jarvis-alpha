@@ -36,12 +36,14 @@ _OFFICIAL_HOSTS_BY_TERM: dict[str, tuple[str, ...]] = {
     "github": ("github.com", "docs.github.com"),
     "stripe": ("stripe.com", "docs.stripe.com"),
     "anthropic": ("anthropic.com", "docs.anthropic.com"),
+    "brave": ("brave.com", "search.brave.com", "api.search.brave.com"),
     "google": ("google.com", "developers.google.com", "cloud.google.com"),
     "microsoft": ("microsoft.com", "learn.microsoft.com"),
     "apple": ("apple.com", "developer.apple.com"),
     "aws": ("aws.amazon.com", "docs.aws.amazon.com"),
     "amazon": ("amazon.com", "aws.amazon.com", "docs.aws.amazon.com"),
     "cloudflare": ("cloudflare.com", "developers.cloudflare.com"),
+    "perplexity": ("perplexity.ai", "docs.perplexity.ai"),
 }
 _LOW_CONFIDENCE_HOSTS = (
     "community.openai.com",
