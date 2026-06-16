@@ -154,6 +154,32 @@ async def test_imessage_draft_can_return_runtime_context_preview_when_requested(
 
 
 @pytest.mark.asyncio
+async def test_imessage_target_preview_loads_last_messages_without_drafting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault_root = _write_vault(tmp_path)
+    fake_client = FakeBodyClient()
+    monkeypatch.setenv(drafts.SPARK_DRAFT_LLM_ENABLED_ENV, "false")
+
+    preview = await drafts.load_imessage_target_preview(
+        vault_root=vault_root,
+        principal_id="ken",
+        approval_id="ken-imessage-approved-20260605-001",
+        max_context_messages=8,
+        bluebubbles_client=fake_client,
+        approved_chat_guid="approved-chat-guid",
+    )
+
+    assert preview.record.approval_id == "ken-imessage-approved-20260605-001"
+    assert preview.conversation_summary.reply_target_label == "Sweta"
+    assert preview.context.principal_sent_messages == 1
+    assert preview.context.runtime_context_messages == 1
+    assert preview.source_readiness[0].status == "live_runtime_context"
+    assert fake_client.calls == [("approved-chat-guid", 8)]
+
+
+@pytest.mark.asyncio
 async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
     tmp_path: Path,
 ) -> None:
@@ -170,6 +196,10 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
         principal_id="ken",
         reply_goal="Tell her I am on it",
         max_context_messages=10,
+        style_adjustments=(
+            "Make the reply a little happier.",
+            "Make the reply sweeter and more affectionate.",
+        ),
         bluebubbles_client=fake_client,
         approved_chat_guid="approved-chat-guid",
         personality_memory_rows=[
@@ -214,6 +244,9 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
     assert "Never mention memory, sensitivity labels" in system_prompt
     assert "do not mention feedback or calibration" in system_prompt
     llm_message = str(calls[0]["user_message"])
+    assert "Style adjustments Ken selected" in llm_message
+    assert "Make the reply a little happier." in llm_message
+    assert "Make the reply sweeter and more affectionate." in llm_message
     assert "private inbound body" in llm_message
     assert "approved-chat-guid" not in json.dumps(calls).lower()
     assert "surface the next real blocker" not in json.dumps(payload).lower()

@@ -3,6 +3,7 @@ export interface SparkIMessageDraftRequest {
   approval_id?: string | null;
   reply_goal?: string | null;
   max_context_messages: number;
+  style_adjustments?: string[];
   include_context_preview?: boolean;
   context_preview_limit?: number;
   include_memory_preview?: boolean;
@@ -23,6 +24,25 @@ export interface SparkIMessageDraftTargetsResponse {
   targets: SparkIMessageDraftTarget[];
 }
 
+export interface SparkIMessageTargetPreviewResponse {
+  principal_id: string;
+  approval_id: string;
+  label: string;
+  channel: string;
+  body_access: boolean;
+  durable_storage_allowed: boolean;
+  context_order: string;
+  context_messages_read: number;
+  principal_sent_messages: number;
+  runtime_context_messages: number;
+  approval_ref_hash: string;
+  source_reference_hash: string;
+  chat_guid_hash: string;
+  conversation_summary: SparkIMessageDraftConversationSummary;
+  source_readiness: SparkIMessageDraftSourceReadiness[];
+  context_preview: SparkIMessageDraftContextMessage[];
+}
+
 export interface SparkIMessageDraftApprovalRequest extends SparkIMessageDraftRequest {
   draft_text_override?: string | null;
 }
@@ -31,7 +51,8 @@ export type SparkDraftFeedbackLabel =
   | "sounds_like_me"
   | "too_robotic"
   | "too_formal"
-  | "too_much_policy";
+  | "too_much_policy"
+  | "too_wordy";
 
 export interface SparkIMessageDraftFeedbackRequest {
   principal_id: string;

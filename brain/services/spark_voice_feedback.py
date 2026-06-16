@@ -30,6 +30,7 @@ SparkDraftQualityFeedbackLabel = Literal[
     "too_robotic",
     "too_formal",
     "too_much_policy",
+    "too_wordy",
 ]
 
 
@@ -115,6 +116,7 @@ def record_spark_draft_quality_feedback(
         "too_robotic",
         "too_formal",
         "too_much_policy",
+        "too_wordy",
     }:
         return SparkDraftQualityFeedbackResult(
             recorded=False,

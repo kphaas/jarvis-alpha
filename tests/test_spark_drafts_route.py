@@ -73,8 +73,11 @@ def _stub_personality_memory(
 
 def test_spark_imessage_draft_route_is_classified_t2_write() -> None:
     target_classes = classify_route("GET", "/v1/spark/drafts/imessage/targets")
+    preview_classes = classify_route("GET", "/v1/spark/drafts/imessage/target-preview")
     assert target_classes == ["read", "security_read"]
     assert determine_risk_tier(target_classes) == "T2"
+    assert preview_classes == ["read", "security_read"]
+    assert determine_risk_tier(preview_classes) == "T2"
 
     classes = classify_route("POST", "/v1/spark/drafts/imessage")
 
@@ -219,6 +222,89 @@ async def test_spark_imessage_draft_targets_list_approved_threads_safely(
 
 
 @pytest.mark.asyncio
+async def test_spark_imessage_target_preview_returns_last_eight_safely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    personality_rows = [
+        {
+            "kind": "relationship",
+            "content": "Sweta: partner; default hybrid_review; approval required True.",
+        }
+    ]
+    monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+    _stub_personality_memory(monkeypatch, personality_rows)
+
+    async def fake_preview(**kwargs):
+        assert kwargs == {
+            "principal_id": "ken",
+            "approval_id": "ken-imessage-approved-20260605-001",
+            "max_context_messages": 8,
+            "personality_memory_rows": personality_rows,
+        }
+        proposal = _proposal()
+        return spark_drafts.SparkIMessageTargetPreview(
+            record=SparkApprovedSourceRecord(
+                principal_id="ken",
+                source="imessage",
+                approval_id="ken-imessage-approved-20260605-001",
+                source_reference_hash="source-hash",
+                source_reference_label="Sweta",
+                source_reference_path=None,
+                source_sha256=None,
+                thread_kind="one_to_one",
+                requested_max_messages=200,
+                requested_date_window=None,
+                relationship_marked=True,
+                relationship_approved=True,
+                legal_marked=False,
+                decision_approved=True,
+            ),
+            context=proposal.context,
+            conversation_summary=proposal.conversation_summary,
+            source_readiness=proposal.source_readiness,
+        )
+
+    monkeypatch.setattr(spark_drafts, "load_imessage_target_preview", fake_preview)
+
+    response = await spark_drafts.spark_imessage_target_preview(
+        _request(),
+        principal_id="ken",
+        approval_id="ken-imessage-approved-20260605-001",
+        limit=50,
+        _="user",
+    )
+
+    payload = response.model_dump()
+    assert payload["label"] == "Sweta"
+    assert payload["context_messages_read"] == 2
+    assert payload["conversation_summary"]["last_message_preview"] == (
+        "private inbound body"
+    )
+    assert payload["context_preview"] == [
+        {
+            "index": 1,
+            "speaker": "Other",
+            "is_from_me": False,
+            "message_ref_hash": "msg-1",
+            "body_text": "private inbound body",
+        },
+        {
+            "index": 2,
+            "speaker": "Ken",
+            "is_from_me": True,
+            "message_ref_hash": "msg-2",
+            "body_text": "ken sent private body",
+        },
+    ]
+    logs = json.dumps(fake_logger.infos).lower()
+    assert "spark_imessage_target_preview_loaded" in logs
+    assert "private inbound body" not in logs
+    assert "ken sent private body" not in logs
+    assert "sweta" not in logs
+
+
+@pytest.mark.asyncio
 async def test_spark_imessage_draft_returns_review_payload_and_safe_logs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -238,6 +324,7 @@ async def test_spark_imessage_draft_returns_review_payload_and_safe_logs(
             "approval_id": None,
             "reply_goal": "Tell her I am on it",
             "max_context_messages": 10,
+            "style_adjustments": [],
             "personality_memory_rows": personality_rows,
         }
         return _proposal()
@@ -290,6 +377,7 @@ async def test_spark_imessage_draft_returns_review_payload_and_safe_logs(
                 "source_reference_hash": "source-hash",
                 "chat_guid_hash": "chat-hash",
                 "draft_engine": "deterministic_v0",
+                "style_adjustment_count": 0,
                 "detected_sensitivity": [],
                 "blocked_sensitivity_count": 0,
                 "actor_sub": "spark-service",
@@ -332,6 +420,7 @@ async def test_spark_imessage_draft_can_return_runtime_review_context(
             "approval_id": None,
             "reply_goal": "Show me context",
             "max_context_messages": 10,
+            "style_adjustments": [],
             "personality_memory_rows": personality_rows,
         }
         return _proposal()
@@ -446,6 +535,7 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
             "approval_id": None,
             "reply_goal": "Tell her I am on it",
             "max_context_messages": 10,
+            "style_adjustments": [],
             "personality_memory_rows": [],
         }
         return _proposal()
@@ -545,7 +635,7 @@ async def test_spark_imessage_draft_feedback_records_label_only(
         return spark_drafts.SparkDraftQualityFeedbackResult(
             recorded=True,
             feedback_ref_hash="feedback-hash",
-            feedback_label="too_formal",
+            feedback_label="too_wordy",
         )
 
     monkeypatch.setattr(
@@ -558,7 +648,7 @@ async def test_spark_imessage_draft_feedback_records_label_only(
         _request(),
         spark_drafts.SparkIMessageDraftFeedbackRequest(
             principal_id="ken",
-            feedback_label="too_formal",
+            feedback_label="too_wordy",
             draft_version="spark-imessage-draft/v0",
             approval_ref_hash="approval-hash",
             source_reference_hash="source-hash",
@@ -569,11 +659,11 @@ async def test_spark_imessage_draft_feedback_records_label_only(
 
     assert response.status == "recorded"
     assert response.feedback_recorded is True
-    assert response.feedback_label == "too_formal"
+    assert response.feedback_label == "too_wordy"
     assert feedback_calls == [
         {
             "principal_id": "ken",
-            "feedback_label": "too_formal",
+            "feedback_label": "too_wordy",
             "draft_version": "spark-imessage-draft/v0",
             "approval_ref_hash": "approval-hash",
             "source_reference_hash": "source-hash",
@@ -581,7 +671,7 @@ async def test_spark_imessage_draft_feedback_records_label_only(
         }
     ]
     logs = json.dumps(fake_logger.infos).lower()
-    assert "too_formal" in logs
+    assert "too_wordy" in logs
     assert "draft_text" not in logs
     assert "private inbound body" not in logs
 

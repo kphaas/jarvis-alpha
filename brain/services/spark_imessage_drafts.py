@@ -134,6 +134,14 @@ class SparkDraftSourceReadiness:
 
 
 @dataclass(frozen=True, slots=True)
+class SparkIMessageTargetPreview:
+    record: SparkApprovedSourceRecord
+    context: SparkDraftContext
+    conversation_summary: SparkDraftConversationSummary
+    source_readiness: tuple[SparkDraftSourceReadiness, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SparkPersonalityMemoryPromptItem:
     kind: str
     content: str
@@ -273,6 +281,7 @@ async def create_imessage_draft_proposal(
     reply_goal: str | None = None,
     approval_id: str | None = None,
     max_context_messages: int = DEFAULT_MAX_CONTEXT_MESSAGES,
+    style_adjustments: tuple[str, ...] | list[str] | None = None,
     vault_root: str | Path | None = None,
     bluebubbles_client: SparkIMessageBodyClient | None = None,
     approved_chat_guid: str | None = None,
@@ -316,6 +325,7 @@ async def create_imessage_draft_proposal(
             personality_memory_rows=personality_memory_rows or [],
             context=context,
             sensitivity_warnings=sensitivity.warnings,
+            style_adjustments=_clean_style_adjustments(style_adjustments),
             llm_call=llm_call,
         )
 
@@ -344,6 +354,49 @@ async def create_imessage_draft_proposal(
         detected_sensitivity=tuple(sensitivity.detected_topics),
         blocked_sensitivity=tuple(sensitivity.blocked_topics),
         draft_engine=draft_engine,
+    )
+
+
+async def load_imessage_target_preview(
+    *,
+    principal_id: str = "ken",
+    approval_id: str | None = None,
+    max_context_messages: int = 8,
+    vault_root: str | Path | None = None,
+    bluebubbles_client: SparkIMessageBodyClient | None = None,
+    approved_chat_guid: str | None = None,
+    personality_memory_rows: list[dict[str, object]] | None = None,
+) -> SparkIMessageTargetPreview:
+    """Load a safe runtime-only preview for an approved iMessage draft target."""
+
+    root = _vault_root(vault_root)
+    records = load_approved_voice_sources(root, principal_id)
+    record = _select_approved_imessage_record(records, approval_id=approval_id)
+    context = await load_approved_imessage_context(
+        record=record,
+        max_context_messages=max_context_messages,
+        bluebubbles_client=bluebubbles_client,
+        approved_chat_guid=approved_chat_guid,
+    )
+    sensitivity = _scan_context_sensitivity(
+        context=context,
+        record=record,
+        reply_goal=None,
+    )
+    if sensitivity.blocked:
+        raise SparkDraftPolicyError(
+            "sensitivity_blocked:" + ",".join(sensitivity.blocked_topics)
+        )
+    rows = personality_memory_rows or []
+    return SparkIMessageTargetPreview(
+        record=record,
+        context=context,
+        conversation_summary=_conversation_summary(
+            record=record,
+            context=context,
+            personality_memory_rows=rows,
+        ),
+        source_readiness=_source_readiness(records=records, selected_record=record),
     )
 
 
@@ -696,6 +749,7 @@ async def _draft_from_context(
     personality_memory_rows: list[dict[str, object]],
     context: SparkDraftContext,
     sensitivity_warnings: tuple[str, ...],
+    style_adjustments: tuple[str, ...],
     llm_call: SparkLLMCall | None,
 ) -> tuple[str, str, tuple[str, ...]]:
     if not _env_bool(SPARK_DRAFT_LLM_ENABLED_ENV, default=True):
@@ -713,6 +767,7 @@ async def _draft_from_context(
             personality_memory_rows=personality_memory_rows,
             context=context,
             sensitivity_warnings=sensitivity_warnings,
+            style_adjustments=style_adjustments,
             llm_call=llm_call,
         )
         draft = _clean_llm_draft(raw)
@@ -737,6 +792,7 @@ async def _call_spark_llm(
     personality_memory_rows: list[dict[str, object]],
     context: SparkDraftContext,
     sensitivity_warnings: tuple[str, ...],
+    style_adjustments: tuple[str, ...],
     llm_call: SparkLLMCall | None,
 ) -> str:
     provider = os.environ.get(SPARK_DRAFT_LLM_PROVIDER_ENV, "anthropic").strip()
@@ -755,11 +811,17 @@ async def _call_spark_llm(
             reply_goal=reply_goal,
             context=context,
             sensitivity_warnings=sensitivity_warnings,
+            style_adjustments=style_adjustments,
         ),
         max_tokens=700,
         temperature=0.35,
         timeout_s=timeout_s,
-        idempotency_key=_draft_idempotency_key(context, reply_goal, auto_context),
+        idempotency_key=_draft_idempotency_key(
+            context,
+            reply_goal,
+            auto_context,
+            style_adjustments,
+        ),
     )
 
 
@@ -899,6 +961,7 @@ def _spark_draft_user_message(
     reply_goal: str | None,
     context: SparkDraftContext,
     sensitivity_warnings: tuple[str, ...],
+    style_adjustments: tuple[str, ...] = (),
 ) -> str:
     lines = [
         f"Principal: {context.principal_id}",
@@ -906,9 +969,20 @@ def _spark_draft_user_message(
         "Channel: iMessage text",
         "Context order: newest first",
         f"Sensitivity labels: {', '.join(sensitivity_warnings) or 'none'}",
-        "",
-        "Runtime thread context:",
     ]
+    if style_adjustments:
+        lines.extend(
+            [
+                "Style adjustments Ken selected:",
+                *[f"- {adjustment}" for adjustment in style_adjustments],
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "Runtime thread context:",
+        ]
+    )
     for index, message in enumerate(context.messages, start=1):
         speaker = "Ken" if message.is_from_me else "Other"
         body = _clip_context_message(message.body_text)
@@ -1030,6 +1104,25 @@ def _clean_reply_goal(value: str | None) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def _clean_style_adjustments(
+    values: tuple[str, ...] | list[str] | None,
+) -> tuple[str, ...]:
+    if not values:
+        return ()
+    clean_values: list[str] = []
+    for value in values:
+        clean = re.sub(r"\s+", " ", str(value)).strip()
+        if not clean:
+            continue
+        clean = clean[:80]
+        if clean.casefold() in {item.casefold() for item in clean_values}:
+            continue
+        clean_values.append(clean)
+        if len(clean_values) >= 3:
+            break
+    return tuple(clean_values)
+
+
 def _ensure_sentence(value: str) -> str:
     clean = value.strip()
     if not clean:
@@ -1066,6 +1159,7 @@ def _draft_idempotency_key(
     context: SparkDraftContext,
     reply_goal: str | None,
     auto_context: AutoSparkPromptContext,
+    style_adjustments: tuple[str, ...] = (),
 ) -> str:
     raw = "|".join(
         [
@@ -1075,6 +1169,7 @@ def _draft_idempotency_key(
             context.chat_guid_hash,
             auto_context.prompt_sha256,
             _sha256_text(_clean_reply_goal(reply_goal)),
+            _sha256_text("|".join(style_adjustments)),
         ]
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
