@@ -72,6 +72,11 @@ const STYLE_ADJUSTMENTS = [
   { label: "More relaxed", value: "Make the reply sound more relaxed and natural." },
 ];
 
+function feedbackDisplayLabel(value: SparkDraftFeedbackLabel | null) {
+  if (!value) return null;
+  return FEEDBACK_BUTTONS.find((item) => item.value === value)?.label ?? value;
+}
+
 const DEFAULT_FAVORITE_TARGETS: SparkProtectedRelationship[] = [
   {
     id: "sweta",
@@ -1118,6 +1123,7 @@ export default function Spark() {
   const previewContextCount = targetPreviewState.data?.context_preview.length ?? 0;
   const hasDraftText = Boolean(state.draftText.trim());
   const hasRecordedFeedback = Boolean(state.feedback?.feedback_recorded);
+  const selectedFeedbackLabel = feedbackDisplayLabel(state.lastFeedbackLabel);
   const hasApproval = Boolean(state.approval?.queue_id);
   const hasOutbox = Boolean(state.approval?.outbox_id);
   const hasSendResult = Boolean(state.approvedSend);
@@ -1167,6 +1173,8 @@ export default function Spark() {
       label: "Rate or edit",
       detail: hasRecordedFeedback
         ? "Feedback recorded"
+        : selectedFeedbackLabel
+          ? `${selectedFeedbackLabel} selected`
         : hasDraftText
           ? "Rate it or edit the text"
           : "Generate a draft first",
@@ -1561,6 +1569,39 @@ export default function Spark() {
                 Feedback recorded
               </div>
             )}
+            <div className={`rounded-lg border p-3 ${border}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div
+                    className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
+                  >
+                    Feedback retry
+                  </div>
+                  <p className={`mt-1 text-xs ${muted}`}>
+                    {selectedFeedbackLabel
+                      ? `${selectedFeedbackLabel} will shape the next draft`
+                      : "Rate the draft, then regenerate with that feedback"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={state.regenerateWithFeedback}
+                  disabled={!state.canRegenerateWithFeedback}
+                  className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-xs font-bold transition ${border} ${
+                    state.canRegenerateWithFeedback
+                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                      : "opacity-45"
+                  }`}
+                >
+                  {state.draftLoading ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                  Try again with feedback
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
