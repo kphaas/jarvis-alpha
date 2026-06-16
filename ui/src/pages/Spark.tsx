@@ -128,6 +128,15 @@ interface DraftTargetOption {
   ready: boolean;
 }
 
+type CockpitStepStatus = "complete" | "active" | "blocked" | "idle" | "error";
+
+interface CockpitStep {
+  id: string;
+  label: string;
+  detail: string;
+  status: CockpitStepStatus;
+}
+
 function tone(isDark: boolean, variant: "ok" | "warn" | "error") {
   if (variant === "ok") {
     return isDark
@@ -231,6 +240,20 @@ function StatusChip({
   );
 }
 
+function stepTone(
+  status: CockpitStepStatus,
+  okClass: string,
+  warnClass: string,
+  errorClass: string,
+  border: string,
+) {
+  if (status === "complete") return okClass;
+  if (status === "active") return warnClass;
+  if (status === "error") return errorClass;
+  if (status === "blocked") return `${warnClass} opacity-75`;
+  return `${border} opacity-70`;
+}
+
 function MetricRow({
   label,
   value,
@@ -318,6 +341,7 @@ function ConversationBriefPanel({
   selectedPrincipalLabel,
   selectedTargetLabel,
   selectedTargetReady,
+  onRefreshPreview,
   border,
   panel,
   muted,
@@ -331,6 +355,7 @@ function ConversationBriefPanel({
   selectedPrincipalLabel: string;
   selectedTargetLabel: string | null;
   selectedTargetReady: boolean;
+  onRefreshPreview: () => void;
   border: string;
   panel: string;
   muted: string;
@@ -373,6 +398,16 @@ function ConversationBriefPanel({
           >
             {statusLabel}
           </span>
+          {selectedTargetReady && (
+            <button
+              type="button"
+              onClick={onRefreshPreview}
+              className={`inline-flex min-h-8 items-center gap-1.5 rounded-md border px-2 text-[10px] font-mono uppercase ${okClass}`}
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Refresh preview
+            </button>
+          )}
           {!summary && selectedTargetLabel && !selectedTargetReady && (
             <span
               className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${warnClass}`}
@@ -404,6 +439,60 @@ function ConversationBriefPanel({
                 "Pick a ready target to load the last 8 texts before drafting."}
           </p>
         </div>
+      </div>
+    </section>
+  );
+}
+
+function ReplyCockpitStepper({
+  steps,
+  border,
+  panel,
+  muted,
+  okClass,
+  warnClass,
+  errorClass,
+}: {
+  steps: CockpitStep[];
+  border: string;
+  panel: string;
+  muted: string;
+  okClass: string;
+  warnClass: string;
+  errorClass: string;
+}) {
+  return (
+    <section className={`rounded-xl border ${border} ${panel} p-4`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <ListChecks className="h-4 w-4 text-emerald-400" />
+          <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>
+            Reply cockpit
+          </h2>
+        </div>
+        <StatusChip label="approval before send" className={warnClass} />
+      </div>
+      <div className="mt-4 grid gap-2 md:grid-cols-3 2xl:grid-cols-6">
+        {steps.map((step, index) => {
+          const className = stepTone(
+            step.status,
+            okClass,
+            warnClass,
+            errorClass,
+            border,
+          );
+          return (
+            <div key={step.id} className={`rounded-lg border p-3 ${className}`}>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-bold">{step.label}</span>
+                <span className="font-mono text-[10px]">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+              </div>
+              <p className="mt-2 min-h-10 text-xs leading-relaxed">{step.detail}</p>
+            </div>
+          );
+        })}
       </div>
     </section>
   );
@@ -1022,9 +1111,100 @@ export default function Spark() {
     principalId,
     selectedDraftTarget?.approvalId ?? null,
   );
+  const reloadTargetPreview = targetPreviewState.refetch;
   const targetReady = draftTargets.length === 0 || Boolean(selectedDraftTarget?.ready);
   const displayContext =
     state.draft?.context_preview ?? targetPreviewState.data?.context_preview ?? [];
+  const previewContextCount = targetPreviewState.data?.context_preview.length ?? 0;
+  const hasDraftText = Boolean(state.draftText.trim());
+  const hasRecordedFeedback = Boolean(state.feedback?.feedback_recorded);
+  const hasApproval = Boolean(state.approval?.queue_id);
+  const hasOutbox = Boolean(state.approval?.outbox_id);
+  const hasSendResult = Boolean(state.approvedSend);
+  const workflowSteps: CockpitStep[] = [
+    {
+      id: "target",
+      label: "Pick target",
+      detail: selectedDraftTarget?.ready
+        ? `${selectedDraftTarget.label} is selected`
+        : selectedDraftTarget
+          ? `${selectedDraftTarget.label} needs an approved source`
+          : "Choose who this reply is for",
+      status: selectedDraftTarget?.ready ? "complete" : "active",
+    },
+    {
+      id: "thread",
+      label: "Review thread",
+      detail: targetPreviewState.isLoading
+        ? "Loading the last 8 texts"
+        : targetPreviewState.error
+          ? "Thread preview could not load"
+          : previewContextCount
+            ? `${previewContextCount} recent texts loaded`
+            : "Open a ready target first",
+      status: targetPreviewState.error
+        ? "error"
+        : previewContextCount
+          ? "complete"
+          : selectedDraftTarget?.ready
+            ? "active"
+            : "blocked",
+    },
+    {
+      id: "generate",
+      label: "Generate",
+      detail: state.draftLoading
+        ? "Spark is drafting"
+        : state.draft
+          ? "Draft is ready to edit"
+          : targetReady
+            ? "Generate after checking context"
+            : "Target source required",
+      status: state.draft ? "complete" : targetReady ? "active" : "blocked",
+    },
+    {
+      id: "rate",
+      label: "Rate or edit",
+      detail: hasRecordedFeedback
+        ? "Feedback recorded"
+        : hasDraftText
+          ? "Rate it or edit the text"
+          : "Generate a draft first",
+      status: hasRecordedFeedback
+        ? "complete"
+        : hasDraftText
+          ? "active"
+          : "blocked",
+    },
+    {
+      id: "approval",
+      label: "Approval",
+      detail: hasApproval
+        ? `Queued ${state.approval?.approval_status ?? "pending"}`
+        : hasDraftText
+          ? "Submit approval to create outbox"
+          : "Draft text required",
+      status: hasApproval ? "complete" : hasDraftText ? "active" : "blocked",
+    },
+    {
+      id: "send",
+      label: "Send",
+      detail: hasSendResult
+        ? `Send result: ${state.approvedSend?.outbox_status ?? "done"}`
+        : hasOutbox
+          ? "Send only after approval passes"
+          : hasApproval
+            ? "Outbox not recorded"
+            : "Approval required first",
+      status: hasSendResult
+        ? "complete"
+        : state.approvedSendError
+          ? "error"
+          : hasOutbox
+            ? "active"
+            : "blocked",
+    },
+  ];
 
   function toggleStyleAdjustment(adjustment: string) {
     state.setStyleAdjustments((current) =>
@@ -1125,6 +1305,9 @@ export default function Spark() {
         selectedPrincipalLabel={selectedPrincipal.label}
         selectedTargetLabel={selectedDraftTarget?.label ?? null}
         selectedTargetReady={Boolean(selectedDraftTarget?.ready)}
+        onRefreshPreview={() => {
+          void reloadTargetPreview();
+        }}
         border={border}
         panel={panel}
         muted={muted}
@@ -1137,6 +1320,16 @@ export default function Spark() {
           Approval queue {activeApproval}
         </div>
       )}
+
+      <ReplyCockpitStepper
+        steps={workflowSteps}
+        border={border}
+        panel={panel}
+        muted={muted}
+        okClass={okClass}
+        warnClass={warnClass}
+        errorClass={errorClass}
+      />
 
       <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[320px_minmax(0,1fr)_340px]">
         <section className={`rounded-xl border ${border} ${panel} p-4`}>
@@ -1486,7 +1679,7 @@ export default function Spark() {
                 )}
                 {state.approvedSendError && (
                   <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
-                    Send blocked
+                    Send blocked until the outbox item is approved
                   </div>
                 )}
               </div>
