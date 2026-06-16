@@ -36,6 +36,8 @@ export const SPARK_COMPARISON_SCENARIOS = [
 const FEEDBACK_RETRY_ADJUSTMENTS: Record<SparkDraftFeedbackLabel, string> = {
   sounds_like_me:
     "Keep this direction, but make the reply a little more natural and specific.",
+  out_of_context:
+    "The previous draft missed the thread context. Re-anchor on the last few texts and answer what was actually said.",
   too_robotic:
     "Make the reply less robotic, less assistant-like, and more like Ken texting.",
   too_formal:
@@ -48,12 +50,12 @@ const FEEDBACK_RETRY_ADJUSTMENTS: Record<SparkDraftFeedbackLabel, string> = {
 
 function mergeStyleAdjustments(
   selected: string[],
-  feedbackLabel: SparkDraftFeedbackLabel | null,
+  feedbackLabels: SparkDraftFeedbackLabel[],
 ) {
-  const feedbackAdjustment = feedbackLabel
-    ? FEEDBACK_RETRY_ADJUSTMENTS[feedbackLabel]
-    : null;
-  return [...(feedbackAdjustment ? [feedbackAdjustment] : []), ...selected]
+  return [
+    ...feedbackLabels.map((feedbackLabel) => FEEDBACK_RETRY_ADJUSTMENTS[feedbackLabel]),
+    ...selected,
+  ]
     .filter((item, index, all) => item.trim() && all.indexOf(item) === index)
     .slice(0, 3);
 }
@@ -133,8 +135,12 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
   const [maxContextMessages, setMaxContextMessages] = useState(8);
   const [styleAdjustments, setStyleAdjustments] = useState<string[]>([]);
   const [draftText, setDraftText] = useState("");
-  const [lastFeedbackLabel, setLastFeedbackLabel] =
-    useState<SparkDraftFeedbackLabel | null>(null);
+  const [selectedFeedbackLabels, setSelectedFeedbackLabels] = useState<
+    SparkDraftFeedbackLabel[]
+  >([]);
+  const [lastSubmittedFeedbackLabels, setLastSubmittedFeedbackLabels] = useState<
+    SparkDraftFeedbackLabel[]
+  >([]);
 
   const draftMutation = useMutation({
     mutationFn: (request: SparkIMessageDraftRequest) =>
@@ -190,25 +196,36 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
   });
 
   const feedbackMutation = useMutation({
-    mutationFn: (feedbackLabel: SparkDraftFeedbackLabel) => {
+    mutationFn: async (feedbackLabels: SparkDraftFeedbackLabel[]) => {
       if (!draftMutation.data) {
         throw new Error("no_draft_for_feedback");
       }
-      const request: SparkIMessageDraftFeedbackRequest = {
-        principal_id: principalId,
-        feedback_label: feedbackLabel,
-        draft_version: draftMutation.data.draft_version,
-        approval_ref_hash: draftMutation.data.approval_ref_hash,
-        source_reference_hash: draftMutation.data.source_reference_hash,
-        chat_guid_hash: draftMutation.data.chat_guid_hash,
-      };
-      return apiJson<SparkIMessageDraftFeedbackResponse>(
-        "/v1/spark/drafts/imessage/feedback",
-        {
-          method: "POST",
-          body: JSON.stringify(request),
-        },
+      const responses = await Promise.all(
+        feedbackLabels.map((feedbackLabel) => {
+          const request: SparkIMessageDraftFeedbackRequest = {
+            principal_id: principalId,
+            feedback_label: feedbackLabel,
+            draft_version: draftMutation.data!.draft_version,
+            approval_ref_hash: draftMutation.data!.approval_ref_hash,
+            source_reference_hash: draftMutation.data!.source_reference_hash,
+            chat_guid_hash: draftMutation.data!.chat_guid_hash,
+          };
+          return apiJson<SparkIMessageDraftFeedbackResponse>(
+            "/v1/spark/drafts/imessage/feedback",
+            {
+              method: "POST",
+              body: JSON.stringify(request),
+            },
+          );
+        }),
       );
+      return {
+        feedbackLabels,
+        responses,
+      };
+    },
+    onSuccess: (result) => {
+      setLastSubmittedFeedbackLabels(result.feedbackLabels);
     },
   });
 
@@ -231,7 +248,8 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     approvalMutation.reset();
     feedbackMutation.reset();
     approvedSendMutation.reset();
-    setLastFeedbackLabel(null);
+    setSelectedFeedbackLabels([]);
+    setLastSubmittedFeedbackLabels([]);
     draftMutation.mutate(
       baseRequest(
         principalId,
@@ -243,19 +261,20 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     );
   }
 
-  function regenerateWithFeedback() {
-    if (!lastFeedbackLabel) {
+  async function regenerateWithFeedback() {
+    if (!selectedFeedbackLabels.length) {
       throw new Error("no_feedback_for_retry");
     }
     approvalMutation.reset();
     approvedSendMutation.reset();
+    await feedbackMutation.mutateAsync(selectedFeedbackLabels);
     draftMutation.mutate(
       baseRequest(
         principalId,
         approvalId,
         replyGoal,
         maxContextMessages,
-        mergeStyleAdjustments(styleAdjustments, lastFeedbackLabel),
+        mergeStyleAdjustments(styleAdjustments, selectedFeedbackLabels),
       ),
     );
   }
@@ -281,9 +300,16 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     approvalMutation.mutate(request);
   }
 
-  function recordFeedback(feedbackLabel: SparkDraftFeedbackLabel) {
-    setLastFeedbackLabel(feedbackLabel);
-    feedbackMutation.mutate(feedbackLabel);
+  function toggleFeedbackLabel(feedbackLabel: SparkDraftFeedbackLabel) {
+    setSelectedFeedbackLabels((current) => {
+      if (current.includes(feedbackLabel)) {
+        return current.filter((item) => item !== feedbackLabel);
+      }
+      if (current.length >= 2) {
+        return current;
+      }
+      return [...current, feedbackLabel];
+    });
   }
 
   function sendApprovedOutbox() {
@@ -297,7 +323,8 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
   function resetDraftSurface() {
     setDraftText("");
     setStyleAdjustments([]);
-    setLastFeedbackLabel(null);
+    setSelectedFeedbackLabels([]);
+    setLastSubmittedFeedbackLabels([]);
     draftMutation.reset();
     comparisonMutation.reset();
     approvalMutation.reset();
@@ -320,7 +347,10 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     generateDraft,
     regenerateWithFeedback,
     canRegenerateWithFeedback:
-      Boolean(lastFeedbackLabel) && Boolean(draftText.trim()) && !draftMutation.isPending,
+      Boolean(selectedFeedbackLabels.length) &&
+      Boolean(draftText.trim()) &&
+      !draftMutation.isPending &&
+      !feedbackMutation.isPending,
     comparisonDrafts: comparisonMutation.data ?? [],
     comparisonLoading: comparisonMutation.isPending,
     comparisonError: comparisonMutation.error,
@@ -331,9 +361,10 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     submitForApproval,
     canSubmitForApproval:
       Boolean(draftText.trim()) && !approvalMutation.isPending,
-    recordFeedback,
-    feedback: feedbackMutation.data ?? null,
-    lastFeedbackLabel,
+    toggleFeedbackLabel,
+    feedback: feedbackMutation.data?.responses ?? [],
+    selectedFeedbackLabels,
+    lastSubmittedFeedbackLabels,
     feedbackLoading: feedbackMutation.isPending,
     feedbackError: feedbackMutation.error,
     approvedSend: approvedSendMutation.data ?? null,
@@ -343,6 +374,10 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     canSendApprovedOutbox:
       Boolean(approvalMutation.data?.outbox_id) && !approvedSendMutation.isPending,
     resetDraftSurface,
+    canSelectMoreFeedback: selectedFeedbackLabels.length < 2,
+    feedbackRecorded:
+      lastSubmittedFeedbackLabels.length > 0 &&
+      Boolean(feedbackMutation.data?.responses.every((item) => item.feedback_recorded)),
   };
 }
 

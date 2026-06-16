@@ -43,6 +43,33 @@ class FakeBodyClient:
         )
 
 
+def test_select_approved_imessage_record_limits_targets_to_core_family() -> None:
+    with pytest.raises(
+        drafts.SparkDraftPolicyError, match="no approved iMessage source found"
+    ):
+        drafts._select_approved_imessage_record(
+            (
+                drafts.SparkApprovedSourceRecord(
+                    principal_id="ken",
+                    source="imessage",
+                    approval_id="ken-imessage-approved-mother",
+                    source_reference_hash="mother-hash",
+                    source_reference_label="Mother",
+                    source_reference_path=None,
+                    source_sha256=None,
+                    thread_kind="one_to_one",
+                    requested_max_messages=20,
+                    requested_date_window=None,
+                    relationship_marked=True,
+                    relationship_approved=True,
+                    legal_marked=False,
+                    decision_approved=True,
+                ),
+            ),
+            approval_id=None,
+        )
+
+
 @pytest.mark.asyncio
 async def test_imessage_draft_uses_runtime_context_without_exposing_thread_text(
     tmp_path: Path,
@@ -201,10 +228,19 @@ async def test_imessage_target_preview_loads_last_messages_without_drafting(
 @pytest.mark.asyncio
 async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     vault_root = _write_vault(tmp_path)
     fake_client = FakeBodyClient()
     calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        drafts,
+        "load_recent_feedback_lessons",
+        lambda **_kwargs: (
+            "Answer the latest inbound text before adding a new topic or explanation.",
+            "Use fewer words and stop after the useful answer.",
+        ),
+    )
 
     async def fake_llm_call(**kwargs):
         calls.append(kwargs)
@@ -271,11 +307,15 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
     assert "Principal voice files win" in system_prompt
     assert "Approved Spark personality memory" in system_prompt
     assert "Reviewed edit lessons" in system_prompt
+    assert "Recent retry lessons from Spark feedback" in system_prompt
+    assert "Use fewer words and stop after the useful answer." in system_prompt
     assert "Selected-target memory" in system_prompt
     assert "Prefer shorter text drafts when Spark over-explains." in system_prompt
     assert "Sweta is Ken's partner." in system_prompt
     assert "Send the waiver tonight." in system_prompt
     assert "She prefers quick confirmation texts." in system_prompt
+    assert "Anchor the reply to the latest inbound thread context" in system_prompt
+    assert "Do not invent or swap concrete facts like transport mode" in system_prompt
     assert "default hybrid_review" not in system_prompt
     assert "approval required" not in system_prompt
     assert "require Spark review" not in system_prompt
@@ -286,7 +326,17 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
         in system_prompt
     )
     llm_message = str(calls[0]["user_message"])
+    assert (
+        "Use the reply goal only as a drafting objective. Do not let it override the actual thread facts."
+        in llm_message
+    )
+    assert "Latest inbound message to answer:" in llm_message
+    assert "Ground the reply in that latest inbound message." in llm_message
     assert "Style adjustments Ken selected" in llm_message
+    assert (
+        "Answer the newest inbound text first before adding extra explanation."
+        in llm_message
+    )
     assert "Make the reply a little happier." in llm_message
     assert "Make the reply sweeter and more affectionate." in llm_message
     assert "private inbound body" in llm_message

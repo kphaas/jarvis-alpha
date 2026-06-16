@@ -13,9 +13,10 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from brain.services.spark_imessage_drafts import SparkDraftProposal
+if TYPE_CHECKING:
+    from brain.services.spark_imessage_drafts import SparkDraftProposal
 
 FEEDBACK_VERSION = "spark-draft-edit-feedback/v0.1"
 QUALITY_FEEDBACK_VERSION = "spark-draft-quality-feedback/v0.1"
@@ -25,8 +26,10 @@ JARVIS_FEEDBACK_ROOT_ENV = "JARVIS_PERSONALITY_FEEDBACK_ROOT"
 FEEDBACK_FILENAME = "imessage_draft_edits.jsonl"
 MAX_STORED_DRAFT_CHARS = 4000
 MAX_KEY_PHRASES = 8
+MAX_RECENT_FEEDBACK_LESSONS = 6
 SparkDraftQualityFeedbackLabel = Literal[
     "sounds_like_me",
+    "out_of_context",
     "too_robotic",
     "too_formal",
     "too_much_policy",
@@ -113,6 +116,7 @@ def record_spark_draft_quality_feedback(
 
     if feedback_label not in {
         "sounds_like_me",
+        "out_of_context",
         "too_robotic",
         "too_formal",
         "too_much_policy",
@@ -167,6 +171,49 @@ def record_spark_draft_quality_feedback(
         feedback_ref_hash=feedback_ref_hash,
         feedback_label=feedback_label,
     )
+
+
+def load_recent_feedback_lessons(
+    *,
+    principal_id: str,
+    vault_root: str | Path | None = None,
+    max_lessons: int = MAX_RECENT_FEEDBACK_LESSONS,
+) -> tuple[str, ...]:
+    """Return recent prompt-safe retry lessons from edit and label feedback."""
+
+    safe_principal = _safe_token(principal_id, fallback="unknown", limit=64)
+    if safe_principal == "unknown":
+        return ()
+
+    path = _feedback_path(vault_root, safe_principal)
+    if not path.exists():
+        return ()
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ()
+
+    lessons: list[str] = []
+    seen: set[str] = set()
+    for raw_line in reversed(lines):
+        if not raw_line.strip():
+            continue
+        try:
+            row = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if str(row.get("principal_id") or "") != safe_principal:
+            continue
+        for lesson in _lessons_from_feedback_row(row):
+            key = lesson.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            lessons.append(lesson)
+            if len(lessons) >= max_lessons:
+                return tuple(lessons)
+    return tuple(lessons)
 
 
 def extract_candidate_key_phrases(text: str) -> tuple[str, ...]:
@@ -225,6 +272,42 @@ def extract_calibration_lessons(
         if lesson.casefold() not in {item.casefold() for item in deduped}:
             deduped.append(lesson)
     return tuple(deduped[:5])
+
+
+def _lessons_from_feedback_row(row: dict[str, Any]) -> tuple[str, ...]:
+    version = str(row.get("feedback_version") or "")
+    if version == FEEDBACK_VERSION:
+        return tuple(
+            lesson
+            for lesson in row.get("calibration_lessons", [])
+            if isinstance(lesson, str) and lesson.strip()
+        )
+    if version == QUALITY_FEEDBACK_VERSION:
+        return _quality_feedback_lessons(
+            str(row.get("feedback_label") or "").strip().lower()
+        )
+    return ()
+
+
+def _quality_feedback_lessons(label: str) -> tuple[str, ...]:
+    if label == "sounds_like_me":
+        return (
+            "When a draft is close, keep the same casual specificity instead of rewriting into a new tone.",
+        )
+    if label == "out_of_context":
+        return (
+            "Answer the latest inbound text before adding a new topic or explanation.",
+            "Stay tightly grounded in the active thread subject instead of guessing at a different need.",
+        )
+    if label == "too_robotic":
+        return ("Avoid assistant-like transitions and polished wrap-up language.",)
+    if label == "too_formal":
+        return ("Prefer casual texting phrasing over email-style wording.",)
+    if label == "too_much_policy":
+        return ("Keep the reply personal and concrete, not process-heavy.",)
+    if label == "too_wordy":
+        return ("Use fewer words and stop after the useful answer.",)
+    return ()
 
 
 def _feedback_record(

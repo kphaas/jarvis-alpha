@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from pydantic import ValidationError
 
 from brain.services.spark_persona_guardrails import (
@@ -19,13 +21,11 @@ def test_default_spark_guardrails_start_draft_only_and_no_auto_send() -> None:
     assert "legal" in state.protected_topics
     assert "medical" in state.protected_topics
     assert "minor" in state.protected_topics
-    assert {item.id for item in state.protected_relationships} >= {
+    assert [item.id for item in state.protected_relationships] == [
+        "sweta",
         "ryleigh",
         "sloane",
-        "sweta",
-        "meagan",
-        "mother",
-    }
+    ]
     assert "robotic" in state.calibration.avoid_voice
     assert "fair enough" in state.calibration.signature_phrases
 
@@ -56,6 +56,31 @@ def test_spark_guardrails_save_and_load_round_trip(tmp_path) -> None:
     assert loaded.active_mode == "hybrid_review"
     assert loaded.auto_send_enabled is False
     assert loaded.updated_at == saved.updated_at
+
+
+def test_spark_guardrails_strip_non_core_relationships_on_load(tmp_path) -> None:
+    path = tmp_path / "guardrails.json"
+    payload = default_spark_guardrails().model_dump(mode="json")
+    payload["protected_relationships"].append(
+        {
+            "id": "mother",
+            "label": "Mother",
+            "relationship": "parent",
+            "sensitivity": "family",
+            "default_mode": "draft_only",
+            "approval_required": True,
+            "notes": None,
+        }
+    )
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_spark_guardrails(path=path)
+
+    assert [item.id for item in loaded.protected_relationships] == [
+        "sweta",
+        "ryleigh",
+        "sloane",
+    ]
 
 
 def test_spark_guardrails_load_missing_path_returns_default(tmp_path) -> None:
