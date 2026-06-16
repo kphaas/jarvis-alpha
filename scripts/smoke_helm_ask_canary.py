@@ -94,26 +94,27 @@ def main() -> int:
     )
     if args.suite or args.extended:
         cases = DEFAULT_CANARY_CASES + (EXTENDED_CANARY_CASES if args.extended else ())
-        suite_thread_id = args.thread_id
+        suite_thread_ids: list[str] = []
         try:
-            evaluation, suite_thread_id = _run_suite(
+            evaluation, suite_thread_ids = _run_suite(
                 base_url=base_url,
                 token=token,
                 cases=cases,
-                thread_id=suite_thread_id,
+                thread_id=args.thread_id,
                 project_id=args.project_id,
+                archive_case_threads=not args.thread_id and not args.keep_thread,
             )
         finally:
-            if suite_thread_id and not args.thread_id and not args.keep_thread:
+            if suite_thread_ids and not args.thread_id and not args.keep_thread:
                 try:
-                    _archive_thread(
+                    _archive_threads(
                         base_url=base_url,
                         token=token,
-                        thread_id=suite_thread_id,
+                        thread_ids=suite_thread_ids,
                     )
                 except Exception as exc:
                     print(
-                        f"warning: failed to archive canary thread: {exc}",
+                        f"warning: failed to archive canary thread(s): {exc}",
                         file=sys.stderr,
                     )
         print(json.dumps(evaluation.as_dict(), sort_keys=True))
@@ -139,20 +140,31 @@ def _run_suite(
     cases: tuple[AskCanaryCase, ...],
     thread_id: str | None,
     project_id: int | None,
-) -> tuple[AskCanarySuiteEvaluation, str | None]:
+    archive_case_threads: bool = False,
+) -> tuple[AskCanarySuiteEvaluation, list[str]]:
     case_payloads: list[tuple[AskCanaryCase, list[dict[str, object]]]] = []
-    current_thread_id = thread_id
+    created_thread_ids: list[str] = []
     for case in cases:
         payloads = _run_case(
             base_url=base_url,
             token=token,
             case=case,
-            thread_id=current_thread_id,
+            thread_id=thread_id,
             project_id=project_id,
         )
-        current_thread_id = current_thread_id or _thread_id_from_payloads(payloads)
+        if thread_id is None:
+            payload_thread_id = _thread_id_from_payloads(payloads)
+            if payload_thread_id:
+                if archive_case_threads:
+                    _archive_thread(
+                        base_url=base_url,
+                        token=token,
+                        thread_id=payload_thread_id,
+                    )
+                else:
+                    created_thread_ids.append(payload_thread_id)
         case_payloads.append((case, payloads))
-    return evaluate_ask_canary_suite(case_payloads), current_thread_id
+    return evaluate_ask_canary_suite(case_payloads), created_thread_ids
 
 
 def _run_case(
@@ -278,6 +290,20 @@ def _archive_thread(
         timeout=30,
     ):
         return
+
+
+def _archive_threads(
+    *,
+    base_url: str,
+    token: str,
+    thread_ids: list[str],
+) -> None:
+    for thread_id in dict.fromkeys(thread_ids):
+        _archive_thread(
+            base_url=base_url,
+            token=token,
+            thread_id=thread_id,
+        )
 
 
 def _call_sse(

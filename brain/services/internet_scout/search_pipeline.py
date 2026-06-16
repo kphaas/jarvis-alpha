@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from brain.services.internet_scout.official_hosts import (
+    host_matches_required,
+    required_official_host_groups,
+)
 from brain.services.internet_scout.models import (
     GatewaySearchResponse,
     GatewaySearchResult,
@@ -91,10 +95,15 @@ def rank_search_results(
         for candidate in candidates.values()
         if candidate.source_quality != "rejected"
     ]
-    return sorted(
+    sorted_ranked = sorted(
         ranked,
         key=lambda item: (-item.score, item.result.host, item.result.url),
-    )[:max_results]
+    )
+    return _select_ranked_results(
+        query=request.query,
+        ranked=sorted_ranked,
+        max_results=max_results,
+    )
 
 
 def _ranked_candidate(candidate: _Candidate) -> RankedSearchResult:
@@ -123,3 +132,41 @@ def _ranked_candidate(candidate: _Candidate) -> RankedSearchResult:
 
 def _normalize_url_key(url: str) -> str:
     return url.strip().rstrip("/").lower()
+
+
+def _select_ranked_results(
+    *,
+    query: str | None,
+    ranked: list[RankedSearchResult],
+    max_results: int,
+) -> list[RankedSearchResult]:
+    if max_results <= 0 or not ranked:
+        return []
+
+    selected: list[RankedSearchResult] = []
+    selected_urls: set[str] = set()
+
+    # Official comparison queries should extract at least one candidate per
+    # required vendor group before filling remaining slots by score.
+    for group in required_official_host_groups(query):
+        if len(selected) >= max_results:
+            break
+        for item in ranked:
+            normalized_url = _normalize_url_key(item.result.url)
+            if normalized_url in selected_urls:
+                continue
+            if host_matches_required(item.result.host, group):
+                selected.append(item)
+                selected_urls.add(normalized_url)
+                break
+
+    for item in ranked:
+        if len(selected) >= max_results:
+            break
+        normalized_url = _normalize_url_key(item.result.url)
+        if normalized_url in selected_urls:
+            continue
+        selected.append(item)
+        selected_urls.add(normalized_url)
+
+    return selected

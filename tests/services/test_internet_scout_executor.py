@@ -133,6 +133,50 @@ class FailingFanoutGatewayClient(FakeGatewayClient):
         return await super().search(query=query, count=count, provider=provider)
 
 
+class ComparisonCoverageGatewayClient(FakeGatewayClient):
+    async def search(
+        self,
+        *,
+        query: str,
+        count: int = 5,
+        provider: str = "auto",
+    ) -> GatewaySearchResponse:
+        self.search_calls.append({"query": query, "count": count, "provider": provider})
+        results = [
+            {
+                "title": "OpenAI Responses API",
+                "url": "https://platform.openai.com/docs/api-reference/responses",
+                "host": "platform.openai.com",
+                "description": "The OpenAI Responses API reference is on platform.openai.com.",
+                "risk_markers": [],
+            },
+            {
+                "title": "OpenAI API reference",
+                "url": "https://platform.openai.com/docs/api-reference",
+                "host": "platform.openai.com",
+                "description": "The OpenAI API reference is on platform.openai.com.",
+                "risk_markers": [],
+            },
+        ]
+        if "anthropic" in query.lower():
+            results.insert(
+                1,
+                {
+                    "title": "Anthropic Messages API",
+                    "url": "https://docs.anthropic.com/en/api/messages",
+                    "host": "docs.anthropic.com",
+                    "description": "The Anthropic Messages API documentation is on docs.anthropic.com.",
+                    "risk_markers": [],
+                },
+            )
+        return GatewaySearchResponse(
+            provider=provider,
+            query_hash="a" * 64,
+            fetched_at=datetime(2026, 6, 16, 13, 0, tzinfo=UTC),
+            results=results[:count],
+        )
+
+
 @pytest.mark.asyncio
 async def test_executor_uses_extract_gateway_path_for_extract_tool():
     gateway = FakeGatewayClient()
@@ -189,6 +233,34 @@ async def test_executor_uses_research_plan_for_deep_search():
     assert all(
         "search result" not in claim.citation_text for claim in packet.claims[:4]
     )
+
+
+@pytest.mark.asyncio
+async def test_executor_extracts_official_comparison_vendor_coverage():
+    gateway = ComparisonCoverageGatewayClient()
+    executor = InternetScoutExecutor(gateway_client=gateway)
+    request = InternetScoutRequest(
+        query=(
+            "Compare the OpenAI Responses API and Anthropic Messages API for "
+            "building a chat gateway. Use official vendor docs only and cite them."
+        ),
+        tool_hint=InternetTool.SEARCH,
+        max_pages=4,
+        requester="alpha_chat.deep_research",
+    )
+    plan = InternetScoutOrchestrator().plan(request)
+
+    decision, packet = await executor.execute(request, plan=plan)
+
+    assert decision.tool == InternetTool.SEARCH
+    extracted_hosts = {
+        urlparse(call["url"]).hostname for call in gateway.extract_calls
+    }
+    assert "platform.openai.com" in extracted_hosts
+    assert "docs.anthropic.com" in extracted_hosts
+    assert {"platform.openai.com", "docs.anthropic.com"} <= {
+        source.host for source in packet.sources
+    }
 
 
 @pytest.mark.asyncio
