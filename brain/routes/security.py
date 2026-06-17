@@ -99,6 +99,8 @@ PORCHLIGHT_REQUIRED_CHECKS = (
     "dependency_cve_scan",
     "malware_scan_repo_freshness",
     "code_malware_scan",
+    "secrets_leakage_scan",
+    "outbound_egress_drift",
     "host_integrity",
     "runtime_exposure",
     "sweep_tls_report_intake",

