@@ -6,6 +6,10 @@ def test_at0_mail_routes_are_classified() -> None:
         "read",
         "security_read",
     ]
+    assert classify_route("GET", "/v1/at0-mail/health") == [
+        "read",
+        "security_read",
+    ]
     assert classify_route("GET", "/v1/at0-mail/messages") == [
         "read",
         "security_read",
