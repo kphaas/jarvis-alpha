@@ -50,6 +50,11 @@ class SkillCostManifest(BaseModel):
 class SkillEgressManifest(BaseModel):
     mode: EgressMode = "none"
     provider: str | None = Field(default=None, max_length=96)
+    data_source_id: str | None = Field(
+        default=None,
+        max_length=96,
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    )
     allowed_hosts: list[str] = Field(default_factory=list)
 
 

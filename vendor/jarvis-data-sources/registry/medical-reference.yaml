@@ -1,0 +1,166 @@
+# Medical reference data sources.
+#
+# RULE: Nothing in this file is PHI-safe. These are public, non-clinical
+# reference APIs. Never send patient identifiers or protected health
+# information to any endpoint listed here.
+#
+# Use cases: drug lookups, ICD/LOINC code resolution, trial discovery,
+# provider validation, patient education content.
+
+- id: openfda
+  name: openFDA
+  domain: medical-reference
+  url: https://open.fda.gov/
+  api_base_url: https://api.fda.gov/
+  auth:
+    type: api-key
+    notes: |
+      Anonymous: 240 req/min, 1000/day.
+      With key: 240 req/min, 120,000/day. Free key from open.fda.gov/apis/authentication/.
+  pricing: free
+  free_tier: 120k req/day with key
+  license: public-domain
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - drug-labels
+    - adverse-event-lookup
+    - device-recalls
+    - food-recalls
+  notes: |
+    Government-maintained, rebuilt from FDA datasets nightly.
+    Adverse event reports are voluntary and self-reported — interpret accordingly.
+    No real-time data; expect 1-7 day lag from FDA submission.
+  last_verified: 2026-05-01
+  review_cadence_days: 180
+
+- id: rxnorm
+  name: RxNorm / RxNav
+  domain: medical-reference
+  url: https://lhncbc.nlm.nih.gov/RxNav/
+  api_base_url: https://rxnav.nlm.nih.gov/REST/
+  auth:
+    type: none
+    notes: |
+      No auth, no rate limit published, but be reasonable.
+      Recommended: 20 req/sec ceiling, exponential backoff on 5xx.
+  pricing: free
+  free_tier: unlimited (fair use)
+  license: public-domain
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - drug-name-normalization
+    - rxcui-lookup
+    - drug-interaction-checks
+    - ndc-conversion
+  notes: |
+    NIH/NLM maintained. RxNav is the API surface; RxNorm is the underlying terminology.
+    Interaction API has known coverage gaps — never use as sole interaction check
+    in clinical workflows. Treat as advisory.
+    Updated weekly Mondays.
+  last_verified: 2026-05-01
+  review_cadence_days: 180
+
+- id: clinicaltrials-gov
+  name: ClinicalTrials.gov API v2
+  domain: medical-reference
+  url: https://clinicaltrials.gov/data-api/api
+  api_base_url: https://clinicaltrials.gov/api/v2/
+  auth:
+    type: none
+    notes: No auth. ~50 req/sec sustained per IP.
+  pricing: free
+  free_tier: unlimited (fair use)
+  license: public-domain
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - trial-discovery
+    - eligibility-criteria-lookup
+    - trial-status-tracking
+    - sponsor-lookup
+  notes: |
+    v1 API was deprecated June 2024 — only use v2.
+    Trial data is sponsor-submitted; quality varies wildly.
+    Pagination via pageToken; do NOT use offset-based pagination.
+  last_verified: 2026-05-01
+  review_cadence_days: 180
+
+- id: nppes-npi-registry
+  name: NPPES NPI Registry
+  domain: medical-reference
+  url: https://npiregistry.cms.hhs.gov/
+  api_base_url: https://npiregistry.cms.hhs.gov/api/
+  auth:
+    type: none
+    notes: No auth. Fair-use limits unpublished.
+  pricing: free
+  free_tier: unlimited (fair use)
+  license: public-domain
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - provider-lookup
+    - npi-validation
+    - taxonomy-lookup
+    - practice-address-verification
+  notes: |
+    CMS-maintained. Updated weekly.
+    Use version=2.1 in query string. Default version is older.
+    Returns 200 with empty result_count for not-found, NOT 404.
+  last_verified: 2026-05-01
+  review_cadence_days: 180
+
+- id: medlineplus-connect
+  name: MedlinePlus Connect
+  domain: medical-reference
+  url: https://medlineplus.gov/connect/overview.html
+  api_base_url: https://connect.medlineplus.gov/service
+  auth:
+    type: none
+    notes: No auth. Fair-use limits unpublished.
+  pricing: free
+  free_tier: unlimited (fair use)
+  license: public-domain
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - patient-education-content
+    - icd10-to-patient-friendly-text
+    - drug-to-patient-education
+    - lab-test-explanations
+  notes: |
+    NIH/NLM-maintained. Returns Atom feed by default; pass knowledgeResponseType=application/json
+    for JSON. Content is patient-facing, multilingual (EN/ES).
+    Use for patient handouts in clinic, NOT for clinician-facing decision support.
+  last_verified: 2026-05-01
+  review_cadence_days: 180
+
+- id: loinc
+  name: LOINC (Logical Observation Identifiers Names and Codes)
+  domain: medical-reference
+  url: https://loinc.org/
+  api_base_url: https://fhir.loinc.org/
+  auth:
+    type: api-key
+    notes: |
+      Free user account required at loinc.org. Account credentials used as HTTP Basic auth
+      against the FHIR terminology server. Personal accounts are fine for internal use;
+      production deployments should request institutional credentials.
+  pricing: free
+  free_tier: unlimited under fair-use
+  license: loinc-license          # free but not public-domain — see https://loinc.org/license/
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - lab-test-code-lookup
+    - lab-result-normalization
+    - panel-membership-resolution
+  notes: |
+    LOINC is the global standard for lab/observation codes. Releases biannual (June, Dec).
+    The FHIR terminology server is the modern interface; older flat-file downloads still available.
+    License is permissive but requires attribution and prohibits redistribution of the database itself.
+    Bulk file download requires accepting license; API access does not.
+  last_verified: 2026-05-01
+  review_cadence_days: 365

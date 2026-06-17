@@ -252,13 +252,14 @@ targets are rejected.
 `weather.current` is the first governed real-world read skill for child-facing
 and operator-facing assistants. It is active, T1, read-only, and must execute
 through SkillRunner. Brain never calls the public weather API directly: the
-handler calls Alpha Gateway, and Gateway calls Open-Meteo with a 10-minute
-cache. Gateway uses configured home coordinates by default, or explicit
-latitude/longitude when a caller provides both.
+handler calls Alpha Gateway, and Gateway calls the curated `open-meteo`
+registry source with a 10-minute cache. Gateway uses configured home
+coordinates by default, or explicit latitude/longitude when a caller provides
+both.
 
 | Skill | State | Approval | Provider | Guardrail |
 |---|---|---|---|---|
-| `weather.current` | active | T1 | Open-Meteo via Gateway | No address geocoding, no broad web/search access, cache TTL 600s. |
+| `weather.current` | active | T1 | Open-Meteo (`open-meteo`) via Gateway | No address geocoding, no broad web/search access, cache TTL 600s. |
 
 ## Approval Canary
 

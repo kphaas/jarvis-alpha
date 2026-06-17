@@ -1,0 +1,87 @@
+# Geocoding, mapping, and places APIs.
+
+- id: nominatim-osm
+  name: Nominatim (OpenStreetMap)
+  domain: geo
+  url: https://nominatim.org/
+  api_base_url: https://nominatim.openstreetmap.org/
+  auth:
+    type: none
+    notes: |
+      No auth. Strict fair-use: max 1 req/sec, valid User-Agent header REQUIRED,
+      no heavy bulk use against the public instance.
+      For production: self-host Nominatim or use a paid mirror (e.g., MapTiler).
+  pricing: free
+  free_tier: 1 req/sec public instance (fair use)
+  license: odbl                     # Open Database License — attribution required
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - forward-geocoding
+    - reverse-geocoding
+    - address-normalization
+  notes: |
+    Free, open-source, no signup. Public instance is rate-limited and not
+    appropriate for production scale. For Jarvis personal use, public
+    instance is fine if traffic stays under fair-use.
+    Self-host on Unraid if rate limits become an issue.
+  last_verified: 2026-05-01
+  review_cadence_days: 180
+
+- id: mapbox
+  name: Mapbox
+  domain: geo
+  url: https://www.mapbox.com/
+  api_base_url: https://api.mapbox.com/
+  auth:
+    type: api-key
+    notes: |
+      Free tier: 100k geocoding req/month, 200k map loads/month.
+      Pay-as-you-go beyond.
+  pricing: freemium
+  free_tier: 100k geocoding/month
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - geocoding
+    - map-tiles
+    - directions
+    - matrix-distance
+    - styled-maps
+  notes: |
+    Generous free tier suitable for personal-scale Jarvis.
+    Better stylistic control than Google Maps.
+    Geocoding accuracy is competitive with Google for US addresses;
+    weaker outside US.
+  last_verified: 2026-05-01
+  review_cadence_days: 90
+
+- id: google-maps-platform
+  name: Google Maps Platform
+  domain: geo
+  url: https://mapsplatform.google.com/
+  api_base_url: https://maps.googleapis.com/maps/api/
+  auth:
+    type: api-key
+    notes: |
+      $200/month free credit covers most personal usage.
+      Per-API pricing thereafter — geocoding ~$5 per 1000 calls.
+  pricing: freemium
+  free_tier: $200 credit/month (~40k geocodes)
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - geocoding
+    - places-search
+    - directions
+    - distance-matrix
+    - timezone-lookup
+  notes: |
+    Best-in-class accuracy globally and best Places coverage.
+    More restrictive ToS than Mapbox — read carefully if doing anything beyond
+    direct user-facing display.
+    Restrict API keys to specific APIs and IP ranges in the GCP console.
+  last_verified: 2026-05-01
+  review_cadence_days: 90

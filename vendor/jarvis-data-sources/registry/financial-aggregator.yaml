@@ -1,0 +1,89 @@
+# Financial aggregator APIs.
+#
+# Read-only aggregation of bank, credit card, and brokerage accounts for
+# wealth tracking and net worth visibility. Execution lives elsewhere.
+
+- id: plaid
+  name: Plaid
+  domain: financial-aggregator
+  url: https://plaid.com/
+  api_base_url: https://production.plaid.com/
+  auth:
+    type: api-key
+    notes: |
+      Two keys: client_id + secret. Plus per-user access_tokens issued via Link flow.
+      Sandbox is free. Development tier (100 items free) for pre-production.
+      Production billed per-Item per-month.
+  pricing: paid
+  free_tier: Sandbox + Dev (100 items free)
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - bank-account-aggregation
+    - transaction-history
+    - balance-checks
+    - identity-verification
+    - liabilities
+  notes: |
+    Already locked for jarvis-financial v1 aggregation.
+    Transactions endpoint coverage is excellent for major US banks.
+    Investments endpoint is improving but inferior to SnapTrade for brokerage.
+    Use Plaid for banks, SnapTrade for brokerages.
+  last_verified: 2026-05-01
+  review_cadence_days: 90
+
+- id: snaptrade
+  name: SnapTrade
+  domain: financial-aggregator
+  url: https://snaptrade.com/
+  api_base_url: https://api.snaptrade.com/api/v1/
+  auth:
+    type: api-key
+    notes: |
+      clientId + consumerKey. Per-user tokens via SnapTrade-managed connection portal.
+      Personal use tier is free for individuals — confirm current pricing.
+  pricing: freemium
+  free_tier: Personal use (individuals only)
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - brokerage-account-read
+    - position-aggregation
+    - transaction-history
+    - read-only-trade-history
+  notes: |
+    Already locked for jarvis-financial v1 brokerage aggregation.
+    Strong coverage of US retail brokerages (Schwab, Fidelity, Vanguard, etc.).
+    Read-only is the safest mode; write/trade is supported but should remain
+    OFF until a deliberate decision is made.
+    Confirm current Personal tier terms before relying on free tier.
+  last_verified: 2026-05-01
+  review_cadence_days: 90
+
+- id: mx
+  name: MX
+  domain: financial-aggregator
+  url: https://www.mx.com/
+  api_base_url: https://api.mx.com/
+  auth:
+    type: api-key
+    notes: |
+      Client ID + API key. Production access requires partnership.
+      Limited free tier; primarily enterprise.
+  pricing: paid
+  free_tier: null
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - bank-account-aggregation
+    - financial-categorization
+    - data-enrichment
+  notes: |
+    Bigger fit for institutional / fintech-platform use than personal finance.
+    Strong categorization and enrichment vs Plaid.
+    Backup vendor — only worth onboarding if Plaid coverage gaps appear.
+  last_verified: 2026-05-01
+  review_cadence_days: 180

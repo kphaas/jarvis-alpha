@@ -17,6 +17,7 @@ dependencies = [
     "temporalio==1.26.0",
     "google-auth==2.38.0",
     "python-multipart==0.0.20",
+    "PyYAML==6.0.3",
     "pdfplumber==0.11.4",
     "openpyxl==3.1.5",
     "trafilatura==2.0.0",
