@@ -7,7 +7,9 @@ from gateway.routes import cloud_routes
 
 
 @pytest.fixture(autouse=True)
-def reset_search_provider_circuits():
+def reset_search_provider_circuits(monkeypatch, tmp_path):
+    monkeypatch.delenv("BEACON_MIN_USABLE_SEARCH_PROVIDERS", raising=False)
+    monkeypatch.setenv("BEACON_SEARCH_USAGE_DIR", str(tmp_path))
     for circuit in cloud_routes._SEARCH_CIRCUITS.values():
         circuit.failures = []
         circuit.open_until = 0.0
@@ -416,6 +418,98 @@ async def test_internet_search_falls_back_when_brave_provider_fails(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_internet_search_blocks_provider_when_budget_is_exhausted(monkeypatch):
+    monkeypatch.setenv("BEACON_PERPLEXITY_DAILY_SEARCH_LIMIT", "1")
+    monkeypatch.setenv("BEACON_PERPLEXITY_MONTHLY_SEARCH_LIMIT", "1")
+
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "PERPLEXITY_API_KEY":
+            return "pplx-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+    seen: dict[str, int] = {"calls": 0}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "results": [
+                    {
+                        "title": "Safe",
+                        "url": "https://public.example.test/report",
+                        "snippet": "Source.",
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, json, headers):
+            seen["calls"] += 1
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    first = await cloud_routes.internet_search(
+        cloud_routes.InternetSearchRequest(query="beacon", provider="perplexity"),
+        authorization="Bearer gateway-token",
+    )
+
+    assert first["provider"] == "perplexity"
+    assert seen["calls"] == 1
+
+    with pytest.raises(HTTPException) as exc:
+        await cloud_routes.internet_search(
+            cloud_routes.InternetSearchRequest(query="beacon", provider="perplexity"),
+            authorization="Bearer gateway-token",
+        )
+
+    assert exc.value.status_code == 429
+    assert exc.value.detail == "Perplexity Search budget exhausted"
+    assert seen["calls"] == 1
+
+
+@pytest.mark.asyncio
+async def test_internet_health_marks_budget_exhausted_provider_unusable(monkeypatch):
+    monkeypatch.setenv("BEACON_PERPLEXITY_DAILY_SEARCH_LIMIT", "0")
+
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "BRAVE_SEARCH_API_KEY":
+            return "brave-token"
+        if name == "PERPLEXITY_API_KEY":
+            return "pplx-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+
+    result = await cloud_routes.internet_health(authorization="Bearer gateway-token")
+
+    assert result["status"] == "degraded"
+    assert result["configured_provider_count"] == 2
+    assert result["usable_provider_count"] == 1
+    assert result["provider_redundancy_status"] == "single_provider"
+    perplexity = next(
+        provider for provider in result["providers"] if provider["provider"] == "perplexity"
+    )
+    assert perplexity["budget_exhausted"] is True
+    assert perplexity["daily_request_limit"] == 0
+
+
+@pytest.mark.asyncio
 async def test_internet_health_reports_provider_configuration(monkeypatch):
     def fake_secret(name: str) -> str:
         if name == "GATEWAY_TOKEN":
@@ -428,12 +522,40 @@ async def test_internet_health_reports_provider_configuration(monkeypatch):
 
     result = await cloud_routes.internet_health(authorization="Bearer gateway-token")
 
-    assert result["status"] == "ok"
+    assert result["status"] == "degraded"
     assert result["configured_provider_count"] == 1
     assert result["usable_provider_count"] == 1
+    assert result["required_provider_count"] == 2
+    assert result["provider_redundancy_ok"] is False
+    assert result["provider_redundancy_status"] == "single_provider"
+    assert result["missing_provider_count"] == 1
     assert result["providers"][0]["provider"] == "brave"
     assert result["providers"][0]["configured"] is True
     assert result["providers"][0]["circuit_open"] is False
+
+
+@pytest.mark.asyncio
+async def test_internet_health_reports_redundant_provider_configuration(monkeypatch):
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "BRAVE_SEARCH_API_KEY":
+            return "brave-token"
+        if name == "PERPLEXITY_API_KEY":
+            return "pplx-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+
+    result = await cloud_routes.internet_health(authorization="Bearer gateway-token")
+
+    assert result["status"] == "ok"
+    assert result["configured_provider_count"] == 2
+    assert result["usable_provider_count"] == 2
+    assert result["required_provider_count"] == 2
+    assert result["provider_redundancy_ok"] is True
+    assert result["provider_redundancy_status"] == "redundant"
+    assert result["missing_provider_count"] == 0
 
 
 @pytest.mark.asyncio

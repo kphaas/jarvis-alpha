@@ -141,18 +141,38 @@ class FakeGatewayClient:
         self.usable_provider_count = usable_provider_count
 
     async def health(self):
+        providers = [
+            {
+                "provider": "brave",
+                "configured": True,
+                "circuit_open": False,
+            },
+            {
+                "provider": "perplexity",
+                "configured": True,
+                "circuit_open": False,
+            },
+        ]
+        for provider in providers[self.usable_provider_count :]:
+            provider["circuit_open"] = True
+        required_count = 2
+        redundancy_ok = self.usable_provider_count >= required_count
         return {
-            "status": "ok" if self.usable_provider_count else "degraded",
+            "status": "ok"
+            if self.usable_provider_count and redundancy_ok
+            else "degraded",
             "provider_order": ["brave", "perplexity"],
             "configured_provider_count": 2,
             "usable_provider_count": self.usable_provider_count,
-            "providers": [
-                {
-                    "provider": "brave",
-                    "configured": True,
-                    "circuit_open": False,
-                }
-            ],
+            "required_provider_count": required_count,
+            "provider_redundancy_ok": redundancy_ok,
+            "provider_redundancy_status": "redundant"
+            if redundancy_ok
+            else "single_provider"
+            if self.usable_provider_count
+            else "unavailable",
+            "missing_provider_count": max(0, required_count - self.usable_provider_count),
+            "providers": providers,
         }
 
 
@@ -269,6 +289,12 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
     assert response.status == "ok"
     assert response.checks["database"].ok is True
     assert response.checks["gateway"].metadata["usable_provider_count"] == 2
+    assert response.checks["gateway"].metadata["required_provider_count"] == 2
+    assert response.checks["gateway"].metadata["provider_redundancy_ok"] is True
+    assert (
+        response.checks["gateway"].metadata["provider_redundancy_status"]
+        == "redundant"
+    )
     assert response.checks["browser_runtime"].ok is True
     assert response.checks["recent_evidence"].metadata["blocked"] == 1
     source_quality = response.checks["recent_evidence"].metadata["source_quality"]
@@ -561,3 +587,36 @@ async def test_health_degrades_when_core_gateway_check_fails(monkeypatch):
 
     assert response.status == "degraded"
     assert response.checks["gateway"].ok is False
+    assert response.checks["gateway"].metadata["provider_redundancy_status"] == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_health_degrades_when_gateway_provider_redundancy_is_missing(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        beacon_health,
+        "browser_runtime_health",
+        lambda: {
+            "ok": True,
+            "runtime": "playwright",
+            "runtime_enabled": True,
+            "playwright_version_ok": True,
+            "screenshot_dir_writable": True,
+        },
+    )
+
+    response = await beacon_health.build_beacon_health(
+        FakeConn(),
+        gateway_client=FakeGatewayClient(usable_provider_count=1),
+    )
+
+    gateway = response.checks["gateway"]
+    assert response.status == "degraded"
+    assert gateway.ok is False
+    assert gateway.status == "degraded"
+    assert gateway.metadata["usable_provider_count"] == 1
+    assert gateway.metadata["required_provider_count"] == 2
+    assert gateway.metadata["provider_redundancy_ok"] is False
+    assert gateway.metadata["provider_redundancy_status"] == "single_provider"
+    assert gateway.metadata["missing_provider_count"] == 1

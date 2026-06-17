@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from html.parser import HTMLParser
 from importlib import import_module
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urldefrag, urljoin
 
@@ -484,6 +485,19 @@ async def internet_search(
         for credential in candidates:
             start = time.monotonic()
             try:
+                _reserve_search_provider_request(credential.provider)
+            except HTTPException as exc:
+                last_error = exc
+                logger.warning(
+                    "beacon_search_provider_budget_blocked provider=%s status_code=%s",
+                    credential.provider,
+                    exc.status_code,
+                )
+                if req.provider != "auto":
+                    raise
+                continue
+
+            try:
                 results = await _execute_search_provider(
                     client=client,
                     credential=credential,
@@ -544,14 +558,18 @@ async def internet_health(authorization: str = Header(...)):
     usable = [
         provider
         for provider in providers
-        if provider["configured"] and not provider["circuit_open"]
+        if provider["configured"]
+        and not provider["circuit_open"]
+        and not provider["budget_exhausted"]
     ]
+    redundancy = _search_provider_redundancy(len(usable))
     return {
-        "status": "ok" if usable else "degraded",
+        "status": "ok" if usable and redundancy["provider_redundancy_ok"] else "degraded",
         "provider_order": list(_configured_search_provider_order()),
         "providers": providers,
         "configured_provider_count": len(configured),
         "usable_provider_count": len(usable),
+        **redundancy,
         "checked_at": datetime.now(UTC).isoformat(),
     }
 
@@ -640,13 +658,131 @@ def _search_provider_health(provider: str) -> dict[str, object]:
         if _is_search_provider_circuit_open(provider)
         else None
     )
+    budget = _search_provider_budget(provider)
     return {
         "provider": provider,
         "configured": _search_provider_key(provider) is not None,
         "circuit_open": cooldown_remaining_s is not None,
         "failure_count": len(circuit.failures),
         "cooldown_remaining_seconds": cooldown_remaining_s,
+        "budget_exhausted": not budget["allowed"],
+        "daily_request_count": budget["daily_count"],
+        "daily_request_limit": budget["daily_limit"],
+        "monthly_request_count": budget["monthly_count"],
+        "monthly_request_limit": budget["monthly_limit"],
     }
+
+
+def _search_provider_redundancy(usable_provider_count: int) -> dict[str, object]:
+    required_count = _bounded_int_env(
+        "BEACON_MIN_USABLE_SEARCH_PROVIDERS",
+        default=2,
+        minimum=1,
+        maximum=len(_SEARCH_PROVIDERS),
+    )
+    redundancy_ok = usable_provider_count >= required_count
+    if usable_provider_count == 0:
+        status = "unavailable"
+    elif redundancy_ok:
+        status = "redundant"
+    else:
+        status = "single_provider"
+    return {
+        "required_provider_count": required_count,
+        "provider_redundancy_ok": redundancy_ok,
+        "provider_redundancy_status": status,
+        "missing_provider_count": max(0, required_count - usable_provider_count),
+    }
+
+
+def _search_usage_dir() -> Path:
+    raw = os.getenv("BEACON_SEARCH_USAGE_DIR", "~/jarvis/state/beacon-search-usage")
+    path = Path(raw).expanduser()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _search_usage_path(provider: str) -> Path:
+    safe_provider = "".join(
+        char for char in provider.lower() if char.isalnum() or char in {"-", "_"}
+    )
+    return _search_usage_dir() / f"{safe_provider}.json"
+
+
+def _provider_limit(provider: str, period: str) -> int | None:
+    name = f"BEACON_{provider.upper()}_{period.upper()}_SEARCH_LIMIT"
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return min(max(int(raw), 0), 1_000_000)
+    except ValueError:
+        return None
+
+
+def _load_search_usage(provider: str) -> dict[str, object]:
+    today = datetime.now(UTC).date().isoformat()
+    month = today[:7]
+    path = _search_usage_path(provider)
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    daily_count = payload.get("daily_count")
+    monthly_count = payload.get("monthly_count")
+    usage = {
+        "day": today,
+        "month": month,
+        "daily_count": daily_count if isinstance(daily_count, int) else 0,
+        "monthly_count": monthly_count if isinstance(monthly_count, int) else 0,
+    }
+    if payload.get("day") != today:
+        usage["daily_count"] = 0
+    if payload.get("month") != month:
+        usage["monthly_count"] = 0
+    return usage
+
+
+def _save_search_usage(provider: str, usage: dict[str, object]) -> None:
+    path = _search_usage_path(provider)
+    tmp_path = path.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(usage, sort_keys=True))
+    tmp_path.replace(path)
+
+
+def _search_provider_budget(provider: str) -> dict[str, object]:
+    usage = _load_search_usage(provider)
+    daily_limit = _provider_limit(provider, "daily")
+    monthly_limit = _provider_limit(provider, "monthly")
+    daily_count = int(usage["daily_count"])
+    monthly_count = int(usage["monthly_count"])
+    allowed = (
+        (daily_limit is None or daily_count < daily_limit)
+        and (monthly_limit is None or monthly_count < monthly_limit)
+    )
+    return {
+        "allowed": allowed,
+        "daily_count": daily_count,
+        "daily_limit": daily_limit,
+        "monthly_count": monthly_count,
+        "monthly_limit": monthly_limit,
+    }
+
+
+def _reserve_search_provider_request(provider: str) -> None:
+    usage = _load_search_usage(provider)
+    budget = _search_provider_budget(provider)
+    if not budget["allowed"]:
+        raise HTTPException(
+            status_code=429,
+            detail=f"{provider.title()} Search budget exhausted",
+        )
+    usage["daily_count"] = int(usage["daily_count"]) + 1
+    usage["monthly_count"] = int(usage["monthly_count"]) + 1
+    _save_search_usage(provider, usage)
 
 
 def _record_search_provider_failure(provider: str) -> None:
