@@ -11,6 +11,8 @@ P10/P11:
 - ADR and service contracts exist.
 - Policy, URL/content safety, sanitizer, evidence, and planning helpers exist.
 - Gateway search/fetch/extract/crawl endpoints are implemented.
+- Current local weather queries route through Gateway's free Open-Meteo adapter
+  before paid search providers.
 - Brain calls Gateway through `call_gateway_proxy()` only.
 - `/v1/internet-scout/research` stores structured evidence under RLS.
 - `/v1/internet-scout/local-llm/tool` returns a citation envelope for local

@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 import pytest
 
 from brain.services.internet_scout.executor import InternetScoutExecutor
+from brain.services.internet_scout.free_source_router import FreeSourceRouter
 from brain.services.internet_scout.gateway_client import (
     InternetScoutGatewayClient,
     InternetScoutGatewayError,
@@ -131,6 +132,31 @@ class FailingFanoutGatewayClient(FakeGatewayClient):
             )
             raise InternetScoutGatewayError(f"{provider} unavailable")
         return await super().search(query=query, count=count, provider=provider)
+
+
+async def fake_weather_client(params: dict[str, object]) -> dict[str, object]:
+    return {
+        "status": "ok",
+        "provider": "open-meteo",
+        "location_label": params.get("location_label") or "home",
+        "observed_at": "2026-06-17T13:00",
+        "latitude": 40.0,
+        "longitude": -75.0,
+        "temperature_f": 72.4,
+        "apparent_temperature_f": 73.1,
+        "relative_humidity_pct": 51,
+        "precipitation_in": 0,
+        "weather_code": 1,
+        "condition": "mostly clear",
+        "cloud_cover_pct": 10,
+        "wind_speed_mph": 6.2,
+        "wind_gust_mph": 11.0,
+        "cached": False,
+    }
+
+
+async def failing_weather_client(_params: dict[str, object]) -> dict[str, object]:
+    raise RuntimeError("weather adapter unavailable")
 
 
 class ComparisonCoverageGatewayClient(FakeGatewayClient):
@@ -265,6 +291,81 @@ class MultiSourceComparisonCoverageGatewayClient(FakeGatewayClient):
             fetched_at=datetime(2026, 6, 16, 13, 0, tzinfo=UTC),
             results=results[:count],
         )
+
+
+@pytest.mark.asyncio
+async def test_executor_routes_current_weather_to_free_source_before_search():
+    gateway = FakeGatewayClient()
+    executor = InternetScoutExecutor(
+        gateway_client=gateway,
+        free_source_router=FreeSourceRouter(weather_client=fake_weather_client),
+    )
+
+    decision, packet = await executor.execute(
+        InternetScoutRequest(
+            query="what is the weather outside right now?",
+            tool_hint=InternetTool.SEARCH,
+        )
+    )
+
+    assert decision.tool == InternetTool.SEARCH
+    assert gateway.search_calls == []
+    assert packet.sources[0].host == "open-meteo.com"
+    assert packet.sources[0].title == "Open-Meteo current weather via Alpha Gateway"
+    assert "mostly clear" in packet.claims[0].citation_text
+    assert "72F" in packet.claims[0].citation_text
+
+
+@pytest.mark.asyncio
+async def test_executor_does_not_free_route_weather_with_explicit_location():
+    gateway = FakeGatewayClient()
+    executor = InternetScoutExecutor(
+        gateway_client=gateway,
+        free_source_router=FreeSourceRouter(weather_client=fake_weather_client),
+    )
+
+    decision, packet = await executor.execute(
+        InternetScoutRequest(
+            query="what is the weather in Chicago right now?",
+            tool_hint=InternetTool.SEARCH,
+        )
+    )
+
+    assert decision.tool == InternetTool.SEARCH
+    assert gateway.search_calls == [
+        {
+            "query": "what is the weather in Chicago right now?",
+            "count": 5,
+            "provider": "auto",
+        }
+    ]
+    assert packet.sources[0].host == "public.example.test"
+
+
+@pytest.mark.asyncio
+async def test_executor_falls_back_to_search_when_free_weather_fails():
+    gateway = FakeGatewayClient()
+    executor = InternetScoutExecutor(
+        gateway_client=gateway,
+        free_source_router=FreeSourceRouter(weather_client=failing_weather_client),
+    )
+
+    decision, packet = await executor.execute(
+        InternetScoutRequest(
+            query="current temperature outside",
+            tool_hint=InternetTool.SEARCH,
+        )
+    )
+
+    assert decision.tool == InternetTool.SEARCH
+    assert gateway.search_calls == [
+        {
+            "query": "current temperature outside",
+            "count": 5,
+            "provider": "auto",
+        }
+    ]
+    assert packet.sources[0].host == "public.example.test"
 
 
 @pytest.mark.asyncio
