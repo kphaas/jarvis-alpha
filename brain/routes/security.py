@@ -84,6 +84,30 @@ SWEEP_REPORT_SECRET_NAME = "ALPHA_SWEEP_REPORT_SECRET"
 SWEEP_REPORT_MAX_SKEW_SECONDS = 300
 SWEEP_REPORT_STALE_AFTER = timedelta(hours=24)
 SWEEP_REPORT_EXPECTED_NODES = ("brain", "endpoint", "gateway", "sandbox")
+PORCHLIGHT_REQUIRED_CHECKS = (
+    "database_rls",
+    "postgres_role_safety",
+    "postgres_hba_safety",
+    "secret_rotation",
+    "secret_live_verification",
+    "security_launchagents",
+    "token_rotation_logs",
+    "backup_recovery",
+    "cloudflare_access",
+    "cloudflare_access_policy_drift",
+    "cloudflare_audit_logs",
+    "dependency_cve_scan",
+    "malware_scan_repo_freshness",
+    "code_malware_scan",
+    "host_integrity",
+    "runtime_exposure",
+    "sweep_tls_report_intake",
+    "financial_security_posture",
+    "github_branch_protection_drift",
+    "route_db_access_review",
+)
+PORCHLIGHT_COMPLETENESS_CHECK = "porchlight_report_completeness"
+_SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
 
 class SentinelReportFinding(BaseModel):
@@ -499,7 +523,91 @@ def _load_porchlight_report() -> dict:
             status_code=502,
             detail="Porchlight report has an unexpected shape.",
         )
-    return report
+    return _guard_porchlight_report_completeness(report)
+
+
+def _guard_porchlight_report_completeness(report: dict) -> dict:
+    checks = report.get("checks")
+    if not isinstance(checks, list):
+        raise HTTPException(
+            status_code=502,
+            detail="Porchlight report has an unexpected checks shape.",
+        )
+
+    observed = {
+        str(check.get("name"))
+        for check in checks
+        if isinstance(check, dict) and check.get("name")
+    }
+    missing = sorted(set(PORCHLIGHT_REQUIRED_CHECKS) - observed)
+    if not missing:
+        return report
+
+    guarded = dict(report)
+    guarded_checks = [
+        check
+        for check in checks
+        if not (
+            isinstance(check, dict)
+            and check.get("name") == PORCHLIGHT_COMPLETENESS_CHECK
+        )
+    ]
+    guarded_checks.insert(
+        0,
+        {
+            "name": PORCHLIGHT_COMPLETENESS_CHECK,
+            "status": "fail",
+            "severity": "high",
+            "summary": "Porchlight report is incomplete; required checks are missing.",
+            "detail": ", ".join(missing),
+            "metadata": {
+                "expected_checks": list(PORCHLIGHT_REQUIRED_CHECKS),
+                "observed_checks": sorted(observed),
+                "missing_checks": missing,
+                "reported_check_count": len(checks),
+            },
+        },
+    )
+    guarded["checks"] = guarded_checks
+    guarded["counts"] = _porchlight_counts(guarded_checks)
+    guarded["status"] = _porchlight_status(guarded["counts"])
+    guarded["severity"] = _porchlight_severity(guarded_checks)
+    return guarded
+
+
+def _porchlight_counts(checks: list[object]) -> dict[str, int]:
+    counts = {"checks": 0, "passing": 0, "warning": 0, "failing": 0}
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        counts["checks"] += 1
+        status = check.get("status")
+        if status == "pass":
+            counts["passing"] += 1
+        elif status == "warn":
+            counts["warning"] += 1
+        else:
+            counts["failing"] += 1
+    return counts
+
+
+def _porchlight_status(counts: dict[str, int]) -> str:
+    if counts["failing"]:
+        return "fail"
+    if counts["warning"]:
+        return "warn"
+    return "pass"
+
+
+def _porchlight_severity(checks: list[object]) -> str:
+    severity = "info"
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        candidate = str(check.get("severity") or "info")
+        if _SEVERITY_RANK.get(candidate, 0) > _SEVERITY_RANK[severity]:
+            severity = candidate
+    return severity
 
 
 def _load_rotation_config() -> dict:
