@@ -49,6 +49,17 @@ class At0MailDashboardOut(BaseModel):
     latest_scan: At0MailScanRunOut | None = None
 
 
+class At0MailHealthOut(BaseModel):
+    status: Literal["ok", "running", "stale", "failed", "missing"]
+    checked_at: datetime
+    stale_after_minutes: int
+    age_minutes: int | None = None
+    requires_attention: bool
+    latest_scan: At0MailScanRunOut | None = None
+    message_count: int
+    draft_count: int
+
+
 class At0MailMessageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

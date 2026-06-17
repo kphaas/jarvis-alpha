@@ -39,6 +39,59 @@ function proofEntries(value: unknown): Array<[string, string]> {
   })
 }
 
+function arrayLength(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === 'number' ? value : 0
+}
+
+function checkByName(report: PorchlightReport | null, name: string): PorchlightCheck | null {
+  return report?.checks.find((check) => check.name === name) ?? null
+}
+
+function checkDisplayName(name: string): string {
+  const labels: Record<string, string> = {
+    malware_scan_repo_freshness: 'Repo freshness',
+    code_malware_scan: 'Malware scan',
+    host_integrity: 'Host integrity',
+    runtime_exposure: 'Runtime exposure',
+  }
+  return labels[name] ?? name.replaceAll('_', ' ')
+}
+
+function checkProofLine(check: PorchlightCheck | null): string {
+  if (!check) return 'No report yet'
+  const metadata = asRecord(check.metadata)
+  if (check.name === 'malware_scan_repo_freshness') {
+    const refreshed = arrayLength(metadata.refreshed)
+    const failed = arrayLength(metadata.failed)
+    const notGit = arrayLength(metadata.not_git)
+    const changed = Array.isArray(metadata.refreshed)
+      ? metadata.refreshed.filter((item) => asRecord(item).changed === true).length
+      : 0
+    return `${refreshed} repos refreshed · ${changed} updated · ${failed + notGit} blocked`
+  }
+  if (check.name === 'code_malware_scan') {
+    const scanned = numberValue(metadata.files_scanned)
+    const findings = numberValue(metadata.finding_count)
+    return `${scanned.toLocaleString()} files scanned · ${findings} findings`
+  }
+  if (check.name === 'host_integrity') {
+    const checked = arrayLength(metadata.checked)
+    const issues = arrayLength(metadata.issues)
+    return `${checked} critical files hashed · ${issues} issues`
+  }
+  if (check.name === 'runtime_exposure') {
+    const listeners = arrayLength(metadata.listeners)
+    const unexpected = arrayLength(metadata.unexpected_listeners)
+    const suspicious = arrayLength(metadata.suspicious_processes)
+    return `${listeners} listening sockets · ${unexpected} unexpected · ${suspicious} suspicious`
+  }
+  return check.summary
+}
+
 function PorchlightProof({ check, muted }: { check: PorchlightCheck; muted: string }) {
   const metadata = asRecord(check.metadata)
   const tokenRecent = check.name === 'token_rotation_logs' ? proofEntries(metadata.recent) : []
@@ -88,6 +141,13 @@ export function PorchlightTab({
   border, subtle, fg, muted,
   report, loadPorchlight, errPorchlight, runLoading, runError, onRun,
 }: PorchlightTabProps) {
+  const postureChecks = [
+    checkByName(report, 'malware_scan_repo_freshness'),
+    checkByName(report, 'code_malware_scan'),
+    checkByName(report, 'host_integrity'),
+    checkByName(report, 'runtime_exposure'),
+  ]
+
   return (
     <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
       <section>
@@ -155,6 +215,39 @@ export function PorchlightTab({
           </div>
         )}
       </section>
+
+      {report && (
+        <section>
+          <p className="text-[10px] font-mono uppercase opacity-40 tracking-widest mb-3">
+            Code and runtime protections
+          </p>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {postureChecks.map((check, index) => (
+              <div key={check?.name ?? index} className={`rounded-2xl border ${border} ${subtle} p-4`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className={`text-[10px] font-mono uppercase opacity-50`}>
+                      {check ? checkDisplayName(check.name) : 'pending'}
+                    </p>
+                    <p className={`mt-2 text-sm font-semibold leading-snug ${fg}`}>
+                      {checkProofLine(check)}
+                    </p>
+                  </div>
+                  <StatusIcon status={check?.status ?? 'warn'} />
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className={`rounded border px-2 py-0.5 text-[10px] font-mono font-bold ${statusClass(check?.status ?? 'warn')}`}>
+                    {check?.status ?? 'missing'}
+                  </span>
+                  <span className={`rounded border px-2 py-0.5 text-[10px] font-mono font-bold ${statusClass(check?.status ?? 'warn')}`}>
+                    {check?.severity ?? 'unknown'}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {report && (
         <section>

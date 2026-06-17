@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Literal
 from uuid import UUID
 
@@ -13,19 +14,27 @@ from brain.models.at0_mail import (
     At0MailDraftProposalList,
     At0MailDraftProposalOut,
     At0MailDraftStatusUpdate,
+    At0MailHealthOut,
     At0MailMessageList,
     At0MailMessageOut,
     At0MailScanResponse,
 )
 from brain.services.at0_mail_agent import scan_at0_mail
 from brain.services.at0_mail_graph_client import configured_mailboxes
-from brain.services.at0_mail_repository import dashboard_summary
+from brain.services.at0_mail_repository import dashboard_summary, health_summary
 
 router = APIRouter(prefix="/v1/at0-mail", tags=["at0-mail"])
 
 
 def _check_read_scope(request: Request) -> None:
     check_scopes(request, "at0_mail.read", "herald.read")
+
+
+def _stale_after_minutes() -> int:
+    try:
+        return max(1, int(os.getenv("AT0_HERALD_STALE_AFTER_MINUTES", "180")))
+    except ValueError:
+        return 180
 
 
 @router.post("/scan", response_model=At0MailScanResponse)
@@ -48,6 +57,20 @@ async def get_dashboard(
     async with get_pool().acquire() as conn:
         summary = await dashboard_summary(conn)
     return At0MailDashboardOut(**summary)
+
+
+@router.get("/health", response_model=At0MailHealthOut)
+async def get_health(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> At0MailHealthOut:
+    _check_read_scope(request)
+    async with get_pool().acquire() as conn:
+        summary = await health_summary(
+            conn,
+            stale_after_minutes=_stale_after_minutes(),
+        )
+    return At0MailHealthOut(**summary)
 
 
 @router.get("/messages", response_model=At0MailMessageList)

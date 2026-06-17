@@ -7,6 +7,7 @@ from uuid import UUID
 
 import pytest
 
+from brain.services.bluebubbles_client import BlueBubblesClientError
 from brain.services.spark_imessage_sender import SparkIMessageSendResult
 from brain.services.spark_outbox import (
     SparkOutboxCrypto,
@@ -58,6 +59,16 @@ class FakeSender:
             message="Success",
             message_ref_hash="message-hash",
         )
+
+
+class FailingSender:
+    async def send_text_to_chat(
+        self,
+        *,
+        chat_guid: str,
+        text: str,
+    ) -> SparkIMessageSendResult:
+        raise BlueBubblesClientError("send failed", status_code=502)
 
 
 @pytest.mark.asyncio
@@ -114,6 +125,67 @@ async def test_send_executor_sends_exact_decrypted_text_and_consumes_approval(
     assert conn.executes[-1][0].startswith("SELECT public.consume_approved_queue_item")
     assert conn.executes[-1][1] == (queue_id,)
 
+    event_args = json.dumps(
+        [
+            str(arg) if isinstance(arg, UUID) else arg
+            for _query, args in conn.fetchvals
+            for arg in args
+            if not isinstance(arg, bytes)
+        ]
+    ).lower()
+    assert "approved text" not in event_args
+    assert "approved-chat-guid" not in event_args
+
+
+@pytest.mark.asyncio
+async def test_send_executor_records_send_failed_without_plaintext(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "SPARK_IMESSAGE_APPROVED_CHAT_GUID_KEN_IMESSAGE_APPROVED_20260605_001",
+        "approved-chat-guid",
+    )
+    crypto = _crypto()
+    queue_id = UUID("11111111-1111-4111-8111-111111111111")
+    outbox_id = UUID("22222222-2222-4222-8222-222222222222")
+    target_hash = _sha256_text("approved-chat-guid")
+    encrypted = crypto.encrypt_draft_text(
+        draft_text="Approved text",
+        channel="imessage",
+        principal_id="ken",
+        target_ref_hash=target_hash,
+        approval_queue_id=queue_id,
+        approval_parameters_hash="a" * 64,
+    )
+    conn = FakeConn(
+        _row(
+            outbox_id=outbox_id,
+            queue_id=queue_id,
+            target_hash=target_hash,
+            ciphertext=encrypted.ciphertext,
+            text_hash=encrypted.draft_text_hash,
+            key_version=encrypted.payload_key_version,
+        )
+    )
+    conn._statuses = ["sending", "send_failed"]
+
+    with pytest.raises(BlueBubblesClientError):
+        await send_approved_spark_imessage_outbox(
+            conn,  # type: ignore[arg-type]
+            outbox_id=outbox_id,
+            actor_sub="spark-service",
+            actor_type="service",
+            crypto=crypto,
+            sender=FailingSender(),
+            approved_sources=(_source(),),
+        )
+
+    assert len(conn.fetchvals) == 2
+    assert conn.fetchvals[0][1][1] == "sending"
+    assert conn.fetchvals[1][1][1] == "send_failed"
+    assert conn.fetchvals[1][1][5] == "BlueBubblesClientError"
+    assert conn.fetchvals[1][1][6] == "spark_imessage_send_failed"
+    assert conn.executes == []
     event_args = json.dumps(
         [
             str(arg) if isinstance(arg, UUID) else arg

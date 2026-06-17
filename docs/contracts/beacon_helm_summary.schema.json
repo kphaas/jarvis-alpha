@@ -230,12 +230,32 @@
           "title": "Configured Provider Count",
           "type": "integer"
         },
+        "missing_provider_count": {
+          "default": 0,
+          "title": "Missing Provider Count",
+          "type": "integer"
+        },
         "provider_order": {
           "items": {
             "type": "string"
           },
           "title": "Provider Order",
           "type": "array"
+        },
+        "provider_redundancy_ok": {
+          "default": false,
+          "title": "Provider Redundancy Ok",
+          "type": "boolean"
+        },
+        "provider_redundancy_status": {
+          "default": "unavailable",
+          "title": "Provider Redundancy Status",
+          "type": "string"
+        },
+        "required_provider_count": {
+          "default": 0,
+          "title": "Required Provider Count",
+          "type": "integer"
         },
         "status": {
           "title": "Status",
