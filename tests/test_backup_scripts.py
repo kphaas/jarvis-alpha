@@ -178,6 +178,7 @@ def test_retention_boundary_at_30_days():
 def test_install_launchagents_registers_both_new_labels():
     from scripts.install_launchagents import SERVICE_NODE_MAP
 
+    assert SERVICE_NODE_MAP.get("com.jarvis.alpha.beacon-quality") == "brain"
     assert SERVICE_NODE_MAP.get("com.jarvis.alpha.pg_backup") == "brain"
     assert SERVICE_NODE_MAP.get("com.jarvis.alpha.restore_drill") == "sandbox"
 
