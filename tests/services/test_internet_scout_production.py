@@ -171,7 +171,9 @@ class FakeGatewayClient:
             else "single_provider"
             if self.usable_provider_count
             else "unavailable",
-            "missing_provider_count": max(0, required_count - self.usable_provider_count),
+            "missing_provider_count": max(
+                0, required_count - self.usable_provider_count
+            ),
             "providers": providers,
         }
 
@@ -292,8 +294,7 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
     assert response.checks["gateway"].metadata["required_provider_count"] == 2
     assert response.checks["gateway"].metadata["provider_redundancy_ok"] is True
     assert (
-        response.checks["gateway"].metadata["provider_redundancy_status"]
-        == "redundant"
+        response.checks["gateway"].metadata["provider_redundancy_status"] == "redundant"
     )
     assert response.checks["browser_runtime"].ok is True
     assert response.checks["recent_evidence"].metadata["blocked"] == 1
@@ -587,7 +588,10 @@ async def test_health_degrades_when_core_gateway_check_fails(monkeypatch):
 
     assert response.status == "degraded"
     assert response.checks["gateway"].ok is False
-    assert response.checks["gateway"].metadata["provider_redundancy_status"] == "unavailable"
+    assert (
+        response.checks["gateway"].metadata["provider_redundancy_status"]
+        == "unavailable"
+    )
 
 
 @pytest.mark.asyncio

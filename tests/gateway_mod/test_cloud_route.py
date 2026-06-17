@@ -503,7 +503,9 @@ async def test_internet_health_marks_budget_exhausted_provider_unusable(monkeypa
     assert result["usable_provider_count"] == 1
     assert result["provider_redundancy_status"] == "single_provider"
     perplexity = next(
-        provider for provider in result["providers"] if provider["provider"] == "perplexity"
+        provider
+        for provider in result["providers"]
+        if provider["provider"] == "perplexity"
     )
     assert perplexity["budget_exhausted"] is True
     assert perplexity["daily_request_limit"] == 0

@@ -564,7 +564,9 @@ async def internet_health(authorization: str = Header(...)):
     ]
     redundancy = _search_provider_redundancy(len(usable))
     return {
-        "status": "ok" if usable and redundancy["provider_redundancy_ok"] else "degraded",
+        "status": "ok"
+        if usable and redundancy["provider_redundancy_ok"]
+        else "degraded",
         "provider_order": list(_configured_search_provider_order()),
         "providers": providers,
         "configured_provider_count": len(configured),
@@ -759,9 +761,8 @@ def _search_provider_budget(provider: str) -> dict[str, object]:
     monthly_limit = _provider_limit(provider, "monthly")
     daily_count = int(usage["daily_count"])
     monthly_count = int(usage["monthly_count"])
-    allowed = (
-        (daily_limit is None or daily_count < daily_limit)
-        and (monthly_limit is None or monthly_count < monthly_limit)
+    allowed = (daily_limit is None or daily_count < daily_limit) and (
+        monthly_limit is None or monthly_count < monthly_limit
     )
     return {
         "allowed": allowed,
