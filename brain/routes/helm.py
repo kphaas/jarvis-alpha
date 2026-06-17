@@ -130,6 +130,10 @@ class HelmBeaconProviderSummary(BaseModel):
     provider_order: list[str] = Field(default_factory=list)
     configured_provider_count: int = 0
     usable_provider_count: int = 0
+    required_provider_count: int = 0
+    provider_redundancy_ok: bool = False
+    provider_redundancy_status: str = "unavailable"
+    missing_provider_count: int = 0
 
 
 class HelmBeaconBrowserSummary(BaseModel):
@@ -628,6 +632,10 @@ def _unavailable_beacon_summary() -> HelmBeaconSummary:
             provider_order=[],
             configured_provider_count=0,
             usable_provider_count=0,
+            required_provider_count=0,
+            provider_redundancy_ok=False,
+            provider_redundancy_status="unavailable",
+            missing_provider_count=0,
         ),
         browser=HelmBeaconBrowserSummary(
             status="unavailable",
@@ -684,6 +692,24 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
             usable_provider_count=_metadata_int(
                 gateway_metadata,
                 "usable_provider_count",
+            ),
+            required_provider_count=_metadata_int(
+                gateway_metadata,
+                "required_provider_count",
+            ),
+            provider_redundancy_ok=_metadata_bool(
+                gateway_metadata,
+                "provider_redundancy_ok",
+            ),
+            provider_redundancy_status=_metadata_str(
+                gateway_metadata,
+                "provider_redundancy_status",
+                "unavailable",
+            )
+            or "unavailable",
+            missing_provider_count=_metadata_int(
+                gateway_metadata,
+                "missing_provider_count",
             ),
         ),
         browser=HelmBeaconBrowserSummary(

@@ -21,10 +21,18 @@ This runbook covers the MVP production closeout for P13-P17:
 Gateway:
 
 - `GATEWAY_TOKEN` or service token accepted by Gateway
-- At least one search provider key:
+- Two search provider keys for production readiness:
   - `BRAVE_SEARCH_API_KEY` or `BRAVE_API_KEY`
   - `PERPLEXITY_API_KEY`
+- `BEACON_MIN_USABLE_SEARCH_PROVIDERS=2` for redundant provider readiness
 - Optional provider order: `BEACON_SEARCH_PROVIDER_ORDER=brave,perplexity`
+- Provider spend guards:
+  - `BEACON_BRAVE_DAILY_SEARCH_LIMIT=50`
+  - `BEACON_BRAVE_MONTHLY_SEARCH_LIMIT=1000`
+  - `BEACON_PERPLEXITY_DAILY_SEARCH_LIMIT=3`
+  - `BEACON_PERPLEXITY_MONTHLY_SEARCH_LIMIT=25`
+  - Optional usage ledger path:
+    `BEACON_SEARCH_USAGE_DIR=~/jarvis/state/beacon-search-usage`
 
 Brain browser runtime:
 
@@ -70,7 +78,9 @@ Expected:
 
 - `/v1/internet-scout/health` returns `status: ok` before production enablement.
 - `checks.database.ok` is true.
-- `checks.gateway.metadata.usable_provider_count` is greater than zero.
+- `checks.gateway.metadata.provider_redundancy_ok` is true.
+- `checks.gateway.metadata.usable_provider_count` is greater than or equal to
+  `checks.gateway.metadata.required_provider_count`.
 - `checks.browser_runtime.ok` is true when browser execution is expected.
 - `retention.mode` is `report_only`.
 - `checks.recent_evidence` is diagnostic. A recent failed request should be
@@ -206,6 +216,9 @@ Gateway provider selection is fail closed:
 
 - Explicit provider requests require that provider key and an open circuit.
 - `auto` uses configured provider order and skips open circuits.
+- Each provider can be hard-capped with daily/monthly request limits. Gateway
+  reserves a request before calling the paid provider, so exhausted providers
+  are skipped in `auto` mode or return HTTP 429 when requested explicitly.
 - Provider failures are recorded in memory and open a cooldown circuit after the
   configured failure threshold.
 - If no configured provider is usable, search returns 503.
@@ -216,6 +229,11 @@ Useful knobs:
 - `BEACON_SEARCH_CIRCUIT_WINDOW_SECONDS`
 - `BEACON_SEARCH_CIRCUIT_FAILURE_THRESHOLD`
 - `BEACON_SEARCH_CIRCUIT_COOLDOWN_SECONDS`
+- `BEACON_BRAVE_DAILY_SEARCH_LIMIT`
+- `BEACON_BRAVE_MONTHLY_SEARCH_LIMIT`
+- `BEACON_PERPLEXITY_DAILY_SEARCH_LIMIT`
+- `BEACON_PERPLEXITY_MONTHLY_SEARCH_LIMIT`
+- `BEACON_SEARCH_USAGE_DIR`
 
 ## Agent Wrapper
 
