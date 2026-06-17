@@ -91,6 +91,7 @@ class SparkIMessageDraftTargetOut(BaseModel):
     thread_kind: str
     relationship_marked: bool
     relationship_approved: bool
+    parent_minor_context_approved: bool
     legal_marked: bool
 
 
@@ -485,6 +486,7 @@ def _draft_target(record: SparkApprovedSourceRecord) -> SparkIMessageDraftTarget
         thread_kind=record.thread_kind,
         relationship_marked=record.relationship_marked,
         relationship_approved=record.relationship_approved,
+        parent_minor_context_approved=record.parent_minor_context_approved,
         legal_marked=record.legal_marked,
     )
 

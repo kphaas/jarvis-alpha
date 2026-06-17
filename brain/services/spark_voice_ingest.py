@@ -90,6 +90,7 @@ class SparkApprovedSourceRecord:
     relationship_approved: bool
     legal_marked: bool
     decision_approved: bool
+    parent_minor_context_approved: bool = False
 
     @property
     def approval_ref_hash(self) -> str:
@@ -459,6 +460,10 @@ def _approval_from_fields(
         relationship_marked=_is_yes(fields.get("relationship_marked")),
         relationship_approved=_is_yes(
             fields.get("relationship_specific_approval_granted")
+        ),
+        parent_minor_context_approved=_is_yes(
+            fields.get("parent_minor_context_approval_granted")
+            or fields.get("minor_related_content_parent_approval")
         ),
         legal_marked=_is_yes(fields.get("legal_or_custody_content")),
         decision_approved=fields.get("decision_approved") == "true",

@@ -16,6 +16,7 @@ export interface SparkIMessageDraftTarget {
   thread_kind: string;
   relationship_marked: boolean;
   relationship_approved: boolean;
+  parent_minor_context_approved: boolean;
   legal_marked: boolean;
 }
 
