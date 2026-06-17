@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
+import re
 import shlex
 import socket
 import subprocess
@@ -101,12 +103,8 @@ DEFAULT_GITHUB_BRANCH_PROTECTION_REPOS = (
     "kphaas/jarvis-forge",
 )
 DEFAULT_GITHUB_REQUIRED_CHECKS = (
-    "base-staleness",
-    "ci-pass",
-    "lint",
-    "secret-scan",
-    "test",
-    "typecheck",
+    "forge/native-ci-shadow",
+    "github/guardrails",
 )
 REMOTE_JWT_ALLOWED_KEYS = {
     "ALPHA_SERVICE_TOKEN",
@@ -150,6 +148,225 @@ TOKEN_LOG_NODES: dict[str, set[str]] = {
 }
 TOKEN_LOG_COMMAND = (
     'tail -n 120 "$HOME/jarvis-alpha/logs/token_rotation.log" 2>/dev/null || true'
+)
+MALWARE_SCAN_DEFAULT_PATHS = (
+    "brain",
+    "common",
+    "config",
+    "db",
+    "docs",
+    "endpoint",
+    "gateway",
+    "launchagents",
+    "scripts",
+    ".github/workflows",
+)
+MALWARE_SCAN_SIBLING_REPOS = (
+    "jarvis-family",
+    "jarvis-forge",
+    "jarvis-financial",
+    "jarvis-personality",
+    "jarvis-council",
+    "jarvis-helm",
+    "jarvis-print",
+    "jarvis-print-copilot",
+    "jarvis-standards",
+)
+MALWARE_SCAN_SUFFIXES = {
+    ".cfg",
+    ".cjs",
+    ".ini",
+    ".js",
+    ".json",
+    ".mjs",
+    ".md",
+    ".mdx",
+    ".plist",
+    ".py",
+    ".sh",
+    ".sql",
+    ".toml",
+    ".ts",
+    ".tsx",
+    ".yaml",
+    ".yml",
+}
+MALWARE_SCAN_EXCLUDED_PARTS = {
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "build",
+    "dist",
+    "logs",
+    "node_modules",
+}
+MALWARE_SCAN_MAX_FILE_BYTES = 1_000_000
+MALWARE_SCAN_DEFAULT_ALLOWLIST = {
+    "../jarvis-family/scripts/familyvault_pull.sh:macos_persistence_writer",
+    "../jarvis-forge/scripts/launchagents/install_inbox_watcher.sh:macos_persistence_writer",
+    "brain/services/internet_scout/search_quality_evals.py:sensitive_data_request_instruction",
+    "scripts/install_launchagents.py:macos_persistence_writer",
+    "scripts/porchlight_security_agent.py:reverse_shell",
+    "scripts/porchlight_security_agent.py:bulk_secret_discovery",
+    "scripts/porchlight_security_agent.py:sensitive_data_request_instruction",
+}
+HOST_INTEGRITY_REPO_FILES = (
+    "scripts/porchlight_security_agent.py",
+    "scripts/porchlight_ssh_probe.sh",
+    "scripts/install_launchagents.py",
+    "scripts/restore_drill_alpha.sh",
+    "scripts/pg_backup_alpha.sh",
+    "scripts/sweep_tls_cert_renewal.py",
+    "scripts/rotate_secret.py",
+    "scripts/rotate_service_token.py",
+    "scripts/start_alpha_gmail_health.sh",
+    "launchagents/com.jarvis.alpha.porchlight.template.plist",
+    "launchagents/com.jarvis.alpha.gmail-health.template.plist",
+    "launchagents/com.jarvis.alpha.sweep-cert-renewal.brain.template.plist",
+)
+HOST_INTEGRITY_BRAIN_FILES = (
+    "~/Library/LaunchAgents/com.jarvis.alpha.porchlight.plist",
+    "~/Library/LaunchAgents/com.jarvis.alpha.gmail-health.plist",
+    "~/Library/LaunchAgents/com.jarvis.alpha.pg_backup.plist",
+    "~/Library/LaunchAgents/com.jarvis.alpha.sweep-cert-renewal.brain.plist",
+    "~/Library/LaunchAgents/com.jarvis.alpha.rotate.brain_service.plist",
+    "~/Library/LaunchAgents/com.jarvis.alpha.rotate.buddy.plist",
+)
+EXPECTED_EXTERNAL_LISTENERS = (
+    ("python", "8186"),
+    ("python", "8187"),
+    ("python", "8195"),
+    ("loki", "3100"),
+    ("rapportd", "49930"),
+    ("controlce", "5000"),
+    ("controlce", "7000"),
+)
+SUSPICIOUS_PROCESS_PATTERNS = (
+    re.compile(r"\bpython(?:3)?\s+-m\s+http\.server\b", re.IGNORECASE),
+    re.compile(r"\b(?:nc|ncat|netcat)\b[^\n]{0,120}\s-l\b", re.IGNORECASE),
+    re.compile(r"\bsocat\b[^\n]{0,160}\bLISTEN\b", re.IGNORECASE),
+    re.compile(r"bash\s+-i\s+>&\s*(?:/dev/tcp/|/dev/udp/)", re.IGNORECASE),
+)
+MALWARE_STATIC_PATTERNS = (
+    {
+        "id": "download_exec_pipe",
+        "severity": "critical",
+        "summary": "downloaded payload is piped directly into an interpreter",
+        "regex": re.compile(
+            r"\b(?:curl|wget)\b[^\n|]{0,220}\|\s*(?:/usr/bin/env\s+)?"
+            r"(?:(?:/bin/)?(?:bash|sh|zsh|perl|ruby)\b|python(?:3)?\s+-(?:\s|$))",
+            re.IGNORECASE,
+        ),
+    },
+    {
+        "id": "obfuscated_python_exec",
+        "severity": "critical",
+        "summary": "base64 or marshal payload is executed dynamically",
+        "regex": re.compile(
+            r"\b(?:exec|eval)\s*\([^)\n]{0,260}\b"
+            r"(?:base64\.b64decode|marshal\.loads|zlib\.decompress)\b"
+            r"|\b(?:base64\.b64decode|marshal\.loads|zlib\.decompress)\b"
+            r"[\s\S]{0,260}\b(?:exec|eval)\s*\(",
+            re.IGNORECASE,
+        ),
+    },
+    {
+        "id": "obfuscated_javascript_exec",
+        "severity": "critical",
+        "summary": "base64 JavaScript payload is executed dynamically",
+        "regex": re.compile(
+            r"\b(?:eval|Function)\s*\(\s*(?:window\.)?(?:atob|Buffer\.from)\s*\(",
+            re.IGNORECASE,
+        ),
+    },
+    {
+        "id": "reverse_shell",
+        "severity": "critical",
+        "summary": "reverse shell primitive appears in source",
+        "regex": re.compile(
+            r"bash\s+-i\s+>&\s*(?:/dev/tcp/|/dev/udp/)"
+            r"|(?:nc|ncat|netcat)\s+[^\n]{0,120}\s-e\s"
+            r"|exec\s+\d+<>/dev/tcp/[^\n]{1,160}cat\s+<",
+            re.IGNORECASE,
+        ),
+    },
+    {
+        "id": "secrets_pipe_to_network",
+        "severity": "critical",
+        "summary": "secret material appears to be piped to a network tool",
+        "regex": re.compile(
+            r"(?:\.secrets|POSTGRES_PASSWORD|GITHUB_TOKEN|CLOUDFLARE_API_TOKEN)"
+            r"[^\n|]{0,180}\|\s*(?:curl|nc|ncat|netcat)\b"
+            r"|(?:curl|nc|ncat|netcat)\b[^\n|]{0,180}<\s*"
+            r"(?:~/)?(?:jarvis/)?\.secrets",
+            re.IGNORECASE,
+        ),
+    },
+    {
+        "id": "env_dump_to_network",
+        "severity": "critical",
+        "summary": "environment variables appear to be dumped to a network tool",
+        "regex": re.compile(
+            r"\b(?:env|printenv|set)\b[^\n|]{0,120}\|\s*"
+            r"(?:curl|nc|ncat|netcat)\b",
+            re.IGNORECASE,
+        ),
+    },
+    {
+        "id": "secret_file_direct_read",
+        "severity": "critical",
+        "summary": "code directly reads sensitive local secret/key files",
+        "regex": re.compile(
+            r"\b(?:cat|less|more|tail|head)\s+[^\n]{0,180}"
+            r"(?:~|\$HOME|/Users|/var/root)[^\n]{0,180}"
+            r"(?:\.secrets|\.env|id_rsa|id_ed25519|credentials\.json|token\.json)",
+            re.IGNORECASE,
+        ),
+    },
+    {
+        "id": "bulk_secret_discovery",
+        "severity": "critical",
+        "summary": "code appears to search broadly for secrets or private keys",
+        "regex": re.compile(
+            r"\b(?:find|fd)\s+(?:/|~|\$HOME|/Users|/var/root)[^\n]{0,220}"
+            r"(?:-name|-iname)[^\n]{0,120}"
+            r"(?:\.secrets|\.env|id_rsa|id_ed25519|credentials\.json|token\.json)"
+            r"|\b(?:grep|rg|ag)\b[^\n]{0,80}(?:-R|-r|--recursive)[^\n]{0,120}"
+            r"(?:AKIA|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|api[_ -]?key|password|token|secret)"
+            r"[^\n]{0,220}(?:/|~|\$HOME|/Users|/var/root)",
+            re.IGNORECASE,
+        ),
+    },
+    {
+        "id": "sensitive_data_request_instruction",
+        "severity": "critical",
+        "summary": "prompt/instruction text asks for sensitive data disclosure",
+        "regex": re.compile(
+            r"(?:ignore\s+(?:all\s+)?(?:previous|prior|above|system)\s+instructions|"
+            r"bypass\s+(?:policy|guardrails|safety)|do\s+not\s+ask\s+permission)"
+            r"[\s\S]{0,260}"
+            r"(?:secret|token|password|api[_ -]?key|private\s+key|credentials|"
+            r"environment\s+variables|sensitive\s+data)"
+            r"|(?:send|post|upload|exfiltrate|dump|reveal|print|return|share)"
+            r"[^\n.]{0,140}"
+            r"\b(?:all|actual|the|your|my|any|full)\s+"
+            r"(?:secrets|tokens|passwords|api[_ -]?keys|private\s+keys|credentials|"
+            r"environment\s+variables|\.secrets|sensitive\s+data)",
+            re.IGNORECASE,
+        ),
+    },
+    {
+        "id": "macos_persistence_writer",
+        "severity": "high",
+        "summary": "code writes directly into macOS LaunchAgent persistence paths",
+        "regex": re.compile(
+            r"(?:write_text|open|cp|mv|install)\s*\(?[^\n]{0,180}"
+            r"(?:~/)?Library/LaunchAgents/",
+            re.IGNORECASE,
+        ),
+    },
 )
 
 SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
@@ -1749,6 +1966,31 @@ def _cloudflare_allowed_public_hosts() -> set[str]:
     return _csv_config_set("PORCHLIGHT_CLOUDFLARE_ALLOWED_PUBLIC_HOSTS")
 
 
+def _normalize_cloudflare_target(
+    value: str, *, include_path: bool = False
+) -> str | None:
+    raw = value.strip().lower()
+    if not raw:
+        return None
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    host = parsed.hostname or ""
+    if "." not in host:
+        return None
+    if not include_path:
+        return host
+    path = (parsed.path or "").strip("/")
+    return f"{host}/{path}" if path else host
+
+
+def _cloudflare_allowed_public_paths() -> set[str]:
+    targets: set[str] = set()
+    for item in _csv_config_set("PORCHLIGHT_CLOUDFLARE_ALLOWED_PUBLIC_PATHS"):
+        normalized = _normalize_cloudflare_target(item, include_path=True)
+        if normalized:
+            targets.add(normalized)
+    return targets
+
+
 def _cloudflare_forbidden_host_patterns() -> tuple[str, ...]:
     configured = os.getenv("PORCHLIGHT_CLOUDFLARE_FORBIDDEN_HOST_PATTERNS", "").strip()
     if configured:
@@ -1805,20 +2047,53 @@ def _cloudflare_account_id() -> str | None:
     return _secret_or_env("CLOUDFLARE_ACCOUNT_ID")
 
 
-def _app_hostnames(app: dict) -> set[str]:
-    hosts = set()
+def _app_target_values(app: dict) -> list[str]:
+    values: list[str] = []
     for key in ("domain", "aud", "hostname"):
         value = app.get(key)
         if isinstance(value, str) and value:
-            host = value.split("/", 1)[0].lower()
-            hosts.add(host)
+            values.append(value)
     for nested_key in ("domains", "self_hosted_domains"):
         value = app.get(nested_key)
         if isinstance(value, list):
             for item in value:
                 if isinstance(item, str) and item:
-                    hosts.add(item.split("/", 1)[0].lower())
+                    values.append(item)
+    destinations = app.get("destinations")
+    if isinstance(destinations, list):
+        for destination in destinations:
+            if not isinstance(destination, dict):
+                continue
+            uri = destination.get("uri")
+            if isinstance(uri, str) and uri:
+                values.append(uri)
+    return values
+
+
+def _app_hostnames(app: dict) -> set[str]:
+    hosts = set()
+    for value in _app_target_values(app):
+        host = _normalize_cloudflare_target(value)
+        if host:
+            hosts.add(host)
     return hosts
+
+
+def _app_path_targets(app: dict) -> set[str]:
+    targets = set()
+    for value in _app_target_values(app):
+        target = _normalize_cloudflare_target(value, include_path=True)
+        if target:
+            targets.add(target)
+    return targets
+
+
+def _app_is_allowed_public_path(app: dict) -> bool:
+    allowed_paths = _cloudflare_allowed_public_paths()
+    if not allowed_paths:
+        return False
+    targets = _app_path_targets(app)
+    return bool(targets) and targets <= allowed_paths
 
 
 def _policy_has_everyone_rule(policy: dict) -> bool:
@@ -1947,6 +2222,7 @@ def check_cloudflare_access_policy_drift(
         )
 
     matched = []
+    public_path_exceptions = []
     risky_policies: list[str] = []
     no_policy_apps: list[str] = []
     expected_policy_emails = _cloudflare_expected_policy_emails()
@@ -1959,7 +2235,17 @@ def check_cloudflare_access_policy_drift(
             continue
         app_id = str(app.get("id") or "")
         name = str(app.get("name") or app_id or "unknown")
-        matched.append({"id": app_id, "name": name, "hostnames": sorted(hostnames)})
+        path_targets = _app_path_targets(app)
+        app_metadata = {
+            "id": app_id,
+            "name": name,
+            "hostnames": sorted(hostnames),
+            "path_targets": sorted(path_targets),
+        }
+        if _app_is_allowed_public_path(app):
+            public_path_exceptions.append(app_metadata)
+            continue
+        matched.append(app_metadata)
         policies = app.get("policies")
         if not isinstance(policies, list) and app_id:
             _rc, policy_payload = _cloudflare_api_get(
@@ -1990,9 +2276,13 @@ def check_cloudflare_access_policy_drift(
             name="cloudflare_access_policy_drift",
             status="fail",
             severity="critical",
-            summary="No Cloudflare Access application matched the expected protected hostnames.",
+            summary="No protected Cloudflare Access application matched the expected hostnames.",
             detail=", ".join(expected_hosts),
-            metadata={"expected_hosts": expected_hosts, "apps_seen": len(apps)},
+            metadata={
+                "expected_hosts": expected_hosts,
+                "apps_seen": len(apps),
+                "allowed_public_path_exceptions": public_path_exceptions,
+            },
         )
     if risky_policies or no_policy_apps:
         details = []
@@ -2009,6 +2299,7 @@ def check_cloudflare_access_policy_drift(
             metadata={
                 "expected_hosts": expected_hosts,
                 "matched": matched,
+                "allowed_public_path_exceptions": public_path_exceptions,
                 "risky_policies": risky_policies,
                 "no_policy_apps": no_policy_apps,
             },
@@ -2030,6 +2321,8 @@ def check_cloudflare_access_policy_drift(
                 detail="; ".join(details),
                 metadata={
                     "expected_hosts": expected_hosts,
+                    "matched": matched,
+                    "allowed_public_path_exceptions": public_path_exceptions,
                     "expected_policy_emails_count": len(expected_policy_emails),
                     "matched_policy_emails_count": len(matched_policy_emails),
                     "missing_policy_emails": missing,
@@ -2049,6 +2342,7 @@ def check_cloudflare_access_policy_drift(
             metadata={
                 "expected_hosts": expected_hosts,
                 "matched": matched,
+                "allowed_public_path_exceptions": public_path_exceptions,
                 "expected_policy_emails_count": 0,
                 "matched_policy_emails_count": len(matched_policy_emails),
             },
@@ -2062,6 +2356,7 @@ def check_cloudflare_access_policy_drift(
         metadata={
             "expected_hosts": expected_hosts,
             "matched": matched,
+            "allowed_public_path_exceptions": public_path_exceptions,
             "expected_policy_emails_count": len(expected_policy_emails),
             "matched_policy_emails_count": len(matched_policy_emails),
         },
@@ -2191,7 +2486,566 @@ def _display_path(path: Path) -> str:
     try:
         return str(path.relative_to(REPO_ROOT))
     except ValueError:
+        pass
+    try:
+        return "../" + str(path.relative_to(REPO_ROOT.parent))
+    except ValueError:
         return str(path)
+
+
+def _default_malware_scan_raw_paths(repo_root: Path) -> list[str]:
+    raw_paths = list(MALWARE_SCAN_DEFAULT_PATHS)
+    for repo_name in MALWARE_SCAN_SIBLING_REPOS:
+        sibling = repo_root.parent / repo_name
+        if sibling.exists() and sibling.resolve() != repo_root.resolve():
+            raw_paths.append(str(sibling))
+    return raw_paths
+
+
+def _missing_default_malware_sibling_repos(repo_root: Path) -> list[str]:
+    return [
+        repo_name
+        for repo_name in MALWARE_SCAN_SIBLING_REPOS
+        if not (repo_root.parent / repo_name).exists()
+    ]
+
+
+def _malware_sibling_repo_paths(repo_root: Path) -> list[Path]:
+    return [
+        repo_root.parent / repo_name
+        for repo_name in MALWARE_SCAN_SIBLING_REPOS
+        if (repo_root.parent / repo_name).exists()
+    ]
+
+
+def _git_command_args(repo: Path, *git_args: str, token: str = "") -> list[str]:
+    args = ["git"]
+    if token:
+        auth = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        args.extend(["-c", f"http.extraHeader=Authorization: Basic {auth}"])
+    args.extend(["-C", str(repo), *git_args])
+    return args
+
+
+def _redact_command_output(value: str, token: str = "") -> str:
+    redacted = value
+    if token:
+        redacted = redacted.replace(token, "<redacted>")
+    return redacted.strip()[:500]
+
+
+def check_malware_scan_repo_freshness(
+    repo_root: Path = REPO_ROOT,
+    command: Callable[..., CommandResult] = run_command,
+) -> CheckResult:
+    refreshed: list[dict[str, object]] = []
+    failed: list[str] = []
+    not_git: list[str] = []
+    missing = _missing_default_malware_sibling_repos(repo_root)
+    token = _secret_or_env("GITHUB_TOKEN") or ""
+
+    for repo in _malware_sibling_repo_paths(repo_root):
+        display = _display_path(repo)
+        if not (repo / ".git").exists():
+            not_git.append(display)
+            continue
+        before = command(["git", "-C", str(repo), "rev-parse", "--short", "HEAD"])
+        before_sha = before.stdout.strip() if before.returncode == 0 else "unknown"
+        fetch = command(
+            _git_command_args(
+                repo,
+                "fetch",
+                "--prune",
+                "--quiet",
+                "origin",
+                token=token,
+            ),
+            timeout=120,
+        )
+        if fetch.returncode != 0:
+            detail = _redact_command_output(fetch.stderr or fetch.stdout, token)
+            failed.append(f"{display}: fetch failed: {detail}")
+            continue
+        pull = command(
+            _git_command_args(repo, "pull", "--ff-only", "--quiet", token=token),
+            timeout=120,
+        )
+        if pull.returncode != 0:
+            detail = _redact_command_output(pull.stderr or pull.stdout, token)
+            failed.append(f"{display}: pull --ff-only failed: {detail}")
+            continue
+        after = command(["git", "-C", str(repo), "rev-parse", "--short", "HEAD"])
+        after_sha = after.stdout.strip() if after.returncode == 0 else "unknown"
+        refreshed.append(
+            {
+                "repo": display,
+                "before": before_sha,
+                "after": after_sha,
+                "changed": before_sha != after_sha,
+            }
+        )
+
+    metadata = {
+        "refreshed": refreshed,
+        "failed": failed,
+        "not_git": not_git,
+        "missing_default_sibling_repos": missing,
+    }
+    if failed:
+        return CheckResult(
+            name="malware_scan_repo_freshness",
+            status="fail",
+            severity="high",
+            summary="One or more malware-scan repos could not be refreshed before scanning.",
+            detail="; ".join(failed[:8]),
+            metadata=metadata,
+        )
+    if not_git:
+        return CheckResult(
+            name="malware_scan_repo_freshness",
+            status="warn",
+            severity="medium",
+            summary="Some malware-scan roots are not git checkouts and cannot be refreshed.",
+            detail=", ".join(not_git[:8]),
+            metadata=metadata,
+        )
+    return CheckResult(
+        name="malware_scan_repo_freshness",
+        status="pass",
+        severity="info",
+        summary=f"Refreshed {len(refreshed)} sibling repo(s) before malware scan.",
+        metadata=metadata,
+    )
+
+
+def _malware_scan_paths(repo_root: Path) -> list[Path]:
+    configured = os.getenv("PORCHLIGHT_MALWARE_SCAN_PATHS", "").strip()
+    raw_paths = (
+        [item.strip() for item in configured.split(",") if item.strip()]
+        if configured
+        else _default_malware_scan_raw_paths(repo_root)
+    )
+    paths: list[Path] = []
+    for raw_path in raw_paths:
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = repo_root / path
+        if path.exists():
+            paths.append(path)
+    return paths
+
+
+def _malware_scan_allowlist() -> set[str]:
+    configured = _secret_or_env("PORCHLIGHT_MALWARE_SCAN_ALLOWLIST") or ""
+    configured_entries = {
+        item.strip().lower() for item in configured.split(",") if item.strip()
+    }
+    return set(MALWARE_SCAN_DEFAULT_ALLOWLIST) | configured_entries
+
+
+def _should_scan_code_file(path: Path) -> bool:
+    if any(part in MALWARE_SCAN_EXCLUDED_PARTS for part in path.parts):
+        return False
+    if path.is_dir():
+        return False
+    if path.suffix.lower() in MALWARE_SCAN_SUFFIXES:
+        return True
+    return path.name in {".envrc", "Dockerfile", "Makefile"}
+
+
+def _iter_malware_scan_files(repo_root: Path) -> tuple[list[Path], int, list[Path]]:
+    files: list[Path] = []
+    skipped_large = 0
+    roots = _malware_scan_paths(repo_root)
+    for root in roots:
+        candidates = root.rglob("*") if root.is_dir() else [root]
+        for candidate in candidates:
+            if not _should_scan_code_file(candidate):
+                continue
+            try:
+                size = candidate.stat().st_size
+            except OSError:
+                continue
+            if size > MALWARE_SCAN_MAX_FILE_BYTES:
+                skipped_large += 1
+                continue
+            files.append(candidate)
+    return sorted(set(files)), skipped_large, roots
+
+
+def _line_number_for_offset(text: str, offset: int) -> int:
+    return text.count("\n", 0, max(0, offset)) + 1
+
+
+def _malware_finding_allowed(
+    *,
+    display_path: str,
+    rule_id: str,
+    allowlist: set[str],
+) -> bool:
+    normalized_path = display_path.lower()
+    normalized_rule = rule_id.lower()
+    return (
+        normalized_rule in allowlist
+        or f"{normalized_path}:{normalized_rule}" in allowlist
+    )
+
+
+def _benign_sensitive_instruction_context(text: str, match: re.Match[str]) -> bool:
+    before = text[max(0, match.start() - 80) : match.start()].lower()
+    matched = match.group(0).lower()
+    guardrail_phrases = (
+        "do not",
+        "don't",
+        "never",
+        "must not",
+        "should not",
+        "cannot",
+        "refuse",
+        "reject",
+        "avoid",
+        "block",
+        "prevent",
+    )
+    if any(phrase in before[-60:] for phrase in guardrail_phrases):
+        return True
+    return any(
+        f"{phrase} reveal" in matched
+        or f"{phrase} print" in matched
+        or f"{phrase} return" in matched
+        or f"{phrase} share" in matched
+        or f"{phrase} send" in matched
+        or f"{phrase} dump" in matched
+        for phrase in guardrail_phrases
+    )
+
+
+def _rule_applies_to_path(rule_id: str, path: Path) -> bool:
+    if path.suffix.lower() in {".md", ".mdx"}:
+        return rule_id == "sensitive_data_request_instruction"
+    return True
+
+
+def check_code_malware_scan(repo_root: Path = REPO_ROOT) -> CheckResult:
+    """Static tripwire for code patterns commonly used by malware implants."""
+    files, skipped_large, scan_roots = _iter_malware_scan_files(repo_root)
+    allowlist = _malware_scan_allowlist()
+    findings: list[dict[str, object]] = []
+    unreadable: list[str] = []
+
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            unreadable.append(_display_path(path))
+            continue
+        display_path = _display_path(path)
+        for pattern in MALWARE_STATIC_PATTERNS:
+            rule_id = str(pattern["id"])
+            if not _rule_applies_to_path(rule_id, path):
+                continue
+            if rule_id == "macos_persistence_writer" and path.suffix == ".plist":
+                continue
+            if _malware_finding_allowed(
+                display_path=display_path,
+                rule_id=rule_id,
+                allowlist=allowlist,
+            ):
+                continue
+            regex = pattern["regex"]
+            assert isinstance(regex, re.Pattern)
+            for match in regex.finditer(text):
+                if rule_id == "sensitive_data_request_instruction" and (
+                    _benign_sensitive_instruction_context(text, match)
+                ):
+                    continue
+                findings.append(
+                    {
+                        "path": display_path,
+                        "line": _line_number_for_offset(text, match.start()),
+                        "rule_id": rule_id,
+                        "severity": pattern["severity"],
+                        "summary": pattern["summary"],
+                    }
+                )
+
+    severity = "info"
+    status = "pass"
+    if any(item["severity"] == "critical" for item in findings):
+        status = "fail"
+        severity = "critical"
+    elif findings:
+        status = "warn"
+        severity = "high"
+    elif unreadable:
+        status = "warn"
+        severity = "low"
+
+    metadata = {
+        "scan_roots": [_display_path(path) for path in scan_roots],
+        "missing_default_sibling_repos": _missing_default_malware_sibling_repos(
+            repo_root
+        ),
+        "files_scanned": len(files),
+        "skipped_large_files": skipped_large,
+        "unreadable_files": unreadable[:20],
+        "findings": findings[:50],
+        "finding_count": len(findings),
+        "allowlist_count": len(allowlist),
+    }
+    if status == "fail":
+        detail = "; ".join(
+            f"{item['path']}:{item['line']} {item['rule_id']}" for item in findings[:8]
+        )
+        return CheckResult(
+            name="code_malware_scan",
+            status="fail",
+            severity="critical",
+            summary="Suspicious malware-style code patterns need review.",
+            detail=detail,
+            metadata=metadata,
+        )
+    if status == "warn":
+        detail = "; ".join(
+            f"{item['path']}:{item['line']} {item['rule_id']}" for item in findings[:8]
+        )
+        if unreadable and not detail:
+            detail = "Unreadable files: " + ", ".join(unreadable[:8])
+        return CheckResult(
+            name="code_malware_scan",
+            status="warn",
+            severity=severity,
+            summary="Code malware scan found items that need review.",
+            detail=detail,
+            metadata=metadata,
+        )
+    return CheckResult(
+        name="code_malware_scan",
+        status="pass",
+        severity="info",
+        summary="Static malware tripwire found no suspicious code patterns.",
+        metadata=metadata,
+    )
+
+
+def _host_integrity_targets(repo_root: Path = REPO_ROOT) -> list[Path]:
+    targets = [repo_root / item for item in HOST_INTEGRITY_REPO_FILES]
+    if current_node_name() == "brain":
+        targets.extend(Path(item).expanduser() for item in HOST_INTEGRITY_BRAIN_FILES)
+    else:
+        targets.extend(
+            path
+            for item in HOST_INTEGRITY_BRAIN_FILES
+            if (path := Path(item).expanduser()).exists()
+        )
+    return targets
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def check_host_integrity(repo_root: Path = REPO_ROOT) -> CheckResult:
+    checked: list[dict[str, object]] = []
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    for path in _host_integrity_targets(repo_root):
+        display = _display_path(path)
+        if not path.exists():
+            issues.append(f"{display}: missing")
+            continue
+        if path.is_symlink():
+            issues.append(f"{display}: symlink")
+            continue
+        try:
+            stat_result = path.stat()
+            mode = stat_result.st_mode & 0o777
+            digest = _sha256_file(path)
+        except OSError as exc:
+            warnings.append(f"{display}: unreadable: {exc.__class__.__name__}")
+            continue
+        if mode & 0o022:
+            issues.append(f"{display}: group/world writable mode {mode:o}")
+        checked.append(
+            {
+                "path": display,
+                "mode": f"{mode:o}",
+                "sha256": digest,
+                "size": stat_result.st_size,
+            }
+        )
+
+    metadata = {
+        "checked": checked,
+        "issues": issues,
+        "warnings": warnings,
+    }
+    if issues:
+        return CheckResult(
+            name="host_integrity",
+            status="fail",
+            severity="high",
+            summary="Critical host files failed integrity safety checks.",
+            detail="; ".join(issues[:8]),
+            metadata=metadata,
+        )
+    if warnings:
+        return CheckResult(
+            name="host_integrity",
+            status="warn",
+            severity="medium",
+            summary="Some critical host files could not be fully inspected.",
+            detail="; ".join(warnings[:8]),
+            metadata=metadata,
+        )
+    return CheckResult(
+        name="host_integrity",
+        status="pass",
+        severity="info",
+        summary=f"Host integrity checked {len(checked)} critical file(s).",
+        metadata=metadata,
+    )
+
+
+def _parse_lsof_listener_line(line: str) -> dict[str, str] | None:
+    parts = line.split()
+    if len(parts) < 9 or parts[0] == "COMMAND":
+        return None
+    try:
+        tcp_index = parts.index("TCP")
+    except ValueError:
+        return None
+    if tcp_index + 1 >= len(parts):
+        return None
+    name = parts[tcp_index + 1]
+    match = re.search(r"(.+):(\d+)$", name)
+    if not match:
+        return None
+    host = match.group(1).strip("[]")
+    return {
+        "command": parts[0],
+        "pid": parts[1],
+        "user": parts[2],
+        "host": host,
+        "port": match.group(2),
+        "name": name,
+    }
+
+
+def _listener_scope(host: str) -> str:
+    normalized = host.lower()
+    if normalized in {"127.0.0.1", "::1", "localhost"}:
+        return "loopback"
+    if normalized in {"*", "::"}:
+        return "all_interfaces"
+    if normalized.startswith("100."):
+        return "tailscale"
+    return "external"
+
+
+def _listener_expected(listener: dict[str, str]) -> bool:
+    command = listener["command"].lower()
+    port = listener["port"]
+    for expected_command, expected_port in EXPECTED_EXTERNAL_LISTENERS:
+        if port == expected_port and command.startswith(expected_command):
+            return True
+    return False
+
+
+def _parse_ps_line(line: str) -> dict[str, str] | None:
+    stripped = line.strip()
+    if not stripped:
+        return None
+    parts = stripped.split(None, 2)
+    if len(parts) < 3 or not parts[0].isdigit():
+        return None
+    return {"pid": parts[0], "comm": parts[1], "args": parts[2]}
+
+
+def check_runtime_exposure(
+    command: Callable[..., CommandResult] = run_command,
+) -> CheckResult:
+    lsof = command(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"], timeout=20)
+    if lsof.returncode != 0:
+        return CheckResult(
+            name="runtime_exposure",
+            status="warn",
+            severity="medium",
+            summary="Could not inspect listening TCP ports.",
+            detail=(lsof.stderr or lsof.stdout).strip()[:500],
+        )
+
+    listeners = [
+        parsed
+        for line in lsof.stdout.splitlines()
+        if (parsed := _parse_lsof_listener_line(line)) is not None
+    ]
+    unexpected_listeners: list[str] = []
+    listener_metadata: list[dict[str, str]] = []
+    for listener in listeners:
+        scope = _listener_scope(listener["host"])
+        listener["scope"] = scope
+        listener_metadata.append(listener)
+        if scope == "loopback":
+            continue
+        if not _listener_expected(listener):
+            unexpected_listeners.append(
+                f"{listener['command']} pid={listener['pid']} {listener['name']}"
+            )
+
+    ps = command(["ps", "-axo", "pid=,comm=,args="], timeout=20)
+    suspicious_processes: list[str] = []
+    process_samples: list[dict[str, str]] = []
+    if ps.returncode == 0:
+        for line in ps.stdout.splitlines():
+            parsed = _parse_ps_line(line)
+            if not parsed:
+                continue
+            args = parsed["args"]
+            if any(pattern.search(args) for pattern in SUSPICIOUS_PROCESS_PATTERNS):
+                suspicious_processes.append(f"{parsed['pid']} {args[:180]}")
+                process_samples.append(parsed)
+    else:
+        suspicious_processes.append(
+            f"ps failed: {(ps.stderr or ps.stdout).strip()[:200]}"
+        )
+
+    metadata = {
+        "listeners": listener_metadata,
+        "unexpected_listeners": unexpected_listeners,
+        "suspicious_processes": suspicious_processes,
+        "process_samples": process_samples[:20],
+    }
+    if unexpected_listeners or suspicious_processes:
+        details = []
+        if unexpected_listeners:
+            details.append(
+                "unexpected listeners: " + "; ".join(unexpected_listeners[:8])
+            )
+        if suspicious_processes:
+            details.append(
+                "suspicious processes: " + "; ".join(suspicious_processes[:8])
+            )
+        return CheckResult(
+            name="runtime_exposure",
+            status="fail",
+            severity="high",
+            summary="Unexpected runtime exposure needs review.",
+            detail="; ".join(details),
+            metadata=metadata,
+        )
+    return CheckResult(
+        name="runtime_exposure",
+        status="pass",
+        severity="info",
+        summary=f"Runtime exposure scan checked {len(listeners)} listening TCP socket(s).",
+        metadata=metadata,
+    )
 
 
 def _pip_audit_counts(payload: dict) -> dict[str, int]:
@@ -3242,6 +4096,10 @@ def run_sweep(args: argparse.Namespace) -> dict[str, object]:
         check_cloudflare_access_policy_drift(),
         check_cloudflare_audit_logs(window_hours=args.cloudflare_audit_window_hours),
         check_dependency_cve_scan(),
+        check_malware_scan_repo_freshness(),
+        check_code_malware_scan(),
+        check_host_integrity(),
+        check_runtime_exposure(),
         check_sweep_tls_report_intake(),
         check_financial_security_posture(),
         check_github_branch_protection_drift(),
