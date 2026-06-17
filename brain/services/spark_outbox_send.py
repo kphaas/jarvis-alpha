@@ -56,6 +56,15 @@ class SparkOutboxSendResult:
     send_attempt_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedSparkOutboxSend:
+    item: SparkOutboxSendItem
+    chat_guid: str
+    draft_text: str
+    actor_sub: str
+    actor_type: str
+
+
 async def send_approved_spark_imessage_outbox(
     conn: asyncpg.Connection,
     *,
@@ -66,6 +75,48 @@ async def send_approved_spark_imessage_outbox(
     sender: SparkIMessageSender | None = None,
     approved_sources: tuple[SparkApprovedSourceRecord, ...] | None = None,
 ) -> SparkOutboxSendResult:
+    prepared = await prepare_approved_spark_imessage_outbox_send(
+        conn,
+        outbox_id=outbox_id,
+        actor_sub=actor_sub,
+        actor_type=actor_type,
+        crypto=crypto,
+        approved_sources=approved_sources,
+    )
+    try:
+        send_result = await execute_prepared_spark_imessage_send(
+            prepared,
+            sender=sender,
+        )
+    except Exception as exc:
+        await record_prepared_spark_imessage_send_failure(
+            conn,
+            prepared=prepared,
+            exc=exc,
+        )
+        if isinstance(
+            exc,
+            (BlueBubblesClientError, BlueBubblesConfigError, BlueBubblesPolicyError),
+        ):
+            raise
+        raise SparkOutboxSendError("spark_imessage_send_failed") from exc
+
+    return await record_prepared_spark_imessage_send_success(
+        conn,
+        prepared=prepared,
+        send_result=send_result,
+    )
+
+
+async def prepare_approved_spark_imessage_outbox_send(
+    conn: asyncpg.Connection,
+    *,
+    outbox_id: UUID,
+    actor_sub: str,
+    actor_type: str,
+    crypto: SparkOutboxCrypto,
+    approved_sources: tuple[SparkApprovedSourceRecord, ...] | None = None,
+) -> PreparedSparkOutboxSend:
     item = await fetch_spark_outbox_item_for_send(conn, outbox_id=outbox_id)
     if item is None:
         raise SparkOutboxSendError("spark_outbox_not_found")
@@ -76,7 +127,6 @@ async def send_approved_spark_imessage_outbox(
         item,
         approved_sources=approved_sources,
     )
-    active_sender = sender or SparkIMessageSendClient()
 
     await record_spark_outbox_event(
         conn,
@@ -89,52 +139,74 @@ async def send_approved_spark_imessage_outbox(
             "draft_text_hash": item.draft_text_hash,
         },
     )
-    try:
-        send_result = await active_sender.send_text_to_chat(
-            chat_guid=chat_guid,
-            text=draft_text,
-        )
-    except Exception as exc:
-        await record_spark_outbox_event(
-            conn,
-            outbox_id=item.outbox_id,
-            event_type="send_failed",
-            actor_sub=actor_sub,
-            actor_type=actor_type,
-            metadata={"approval_queue_id": str(item.approval_queue_id)},
-            error_class=exc.__class__.__name__,
-            error_message="spark_imessage_send_failed",
-        )
-        if isinstance(
-            exc,
-            (BlueBubblesClientError, BlueBubblesConfigError, BlueBubblesPolicyError),
-        ):
-            raise
-        raise SparkOutboxSendError("spark_imessage_send_failed") from exc
-
-    status = await record_spark_outbox_event(
-        conn,
-        outbox_id=item.outbox_id,
-        event_type="sent",
+    return PreparedSparkOutboxSend(
+        item=item,
+        chat_guid=chat_guid,
+        draft_text=draft_text,
         actor_sub=actor_sub,
         actor_type=actor_type,
+    )
+
+
+async def execute_prepared_spark_imessage_send(
+    prepared: PreparedSparkOutboxSend,
+    *,
+    sender: SparkIMessageSender | None = None,
+) -> SparkIMessageSendResult:
+    active_sender = sender or SparkIMessageSendClient()
+    return await active_sender.send_text_to_chat(
+        chat_guid=prepared.chat_guid,
+        text=prepared.draft_text,
+    )
+
+
+async def record_prepared_spark_imessage_send_failure(
+    conn: asyncpg.Connection,
+    *,
+    prepared: PreparedSparkOutboxSend,
+    exc: Exception,
+) -> None:
+    await record_spark_outbox_event(
+        conn,
+        outbox_id=prepared.item.outbox_id,
+        event_type="send_failed",
+        actor_sub=prepared.actor_sub,
+        actor_type=prepared.actor_type,
+        metadata={"approval_queue_id": str(prepared.item.approval_queue_id)},
+        error_class=exc.__class__.__name__,
+        error_message="spark_imessage_send_failed",
+    )
+
+
+async def record_prepared_spark_imessage_send_success(
+    conn: asyncpg.Connection,
+    *,
+    prepared: PreparedSparkOutboxSend,
+    send_result: SparkIMessageSendResult,
+) -> SparkOutboxSendResult:
+    status = await record_spark_outbox_event(
+        conn,
+        outbox_id=prepared.item.outbox_id,
+        event_type="sent",
+        actor_sub=prepared.actor_sub,
+        actor_type=prepared.actor_type,
         metadata={
-            "approval_queue_id": str(item.approval_queue_id),
+            "approval_queue_id": str(prepared.item.approval_queue_id),
             "bluebubbles_status": send_result.status,
             "message_ref_hash": send_result.message_ref_hash or "",
         },
     )
     await consume_spark_outbox_approval(
         conn,
-        approval_queue_id=item.approval_queue_id,
+        approval_queue_id=prepared.item.approval_queue_id,
     )
     return SparkOutboxSendResult(
-        outbox_id=str(item.outbox_id),
+        outbox_id=str(prepared.item.outbox_id),
         outbox_status=status,
-        approval_queue_id=str(item.approval_queue_id),
+        approval_queue_id=str(prepared.item.approval_queue_id),
         approval_status="executed",
         message_ref_hash=send_result.message_ref_hash,
-        send_attempt_count=item.send_attempt_count + 1,
+        send_attempt_count=prepared.item.send_attempt_count + 1,
     )
 
 
