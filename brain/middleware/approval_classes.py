@@ -134,6 +134,9 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/dev": ["admin"],
     # --- Review — T2 pass-through (Forge service review calls, local Ollama, $0) ---
     "POST /v1/review": ["write", "external_call"],  # TASK-001 Deliverable A
+    # --- Internal LLM tool-call — T2 pass-through (service-only, local Ollama,
+    # $0, no memory/embedding side effects). Not cost_incurring (local = free). ---
+    "POST /v1/internal/complete": ["external_call"],
     # --- Diagnose — T2 security_read ---
     "GET /v1/diagnose": ["read", "security_read"],
     # --- Health agents — T1 read ---
