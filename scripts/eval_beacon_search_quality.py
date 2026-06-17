@@ -11,6 +11,7 @@ import sys
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(repo_root))
+    sys.path.insert(0, str(repo_root / "common"))
 
     from brain.services.internet_scout.quality_canary import (
         search_quality_eval_payload,
