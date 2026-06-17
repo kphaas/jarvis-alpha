@@ -50,23 +50,23 @@ interface CoverageLane {
   checks: string[]
 }
 
-const EXPECTED_PORCHLIGHT_CHECKS = 20
+const EXPECTED_PORCHLIGHT_CHECKS = 22
 const PORCHLIGHT_STALE_AFTER_HOURS = 30
 
 const coverageLanes: CoverageLane[] = [
   {
     id: 'detect',
     title: 'Detection',
-    detail: 'Malware patterns, runtime exposure, honeypot and data-boundary signals.',
+    detail: 'Malware patterns, secret leakage, runtime exposure, honeypot, and data-boundary signals.',
     tab: 'Porchlight',
     icon: Activity,
     agents: ['porchlight', 'tripwire', 'sentry'],
-    checks: ['code_malware_scan', 'runtime_exposure'],
+    checks: ['code_malware_scan', 'secrets_leakage_scan', 'runtime_exposure'],
   },
   {
     id: 'exposure',
     title: 'Exposure',
-    detail: 'Repo freshness, dependencies, TLS, Cloudflare, and public surface drift.',
+    detail: 'Repo freshness, dependencies, TLS, Cloudflare, egress, and public surface drift.',
     tab: 'Sweep',
     icon: Radio,
     agents: ['sweep', 'porchlight'],
@@ -75,6 +75,7 @@ const coverageLanes: CoverageLane[] = [
       'dependency_cve_scan',
       'cloudflare_access',
       'cloudflare_access_policy_drift',
+      'outbound_egress_drift',
       'sweep_tls_report_intake',
     ],
   },

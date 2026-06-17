@@ -234,6 +234,105 @@ HOST_INTEGRITY_BRAIN_FILES = (
     "~/Library/LaunchAgents/com.jarvis.alpha.rotate.brain_service.plist",
     "~/Library/LaunchAgents/com.jarvis.alpha.rotate.buddy.plist",
 )
+SECRET_LEAK_LOG_DEFAULT_PATHS = ("logs",)
+SECRET_LEAK_LOG_SUFFIXES = {
+    ".err",
+    ".json",
+    ".jsonl",
+    ".log",
+    ".out",
+    ".txt",
+}
+SECRET_LEAK_EXCLUDED_PARTS = {
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "node_modules",
+}
+SECRET_LEAK_MAX_FILE_BYTES = int(
+    os.getenv("PORCHLIGHT_SECRET_LEAK_MAX_FILE_BYTES", "1048576")
+)
+SECRET_LEAK_DB_LIMIT = int(os.getenv("PORCHLIGHT_SECRET_LEAK_DB_LIMIT", "250"))
+SECRET_LEAK_DB_LOOKBACK_HOURS = int(
+    os.getenv("PORCHLIGHT_SECRET_LEAK_DB_LOOKBACK_HOURS", "48")
+)
+EGRESS_SCAN_DEFAULT_PATHS = (
+    "brain",
+    "config",
+    "gateway",
+    "launchagents",
+    "scripts",
+    ".github/workflows",
+)
+EGRESS_SCAN_SUFFIXES = {
+    ".cfg",
+    ".ini",
+    ".json",
+    ".md",
+    ".plist",
+    ".py",
+    ".sh",
+    ".toml",
+    ".yaml",
+    ".yml",
+}
+EGRESS_SCAN_EXCLUDED_PARTS = {
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "dist",
+    "logs",
+    "node_modules",
+    "tests",
+}
+EGRESS_LOG_DEFAULT_PATHS = ("logs",)
+EGRESS_LOG_NAME_TERMS = ("cloud", "egress", "gateway", "notify", "proxy")
+EGRESS_ALLOWED_HOSTS = {
+    "127.0.0.1",
+    "0.0.0.0",
+    "accounts.google.com",
+    "api.anthropic.com",
+    "api.cloudflare.com",
+    "api.github.com",
+    "api.open-meteo.com",
+    "api.openai.com",
+    "api.perplexity.ai",
+    "api.pushover.net",
+    "api.search.brave.com",
+    "aws.amazon.com",
+    "brave.com",
+    "cloudbilling.googleapis.com",
+    "developers.cloudflare.com",
+    "docs.anthropic.com",
+    "docs.github.com",
+    "docs.perplexity.ai",
+    "docs.stripe.com",
+    "family.kmfh.cloud",
+    "generativelanguage.googleapis.com",
+    "github.com",
+    "gmail.googleapis.com",
+    "graph.microsoft.com",
+    "jarvis-brain.tail40ed36.ts.net",
+    "jarvis-endpoint.tail40ed36.ts.net",
+    "jarvis-gateway.tail40ed36.ts.net",
+    "localhost",
+    "login.microsoftonline.com",
+    "oauth2.googleapis.com",
+    "platform.openai.com",
+    "www.apple.com",
+    "www.googleapis.com",
+}
+EGRESS_ALLOWED_SUFFIXES = (".tail40ed36.ts.net",)
+EGRESS_NON_EGRESS_PATH_PARTS = (("brain", "agents", "privacy_scrub", "data"),)
+EGRESS_NON_EGRESS_FILES = {
+    "brain/routes/honeypot.py",
+    "brain/services/internet_scout/search_quality_evals.py",
+}
 EXPECTED_EXTERNAL_LISTENERS = (
     ("python", "8186"),
     ("python", "8187"),
@@ -368,6 +467,85 @@ MALWARE_STATIC_PATTERNS = (
         ),
     },
 )
+SECRET_LEAK_PATTERNS = (
+    {
+        "id": "private_key_material",
+        "severity": "critical",
+        "regex": re.compile(
+            r"-----BEGIN (?:RSA |OPENSSH |EC |DSA |)?PRIVATE KEY-----",
+            re.IGNORECASE,
+        ),
+    },
+    {
+        "id": "jwt_token_value",
+        "severity": "critical",
+        "regex": re.compile(
+            r"\b(?P<value>eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+            r"\.[A-Za-z0-9_-]{10,})\b"
+        ),
+    },
+    {
+        "id": "github_token_value",
+        "severity": "critical",
+        "regex": re.compile(
+            r"\b(?P<value>(?:github_pat_[A-Za-z0-9_]{22,}|"
+            r"gh[pousr]_[A-Za-z0-9_]{20,}))\b"
+        ),
+    },
+    {
+        "id": "provider_api_key_value",
+        "severity": "critical",
+        "regex": re.compile(
+            r"\b(?P<value>(?:sk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{20,}|"
+            r"AIza[0-9A-Za-z_-]{32,}|xox[baprs]-[0-9A-Za-z-]{20,}))\b"
+        ),
+    },
+    {
+        "id": "bearer_token_value",
+        "severity": "high",
+        "regex": re.compile(
+            r"\bBearer\s+(?P<value>[A-Za-z0-9._~+/=-]{32,})\b",
+            re.IGNORECASE,
+        ),
+    },
+    {
+        "id": "credential_assignment_value",
+        "severity": "high",
+        "regex": re.compile(
+            r"\b(?:password|passwd|secret|token|api[_-]?key|client[_-]?secret|"
+            r"refresh[_-]?token|access[_-]?token)\b"
+            r"\s*[:=]\s*[\"']?(?P<value>[A-Za-z0-9_./+=:-]{20,})",
+            re.IGNORECASE,
+        ),
+    },
+    {
+        "id": "credential_url_value",
+        "severity": "high",
+        "regex": re.compile(
+            r"\b(?:postgres(?:ql)?|mysql|redis|mongodb)://"
+            r"[^:\s/@]+:(?P<value>[^@\s]{6,})@",
+            re.IGNORECASE,
+        ),
+    },
+    {
+        "id": "aws_access_key_value",
+        "severity": "high",
+        "regex": re.compile(r"\b(?P<value>AKIA[0-9A-Z]{16})\b"),
+    },
+)
+SECRET_PLACEHOLDER_VALUES = {
+    "access-token",
+    "api-key",
+    "bearer-token",
+    "changeme",
+    "dummy-token",
+    "example-token",
+    "fake-token",
+    "redacted",
+    "secret",
+    "test-token",
+    "token",
+}
 
 SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 REVIEWED_ROUTE_DB_ACCESS: dict[str, str] = {
@@ -2828,6 +3006,498 @@ def check_code_malware_scan(repo_root: Path = REPO_ROOT) -> CheckResult:
     )
 
 
+def _csv_env(name: str) -> list[str]:
+    configured = os.getenv(name, "").strip()
+    if not configured:
+        return []
+    return [item.strip() for item in configured.split(",") if item.strip()]
+
+
+def _secret_leak_log_roots(repo_root: Path = REPO_ROOT) -> list[Path]:
+    raw_paths = _csv_env("PORCHLIGHT_SECRET_LEAK_LOG_PATHS") or list(
+        SECRET_LEAK_LOG_DEFAULT_PATHS
+    )
+    roots: list[Path] = []
+    for raw_path in raw_paths:
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = repo_root / path
+        if path.exists():
+            roots.append(path)
+    return roots
+
+
+def _should_scan_secret_log(path: Path) -> bool:
+    if any(part in SECRET_LEAK_EXCLUDED_PARTS for part in path.parts):
+        return False
+    if path.is_dir():
+        return False
+    return path.suffix.lower() in SECRET_LEAK_LOG_SUFFIXES
+
+
+def _iter_secret_log_files(repo_root: Path = REPO_ROOT) -> list[Path]:
+    files: list[Path] = []
+    for root in _secret_leak_log_roots(repo_root):
+        candidates = root.rglob("*") if root.is_dir() else [root]
+        for candidate in candidates:
+            if _should_scan_secret_log(candidate):
+                files.append(candidate)
+    return sorted(set(files))
+
+
+def _read_tail_text(path: Path, max_bytes: int) -> str:
+    size = path.stat().st_size
+    with path.open("rb") as handle:
+        if size > max_bytes:
+            handle.seek(size - max_bytes)
+        return handle.read(max_bytes).decode("utf-8", errors="replace")
+
+
+def _secret_value_from_match(match: re.Match[str]) -> str:
+    try:
+        value = match.group("value")
+    except IndexError:
+        value = ""
+    return value or match.group(0)
+
+
+def _secret_match_is_placeholder(value: str) -> bool:
+    normalized = value.strip().strip("\"'").lower()
+    if not normalized:
+        return True
+    if normalized in SECRET_PLACEHOLDER_VALUES:
+        return True
+    if normalized.startswith(("$", "${", "{{", "<")):
+        return True
+    if "redacted" in normalized or "example" in normalized:
+        return True
+    if re.fullmatch(r"(?:sha256:)?[a-f0-9]{64}", normalized):
+        return True
+    return False
+
+
+def _scan_secret_text(
+    text: str,
+    *,
+    source: str,
+    field: str,
+) -> list[dict[str, object]]:
+    findings: list[dict[str, object]] = []
+    for pattern in SECRET_LEAK_PATTERNS:
+        regex = pattern["regex"]
+        assert isinstance(regex, re.Pattern)
+        for match in regex.finditer(text):
+            value = _secret_value_from_match(match)
+            if _secret_match_is_placeholder(value):
+                continue
+            findings.append(
+                {
+                    "source": source,
+                    "field": field,
+                    "line": _line_number_for_offset(text, match.start()),
+                    "rule_id": pattern["id"],
+                    "severity": pattern["severity"],
+                }
+            )
+    return findings
+
+
+def _secret_event_scan_query(limit: int, lookback_hours: int) -> str:
+    limit = max(1, min(limit, 2000))
+    lookback_hours = max(1, min(lookback_hours, 720))
+    return f"""
+SELECT set_config('rls.role', 'platform_admin', false);
+WITH agent_rows AS (
+    SELECT created_at,
+           'alpha_agent_events'::text AS source,
+           id::text AS row_id,
+           jsonb_build_object(
+             'message', message,
+             'payload', payload,
+             'notification_result', notification_result,
+             'notification_error', notification_error
+           ) AS fields
+    FROM public.alpha_agent_events
+    WHERE created_at >= now() - interval '{lookback_hours} hours'
+    ORDER BY created_at DESC
+    LIMIT {limit}
+),
+buddy_rows AS (
+    SELECT created_at,
+           'alpha_buddy_events'::text AS source,
+           id::text AS row_id,
+           jsonb_build_object(
+             'title', title,
+             'body', body,
+             'payload', COALESCE(payload, '{{}}'::jsonb)
+           ) AS fields
+    FROM public.alpha_buddy_events
+    WHERE created_at >= now() - interval '{lookback_hours} hours'
+    ORDER BY created_at DESC
+    LIMIT {limit}
+),
+flat AS (
+    SELECT source, row_id, created_at, item.key AS field, item.value AS value
+    FROM agent_rows
+    CROSS JOIN LATERAL jsonb_each_text(fields) AS item(key, value)
+    UNION ALL
+    SELECT source, row_id, created_at, item.key AS field, item.value AS value
+    FROM buddy_rows
+    CROSS JOIN LATERAL jsonb_each_text(fields) AS item(key, value)
+)
+SELECT source,
+       row_id,
+       field,
+       encode(convert_to(value, 'UTF8'), 'base64') AS value_b64
+FROM flat
+WHERE COALESCE(value, '') <> ''
+ORDER BY created_at DESC
+LIMIT {limit * 8};
+""".strip()
+
+
+def _decode_psql_b64(value: str) -> str:
+    return base64.b64decode(value.encode("ascii"), validate=True).decode(
+        "utf-8",
+        errors="replace",
+    )
+
+
+def _scan_recent_event_fields(
+    *,
+    psql: Callable[[str], CommandResult] = run_psql,
+    limit: int = SECRET_LEAK_DB_LIMIT,
+    lookback_hours: int = SECRET_LEAK_DB_LOOKBACK_HOURS,
+) -> tuple[list[dict[str, object]], int, str | None]:
+    result = psql(_secret_event_scan_query(limit, lookback_hours), timeout=45)
+    if result.returncode != 0:
+        return [], 0, (result.stderr or result.stdout).strip()[:500]
+
+    findings: list[dict[str, object]] = []
+    fields_scanned = 0
+    for row in parse_psql_rows(result.stdout):
+        if len(row) < 4:
+            continue
+        source, row_id, field, value_b64 = row[:4]
+        try:
+            text = _decode_psql_b64(value_b64)
+        except Exception:
+            continue
+        fields_scanned += 1
+        findings.extend(
+            _scan_secret_text(
+                text,
+                source=f"{source}:{row_id}",
+                field=field,
+            )
+        )
+    return findings, fields_scanned, None
+
+
+def check_secrets_leakage_scan(
+    repo_root: Path = REPO_ROOT,
+    psql: Callable[[str], CommandResult] = run_psql,
+) -> CheckResult:
+    """Scan local logs and recent event payloads for leaked secret material."""
+    findings: list[dict[str, object]] = []
+    unreadable: list[str] = []
+    files_scanned = 0
+
+    for path in _iter_secret_log_files(repo_root):
+        display = _display_path(path)
+        try:
+            text = _read_tail_text(path, SECRET_LEAK_MAX_FILE_BYTES)
+        except OSError as exc:
+            unreadable.append(f"{display}: {exc.__class__.__name__}")
+            continue
+        files_scanned += 1
+        findings.extend(_scan_secret_text(text, source=display, field="file"))
+
+    db_findings, db_fields_scanned, db_error = _scan_recent_event_fields(psql=psql)
+    findings.extend(db_findings)
+
+    metadata = {
+        "log_roots": [
+            _display_path(path) for path in _secret_leak_log_roots(repo_root)
+        ],
+        "log_files_scanned": files_scanned,
+        "db_fields_scanned": db_fields_scanned,
+        "db_lookback_hours": SECRET_LEAK_DB_LOOKBACK_HOURS,
+        "unreadable_files": unreadable[:20],
+        "db_error": db_error,
+        "findings": findings[:50],
+        "finding_count": len(findings),
+    }
+    if findings:
+        severity = (
+            "critical"
+            if any(item["severity"] == "critical" for item in findings)
+            else "high"
+        )
+        detail = "; ".join(
+            f"{item['source']}:{item['field']} {item['rule_id']}"
+            for item in findings[:8]
+        )
+        return CheckResult(
+            name="secrets_leakage_scan",
+            status="fail",
+            severity=severity,
+            summary="Secret-shaped values were found in logs or event payloads.",
+            detail=detail,
+            metadata=metadata,
+        )
+    if unreadable or db_error:
+        warnings = []
+        if unreadable:
+            warnings.append("unreadable log files")
+        if db_error:
+            warnings.append("recent DB event scan failed")
+        return CheckResult(
+            name="secrets_leakage_scan",
+            status="warn",
+            severity="medium",
+            summary="Secrets leakage scan could not inspect every source.",
+            detail="; ".join(warnings),
+            metadata=metadata,
+        )
+    return CheckResult(
+        name="secrets_leakage_scan",
+        status="pass",
+        severity="info",
+        summary=(
+            "No secret-shaped values found in local logs or recent event payloads."
+        ),
+        metadata=metadata,
+    )
+
+
+def _egress_allowed_hosts() -> set[str]:
+    configured = {item.lower() for item in _csv_env("PORCHLIGHT_EGRESS_ALLOWED_HOSTS")}
+    return {item.lower() for item in EGRESS_ALLOWED_HOSTS} | configured
+
+
+def _egress_allowed_suffixes() -> tuple[str, ...]:
+    configured = tuple(
+        item.lower() for item in _csv_env("PORCHLIGHT_EGRESS_ALLOWED_SUFFIXES")
+    )
+    return EGRESS_ALLOWED_SUFFIXES + configured
+
+
+def _egress_scan_roots(repo_root: Path = REPO_ROOT) -> list[Path]:
+    raw_paths = _csv_env("PORCHLIGHT_EGRESS_SCAN_PATHS") or list(
+        EGRESS_SCAN_DEFAULT_PATHS
+    )
+    roots: list[Path] = []
+    for raw_path in raw_paths:
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = repo_root / path
+        if path.exists():
+            roots.append(path)
+    return roots
+
+
+def _egress_log_roots(repo_root: Path = REPO_ROOT) -> list[Path]:
+    raw_paths = _csv_env("PORCHLIGHT_EGRESS_LOG_PATHS") or list(
+        EGRESS_LOG_DEFAULT_PATHS
+    )
+    roots: list[Path] = []
+    for raw_path in raw_paths:
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = repo_root / path
+        if path.exists():
+            roots.append(path)
+    return roots
+
+
+def _should_scan_egress_file(path: Path) -> bool:
+    if any(part in EGRESS_SCAN_EXCLUDED_PARTS for part in path.parts):
+        return False
+    rel = _display_path(path)
+    if rel in EGRESS_NON_EGRESS_FILES:
+        return False
+    if any(
+        all(part in path.parts for part in skipped_parts)
+        for skipped_parts in EGRESS_NON_EGRESS_PATH_PARTS
+    ):
+        return False
+    if path.is_dir():
+        return False
+    return path.suffix.lower() in EGRESS_SCAN_SUFFIXES or path.name == "Dockerfile"
+
+
+def _iter_egress_source_files(repo_root: Path = REPO_ROOT) -> list[Path]:
+    files: list[Path] = []
+    for root in _egress_scan_roots(repo_root):
+        candidates = root.rglob("*") if root.is_dir() else [root]
+        for candidate in candidates:
+            if _should_scan_egress_file(candidate):
+                files.append(candidate)
+    return sorted(set(files))
+
+
+def _iter_egress_log_files(repo_root: Path = REPO_ROOT) -> list[Path]:
+    files: list[Path] = []
+    for root in _egress_log_roots(repo_root):
+        candidates = root.rglob("*") if root.is_dir() else [root]
+        for candidate in candidates:
+            name = candidate.name.lower()
+            if _should_scan_secret_log(candidate) and any(
+                term in name for term in EGRESS_LOG_NAME_TERMS
+            ):
+                files.append(candidate)
+    return sorted(set(files))
+
+
+URL_RE = re.compile(r"https?://[^\s\"'<>{}\\)}\]]+", re.IGNORECASE)
+
+
+def _normalize_host(host: str) -> str:
+    return host.strip().strip(".").lower()
+
+
+def _host_is_private_or_local(host: str) -> bool:
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    if re.fullmatch(r"10(?:\.\d{1,3}){3}", host):
+        return True
+    if re.fullmatch(r"192\.168(?:\.\d{1,3}){2}", host):
+        return True
+    if re.fullmatch(r"172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2}", host):
+        return True
+    if re.fullmatch(r"100(?:\.\d{1,3}){3}", host):
+        return True
+    return False
+
+
+def _host_is_placeholder(host: str) -> bool:
+    if not host:
+        return True
+    if "\\" in host or "{" in host or "}" in host or "$" in host:
+        return True
+    if host in {"host", "raw"}:
+        return True
+    if host.endswith(".fake.local"):
+        return True
+    if "." not in host and not _host_is_private_or_local(host):
+        return True
+    return False
+
+
+def _extract_url_hosts(text: str) -> list[tuple[str, int]]:
+    hosts: list[tuple[str, int]] = []
+    for match in URL_RE.finditer(text):
+        raw_url = match.group(0).rstrip(".,;:")
+        parsed = urlparse(raw_url)
+        host = _normalize_host(parsed.hostname or "")
+        if host and not _host_is_placeholder(host):
+            hosts.append((host, match.start()))
+    return hosts
+
+
+def _egress_host_allowed(host: str) -> bool:
+    normalized = _normalize_host(host)
+    if _host_is_private_or_local(normalized):
+        return True
+    if normalized in _egress_allowed_hosts():
+        return True
+    return any(normalized.endswith(suffix) for suffix in _egress_allowed_suffixes())
+
+
+def _scan_egress_text(
+    text: str,
+    *,
+    source: str,
+) -> list[dict[str, object]]:
+    findings: list[dict[str, object]] = []
+    for host, offset in _extract_url_hosts(text):
+        if _egress_host_allowed(host):
+            continue
+        findings.append(
+            {
+                "source": source,
+                "line": _line_number_for_offset(text, offset),
+                "host": host,
+            }
+        )
+    return findings
+
+
+def check_outbound_egress_drift(repo_root: Path = REPO_ROOT) -> CheckResult:
+    """Detect newly introduced external destinations in code/config and logs."""
+    findings: list[dict[str, object]] = []
+    unreadable: list[str] = []
+    source_files_scanned = 0
+    log_files_scanned = 0
+    observed_hosts: set[str] = set()
+
+    for path in _iter_egress_source_files(repo_root):
+        display = _display_path(path)
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            unreadable.append(f"{display}: {exc.__class__.__name__}")
+            continue
+        source_files_scanned += 1
+        observed_hosts.update(host for host, _offset in _extract_url_hosts(text))
+        findings.extend(_scan_egress_text(text, source=display))
+
+    for path in _iter_egress_log_files(repo_root):
+        display = _display_path(path)
+        try:
+            text = _read_tail_text(path, SECRET_LEAK_MAX_FILE_BYTES)
+        except OSError as exc:
+            unreadable.append(f"{display}: {exc.__class__.__name__}")
+            continue
+        log_files_scanned += 1
+        observed_hosts.update(host for host, _offset in _extract_url_hosts(text))
+        findings.extend(_scan_egress_text(text, source=display))
+
+    unique_unapproved = sorted({str(item["host"]) for item in findings})
+    metadata = {
+        "scan_roots": [_display_path(path) for path in _egress_scan_roots(repo_root)],
+        "log_roots": [_display_path(path) for path in _egress_log_roots(repo_root)],
+        "source_files_scanned": source_files_scanned,
+        "log_files_scanned": log_files_scanned,
+        "observed_hosts": sorted(observed_hosts),
+        "unapproved_hosts": unique_unapproved,
+        "findings": findings[:50],
+        "finding_count": len(findings),
+        "allowlist_count": len(_egress_allowed_hosts())
+        + len(_egress_allowed_suffixes()),
+        "unreadable_files": unreadable[:20],
+    }
+    if findings:
+        detail = "; ".join(
+            f"{item['source']}:{item['line']} {item['host']}" for item in findings[:8]
+        )
+        return CheckResult(
+            name="outbound_egress_drift",
+            status="fail",
+            severity="high",
+            summary="Unapproved outbound destination drift was detected.",
+            detail=detail,
+            metadata=metadata,
+        )
+    if unreadable:
+        return CheckResult(
+            name="outbound_egress_drift",
+            status="warn",
+            severity="medium",
+            summary="Outbound egress drift scan could not inspect every source.",
+            detail="; ".join(unreadable[:8]),
+            metadata=metadata,
+        )
+    return CheckResult(
+        name="outbound_egress_drift",
+        status="pass",
+        severity="info",
+        summary="No unapproved outbound destinations found in scanned code or logs.",
+        metadata=metadata,
+    )
+
+
 def _host_integrity_targets(repo_root: Path = REPO_ROOT) -> list[Path]:
     targets = [repo_root / item for item in HOST_INTEGRITY_REPO_FILES]
     if current_node_name() == "brain":
@@ -4098,6 +4768,8 @@ def run_sweep(args: argparse.Namespace) -> dict[str, object]:
         check_dependency_cve_scan(),
         check_malware_scan_repo_freshness(),
         check_code_malware_scan(),
+        check_secrets_leakage_scan(),
+        check_outbound_egress_drift(),
         check_host_integrity(),
         check_runtime_exposure(),
         check_sweep_tls_report_intake(),
