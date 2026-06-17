@@ -81,6 +81,7 @@ def scan_spark_draft_sensitivity(
     protected_topics: Iterable[SparkSensitivity],
     relationship_marked: bool,
     relationship_approved: bool,
+    parent_minor_context_approved: bool = False,
 ) -> SparkSensitivityScan:
     """Detect sensitive topic labels and decide which ones block drafting."""
 
@@ -102,6 +103,8 @@ def scan_spark_draft_sensitivity(
         if topic == "relationship":
             if not relationship_approved:
                 blocked.add(topic)
+            continue
+        if topic == "minor" and parent_minor_context_approved:
             continue
         if topic in _BLOCKING_TOPICS and topic in protected:
             blocked.add(topic)

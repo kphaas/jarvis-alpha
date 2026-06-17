@@ -396,7 +396,10 @@ async def test_imessage_draft_flags_invented_logistics_and_context_drift(
 async def test_imessage_draft_blocks_detected_sensitive_topics_before_llm(
     tmp_path: Path,
 ) -> None:
-    vault_root = _write_vault(tmp_path)
+    vault_root = _write_vault(
+        tmp_path,
+        parent_minor_context_approval_granted="yes",
+    )
     fake_client = FakeBodyClient(sensitive=True)
     called = False
 
@@ -417,6 +420,57 @@ async def test_imessage_draft_blocks_detected_sensitive_topics_before_llm(
 
     assert fake_client.calls == [("approved-chat-guid", 10)]
     assert called is False
+
+
+@pytest.mark.asyncio
+async def test_imessage_target_preview_blocks_minor_context_without_parent_approval(
+    tmp_path: Path,
+) -> None:
+    vault_root = _write_vault(
+        tmp_path,
+        parent_minor_context_approval_granted="no",
+    )
+    fake_client = FakeBodyClient(
+        inbound_body="Can you handle school pickup for the kids?"
+    )
+
+    with pytest.raises(drafts.SparkDraftPolicyError, match="minor"):
+        await drafts.load_imessage_target_preview(
+            vault_root=vault_root,
+            principal_id="ken",
+            approval_id="ken-imessage-approved-20260605-001",
+            max_context_messages=8,
+            bluebubbles_client=fake_client,
+            approved_chat_guid="approved-chat-guid",
+        )
+
+    assert fake_client.calls == [("approved-chat-guid", 8)]
+
+
+@pytest.mark.asyncio
+async def test_imessage_target_preview_allows_parent_approved_minor_context(
+    tmp_path: Path,
+) -> None:
+    vault_root = _write_vault(
+        tmp_path,
+        parent_minor_context_approval_granted="yes",
+    )
+    fake_client = FakeBodyClient(
+        inbound_body="Can you handle school pickup for the kids?"
+    )
+
+    preview = await drafts.load_imessage_target_preview(
+        vault_root=vault_root,
+        principal_id="ken",
+        approval_id="ken-imessage-approved-20260605-001",
+        max_context_messages=8,
+        bluebubbles_client=fake_client,
+        approved_chat_guid="approved-chat-guid",
+    )
+
+    assert preview.context.runtime_context_messages == 1
+    assert preview.context.durable_storage_allowed is False
+    assert fake_client.calls == [("approved-chat-guid", 8)]
 
 
 @pytest.mark.asyncio
@@ -511,6 +565,7 @@ def _write_vault(
     tmp_path: Path,
     *,
     relationship_specific_approval_granted: str = "yes",
+    parent_minor_context_approval_granted: str = "no",
     include_auto: bool = True,
 ) -> Path:
     principal_root = tmp_path / "spark" / "principals" / "ken"
@@ -595,6 +650,7 @@ Prefer:
 |---|---|
 | Relationship-marked | yes |
 | Relationship-specific approval granted | {relationship_specific_approval_granted} |
+| Parent minor context approval granted | {parent_minor_context_approval_granted} |
 | Legal or custody content | block if detected |
 
 - [x] Approved

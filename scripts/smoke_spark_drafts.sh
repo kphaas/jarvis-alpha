@@ -189,7 +189,19 @@ if label == "targets":
     targets = payload.get("targets")
     if not isinstance(targets, list):
         raise SystemExit("FAIL targets: targets missing")
-    print(f"PASS targets: count={len(targets)}")
+    parent_minor_context_approved = 0
+    for target in targets:
+        value = target.get("parent_minor_context_approved")
+        if not isinstance(value, bool):
+            raise SystemExit(
+                "FAIL targets: parent_minor_context_approved missing or not bool"
+            )
+        parent_minor_context_approved += int(value)
+    print(
+        "PASS targets: "
+        f"count={len(targets)} "
+        f"parent_minor_context_approved={parent_minor_context_approved}"
+    )
 elif label == "target_preview":
     context_preview = payload.get("context_preview")
     if not isinstance(context_preview, list):

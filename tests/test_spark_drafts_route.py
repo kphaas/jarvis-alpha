@@ -231,6 +231,7 @@ async def test_spark_imessage_draft_targets_list_approved_threads_safely(
                 "thread_kind": "one_to_one",
                 "relationship_marked": True,
                 "relationship_approved": True,
+                "parent_minor_context_approved": False,
                 "legal_marked": False,
             }
         ],

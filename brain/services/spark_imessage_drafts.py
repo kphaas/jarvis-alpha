@@ -1302,6 +1302,9 @@ def _scan_context_sensitivity(
         protected_topics=protected_topics,
         relationship_marked=record.relationship_marked,
         relationship_approved=record.relationship_approved,
+        parent_minor_context_approved=(
+            record.parent_minor_context_approved and record.principal_id == "ken"
+        ),
     )
 
 
