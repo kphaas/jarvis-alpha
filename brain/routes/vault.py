@@ -226,9 +226,14 @@ async def vault_pipeline_confirm(pipeline_id: str, request: Request):
             pipeline_id,
         )
         await db.execute(
-            "UPDATE vault_documents SET local_path = $1, status = $2 WHERE id = $3",
+            """
+            UPDATE vault_documents
+            SET local_path = $1, status = $2, storage_tier = $3
+            WHERE id = $4
+            """,
             archive_path,
             "archived" if not error else "confirm_error",
+            tier,
             str(row["doc_id"]),
         )
 
