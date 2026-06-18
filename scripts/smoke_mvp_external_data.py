@@ -451,6 +451,10 @@ def _live_payload_summary(payload: Any) -> dict[str, Any]:
         "configured_provider_count",
         "usable_provider_count",
         "provider_redundancy_status",
+        "provider_warning_status",
+        "primary_provider",
+        "primary_provider_usable",
+        "budget_capped_backup_provider_count",
     )
     summary = {key: payload[key] for key in keys if key in payload}
     providers = payload.get("providers")

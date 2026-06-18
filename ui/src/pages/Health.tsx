@@ -61,7 +61,7 @@ interface TemporalStoragePayload {
 
 interface BeaconHealthCheck {
   ok: boolean;
-  status: "ok" | "degraded" | "unavailable";
+  status: "ok" | "warning" | "degraded" | "unavailable";
   detail: string;
   metadata: Record<string, unknown>;
 }
@@ -166,6 +166,7 @@ function temporalStatusColor(status: string): string {
 
 function beaconStatusColor(status: string): string {
   if (status === "ok") return "#22c55e";
+  if (status === "warning") return "#f59e0b";
   if (status === "degraded") return "#f59e0b";
   return "#ef4444";
 }

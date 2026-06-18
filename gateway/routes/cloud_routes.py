@@ -667,20 +667,60 @@ async def internet_health(authorization: str = Header(...)):
     usable = [
         provider
         for provider in providers
-        if provider["configured"]
-        and not provider["circuit_open"]
-        and not provider["budget_exhausted"]
+        if _search_provider_health_is_usable(provider)
     ]
     redundancy = _search_provider_redundancy(len(usable))
-    return {
-        "status": "ok"
+    provider_order = list(_configured_search_provider_order())
+    primary_provider = provider_order[0] if provider_order else None
+    primary_health = _provider_health_by_name(providers, primary_provider)
+    primary_usable = (
+        _search_provider_health_is_usable(primary_health)
+        if primary_health is not None
+        else False
+    )
+    budget_capped_providers = [
+        provider
+        for provider in providers
+        if provider["configured"] and provider["budget_exhausted"]
+    ]
+    budget_capped_backup_providers = [
+        provider
+        for provider in budget_capped_providers
+        if provider["provider"] != primary_provider
+    ]
+    backup_budget_guard_warning = (
+        bool(usable)
+        and not redundancy["provider_redundancy_ok"]
+        and primary_usable
+        and bool(budget_capped_backup_providers)
+    )
+    provider_redundancy_status = (
+        "backup_budget_capped"
+        if backup_budget_guard_warning
+        else redundancy["provider_redundancy_status"]
+    )
+    status = (
+        "ok"
         if usable and redundancy["provider_redundancy_ok"]
-        else "degraded",
-        "provider_order": list(_configured_search_provider_order()),
+        else "warning"
+        if backup_budget_guard_warning
+        else "degraded"
+    )
+    return {
+        "status": status,
+        "provider_order": provider_order,
         "providers": providers,
         "configured_provider_count": len(configured),
         "usable_provider_count": len(usable),
         **redundancy,
+        "provider_redundancy_status": provider_redundancy_status,
+        "provider_warning_status": "backup_budget_capped"
+        if backup_budget_guard_warning
+        else None,
+        "primary_provider": primary_provider,
+        "primary_provider_usable": primary_usable,
+        "budget_capped_provider_count": len(budget_capped_providers),
+        "budget_capped_backup_provider_count": len(budget_capped_backup_providers),
         "checked_at": datetime.now(UTC).isoformat(),
     }
 
@@ -783,6 +823,30 @@ def _search_provider_health(provider: str) -> dict[str, object]:
         "monthly_request_count": budget["monthly_count"],
         "monthly_request_limit": budget["monthly_limit"],
     }
+
+
+def _search_provider_health_is_usable(provider: dict[str, object]) -> bool:
+    return bool(
+        provider.get("configured")
+        and not provider.get("circuit_open")
+        and not provider.get("budget_exhausted")
+    )
+
+
+def _provider_health_by_name(
+    providers: list[dict[str, object]],
+    provider_name: str | None,
+) -> dict[str, object] | None:
+    if provider_name is None:
+        return None
+    return next(
+        (
+            provider
+            for provider in providers
+            if provider.get("provider") == provider_name
+        ),
+        None,
+    )
 
 
 def _search_provider_redundancy(usable_provider_count: int) -> dict[str, object]:

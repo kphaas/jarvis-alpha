@@ -137,8 +137,14 @@ class FakeConn:
 
 
 class FakeGatewayClient:
-    def __init__(self, *, usable_provider_count: int = 2) -> None:
+    def __init__(
+        self,
+        *,
+        usable_provider_count: int = 2,
+        backup_budget_guard_warning: bool = False,
+    ) -> None:
         self.usable_provider_count = usable_provider_count
+        self.backup_budget_guard_warning = backup_budget_guard_warning
 
     async def health(self):
         providers = [
@@ -146,34 +152,57 @@ class FakeGatewayClient:
                 "provider": "brave",
                 "configured": True,
                 "circuit_open": False,
+                "budget_exhausted": False,
             },
             {
                 "provider": "perplexity",
                 "configured": True,
                 "circuit_open": False,
+                "budget_exhausted": False,
             },
         ]
-        for provider in providers[self.usable_provider_count :]:
-            provider["circuit_open"] = True
+        usable_provider_count = self.usable_provider_count
+        if self.backup_budget_guard_warning:
+            usable_provider_count = 1
+            providers[1]["budget_exhausted"] = True
+        else:
+            for provider in providers[usable_provider_count:]:
+                provider["circuit_open"] = True
         required_count = 2
-        redundancy_ok = self.usable_provider_count >= required_count
+        redundancy_ok = usable_provider_count >= required_count
+        warning_status = (
+            "backup_budget_capped" if self.backup_budget_guard_warning else None
+        )
         return {
-            "status": "ok"
-            if self.usable_provider_count and redundancy_ok
+            "status": "warning"
+            if self.backup_budget_guard_warning
+            else "ok"
+            if usable_provider_count and redundancy_ok
             else "degraded",
             "provider_order": ["brave", "perplexity"],
             "configured_provider_count": 2,
-            "usable_provider_count": self.usable_provider_count,
+            "usable_provider_count": usable_provider_count,
             "required_provider_count": required_count,
             "provider_redundancy_ok": redundancy_ok,
             "provider_redundancy_status": "redundant"
             if redundancy_ok
+            else "backup_budget_capped"
+            if self.backup_budget_guard_warning
             else "single_provider"
-            if self.usable_provider_count
+            if usable_provider_count
             else "unavailable",
-            "missing_provider_count": max(
-                0, required_count - self.usable_provider_count
-            ),
+            "missing_provider_count": max(0, required_count - usable_provider_count),
+            "provider_warning_status": warning_status,
+            "primary_provider": "brave",
+            "primary_provider_usable": usable_provider_count > 0
+            and not providers[0]["circuit_open"]
+            and not providers[0]["budget_exhausted"],
+            "budget_capped_provider_count": 1
+            if self.backup_budget_guard_warning
+            else 0,
+            "budget_capped_backup_provider_count": 1
+            if self.backup_budget_guard_warning
+            else 0,
             "providers": providers,
         }
 
@@ -624,3 +653,41 @@ async def test_health_degrades_when_gateway_provider_redundancy_is_missing(
     assert gateway.metadata["provider_redundancy_ok"] is False
     assert gateway.metadata["provider_redundancy_status"] == "single_provider"
     assert gateway.metadata["missing_provider_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_health_warns_when_backup_provider_is_budget_capped(monkeypatch):
+    monkeypatch.setattr(
+        beacon_health,
+        "browser_runtime_health",
+        lambda: {
+            "ok": True,
+            "runtime": "playwright",
+            "runtime_enabled": True,
+            "playwright_version_ok": True,
+            "screenshot_dir_writable": True,
+        },
+    )
+
+    response = await beacon_health.build_beacon_health(
+        FakeConn(),
+        gateway_client=FakeGatewayClient(backup_budget_guard_warning=True),
+    )
+
+    gateway = response.checks["gateway"]
+    assert response.status == "ok"
+    assert gateway.ok is True
+    assert gateway.status == "warning"
+    assert gateway.detail == (
+        "Gateway has 1 usable search provider(s); backup provider is capped by "
+        "spend guard."
+    )
+    assert gateway.metadata["gateway_status"] == "warning"
+    assert gateway.metadata["usable_provider_count"] == 1
+    assert gateway.metadata["required_provider_count"] == 2
+    assert gateway.metadata["provider_redundancy_ok"] is False
+    assert gateway.metadata["provider_redundancy_status"] == "backup_budget_capped"
+    assert gateway.metadata["provider_warning_status"] == "backup_budget_capped"
+    assert gateway.metadata["primary_provider"] == "brave"
+    assert gateway.metadata["primary_provider_usable"] is True
+    assert gateway.metadata["budget_capped_backup_provider_count"] == 1
