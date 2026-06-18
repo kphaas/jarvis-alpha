@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+from types import SimpleNamespace
 import zipfile
 
 import pytest
@@ -14,6 +15,7 @@ os.environ.setdefault("OLLAMA_URL", "http://localhost:11434")
 
 from brain.ingest.docx import extract_docx_text
 from brain.ingest.text import _chunk_text, _decode_text
+from brain.routes.vault import _vault_workspace_id
 
 
 def _docx_bytes(document_xml: str) -> bytes:
@@ -66,3 +68,17 @@ def test_chunk_text_uses_overlap_for_long_text() -> None:
     assert len(chunks) == 2
     assert chunks[0] == "x" * 512
     assert chunks[1] == "x" * 238
+
+
+def test_vault_workspace_id_defaults_service_tokens_to_personal() -> None:
+    request = SimpleNamespace(state=SimpleNamespace(workspace_id=None))
+
+    assert _vault_workspace_id(request) == "personal"
+    assert request.state.workspace_id == "personal"
+
+
+def test_vault_workspace_id_preserves_explicit_workspace() -> None:
+    request = SimpleNamespace(state=SimpleNamespace(workspace_id="  tax-workspace  "))
+
+    assert _vault_workspace_id(request) == "tax-workspace"
+    assert request.state.workspace_id == "tax-workspace"
