@@ -11,7 +11,7 @@ def test_spark_send_readiness_smoke_script_avoids_secret_tracing() -> None:
     assert "bash -x" not in text
     assert "BLUEBUBBLES_PASSWORD" not in text
     assert "echo ${TOKEN}" not in text
-    assert "echo \"$TOKEN\"" not in text
+    assert 'echo "$TOKEN"' not in text
     assert "curl -v" not in text
     assert "trap 'rm -rf \"${TMP_DIR}\"' EXIT" in text
 

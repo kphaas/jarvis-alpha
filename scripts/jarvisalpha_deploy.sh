@@ -284,6 +284,43 @@ print(f"{len(passed)} checks passed")
     fi
   fi
 
+  if [[ "${JARVIS_SKIP_BEACON_SMOKE:-0}" == "1" || "${JARVIS_ALPHA_SKIP_BEACON_SMOKE:-0}" == "1" ]]; then
+    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "beacon smoke" "SKIPPED (JARVIS_SKIP_BEACON_SMOKE=1)" ""
+  else
+    local beacon_start=$SECONDS
+    local beacon_out
+    local beacon_ec
+
+    beacon_out=$(
+      ALPHA_BASE_URL="$settings_base_url" \
+      BEACON_SMOKE_TOKEN_SSH_TARGET="$BRAIN" \
+      BEACON_SMOKE_SKIP_AGENT=1 \
+        python3 "$REPO_DIR/scripts/smoke_beacon_production.py" --skip-agent 2>&1
+    )
+    beacon_ec=$?
+    if [ $beacon_ec -ne 0 ]; then
+      step_fail "beacon smoke" "failed"
+      echo "$beacon_out" >&2
+      smoke_failed=1
+    else
+      local beacon_summary
+      beacon_summary=$(printf '%s\n' "$beacon_out" | tail -1 | python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+health = payload.get("results", {}).get("health", {})
+status = health.get("status", "unknown")
+warnings = health.get("warning_checks") or []
+if warnings:
+    print(f"health {status}; warnings={','.join(warnings)}")
+else:
+    print(f"health {status}; no warnings")
+' 2>/dev/null || true)
+      step_ok "beacon smoke" "${beacon_summary:-passed}" "$(fmt_s $((SECONDS - beacon_start)))"
+    fi
+  fi
+
   return $smoke_failed
 }
 
