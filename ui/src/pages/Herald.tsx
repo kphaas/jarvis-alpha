@@ -365,7 +365,7 @@ export default function Herald() {
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <ShieldCheck className="h-4 w-4 text-emerald-400" />
-              <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>Draft review</h2>
+              <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>AT-0 Spark drafts</h2>
             </div>
             <span className={`text-[10px] font-mono uppercase ${muted}`}>
               {selectedLabel} · Last scan {timeText(dashboard?.latest_scan?.finished_at ?? dashboard?.latest_scan?.started_at ?? null)}
