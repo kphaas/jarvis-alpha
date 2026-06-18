@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 import zipfile
 
+import openpyxl
 import pytest
 
 os.environ.setdefault("ALPHA_DB_DSN", "postgresql://test:test@localhost/test")
@@ -15,6 +16,8 @@ os.environ.setdefault("ALPHA_GATEWAY_URL", "http://localhost:8080")
 os.environ.setdefault("OLLAMA_URL", "http://localhost:11434")
 
 from brain.ingest.docx import extract_docx_text
+from brain.ingest.excel import ingest_excel
+from brain.ingest import text as text_ingest
 from brain.ingest.text import _chunk_text, _decode_text
 from brain.routes.vault import _vault_workspace_id
 from brain.services import vault_security
@@ -31,6 +34,17 @@ def _zip_bytes(path: str, content: str) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
         archive.writestr(path, content)
+    return buffer.getvalue()
+
+
+def _xlsx_bytes() -> bytes:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["Role", "Evidence"])
+    sheet.append(["Staff Engineer", "Built private document ingestion"])
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
     return buffer.getvalue()
 
 
@@ -122,3 +136,71 @@ async def test_vault_rls_connection_maps_scoped_service_to_platform_admin(
     assert seen["ctx"].user_id == "endpoint_service"
     assert seen["ctx"].workspace_id == "personal"
     assert request.state.workspace_id == "personal"
+
+
+@pytest.mark.asyncio
+async def test_text_ingestion_uses_vault_rls_connection(monkeypatch) -> None:
+    calls = []
+
+    class FakeConnection:
+        async def execute(self, sql, *args):
+            calls.append((sql, args))
+
+    @asynccontextmanager
+    async def fake_vault_rls_connection(request):
+        calls.append(("vault_rls_connection", request))
+        yield FakeConnection()
+
+    async def fake_embed_text(text: str):
+        return None
+
+    request = SimpleNamespace(state=SimpleNamespace(scopes=["vault.write"]))
+    monkeypatch.setattr(
+        vault_security,
+        "vault_rls_connection",
+        fake_vault_rls_connection,
+    )
+    monkeypatch.setattr(text_ingest, "_embed_text", fake_embed_text)
+
+    result = await text_ingest.ingest_extracted_text(
+        text="Supported career fact from a private resume document.",
+        doc_id="doc-123",
+        request=request,
+        source="text",
+    )
+
+    assert result["chunk_count"] == 1
+    assert calls[0] == ("vault_rls_connection", request)
+    assert any("INSERT INTO vault_chunks" in sql for sql, _ in calls[1:])
+
+
+@pytest.mark.asyncio
+async def test_excel_ingestion_uses_vault_rls_connection(monkeypatch) -> None:
+    calls = []
+
+    class FakeConnection:
+        async def execute(self, sql, *args):
+            calls.append((sql, args))
+
+    @asynccontextmanager
+    async def fake_vault_rls_connection(request):
+        calls.append(("vault_rls_connection", request))
+        yield FakeConnection()
+
+    request = SimpleNamespace(state=SimpleNamespace(scopes=["vault.write"]))
+    monkeypatch.setattr(
+        vault_security,
+        "vault_rls_connection",
+        fake_vault_rls_connection,
+    )
+
+    result = await ingest_excel(
+        file_bytes=_xlsx_bytes(),
+        filename="career-facts.xlsx",
+        doc_id="doc-123",
+        request=request,
+    )
+
+    assert result["row_count"] == 1
+    assert calls[0] == ("vault_rls_connection", request)
+    assert any("CREATE TABLE IF NOT EXISTS" in sql for sql, _ in calls[1:])
