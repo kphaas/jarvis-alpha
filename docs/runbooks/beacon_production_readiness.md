@@ -151,6 +151,31 @@ Expected:
 
 The smoke script does not print tokens or raw retrieved content.
 
+## AT-0 MVP Front-Door Smoke
+
+Run this after deploy to prove the user-facing Alpha chat endpoint reaches
+Beacon and that browser-use work stays behind the operator approval queue:
+
+```bash
+python scripts/smoke_at0_mvp_user_paths.py
+```
+
+For production targets, the smoke script uses a target-side token by default:
+
+```bash
+python scripts/smoke_at0_mvp_user_paths.py \
+  --token-ssh-target jarvisbrain@jarvis-brain.tail40ed36.ts.net
+```
+
+Expected:
+
+- weather chat uses `web_search` and cites Open-Meteo evidence
+- deep research chat uses `deep_research` with cited Beacon evidence
+- raw web content remains marked untrusted
+- automatic memory writes are blocked and memory promotion review is required
+- browser-use requests create a pending `beacon_browser_use` T4 approval visible
+  from `/v1/approvals/pending`
+
 ## Helm Ask Quality Canary Suite
 
 Run this after the production smoke when Helm Ask or Beacon ranking changed:
