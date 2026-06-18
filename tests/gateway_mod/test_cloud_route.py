@@ -414,6 +414,72 @@ async def test_msgraph_mailbox_messages_allows_only_herald_mailboxes(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_msgraph_mailbox_reply_allows_only_herald_mailboxes(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 202
+        text = ""
+
+        def json(self):
+            raise ValueError("empty")
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            seen["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, headers, json):
+            seen["url"] = url
+            seen["headers"] = headers
+            seen["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.msgraph_mailbox_reply(
+        cloud_routes.MicrosoftGraphMailboxReplyRequest(
+            access_token="token",
+            mailbox="hello@at-0.com",
+            message_id="AAMk/with+chars=",
+            reply_body="Approved reply",
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert seen["url"] == (
+        "https://graph.microsoft.com/v1.0/users/"
+        "hello%40at-0.com/messages/AAMk%2Fwith%2Bchars%3D/reply"
+    )
+    assert seen["headers"]["Authorization"] == "Bearer token"
+    assert seen["headers"]["Content-Type"] == "application/json"
+    assert seen["json"]["message"]["body"] == {
+        "contentType": "Text",
+        "content": "Approved reply",
+    }
+    assert result == {"status_code": 202, "payload": {"raw": ""}}
+
+    with pytest.raises(HTTPException) as exc:
+        await cloud_routes.msgraph_mailbox_reply(
+            cloud_routes.MicrosoftGraphMailboxReplyRequest(
+                access_token="token",
+                mailbox="admin@at-0.com",
+                message_id="message-1",
+                reply_body="Nope",
+            ),
+            authorization="Bearer gateway-token",
+        )
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_anthropic_admin_rejects_unsupported_path(monkeypatch):
     monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
 
