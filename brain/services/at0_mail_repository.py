@@ -198,9 +198,9 @@ async def dashboard_summary(conn: asyncpg.Connection) -> dict:
     )
     draft_rows = await conn.fetch(
         """
-        SELECT status, count(*)::int AS count
+        SELECT mailbox, status, count(*)::int AS count
         FROM public.alpha_at0_mail_draft_proposals
-        GROUP BY status
+        GROUP BY mailbox, status
         """
     )
     latest = await latest_scan_run(conn)

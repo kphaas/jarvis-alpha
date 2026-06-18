@@ -238,6 +238,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- AT-0 Herald mail — Microsoft Graph read-only ingestion + local drafts ---
     "GET /v1/at0-mail/dashboard": ["read", "security_read"],
     "GET /v1/at0-mail/health": ["read", "security_read"],
+    "GET /v1/at0-mail/mailboxes": ["read", "security_read"],
     "GET /v1/at0-mail/messages": ["read", "security_read"],
     "GET /v1/at0-mail/drafts": ["read", "security_read"],
     "POST /v1/at0-mail/scan": ["write", "external_call"],

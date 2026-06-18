@@ -128,6 +128,12 @@ elif label == "health":
         f"status={payload['status']} "
         f"age_minutes={payload.get('age_minutes')}"
     )
+elif label == "mailboxes":
+    if not isinstance(payload.get("mailboxes"), list):
+        raise SystemExit("FAIL mailboxes: mailboxes missing")
+    if not payload["mailboxes"]:
+        raise SystemExit("FAIL mailboxes: no configured mailboxes returned")
+    print(f"PASS mailboxes: count={len(payload['mailboxes'])}")
 elif label == "dashboard":
     for field in ("message_counts", "draft_counts"):
         if not isinstance(payload.get(field), list):
@@ -152,8 +158,9 @@ PY
 
 request_json "POST" "scan" "/v1/at0-mail/scan?max_results=${MAX_RESULTS}"
 request_json "GET" "health" "/v1/at0-mail/health"
+request_json "GET" "mailboxes" "/v1/at0-mail/mailboxes"
 request_json "GET" "dashboard" "/v1/at0-mail/dashboard"
 request_json "GET" "messages" "/v1/at0-mail/messages?limit=1"
 request_json "GET" "drafts" "/v1/at0-mail/drafts?limit=1"
 
-echo "PASS at0-herald-mail smoke: scan, health, dashboard, messages, drafts reachable"
+echo "PASS at0-herald-mail smoke: scan, health, mailboxes, dashboard, messages, drafts reachable"
