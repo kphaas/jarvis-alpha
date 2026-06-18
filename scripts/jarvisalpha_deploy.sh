@@ -206,32 +206,31 @@ remote_pull() {
 run_post_deploy_smokes() {
   phase_header "POST-DEPLOY SMOKE"
 
-  if [[ "${JARVIS_SKIP_SETTINGS_SMOKE:-0}" == "1" || "${JARVIS_ALPHA_SKIP_SETTINGS_SMOKE:-0}" == "1" ]]; then
-    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "settings smoke" "SKIPPED (JARVIS_SKIP_SETTINGS_SMOKE=1)" ""
-    return 0
-  fi
-
-  local smoke_start=$SECONDS
+  local smoke_failed=0
   local settings_base_url="${JARVIS_ALPHA_BRAIN_HEALTH_URL%/health}"
   local settings_endpoint_url="${JARVIS_ALPHA_ENDPOINT_HEALTH_URL%/}/settings"
-  local smoke_out
-  local smoke_ec
 
-  smoke_out=$(
-    SETTINGS_SMOKE_BASE_URL="$settings_base_url" \
-    SETTINGS_SMOKE_ENDPOINT_URL="$settings_endpoint_url" \
-    SETTINGS_SMOKE_TOKEN_SSH_TARGET="$BRAIN" \
-      python3 "$REPO_DIR/scripts/smoke_settings.py" 2>&1
-  )
-  smoke_ec=$?
-  if [ $smoke_ec -ne 0 ]; then
-    step_fail "settings smoke" "failed"
-    echo "$smoke_out" >&2
-    return 1
-  fi
+  if [[ "${JARVIS_SKIP_SETTINGS_SMOKE:-0}" == "1" || "${JARVIS_ALPHA_SKIP_SETTINGS_SMOKE:-0}" == "1" ]]; then
+    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "settings smoke" "SKIPPED (JARVIS_SKIP_SETTINGS_SMOKE=1)" ""
+  else
+    local smoke_start=$SECONDS
+    local smoke_out
+    local smoke_ec
 
-  local smoke_summary
-  smoke_summary=$(printf '%s\n' "$smoke_out" | tail -1 | python3 -c '
+    smoke_out=$(
+      SETTINGS_SMOKE_BASE_URL="$settings_base_url" \
+      SETTINGS_SMOKE_ENDPOINT_URL="$settings_endpoint_url" \
+      SETTINGS_SMOKE_TOKEN_SSH_TARGET="$BRAIN" \
+        python3 "$REPO_DIR/scripts/smoke_settings.py" 2>&1
+    )
+    smoke_ec=$?
+    if [ $smoke_ec -ne 0 ]; then
+      step_fail "settings smoke" "failed"
+      echo "$smoke_out" >&2
+      smoke_failed=1
+    else
+      local smoke_summary
+      smoke_summary=$(printf '%s\n' "$smoke_out" | tail -1 | python3 -c '
 import json
 import sys
 
@@ -244,7 +243,48 @@ passed = [
 ]
 print(f"{len(passed)} checks passed")
 ' 2>/dev/null || true)
-  step_ok "settings smoke" "${smoke_summary:-passed}" "$(fmt_s $((SECONDS - smoke_start)))"
+      step_ok "settings smoke" "${smoke_summary:-passed}" "$(fmt_s $((SECONDS - smoke_start)))"
+    fi
+  fi
+
+  if [[ "${JARVIS_SKIP_MEMORY_CORE_SMOKE:-0}" == "1" || "${JARVIS_ALPHA_SKIP_MEMORY_CORE_SMOKE:-0}" == "1" ]]; then
+    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "memory core smoke" "SKIPPED (JARVIS_SKIP_MEMORY_CORE_SMOKE=1)" ""
+  else
+    local memory_start=$SECONDS
+    local memory_out
+    local memory_ec
+
+    memory_out=$(
+      MEMORY_CORE_SMOKE_BASE_URL="$settings_base_url" \
+      MEMORY_CORE_SMOKE_TOKEN_SSH_TARGET="$BRAIN" \
+      MEMORY_CORE_SMOKE_DB_SSH_TARGET="$BRAIN" \
+        python3 "$REPO_DIR/scripts/smoke_memory_core.py" 2>&1
+    )
+    memory_ec=$?
+    if [ $memory_ec -ne 0 ]; then
+      step_fail "memory core smoke" "failed"
+      echo "$memory_out" >&2
+      smoke_failed=1
+    else
+      local memory_summary
+      memory_summary=$(printf '%s\n' "$memory_out" | tail -1 | python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+checks = payload.get("checks", {})
+passed = [
+    name
+    for name, check in checks.items()
+    if isinstance(check, dict) and check.get("status") == "passed"
+]
+print(f"{len(passed)} checks passed")
+' 2>/dev/null || true)
+      step_ok "memory core smoke" "${memory_summary:-passed}" "$(fmt_s $((SECONDS - memory_start)))"
+    fi
+  fi
+
+  return $smoke_failed
 }
 
 cd "$REPO_DIR"
