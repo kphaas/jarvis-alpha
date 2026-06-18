@@ -504,6 +504,143 @@ class MemoryService:
             "working": [dict(row) for row in working_rows],
         }
 
+    async def telemetry(
+        self,
+        conn: asyncpg.Connection,
+        user_id: UUID,
+        *,
+        recent_limit: int = 20,
+    ) -> dict:
+        """Return operational memory telemetry without raw memory fact text."""
+        semantic_metrics = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*)::int AS total_semantic,
+                COUNT(*) FILTER (WHERE review_status = 'active')::int AS active_semantic,
+                COUNT(*) FILTER (WHERE review_status = 'pending_review')::int AS pending_review,
+                COUNT(*) FILTER (WHERE review_status = 'rejected')::int AS rejected,
+                COUNT(*) FILTER (WHERE review_status = 'archived')::int AS archived,
+                COUNT(*) FILTER (
+                    WHERE created_at >= now() - INTERVAL '24 hours'
+                )::int AS semantic_saves_24h,
+                COUNT(*) FILTER (
+                    WHERE created_at >= now() - INTERVAL '7 days'
+                )::int AS semantic_saves_7d,
+                COUNT(*) FILTER (
+                    WHERE review_status = 'pending_review'
+                      AND created_at >= now() - INTERVAL '24 hours'
+                )::int AS review_required_24h
+            FROM alpha_semantic_memory
+            WHERE user_id = $1
+            """,
+            user_id,
+        )
+        source_rows = await conn.fetch(
+            """
+            SELECT
+                COALESCE(NULLIF(provenance->>'source_surface', ''), source, 'unknown')
+                    AS label,
+                COUNT(*)::int AS count
+            FROM alpha_semantic_memory
+            WHERE user_id = $1
+              AND created_at >= now() - INTERVAL '7 days'
+            GROUP BY label
+            ORDER BY count DESC, label ASC
+            LIMIT 8
+            """,
+            user_id,
+        )
+        category_rows = await conn.fetch(
+            """
+            SELECT category AS label, COUNT(*)::int AS count
+            FROM alpha_semantic_memory
+            WHERE user_id = $1
+              AND created_at >= now() - INTERVAL '7 days'
+            GROUP BY category
+            ORDER BY count DESC, category ASC
+            LIMIT 8
+            """,
+            user_id,
+        )
+        recent_saves = await conn.fetch(
+            """
+            SELECT
+                s.id::text,
+                s.category,
+                s.review_status,
+                s.review_reason,
+                s.created_at,
+                s.updated_at,
+                COALESCE(NULLIF(s.provenance->>'source_surface', ''), s.source, 'unknown')
+                    AS source_surface,
+                COALESCE(NULLIF(s.provenance->>'source_action', ''), 'unknown')
+                    AS source_action,
+                b.id::text AS buddy_event_id
+            FROM alpha_semantic_memory s
+            LEFT JOIN LATERAL (
+                SELECT id
+                FROM alpha_buddy_events
+                WHERE payload->>'memory_id' = s.id::text
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) b ON true
+            WHERE s.user_id = $1
+            ORDER BY s.created_at DESC
+            LIMIT $2
+            """,
+            user_id,
+            recent_limit,
+        )
+        buddy_metrics = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*)::int AS memory_buddy_events_7d,
+                COUNT(*) FILTER (WHERE read = false)::int AS unread_memory_buddy_events,
+                COUNT(*) FILTER (WHERE priority >= 3)::int AS high_priority_buddy_events
+            FROM alpha_buddy_events
+            WHERE user_id = $1
+              AND created_at >= now() - INTERVAL '7 days'
+              AND (
+                source = 'semantic_memory_review'
+                OR payload ? 'memory_id'
+                OR title ILIKE '%memory%'
+              )
+            """,
+            str(user_id),
+        )
+        recent_buddy_events = await conn.fetch(
+            """
+            SELECT
+                id::text,
+                event_type,
+                title,
+                priority,
+                read,
+                source,
+                payload->>'memory_id' AS memory_id,
+                created_at
+            FROM alpha_buddy_events
+            WHERE user_id = $1
+              AND (
+                source = 'semantic_memory_review'
+                OR payload ? 'memory_id'
+                OR title ILIKE '%memory%'
+              )
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            str(user_id),
+            recent_limit,
+        )
+        return {
+            "semantic_metrics": dict(semantic_metrics or {}),
+            "source_surfaces_7d": [dict(row) for row in source_rows],
+            "categories_7d": [dict(row) for row in category_rows],
+            "recent_semantic_saves": [dict(row) for row in recent_saves],
+            "buddy_metrics": dict(buddy_metrics or {}),
+            "recent_buddy_events": [dict(row) for row in recent_buddy_events],
+        }
+
 
 def _semantic_summary_row(row: asyncpg.Record) -> dict[str, Any]:
     payload = dict(row)
