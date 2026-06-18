@@ -56,6 +56,12 @@ class At0MailMessage:
         return hashlib.sha256(self.body_preview.encode("utf-8")).hexdigest()
 
 
+@dataclass(frozen=True)
+class At0MailSendResult:
+    status_code: int
+    provider_operation: str
+
+
 def configured_mailboxes(raw: str | None = None) -> tuple[str, ...]:
     value = raw if raw is not None else _secret("AT0_HERALD_MAILBOXES")
     if not value:
@@ -237,6 +243,58 @@ class At0MailGraphClient:
             for item in values
             if isinstance(item, dict) and item.get("id")
         ]
+
+    async def send_reply(
+        self,
+        *,
+        mailbox: str,
+        message_id: str,
+        reply_body: str,
+    ) -> At0MailSendResult:
+        token = await self.access_token()
+        try:
+            response = await call_gateway_proxy(
+                "msgraph/mailbox_reply",
+                {
+                    "access_token": token,
+                    "mailbox": mailbox.lower(),
+                    "message_id": message_id,
+                    "reply_body": reply_body,
+                },
+                timeout_s=35,
+            )
+        except GatewayEgressError as exc:
+            raise At0MailGraphError(f"Microsoft Graph reply failed: {exc}") from exc
+        status_code = int(response.get("status_code") or 502)
+        payload = response.get("payload")
+        if status_code != 202:
+            error_type = None
+            if isinstance(payload, dict):
+                error = payload.get("error")
+                if isinstance(error, dict):
+                    error_type = _optional_str(error.get("code"))
+            raise At0MailGraphError(
+                f"Microsoft Graph reply failed: {status_code}",
+                status_code=status_code,
+                error_type=error_type,
+            )
+        return At0MailSendResult(
+            status_code=status_code,
+            provider_operation="message.reply",
+        )
+
+
+async def send_at0_mail_reply(
+    *,
+    mailbox: str,
+    message_id: str,
+    reply_body: str,
+) -> At0MailSendResult:
+    return await At0MailGraphClient().send_reply(
+        mailbox=mailbox,
+        message_id=message_id,
+        reply_body=reply_body,
+    )
 
 
 def _extract_access_token(response: dict[str, Any]) -> str:

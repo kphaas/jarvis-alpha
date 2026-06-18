@@ -30,9 +30,11 @@ def test_at0_herald_smoke_script_covers_required_endpoints() -> None:
         "/v1/at0-mail/dashboard",
         "/v1/at0-mail/messages",
         "/v1/at0-mail/drafts",
+        "/v1/at0-mail/drafts/${SEND_DRAFT_ID}/send",
     ):
         assert path in text
     assert "herald.read,herald.write,at0_mail.read,at0_mail.scan,at0_mail.write" in text
+    assert "HERALD_SMOKE_SEND_DRAFT_ID" in text
 
 
 def test_at0_herald_smoke_script_does_not_print_sensitive_fields() -> None:

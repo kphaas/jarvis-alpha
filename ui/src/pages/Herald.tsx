@@ -6,6 +6,7 @@ import {
   LoaderCircle,
   MailCheck,
   RefreshCw,
+  Send,
   ShieldCheck,
   XCircle,
 } from 'lucide-react'
@@ -80,6 +81,11 @@ interface Draft {
   reviewer_notes: string | null
   reviewed_by: string | null
   reviewed_at: string | null
+  sent_at: string | null
+  send_failed_at: string | null
+  send_error_type: string | null
+  send_error_message: string | null
+  send_attempt_count: number
   created_at: string
   sender_name: string | null
   sender_email: string | null
@@ -97,6 +103,14 @@ interface ScanResponse {
   messages_seen: number
   messages_new: number
   draft_proposals_created: number
+}
+
+interface SendResponse {
+  mailbox: string
+  status: 'sent'
+  graph_status_code: number
+  send_attempt_count: number
+  sent_at: string
 }
 
 const ALL_MAILBOXES = 'all'
@@ -158,7 +172,7 @@ export default function Herald() {
         apiJson<MailboxList>('/v1/at0-mail/mailboxes'),
         apiJson<Dashboard>('/v1/at0-mail/dashboard'),
         apiJson<MessageList>(`/v1/at0-mail/messages?limit=12${mailboxQuery}`),
-        apiJson<DraftList>(`/v1/at0-mail/drafts?limit=8${mailboxQuery}`),
+        apiJson<DraftList>(`/v1/at0-mail/drafts?status=all&limit=12${mailboxQuery}`),
       ])
       setMailboxes(mailboxRes.mailboxes)
       if (selectedMailbox !== ALL_MAILBOXES && !mailboxRes.mailboxes.includes(selectedMailbox)) {
@@ -239,6 +253,23 @@ export default function Herald() {
     }
   }
 
+  const sendDraft = async (draftId: string) => {
+    setActingDraftId(draftId)
+    setNotice(null)
+    try {
+      const result = await apiJson<SendResponse>(`/v1/at0-mail/drafts/${draftId}/send`, {
+        method: 'POST',
+      })
+      setNotice(`Reply sent from ${result.mailbox}`)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Send failed')
+      await load()
+    } finally {
+      setActingDraftId(null)
+    }
+  }
+
   return (
     <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="max-w-6xl space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -257,7 +288,7 @@ export default function Herald() {
           <div className={`grid grid-cols-3 overflow-hidden rounded-lg border text-center text-[10px] font-mono uppercase ${border}`}>
             <div className={`px-3 py-2 ${panel}`}>read only</div>
             <div className={`border-x px-3 py-2 ${border}`}>scoped</div>
-            <div className={`px-3 py-2 ${panel}`}>drafts local</div>
+            <div className={`px-3 py-2 ${panel}`}>approved send</div>
           </div>
           <button
             type="button"
@@ -386,6 +417,16 @@ export default function Herald() {
                 <pre className={`mt-3 max-h-44 overflow-auto whitespace-pre-wrap rounded-lg border p-3 text-xs leading-relaxed ${border} ${panel}`}>
                   {draft.proposed_body}
                 </pre>
+                {draft.status === 'send_failed' && (
+                  <div className="mt-3 rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                    {draft.send_error_message ?? 'Send failed. Review and retry.'}
+                  </div>
+                )}
+                {draft.status === 'sent' && (
+                  <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${border} ${panel}`}>
+                    Sent {timeText(draft.sent_at)} · attempt {draft.send_attempt_count}
+                  </div>
+                )}
                 {draft.status === 'needs_review' && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
@@ -408,10 +449,27 @@ export default function Herald() {
                     </button>
                   </div>
                 )}
+                {(draft.status === 'approved' || draft.status === 'send_failed') && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => sendDraft(draft.id)}
+                      disabled={actingDraftId === draft.id}
+                      className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-emerald-600 px-3 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-45"
+                    >
+                      {actingDraftId === draft.id ? (
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                      {draft.status === 'send_failed' ? 'Retry send' : 'Send reply'}
+                    </button>
+                  </div>
+                )}
               </article>
             ))}
             {!loading && drafts.length === 0 && (
-              <div className={`rounded-lg border p-4 text-sm ${border} ${muted}`}>No draft proposals waiting.</div>
+              <div className={`rounded-lg border p-4 text-sm ${border} ${muted}`}>No draft proposals for this inbox.</div>
             )}
           </div>
         </section>

@@ -96,6 +96,13 @@ class MicrosoftGraphMailboxMessagesRequest(BaseModel):
     max_results: int = Field(default=25, ge=1, le=50)
 
 
+class MicrosoftGraphMailboxReplyRequest(BaseModel):
+    access_token: str
+    mailbox: str
+    message_id: str = Field(min_length=1, max_length=2048)
+    reply_body: str = Field(min_length=1, max_length=20000)
+
+
 class AnthropicAdminRequest(BaseModel):
     path: str
     params: dict[str, str]
@@ -436,6 +443,42 @@ async def msgraph_mailbox_messages(
                 "$top": req.max_results,
                 "$select": select,
                 "$orderby": "receivedDateTime desc",
+            },
+        )
+    payload: Any
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {"raw": response.text}
+    return {"status_code": response.status_code, "payload": payload}
+
+
+@router.post("/msgraph/mailbox_reply")
+async def msgraph_mailbox_reply(
+    req: MicrosoftGraphMailboxReplyRequest,
+    authorization: str = Header(...),
+):
+    _authorize_gateway_call(authorization)
+    mailbox = _require_allowed_msgraph_mailbox(req.mailbox)
+    encoded_mailbox = quote(mailbox, safe="")
+    encoded_message_id = quote(req.message_id, safe="")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            (
+                "https://graph.microsoft.com/v1.0/users/"
+                f"{encoded_mailbox}/messages/{encoded_message_id}/reply"
+            ),
+            headers={
+                "Authorization": f"Bearer {req.access_token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "message": {
+                    "body": {
+                        "contentType": "Text",
+                        "content": req.reply_body,
+                    }
+                }
             },
         )
     payload: Any

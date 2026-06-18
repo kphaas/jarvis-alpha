@@ -10,6 +10,7 @@ BASE_URL="${ALPHA_BASE_URL:-https://jarvis-brain.tail40ed36.ts.net:8186}"
 TIMEOUT_SEC="${HERALD_SMOKE_TIMEOUT_SEC:-30}"
 MAX_RESULTS="${HERALD_SMOKE_MAX_RESULTS:-1}"
 TOKEN="${HERALD_SMOKE_TOKEN:-${ALPHA_SERVICE_TOKEN:-}}"
+SEND_DRAFT_ID="${HERALD_SMOKE_SEND_DRAFT_ID:-}"
 if [ -x "${REPO_ROOT}/.venv/bin/python" ]; then
   DEFAULT_PYTHON="${REPO_ROOT}/.venv/bin/python"
 else
@@ -159,6 +160,20 @@ elif label == "drafts":
     if not isinstance(payload.get("drafts"), list):
         raise SystemExit("FAIL drafts: drafts missing")
     print(f"PASS drafts: count={len(payload['drafts'])}")
+elif label == "send":
+    if payload.get("status") != "sent":
+        raise SystemExit(f"FAIL send: status={payload.get('status')}")
+    if payload.get("graph_status_code") != 202:
+        raise SystemExit(f"FAIL send: graph_status_code={payload.get('graph_status_code')}")
+    if not isinstance(payload.get("send_attempt_count"), int):
+        raise SystemExit("FAIL send: send_attempt_count missing")
+    if not payload.get("sent_at"):
+        raise SystemExit("FAIL send: sent_at missing")
+    print(
+        "PASS send: "
+        f"mailbox={payload.get('mailbox')} "
+        f"attempts={payload['send_attempt_count']}"
+    )
 else:
     raise SystemExit(f"FAIL unknown label: {label}")
 PY
@@ -172,4 +187,9 @@ request_json "GET" "dashboard" "/v1/at0-mail/dashboard"
 request_json "GET" "messages" "/v1/at0-mail/messages?limit=1"
 request_json "GET" "drafts" "/v1/at0-mail/drafts?limit=1"
 
-echo "PASS at0-herald-mail smoke: scan, health, mailboxes, spark, dashboard, messages, drafts reachable"
+if [ -n "${SEND_DRAFT_ID}" ]; then
+  request_json "POST" "send" "/v1/at0-mail/drafts/${SEND_DRAFT_ID}/send"
+  echo "PASS at0-herald-mail smoke: scan, health, mailboxes, spark, dashboard, messages, drafts, send reachable"
+else
+  echo "PASS at0-herald-mail smoke: scan, health, mailboxes, spark, dashboard, messages, drafts reachable"
+fi

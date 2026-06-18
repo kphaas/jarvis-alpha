@@ -34,3 +34,9 @@ def test_at0_mail_routes_are_classified() -> None:
         "write",
         "security_write",
     ]
+    assert classify_route("POST", "/v1/at0-mail/drafts/abc/send") == [
+        "write",
+        "security_write",
+        "external_call",
+        "email_send",
+    ]

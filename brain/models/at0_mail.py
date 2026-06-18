@@ -114,6 +114,11 @@ class At0MailDraftProposalOut(BaseModel):
     reviewer_notes: str | None
     reviewed_by: str | None
     reviewed_at: datetime | None
+    sent_at: datetime | None = None
+    send_failed_at: datetime | None = None
+    send_error_type: str | None = None
+    send_error_message: str | None = None
+    send_attempt_count: int = 0
     created_at: datetime
     sender_name: str | None
     sender_email: str | None
@@ -130,3 +135,13 @@ class At0MailDraftProposalList(BaseModel):
 class At0MailDraftStatusUpdate(BaseModel):
     status: Literal["needs_review", "approved", "rejected"]
     reviewer_notes: str | None = None
+
+
+class At0MailDraftSendOut(BaseModel):
+    draft_id: UUID
+    mail_message_id: UUID
+    mailbox: str
+    status: Literal["sent"]
+    graph_status_code: int
+    send_attempt_count: int
+    sent_at: datetime

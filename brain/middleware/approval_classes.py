@@ -246,7 +246,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/school-email/gmail/health/check": ["write", "external_call"],
     "POST /v1/school-email/candidates/{candidate_id}/status": ["write"],
     "POST /v1/school-email/actions/{candidate_id}/status": ["write"],
-    # --- AT-0 Herald mail — Microsoft Graph read-only ingestion + local drafts ---
+    # --- AT-0 Herald mail — Graph ingestion, local drafts, approved replies ---
     "GET /v1/at0-mail/dashboard": ["read", "security_read"],
     "GET /v1/at0-mail/health": ["read", "security_read"],
     "GET /v1/at0-mail/mailboxes": ["read", "security_read"],
@@ -255,6 +255,12 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/at0-mail/drafts": ["read", "security_read"],
     "POST /v1/at0-mail/scan": ["write", "external_call"],
     "POST /v1/at0-mail/drafts/{draft_id}/status": ["write", "security_write"],
+    "POST /v1/at0-mail/drafts/{draft_id}/send": [
+        "write",
+        "security_write",
+        "external_call",
+        "email_send",
+    ],
     # --- Spark iMessage — metadata-only BlueBubbles read surface ---
     "GET /v1/spark/imessage/health": ["read", "security_read"],
     "GET /v1/spark/imessage/counts": ["read", "security_read"],
