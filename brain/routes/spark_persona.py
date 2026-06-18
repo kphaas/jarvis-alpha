@@ -48,6 +48,7 @@ from jarvis_common.logging_config import get_logger
 
 router = APIRouter(prefix="/v1/spark/persona", tags=["spark-persona"])
 logger = get_logger("alpha_brain")
+SPARK_PERSONALITY_MEMORY_REVIEW_LIMIT = 96
 
 
 class SparkPersonalityMemoryItem(BaseModel):
@@ -346,7 +347,11 @@ async def get_spark_personality_memory(
     check_scopes(request, "admin")
     guardrails = load_spark_guardrails()
     async with rls_connection(request) as conn:
-        rows = await fetch_personality_memory(conn, principal_id)
+        rows = await fetch_personality_memory(
+            conn,
+            principal_id,
+            limit=SPARK_PERSONALITY_MEMORY_REVIEW_LIMIT,
+        )
     proposals = build_personality_memory_proposals(
         principal_id=principal_id,
         guardrails=guardrails,

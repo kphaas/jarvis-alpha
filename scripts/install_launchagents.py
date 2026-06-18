@@ -58,6 +58,7 @@ SERVICE_NODE_MAP = {
     "com.jarvis.alpha.rotate.brain_service": "brain",
     "com.jarvis.alpha.rotate.buddy": "brain",
     "com.jarvis.alpha.school-email": "brain",
+    "com.jarvis.alpha.spark-send-readiness": "brain",
     "com.jarvis.alpha.sweep-cert-renewal.brain": "brain",
     "com.jarvis.alpha.sweep-cert-renewal.endpoint": "endpoint",
     "com.jarvis.alpha.sweep-cert-renewal.gateway": "gateway",

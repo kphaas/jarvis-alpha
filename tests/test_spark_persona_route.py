@@ -259,10 +259,16 @@ async def test_spark_memory_read_returns_active_and_proposals(
         "load_spark_guardrails",
         default_spark_guardrails,
     )
+    fetch_calls: list[dict[str, object]] = []
+
+    async def fake_fetch_personality_memory(_conn, principal_id, **kwargs):
+        fetch_calls.append({"principal_id": principal_id, **kwargs})
+        return rows
+
     monkeypatch.setattr(
         spark_persona,
         "fetch_personality_memory",
-        _async_return(rows),
+        fake_fetch_personality_memory,
     )
     monkeypatch.setattr(
         spark_persona,
@@ -276,6 +282,12 @@ async def test_spark_memory_read_returns_active_and_proposals(
         "user",
     )
 
+    assert fetch_calls == [
+        {
+            "principal_id": "ken",
+            "limit": spark_persona.SPARK_PERSONALITY_MEMORY_REVIEW_LIMIT,
+        }
+    ]
     assert response.active[0].content == "Voice should feel composed."
     assert response.proposals[0].content == "Signature phrase: fair enough."
     assert response.scorecard.active_count == 1
