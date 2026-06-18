@@ -25,6 +25,7 @@ def test_at0_herald_smoke_script_covers_required_endpoints() -> None:
     for path in (
         "/v1/at0-mail/scan",
         "/v1/at0-mail/health",
+        "/v1/at0-mail/mailboxes",
         "/v1/at0-mail/dashboard",
         "/v1/at0-mail/messages",
         "/v1/at0-mail/drafts",
