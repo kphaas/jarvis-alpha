@@ -90,13 +90,6 @@ NODE_CONFIG = {
         "private_key_path": "~/jarvis/pki/services/endpoint_private.pem",
         "secrets_file": "~/jarvis/.secrets",
     },
-    "print": {
-        "iss": "print",
-        "actor_type": "service",
-        "secret_key": "ALPHA_PRINT_SERVICE_TOKEN",
-        "private_key_path": "~/pki/services/print_private.pem",
-        "secrets_file": "~/.secrets",
-    },
 }
 
 BRAIN_HEALTH_URL = "https://jarvis-brain.tail40ed36.ts.net:8186/health"
@@ -114,7 +107,6 @@ SERVICE_ROTATION_NAMES = {
     "endpoint": "ALPHA_SERVICE_TOKEN_ENDPOINT",
     "sandbox": "ALPHA_SERVICE_TOKEN_SANDBOX",
     "forge_sentinel": "ALPHA_SENTINEL_SERVICE_TOKEN",
-    "print": "ALPHA_PRINT_SERVICE_TOKEN",
 }
 SERVICE_ROTATION_LEDGER_NODES = {
     "brain": "brain",
@@ -123,7 +115,6 @@ SERVICE_ROTATION_LEDGER_NODES = {
     "endpoint": "endpoint",
     "sandbox": "sandbox",
     "forge_sentinel": "sandbox",
-    "print": "print",
 }
 
 
@@ -521,7 +512,6 @@ def main() -> int:
             "sandbox",
             "endpoint",
             "forge_sentinel",
-            "print",
         ),
         help="Target node",
     )
@@ -572,7 +562,7 @@ def main() -> int:
 
     old_token: str | None = None
     token_hash: str | None = None
-    if node in ("gateway", "sandbox", "forge_sentinel", "print"):
+    if node in ("gateway", "sandbox", "forge_sentinel"):
         old_token = read_secret_value(secrets_file, secret_key)
 
     try:
