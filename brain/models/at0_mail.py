@@ -65,6 +65,23 @@ class At0MailDashboardOut(BaseModel):
     latest_scan: At0MailScanRunOut | None = None
 
 
+class At0MailGraphHealthOut(BaseModel):
+    id: UUID
+    status: Literal["ok", "failed"]
+    trigger: str
+    checked_at: datetime
+    mailboxes_checked: int
+    messages_seen: int
+    graph_roles: list[str]
+    missing_graph_roles: list[str]
+    current_send_failures: int
+    stuck_sending_count: int
+    last_sent_at: datetime | None = None
+    error_type: str | None = None
+    error_message: str | None = None
+    requires_attention: bool
+
+
 class At0MailHealthOut(BaseModel):
     status: Literal["ok", "running", "stale", "failed", "missing"]
     checked_at: datetime
@@ -72,6 +89,7 @@ class At0MailHealthOut(BaseModel):
     age_minutes: int | None = None
     requires_attention: bool
     latest_scan: At0MailScanRunOut | None = None
+    latest_graph_health: At0MailGraphHealthOut | None = None
     message_count: int
     draft_count: int
 

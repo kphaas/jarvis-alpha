@@ -29,6 +29,7 @@ from brain.services.at0_mail_graph_client import (
     configured_mailboxes,
     send_at0_mail_reply,
 )
+from brain.services.at0_mail_health import latest_at0_mail_graph_health
 from brain.services.at0_mail_repository import dashboard_summary, health_summary
 from brain.services.at0_mail_sender import (
     At0MailDraftNotFoundError,
@@ -125,6 +126,16 @@ async def get_health(
             conn,
             stale_after_minutes=_stale_after_minutes(),
         )
+        graph_health = await latest_at0_mail_graph_health(conn)
+        if graph_health is not None:
+            if graph_health.requires_attention:
+                summary["requires_attention"] = True
+                if summary.get("status") == "ok":
+                    summary["status"] = "failed"
+            summary["latest_graph_health"] = {
+                **graph_health.__dict__,
+                "requires_attention": graph_health.requires_attention,
+            }
     return At0MailHealthOut(**summary)
 
 
