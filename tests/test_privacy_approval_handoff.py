@@ -120,6 +120,7 @@ async def test_pending_approvals_include_privacy_case_context(monkeypatch) -> No
         "action_statuses": ["awaiting_approval"],
     }
     assert response["pending"][0]["spark"] is None
+    assert response["pending"][0]["beacon"] is None
 
 
 @pytest.mark.asyncio
@@ -176,6 +177,109 @@ async def test_pending_approvals_include_spark_draft_context(monkeypatch) -> Non
         "outbox_id": None,
         "outbox_status": None,
         "outbox_recorded": False,
+    }
+    assert response["pending"][0]["beacon"] is None
+
+
+@pytest.mark.asyncio
+async def test_pending_approvals_include_beacon_browser_context(monkeypatch) -> None:
+    queue_id = uuid4()
+    request_id = uuid4()
+
+    class FakeConn:
+        def __init__(self) -> None:
+            self.query = ""
+
+        async def fetch(self, query, *args):
+            self.query = query
+            return [
+                {
+                    "id": queue_id,
+                    "action_class": ["beacon_browser_use", "external_call"],
+                    "risk_tier": "T4",
+                    "actor_sub": "ken",
+                    "actor_type": "user",
+                    "description": "Beacon browser-use approval",
+                    "parameters_hash": "a" * 64,
+                    "status": "pending",
+                    "requested_at": datetime.now(UTC),
+                    "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+                    "overnight": False,
+                    "privacy_case_id": None,
+                    "privacy_action_count": None,
+                    "privacy_action_statuses": None,
+                    "spark_principal_id": None,
+                    "spark_target_label": None,
+                    "spark_outbox_id": None,
+                    "spark_outbox_status": None,
+                    "beacon_request_id": request_id,
+                    "beacon_selected_tool": "browser_use",
+                    "beacon_sensitivity": "normal",
+                    "beacon_policy_tier": "T4",
+                    "beacon_request_shape": {
+                        "has_query": True,
+                        "url_count": 1,
+                        "max_pages": 1,
+                        "max_depth": 0,
+                        "needs_interaction": True,
+                    },
+                    "beacon_metadata": {
+                        "browser_action_preview": {
+                            "kind": "beacon_browser_use",
+                            "selected_tool": "browser_use",
+                            "risk_tier": "T4",
+                            "sensitivity": "normal",
+                            "requires_human_approval": True,
+                            "has_query": True,
+                            "url_count": 1,
+                            "max_pages": 1,
+                            "max_depth": 0,
+                            "needs_interaction": True,
+                            "same_host_required": True,
+                            "screenshots_required": True,
+                            "downloads_allowed": False,
+                            "forms_allowed": False,
+                            "raw_task_text_included": False,
+                            "raw_web_content_is_untrusted": True,
+                            "approval_hash_prefix": "abc123abc123",
+                        }
+                    },
+                }
+            ]
+
+    conn = FakeConn()
+
+    @asynccontextmanager
+    async def fake_rls_connection(request):
+        yield conn
+
+    monkeypatch.setattr(approvals, "rls_connection", fake_rls_connection)
+
+    response = await approvals.list_pending(_request())
+
+    assert "beacon_context" in conn.query
+    assert response["count"] == 1
+    assert response["pending"][0]["privacy"] is None
+    assert response["pending"][0]["spark"] is None
+    assert response["pending"][0]["beacon"] == {
+        "kind": "beacon_browser_use",
+        "request_id": str(request_id),
+        "selected_tool": "browser_use",
+        "risk_tier": "T4",
+        "sensitivity": "normal",
+        "requires_human_approval": True,
+        "has_query": True,
+        "url_count": 1,
+        "max_pages": 1,
+        "max_depth": 0,
+        "needs_interaction": True,
+        "same_host_required": True,
+        "screenshots_required": True,
+        "downloads_allowed": False,
+        "forms_allowed": False,
+        "raw_task_text_included": False,
+        "raw_web_content_is_untrusted": True,
+        "approval_hash_prefix": "abc123abc123",
     }
 
 
