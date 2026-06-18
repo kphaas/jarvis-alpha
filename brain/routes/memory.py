@@ -70,6 +70,16 @@ class MemoryTelemetryMetrics(BaseModel):
     memory_buddy_events_7d: int = 0
     unread_memory_buddy_events: int = 0
     high_priority_buddy_events: int = 0
+    dream_proposals_7d: int = 0
+    dream_reviewed_writes_open: int = 0
+    dream_proposals_queued: int = 0
+    dream_informational_open: int = 0
+    dream_approved_waiting_execution: int = 0
+    dream_proposals_executed: int = 0
+    dream_proposals_reverted: int = 0
+    stale_dream_reviewed_writes: int = 0
+    dream_approval_mismatch_count: int = 0
+    dream_executed_without_ledger: int = 0
 
 
 class MemoryTelemetryCount(BaseModel):
@@ -100,6 +110,17 @@ class MemoryTelemetryBuddyEvent(BaseModel):
     created_at: str | None = None
 
 
+class MemoryTelemetryDreamProposal(BaseModel):
+    proposal_id: str
+    proposed_action: str
+    executable: bool
+    status: str
+    approval_queue_id: str | None = None
+    approval_status: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
 class MemoryTelemetryResponse(BaseModel):
     status: Literal["ok"] = "ok"
     user_id: str
@@ -108,6 +129,9 @@ class MemoryTelemetryResponse(BaseModel):
     categories_7d: list[MemoryTelemetryCount]
     recent_semantic_saves: list[MemoryTelemetrySemanticEvent]
     recent_buddy_events: list[MemoryTelemetryBuddyEvent]
+    recent_dream_proposals: list[MemoryTelemetryDreamProposal] = Field(
+        default_factory=list
+    )
 
 
 class SaveSemanticMemoryRequest(BaseModel):
@@ -204,12 +228,14 @@ async def get_memory_telemetry(
         )
     semantic_metrics = _dict_value(telemetry.get("semantic_metrics"))
     buddy_metrics = _dict_value(telemetry.get("buddy_metrics"))
+    proposal_metrics = _dict_value(telemetry.get("proposal_metrics"))
     return MemoryTelemetryResponse(
         user_id=str(uid),
         metrics=MemoryTelemetryMetrics(
             **{
                 **semantic_metrics,
                 **buddy_metrics,
+                **proposal_metrics,
             }
         ),
         source_surfaces_7d=[
@@ -227,6 +253,10 @@ async def get_memory_telemetry(
         recent_buddy_events=[
             _telemetry_buddy_event(row)
             for row in _list_of_dicts(telemetry.get("recent_buddy_events"))
+        ],
+        recent_dream_proposals=[
+            _telemetry_dream_proposal(row)
+            for row in _list_of_dicts(telemetry.get("recent_dream_proposals"))
         ],
     )
 
@@ -431,6 +461,19 @@ def _telemetry_buddy_event(row: dict) -> MemoryTelemetryBuddyEvent:
         source=_optional_str(row.get("source")),
         memory_id=_optional_str(row.get("memory_id")),
         created_at=_iso(row.get("created_at")),
+    )
+
+
+def _telemetry_dream_proposal(row: dict) -> MemoryTelemetryDreamProposal:
+    return MemoryTelemetryDreamProposal(
+        proposal_id=str(row.get("proposal_id") or ""),
+        proposed_action=str(row.get("proposed_action") or "unknown"),
+        executable=bool(row.get("executable")),
+        status=str(row.get("status") or "unknown"),
+        approval_queue_id=_optional_str(row.get("approval_queue_id")),
+        approval_status=_optional_str(row.get("approval_status")),
+        created_at=_iso(row.get("created_at")),
+        updated_at=_iso(row.get("updated_at")),
     )
 
 

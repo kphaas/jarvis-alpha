@@ -92,6 +92,18 @@ class FakeMemoryService:
                 "unread_memory_buddy_events": 2,
                 "high_priority_buddy_events": 1,
             },
+            "proposal_metrics": {
+                "dream_proposals_7d": 4,
+                "dream_reviewed_writes_open": 2,
+                "dream_proposals_queued": 1,
+                "dream_informational_open": 1,
+                "dream_approved_waiting_execution": 1,
+                "dream_proposals_executed": 2,
+                "dream_proposals_reverted": 1,
+                "stale_dream_reviewed_writes": 1,
+                "dream_approval_mismatch_count": 0,
+                "dream_executed_without_ledger": 0,
+            },
             "source_surfaces_7d": [
                 {"label": "at0_chat", "count": 3},
                 {"label": "ask_pages", "count": 2},
@@ -120,6 +132,19 @@ class FakeMemoryService:
                     "source": "semantic_memory_review",
                     "memory_id": "33333333-3333-4333-8333-333333333333",
                     "created_at": datetime(2026, 6, 18, tzinfo=UTC),
+                }
+            ][:recent_limit],
+            "recent_dream_proposals": [
+                {
+                    "proposal_id": "55555555-5555-4555-8555-555555555555",
+                    "proposed_action": "promote_episodic_to_semantic",
+                    "executable": True,
+                    "status": "queued",
+                    "approval_queue_id": "66666666-6666-4666-8666-666666666666",
+                    "approval_status": "approved",
+                    "created_at": datetime(2026, 6, 18, tzinfo=UTC),
+                    "updated_at": datetime(2026, 6, 18, tzinfo=UTC),
+                    "evidence": "raw memory evidence should not be modeled",
                 }
             ][:recent_limit],
         }
@@ -211,11 +236,17 @@ async def test_memory_telemetry_omits_raw_fact_text(
     assert response.metrics.pending_review == 1
     assert response.metrics.review_required_24h == 1
     assert response.metrics.memory_buddy_events_7d == 3
+    assert response.metrics.dream_reviewed_writes_open == 2
+    assert response.metrics.dream_approved_waiting_execution == 1
+    assert response.metrics.stale_dream_reviewed_writes == 1
     assert response.source_surfaces_7d[0].label == "at0_chat"
     assert response.recent_semantic_saves[0].source_action == "slash_memory_command"
     assert response.recent_semantic_saves[0].buddy_event_id
     assert response.recent_buddy_events[0].source == "semantic_memory_review"
+    assert response.recent_dream_proposals[0].status == "queued"
+    assert response.recent_dream_proposals[0].approval_status == "approved"
     assert not hasattr(response.recent_semantic_saves[0], "fact")
+    assert not hasattr(response.recent_dream_proposals[0], "evidence")
 
 
 @pytest.mark.asyncio
