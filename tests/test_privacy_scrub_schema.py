@@ -62,6 +62,48 @@ REMOVAL_CONTROL_ROLLBACK_PATH = (
     / "rollbacks"
     / "20260606_173000_privacy_removal_control_plane_rollback.sql"
 )
+LIFECYCLE_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260618_090000_privacy_authorization_lifecycle.sql"
+)
+LIFECYCLE_ROLLBACK_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "brain"
+    / "db"
+    / "rollbacks"
+    / "20260618_090000_privacy_authorization_lifecycle_rollback.sql"
+)
+DRY_RUN_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260618_100000_privacy_gateway_dry_run.sql"
+)
+DRY_RUN_ROLLBACK_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "brain"
+    / "db"
+    / "rollbacks"
+    / "20260618_100000_privacy_gateway_dry_run_rollback.sql"
+)
+LIVE_PREFLIGHT_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260618_110000_privacy_gateway_live_preflight.sql"
+)
+LIVE_PREFLIGHT_ROLLBACK_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "brain"
+    / "db"
+    / "rollbacks"
+    / "20260618_110000_privacy_gateway_live_preflight_rollback.sql"
+)
 
 MIGRATION_SQL = MIGRATION_PATH.read_text(encoding="utf-8")
 TARGET_CACHE_RLS_SQL = TARGET_CACHE_RLS_MIGRATION_PATH.read_text(encoding="utf-8")
@@ -71,6 +113,14 @@ CASE_COMPLETED_SQL = CASE_COMPLETED_MIGRATION_PATH.read_text(encoding="utf-8")
 CASE_COMPLETED_ROLLBACK_SQL = CASE_COMPLETED_ROLLBACK_PATH.read_text(encoding="utf-8")
 REMOVAL_CONTROL_SQL = REMOVAL_CONTROL_MIGRATION_PATH.read_text(encoding="utf-8")
 REMOVAL_CONTROL_ROLLBACK_SQL = REMOVAL_CONTROL_ROLLBACK_PATH.read_text(
+    encoding="utf-8",
+)
+LIFECYCLE_SQL = LIFECYCLE_MIGRATION_PATH.read_text(encoding="utf-8")
+LIFECYCLE_ROLLBACK_SQL = LIFECYCLE_ROLLBACK_PATH.read_text(encoding="utf-8")
+DRY_RUN_SQL = DRY_RUN_MIGRATION_PATH.read_text(encoding="utf-8")
+DRY_RUN_ROLLBACK_SQL = DRY_RUN_ROLLBACK_PATH.read_text(encoding="utf-8")
+LIVE_PREFLIGHT_SQL = LIVE_PREFLIGHT_MIGRATION_PATH.read_text(encoding="utf-8")
+LIVE_PREFLIGHT_ROLLBACK_SQL = LIVE_PREFLIGHT_ROLLBACK_PATH.read_text(
     encoding="utf-8",
 )
 
@@ -214,10 +264,154 @@ def test_removal_control_migration_has_rollback_for_every_new_table():
         assert f"DROP TABLE IF EXISTS public.{table}" in REMOVAL_CONTROL_ROLLBACK_SQL
 
 
+def test_authorization_lifecycle_migration_adds_force_rls_request_ledger():
+    for table in (
+        "alpha_privacy_removal_requests",
+        "alpha_privacy_removal_request_events",
+    ):
+        assert f"CREATE TABLE IF NOT EXISTS public.{table}" in LIFECYCLE_SQL
+        assert f"ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY" in (
+            LIFECYCLE_SQL
+        )
+        assert f"ALTER TABLE public.{table} FORCE ROW LEVEL SECURITY" in (LIFECYCLE_SQL)
+
+    assert "privacy_removal_requests_isolation" in LIFECYCLE_SQL
+    assert "privacy_removal_request_events_isolation" in LIFECYCLE_SQL
+    assert "lifecycle_status" in LIFECYCLE_SQL
+    assert "'completed'" in LIFECYCLE_SQL
+    assert "removal_request_id UUID" in LIFECYCLE_SQL
+    assert "REFERENCES public.alpha_privacy_removal_requests" in LIFECYCLE_SQL
+
+
+def test_authorization_lifecycle_migration_keeps_payloads_encrypted():
+    assert "request_payload_ciphertext" in LIFECYCLE_SQL
+    assert "request_payload_hash" in LIFECYCLE_SQL
+    assert "event_payload_ciphertext" in LIFECYCLE_SQL
+    assert "event_payload_hash" in LIFECYCLE_SQL
+    assert "CREATE OR REPLACE FUNCTION public.privacy_decrypt_payload" not in (
+        LIFECYCLE_SQL
+    )
+    forbidden = (
+        "authorization_text",
+        "request_body TEXT",
+        "proof_url TEXT",
+        "response_body TEXT",
+        "metadata JSONB",
+    )
+    for token in forbidden:
+        assert token not in LIFECYCLE_SQL
+
+
+def test_authorization_lifecycle_migration_has_rollback():
+    assert "DROP COLUMN IF EXISTS removal_request_id" in LIFECYCLE_ROLLBACK_SQL
+    assert (
+        "DROP TABLE IF EXISTS public.alpha_privacy_removal_request_events"
+        in LIFECYCLE_ROLLBACK_SQL
+    )
+    assert (
+        "DROP TABLE IF EXISTS public.alpha_privacy_removal_requests"
+        in LIFECYCLE_ROLLBACK_SQL
+    )
+
+
+def test_gateway_dry_run_migration_adds_encrypted_gateway_proof_columns():
+    assert "dry_run_payload_ciphertext BYTEA" in DRY_RUN_SQL
+    assert "dry_run_payload_hash TEXT" in DRY_RUN_SQL
+    assert "dry_run_payload_key_version TEXT" in DRY_RUN_SQL
+    assert "gateway_idempotency_key_digest TEXT" in DRY_RUN_SQL
+    assert "'dry_run_prepared'" in DRY_RUN_SQL
+    assert "privacy_gateway_dry-run must not expose decrypt helpers" not in (
+        DRY_RUN_SQL
+    )
+    assert "CREATE OR REPLACE FUNCTION public.privacy_decrypt_payload" not in (
+        DRY_RUN_SQL
+    )
+    assert "relrowsecurity AND relforcerowsecurity" in DRY_RUN_SQL
+
+
+def test_gateway_dry_run_migration_avoids_plaintext_executor_payloads():
+    forbidden = (
+        "request_body TEXT",
+        "response_body TEXT",
+        "broker_response TEXT",
+        "metadata JSONB",
+        "idempotency_key TEXT",
+        "target_url TEXT",
+    )
+    for token in forbidden:
+        assert token not in DRY_RUN_SQL
+
+
+def test_gateway_dry_run_migration_has_rollback():
+    assert "SET event_type = 'note'" in DRY_RUN_ROLLBACK_SQL
+    assert "DROP COLUMN IF EXISTS dry_run_payload_ciphertext" in DRY_RUN_ROLLBACK_SQL
+    assert "DROP COLUMN IF EXISTS dry_run_payload_hash" in DRY_RUN_ROLLBACK_SQL
+    assert "DROP COLUMN IF EXISTS gateway_idempotency_key_digest" in (
+        DRY_RUN_ROLLBACK_SQL
+    )
+    assert (
+        "'dry_run_prepared'"
+        not in DRY_RUN_ROLLBACK_SQL.split(
+            "ADD CONSTRAINT privacy_removal_request_events_event_type_check",
+            1,
+        )[1]
+    )
+
+
+def test_gateway_live_preflight_migration_adds_encrypted_proof_columns():
+    assert "live_preflight_payload_ciphertext BYTEA" in LIVE_PREFLIGHT_SQL
+    assert "live_preflight_payload_hash TEXT" in LIVE_PREFLIGHT_SQL
+    assert "live_preflight_payload_key_version TEXT" in LIVE_PREFLIGHT_SQL
+    assert "live_preflight_approval_queue_id UUID" in LIVE_PREFLIGHT_SQL
+    assert "REFERENCES public.alpha_approval_queue(id)" in LIVE_PREFLIGHT_SQL
+    assert "'live_disabled'" in LIVE_PREFLIGHT_SQL
+    assert "'live_preflight_passed'" in LIVE_PREFLIGHT_SQL
+    assert "'live_preflight_failed'" in LIVE_PREFLIGHT_SQL
+    assert "CREATE OR REPLACE FUNCTION public.privacy_decrypt_payload" not in (
+        LIVE_PREFLIGHT_SQL
+    )
+    assert "relrowsecurity AND relforcerowsecurity" in LIVE_PREFLIGHT_SQL
+
+
+def test_gateway_live_preflight_migration_avoids_plaintext_executor_payloads():
+    forbidden = (
+        "request_body TEXT",
+        "response_body TEXT",
+        "broker_response TEXT",
+        "metadata JSONB",
+        "idempotency_key TEXT",
+        "target_url TEXT",
+        "approval_token TEXT",
+    )
+    for token in forbidden:
+        assert token not in LIVE_PREFLIGHT_SQL
+
+
+def test_gateway_live_preflight_migration_has_rollback():
+    assert "SET event_type = 'note'" in LIVE_PREFLIGHT_ROLLBACK_SQL
+    assert "DROP COLUMN IF EXISTS live_preflight_payload_ciphertext" in (
+        LIVE_PREFLIGHT_ROLLBACK_SQL
+    )
+    assert "DROP COLUMN IF EXISTS live_preflight_payload_hash" in (
+        LIVE_PREFLIGHT_ROLLBACK_SQL
+    )
+    assert "DROP COLUMN IF EXISTS live_preflight_approval_queue_id" in (
+        LIVE_PREFLIGHT_ROLLBACK_SQL
+    )
+    assert (
+        "'live_preflight_passed'"
+        not in LIVE_PREFLIGHT_ROLLBACK_SQL.split(
+            "ADD CONSTRAINT privacy_removal_request_events_event_type_check",
+            1,
+        )[1]
+    )
+
+
 def test_migration_policies_have_with_check():
     assert MIGRATION_SQL.count("WITH CHECK") >= 6
     assert CASE_DRAFTS_SQL.count("WITH CHECK") >= 1
     assert REMOVAL_CONTROL_SQL.count("WITH CHECK") >= 6
+    assert LIFECYCLE_SQL.count("WITH CHECK") >= 2
 
 
 def test_migration_has_no_public_decrypt_helper():
@@ -228,6 +422,16 @@ def test_migration_has_no_public_decrypt_helper():
     assert (
         "CREATE OR REPLACE FUNCTION public.privacy_decrypt_payload"
         not in REMOVAL_CONTROL_SQL
+    )
+    assert (
+        "CREATE OR REPLACE FUNCTION public.privacy_decrypt_payload" not in LIFECYCLE_SQL
+    )
+    assert (
+        "CREATE OR REPLACE FUNCTION public.privacy_decrypt_payload" not in DRY_RUN_SQL
+    )
+    assert (
+        "CREATE OR REPLACE FUNCTION public.privacy_decrypt_payload"
+        not in LIVE_PREFLIGHT_SQL
     )
 
 
@@ -244,6 +448,8 @@ def test_migration_avoids_plaintext_sensitive_columns():
         assert token not in CASE_DRAFTS_SQL
         assert token not in MANUAL_WORKFLOW_SQL
         assert token not in REMOVAL_CONTROL_SQL
+        assert token not in DRY_RUN_SQL
+        assert token not in LIVE_PREFLIGHT_SQL
 
 
 def test_migration_adds_approval_and_append_only_controls():
@@ -257,6 +463,8 @@ def test_migration_adds_approval_and_append_only_controls():
 def test_migration_does_not_cascade_delete_privacy_records():
     assert "ON DELETE CASCADE" not in MIGRATION_SQL
     assert "ON DELETE CASCADE" not in REMOVAL_CONTROL_SQL
+    assert "ON DELETE CASCADE" not in DRY_RUN_SQL
+    assert "ON DELETE CASCADE" not in LIVE_PREFLIGHT_SQL
 
 
 @pytest.fixture

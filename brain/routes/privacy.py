@@ -34,6 +34,19 @@ from brain.agents.privacy_scrub.drafts import (
     list_approved_privacy_actions,
 )
 from brain.agents.privacy_scrub.identity import TupleType
+from brain.agents.privacy_scrub.lifecycle import (
+    PrivacyGatewayDryRunResult,
+    PrivacyGatewayLivePreflightResult,
+    PrivacyAuthorizationLifecycleRepository,
+    PrivacyLifecycleAuthorizationRequired,
+    PrivacyLifecycleError,
+    PrivacyLifecycleGatewayError,
+    PrivacyLifecycleNotFound,
+    PrivacyLifecycleTransitionError,
+    RemovalRequestTransitionResult,
+    StoredPrivacyAuthorization,
+    StoredRemovalRequest,
+)
 from brain.agents.privacy_scrub.removal_control import (
     PrivacyRemovalControlRepository,
     RemovalBenchmark,
@@ -406,6 +419,136 @@ class PrivacyRemovalSeedOut(BaseModel):
     payload_key_version: str
     generated_at: datetime
     counts: PrivacyRemovalSeedCountsOut
+
+
+class PrivacyAuthorizationCreateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    authorization_type: Literal[
+        "agent_authorization",
+        "guardian_authorization",
+        "custom_removal",
+        "search_deindex",
+        "public_record_triage",
+    ] = "agent_authorization"
+    signed_payload: dict[str, object] = Field(min_length=1)
+    expires_at: datetime | None = None
+
+
+class PrivacyAuthorizationOut(BaseModel):
+    authorization_id: UUID
+    subject_id: UUID
+    authorization_type: str
+    status: str
+    authorization_payload_hash: str
+    payload_key_version: str
+    expires_at: datetime | None = None
+    revoked_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class PrivacyAuthorizationsOut(BaseModel):
+    count: int
+    authorizations: list[PrivacyAuthorizationOut]
+
+
+class PrivacyRemovalRequestCreateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operator_note: str | None = Field(default=None, max_length=1000)
+
+
+class PrivacyRemovalRequestTransitionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lifecycle_status: Literal[
+        "approved",
+        "queued",
+        "sent",
+        "acknowledged",
+        "monitoring",
+        "completed",
+        "failed",
+        "escalated",
+        "blocked",
+    ]
+    operator_note: str | None = Field(default=None, max_length=1000)
+    evidence_reference: str | None = Field(default=None, max_length=1000)
+    next_check_at: datetime | None = None
+
+
+class PrivacyRemovalRequestOut(BaseModel):
+    request_id: UUID
+    subject_id: UUID
+    target_id: str
+    target_name: str
+    target_category: str
+    authorization_id: UUID
+    action_id: UUID | None
+    lifecycle_status: str
+    request_payload_hash: str
+    payload_key_version: str
+    target_opt_out_method: str
+    current_evidence_count: int
+    next_check_at: datetime | None = None
+    last_event_at: datetime | None = None
+    dry_run_payload_hash: str | None = None
+    dry_run_payload_key_version: str | None = None
+    dry_run_prepared_at: datetime | None = None
+    live_preflight_payload_hash: str | None = None
+    live_preflight_payload_key_version: str | None = None
+    live_preflight_at: datetime | None = None
+    live_preflight_status: str | None = None
+    live_preflight_approval_queue_id: UUID | None = None
+    gateway_idempotency_key_digest: str | None = None
+    created_by_user_id: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class PrivacyRemovalRequestsOut(BaseModel):
+    count: int
+    requests: list[PrivacyRemovalRequestOut]
+
+
+class PrivacyRemovalRequestTransitionOut(BaseModel):
+    event_type: str
+    event_payload_hash: str | None
+    evidence_created: bool
+    request: PrivacyRemovalRequestOut
+
+
+class PrivacyGatewayDryRunOut(BaseModel):
+    request: PrivacyRemovalRequestOut
+    event_type: str
+    event_payload_hash: str | None
+    gateway_path: str
+    gateway_status: str
+    egress_mode: Literal["gateway_dry_run"]
+    outbound_enabled: Literal[False]
+    would_send: Literal[False]
+    adapter_kind: str
+    idempotency_key_digest: str
+    dry_run_payload_hash: str
+    prepared_at: datetime
+
+
+class PrivacyGatewayLivePreflightOut(BaseModel):
+    request: PrivacyRemovalRequestOut
+    event_type: str
+    event_payload_hash: str | None
+    gateway_path: str
+    gateway_status: str
+    egress_mode: Literal["gateway_live_preflight"]
+    outbound_enabled: bool
+    would_send: Literal[False]
+    target_http_attempted: bool
+    adapter_kind: str
+    idempotency_key_digest: str
+    live_preflight_payload_hash: str
+    approval_queue_id: UUID
+    prepared_at: datetime
 
 
 @router.post("/subjects", response_model=SubjectCreateOut)
@@ -1149,6 +1292,293 @@ def _privacy_removal_seed_out(
     )
 
 
+@router.post(
+    "/subjects/{subject_id}/authorizations",
+    response_model=PrivacyAuthorizationOut,
+)
+async def create_privacy_authorization(
+    request: Request,
+    subject_id: UUID,
+    body: PrivacyAuthorizationCreateIn,
+    user_id: str = Depends(require_auth),
+) -> PrivacyAuthorizationOut:
+    _assert_adult_or_admin_actor(request)
+    crypto = _load_crypto_or_503()
+
+    try:
+        async with rls_connection(request) as conn:
+            authorization = await PrivacyAuthorizationLifecycleRepository(
+                conn,
+                crypto,
+            ).create_authorization(
+                subject_id=subject_id,
+                actor=user_id,
+                authorization_type=body.authorization_type,
+                signed_payload=body.signed_payload,
+                expires_at=body.expires_at,
+            )
+    except PrivacyLifecycleNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_subject_not_found",
+        ) from exc
+    except PrivacyLifecycleError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy_authorization_invalid",
+        ) from exc
+
+    return _privacy_authorization_out(authorization)
+
+
+@router.get(
+    "/subjects/{subject_id}/authorizations",
+    response_model=PrivacyAuthorizationsOut,
+)
+async def list_privacy_authorizations(
+    request: Request,
+    subject_id: UUID,
+    _: str = Depends(require_auth),
+) -> PrivacyAuthorizationsOut:
+    _assert_adult_or_admin_actor(request)
+    crypto = _load_crypto_or_503()
+
+    try:
+        async with rls_connection(request) as conn:
+            authorizations = await PrivacyAuthorizationLifecycleRepository(
+                conn,
+                crypto,
+            ).list_authorizations(subject_id=subject_id)
+    except PrivacyLifecycleNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_subject_not_found",
+        ) from exc
+
+    return PrivacyAuthorizationsOut(
+        count=len(authorizations),
+        authorizations=[
+            _privacy_authorization_out(authorization)
+            for authorization in authorizations
+        ],
+    )
+
+
+@router.post(
+    "/actions/{action_id}/removal-request",
+    response_model=PrivacyRemovalRequestOut,
+)
+async def create_privacy_removal_request(
+    request: Request,
+    action_id: UUID,
+    body: PrivacyRemovalRequestCreateIn,
+    user_id: str = Depends(require_auth),
+) -> PrivacyRemovalRequestOut:
+    _assert_adult_or_admin_actor(request)
+    crypto = _load_crypto_or_503()
+
+    try:
+        async with rls_connection(request) as conn:
+            removal_request = await PrivacyAuthorizationLifecycleRepository(
+                conn,
+                crypto,
+            ).create_request_for_action(
+                action_id=action_id,
+                actor=user_id,
+                operator_note=body.operator_note,
+            )
+    except PrivacyLifecycleAuthorizationRequired as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="privacy_authorization_required",
+        ) from exc
+    except PrivacyLifecycleNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_action_not_found",
+        ) from exc
+    except PrivacyLifecycleError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy_removal_request_invalid",
+        ) from exc
+
+    return _privacy_removal_request_out(removal_request)
+
+
+@router.get("/removal-requests", response_model=PrivacyRemovalRequestsOut)
+async def list_privacy_removal_requests(
+    request: Request,
+    subject_id: UUID | None = None,
+    limit: int = 25,
+    _: str = Depends(require_auth),
+) -> PrivacyRemovalRequestsOut:
+    _assert_adult_or_admin_actor(request)
+    if limit < 1 or limit > 50:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy_removal_request_limit_invalid",
+        )
+    crypto = _load_crypto_or_503()
+
+    try:
+        async with rls_connection(request) as conn:
+            requests = await PrivacyAuthorizationLifecycleRepository(
+                conn,
+                crypto,
+            ).list_requests(subject_id=subject_id, limit=limit)
+    except PrivacyLifecycleNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_subject_not_found",
+        ) from exc
+    except PrivacyLifecycleError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy_removal_request_invalid",
+        ) from exc
+
+    return PrivacyRemovalRequestsOut(
+        count=len(requests),
+        requests=[_privacy_removal_request_out(item) for item in requests],
+    )
+
+
+@router.post(
+    "/removal-requests/{request_id}/transition",
+    response_model=PrivacyRemovalRequestTransitionOut,
+)
+async def transition_privacy_removal_request(
+    request: Request,
+    request_id: UUID,
+    body: PrivacyRemovalRequestTransitionIn,
+    user_id: str = Depends(require_auth),
+) -> PrivacyRemovalRequestTransitionOut:
+    _assert_adult_or_admin_actor(request)
+    crypto = _load_crypto_or_503()
+
+    try:
+        async with rls_connection(request) as conn:
+            result = await PrivacyAuthorizationLifecycleRepository(
+                conn,
+                crypto,
+            ).transition_request(
+                request_id=request_id,
+                actor=user_id,
+                lifecycle_status=body.lifecycle_status,
+                operator_note=body.operator_note,
+                evidence_reference=body.evidence_reference,
+                next_check_at=body.next_check_at,
+            )
+    except PrivacyLifecycleNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_removal_request_not_found",
+        ) from exc
+    except PrivacyLifecycleTransitionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="privacy_removal_request_transition_invalid",
+        ) from exc
+    except PrivacyLifecycleError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy_removal_request_invalid",
+        ) from exc
+
+    return _privacy_removal_request_transition_out(result)
+
+
+@router.post(
+    "/removal-requests/{request_id}/dry-run",
+    response_model=PrivacyGatewayDryRunOut,
+)
+async def prepare_privacy_gateway_dry_run(
+    request: Request,
+    request_id: UUID,
+    user_id: str = Depends(require_auth),
+) -> PrivacyGatewayDryRunOut:
+    _assert_adult_or_admin_actor(request)
+    crypto = _load_crypto_or_503()
+
+    try:
+        async with rls_connection(request) as conn:
+            result = await PrivacyAuthorizationLifecycleRepository(
+                conn,
+                crypto,
+            ).prepare_gateway_dry_run(
+                request_id=request_id,
+                actor=user_id,
+            )
+    except PrivacyLifecycleNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_removal_request_not_found",
+        ) from exc
+    except PrivacyLifecycleGatewayError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="privacy_gateway_dry_run_unavailable",
+        ) from exc
+    except PrivacyLifecycleTransitionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="privacy_removal_request_dry_run_invalid",
+        ) from exc
+    except PrivacyLifecycleError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy_removal_request_invalid",
+        ) from exc
+
+    return _privacy_gateway_dry_run_out(result)
+
+
+@router.post(
+    "/removal-requests/{request_id}/live-preflight",
+    response_model=PrivacyGatewayLivePreflightOut,
+)
+async def prepare_privacy_gateway_live_preflight(
+    request: Request,
+    request_id: UUID,
+    user_id: str = Depends(require_auth),
+) -> PrivacyGatewayLivePreflightOut:
+    _assert_adult_or_admin_actor(request)
+    crypto = _load_crypto_or_503()
+
+    try:
+        async with rls_connection(request) as conn:
+            result = await PrivacyAuthorizationLifecycleRepository(
+                conn,
+                crypto,
+            ).prepare_gateway_live_preflight(
+                request_id=request_id,
+                actor=user_id,
+            )
+    except PrivacyLifecycleNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="privacy_removal_request_not_found",
+        ) from exc
+    except PrivacyLifecycleGatewayError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="privacy_gateway_live_preflight_unavailable",
+        ) from exc
+    except PrivacyLifecycleTransitionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="privacy_removal_request_live_preflight_invalid",
+        ) from exc
+    except PrivacyLifecycleError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy_removal_request_invalid",
+        ) from exc
+
+    return _privacy_gateway_live_preflight_out(result)
+
+
 def _privacy_removal_lane_out(lane: RemovalLane) -> PrivacyRemovalLaneOut:
     return PrivacyRemovalLaneOut(
         code=lane.code,
@@ -1180,6 +1610,107 @@ def _privacy_removal_benchmark_out(
         capability=benchmark.capability,
         alpha_gap=benchmark.alpha_gap,
         control=benchmark.control,
+    )
+
+
+def _privacy_authorization_out(
+    authorization: StoredPrivacyAuthorization,
+) -> PrivacyAuthorizationOut:
+    return PrivacyAuthorizationOut(
+        authorization_id=authorization.id,
+        subject_id=authorization.subject_id,
+        authorization_type=authorization.authorization_type,
+        status=authorization.status,
+        authorization_payload_hash=authorization.authorization_payload_hash,
+        payload_key_version=authorization.payload_key_version,
+        expires_at=authorization.expires_at,
+        revoked_at=authorization.revoked_at,
+        created_at=authorization.created_at,
+        updated_at=authorization.updated_at,
+    )
+
+
+def _privacy_removal_request_out(
+    request: StoredRemovalRequest,
+) -> PrivacyRemovalRequestOut:
+    return PrivacyRemovalRequestOut(
+        request_id=request.id,
+        subject_id=request.subject_id,
+        target_id=request.target_id,
+        target_name=request.target_name,
+        target_category=request.target_category,
+        authorization_id=request.authorization_id,
+        action_id=request.action_id,
+        lifecycle_status=request.lifecycle_status,
+        request_payload_hash=request.request_payload_hash,
+        payload_key_version=request.payload_key_version,
+        target_opt_out_method=request.target_opt_out_method,
+        current_evidence_count=request.current_evidence_count,
+        next_check_at=request.next_check_at,
+        last_event_at=request.last_event_at,
+        dry_run_payload_hash=request.dry_run_payload_hash,
+        dry_run_payload_key_version=request.dry_run_payload_key_version,
+        dry_run_prepared_at=request.dry_run_prepared_at,
+        live_preflight_payload_hash=request.live_preflight_payload_hash,
+        live_preflight_payload_key_version=(request.live_preflight_payload_key_version),
+        live_preflight_at=request.live_preflight_at,
+        live_preflight_status=request.live_preflight_status,
+        live_preflight_approval_queue_id=request.live_preflight_approval_queue_id,
+        gateway_idempotency_key_digest=request.gateway_idempotency_key_digest,
+        created_by_user_id=request.created_by_user_id,
+        created_at=request.created_at,
+        updated_at=request.updated_at,
+    )
+
+
+def _privacy_removal_request_transition_out(
+    result: RemovalRequestTransitionResult,
+) -> PrivacyRemovalRequestTransitionOut:
+    return PrivacyRemovalRequestTransitionOut(
+        event_type=result.event.event_type,
+        event_payload_hash=result.event.event_payload_hash,
+        evidence_created=result.evidence_created,
+        request=_privacy_removal_request_out(result.request),
+    )
+
+
+def _privacy_gateway_dry_run_out(
+    result: PrivacyGatewayDryRunResult,
+) -> PrivacyGatewayDryRunOut:
+    return PrivacyGatewayDryRunOut(
+        request=_privacy_removal_request_out(result.request),
+        event_type=result.event.event_type,
+        event_payload_hash=result.event.event_payload_hash,
+        gateway_path=result.gateway_path,
+        gateway_status=result.gateway_status,
+        egress_mode="gateway_dry_run",
+        outbound_enabled=False,
+        would_send=False,
+        adapter_kind=result.adapter_kind,
+        idempotency_key_digest=result.idempotency_key_digest,
+        dry_run_payload_hash=result.dry_run_payload_hash,
+        prepared_at=result.prepared_at,
+    )
+
+
+def _privacy_gateway_live_preflight_out(
+    result: PrivacyGatewayLivePreflightResult,
+) -> PrivacyGatewayLivePreflightOut:
+    return PrivacyGatewayLivePreflightOut(
+        request=_privacy_removal_request_out(result.request),
+        event_type=result.event.event_type,
+        event_payload_hash=result.event.event_payload_hash,
+        gateway_path=result.gateway_path,
+        gateway_status=result.gateway_status,
+        egress_mode="gateway_live_preflight",
+        outbound_enabled=result.outbound_enabled,
+        would_send=False,
+        target_http_attempted=result.target_http_attempted,
+        adapter_kind=result.adapter_kind,
+        idempotency_key_digest=result.idempotency_key_digest,
+        live_preflight_payload_hash=result.live_preflight_payload_hash,
+        approval_queue_id=result.approval_queue_id,
+        prepared_at=result.prepared_at,
     )
 
 
