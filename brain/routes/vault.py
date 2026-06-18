@@ -1,12 +1,12 @@
 import os
 import shutil
 import uuid
+from contextlib import suppress
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from brain.db.rls import rls_connection
 from brain.ingest.docx import ingest_docx
 from brain.middleware.scopes import check_scopes
 from brain.ingest.excel import ingest_excel
@@ -17,6 +17,10 @@ from brain.services.vault_recall import (
     embed_vault_query,
     search_vault_chunks,
     vault_context_block,
+)
+from brain.services.vault_security import (
+    vault_rls_connection,
+    vault_workspace_id,
 )
 from brain.storage.archive import archive_document
 
@@ -35,8 +39,6 @@ VALID_CLASSIFICATIONS = (
     "50_SECRETS",
 )
 
-DEFAULT_VAULT_WORKSPACE_ID = "personal"
-
 router = APIRouter(prefix="/v1/vault", tags=["vault"])
 
 
@@ -53,13 +55,7 @@ class VaultAskRequest(VaultSearchRequest):
 
 
 def _vault_workspace_id(request: Request) -> str:
-    workspace_id = getattr(request.state, "workspace_id", None)
-    if isinstance(workspace_id, str) and workspace_id.strip():
-        normalized = workspace_id.strip()
-        request.state.workspace_id = normalized
-        return normalized
-    request.state.workspace_id = DEFAULT_VAULT_WORKSPACE_ID
-    return DEFAULT_VAULT_WORKSPACE_ID
+    return vault_workspace_id(request)
 
 
 async def _pipeline_document_row(db, pipeline_id: str):
@@ -123,39 +119,44 @@ async def vault_upload(
     size = os.path.getsize(local_path)
     content_type = file.content_type or "application/octet-stream"
 
-    async with rls_connection(request) as db:
-        await db.execute(
-            """
-            INSERT INTO vault_documents
-              (id, filename, content_type, size_bytes, classification, local_path, storage_tier, uploaded_by, workspace_id)
-            VALUES
-              ($1, $2, $3, $4, $5, $6, 'hot', $7, $8)
-            """,
-            uuid.UUID(doc_id),
-            filename,
-            content_type,
-            size,
-            classification,
-            local_path,
-            getattr(request.state, "user_id", None),
-            workspace_id,
-        )
-        row = await db.fetchrow(
-            """
-            INSERT INTO vault_pipeline
-              (document_id, filename, content_type, local_path, size_bytes, stage, uploaded_by, workspace_id)
-            VALUES
-              ($1, $2, $3, $4, $5, 'inbox', $6, $7)
-            RETURNING id
-            """,
-            uuid.UUID(doc_id),
-            filename,
-            content_type,
-            local_path,
-            size,
-            getattr(request.state, "user_id", None),
-            workspace_id,
-        )
+    try:
+        async with vault_rls_connection(request) as db:
+            await db.execute(
+                """
+                INSERT INTO vault_documents
+                  (id, filename, content_type, size_bytes, classification, local_path, storage_tier, uploaded_by, workspace_id)
+                VALUES
+                  ($1, $2, $3, $4, $5, $6, 'hot', $7, $8)
+                """,
+                uuid.UUID(doc_id),
+                filename,
+                content_type,
+                size,
+                classification,
+                local_path,
+                getattr(request.state, "user_id", None),
+                workspace_id,
+            )
+            row = await db.fetchrow(
+                """
+                INSERT INTO vault_pipeline
+                  (document_id, filename, content_type, local_path, size_bytes, stage, uploaded_by, workspace_id)
+                VALUES
+                  ($1, $2, $3, $4, $5, 'inbox', $6, $7)
+                RETURNING id
+                """,
+                uuid.UUID(doc_id),
+                filename,
+                content_type,
+                local_path,
+                size,
+                getattr(request.state, "user_id", None),
+                workspace_id,
+            )
+    except Exception:
+        with suppress(FileNotFoundError):
+            os.remove(local_path)
+        raise
 
     pipeline_id = row["id"]
 
@@ -175,7 +176,7 @@ async def vault_upload(
 async def vault_pipeline_list(request: Request):
     check_scopes(request, "vault.read", "admin")
     _vault_workspace_id(request)
-    async with rls_connection(request) as db:
+    async with vault_rls_connection(request) as db:
         rows = await db.fetch(
             """
             SELECT id, filename, content_type, stage, size_bytes, created_at
@@ -205,7 +206,7 @@ async def vault_pipeline_list(request: Request):
 async def vault_pipeline_confirm(pipeline_id: str, request: Request):
     check_scopes(request, "vault.write", "admin")
     _vault_workspace_id(request)
-    async with rls_connection(request) as db:
+    async with vault_rls_connection(request) as db:
         row = await _pipeline_document_row(db, pipeline_id)
 
         result = await archive_document(
@@ -249,14 +250,14 @@ async def vault_ingest_pdf(
     check_scopes(request, "vault.write", "admin")
     _vault_workspace_id(request)
     file_bytes = await file.read()
-    async with rls_connection(request) as db:
+    async with vault_rls_connection(request) as db:
         row = await _pipeline_document_row(db, pipeline_id)
     result = await ingest_pdf(
         file_bytes=file_bytes,
         doc_id=str(row["doc_id"]),
         request=request,
     )
-    async with rls_connection(request) as db:
+    async with vault_rls_connection(request) as db:
         await _mark_ingestion_result(db, pipeline_id, result)
     return JSONResponse(result)
 
@@ -270,14 +271,14 @@ async def vault_ingest_docx(
     check_scopes(request, "vault.write", "admin")
     _vault_workspace_id(request)
     file_bytes = await file.read()
-    async with rls_connection(request) as db:
+    async with vault_rls_connection(request) as db:
         row = await _pipeline_document_row(db, pipeline_id)
     result = await ingest_docx(
         file_bytes=file_bytes,
         doc_id=str(row["doc_id"]),
         request=request,
     )
-    async with rls_connection(request) as db:
+    async with vault_rls_connection(request) as db:
         await _mark_ingestion_result(db, pipeline_id, result)
     return JSONResponse(result)
 
@@ -291,7 +292,7 @@ async def vault_ingest_text(
     check_scopes(request, "vault.write", "admin")
     _vault_workspace_id(request)
     file_bytes = await file.read()
-    async with rls_connection(request) as db:
+    async with vault_rls_connection(request) as db:
         row = await _pipeline_document_row(db, pipeline_id)
     result = await ingest_plain_text(
         file_bytes=file_bytes,
@@ -299,7 +300,7 @@ async def vault_ingest_text(
         doc_id=str(row["doc_id"]),
         request=request,
     )
-    async with rls_connection(request) as db:
+    async with vault_rls_connection(request) as db:
         await _mark_ingestion_result(db, pipeline_id, result)
     return JSONResponse(result)
 
@@ -313,7 +314,7 @@ async def vault_ingest_excel(
     check_scopes(request, "vault.write", "admin")
     _vault_workspace_id(request)
     file_bytes = await file.read()
-    async with rls_connection(request) as db:
+    async with vault_rls_connection(request) as db:
         row = await _pipeline_document_row(db, pipeline_id)
     result = await ingest_excel(
         file_bytes=file_bytes,
@@ -321,7 +322,7 @@ async def vault_ingest_excel(
         doc_id=str(row["doc_id"]),
         request=request,
     )
-    async with rls_connection(request) as db:
+    async with vault_rls_connection(request) as db:
         await _mark_ingestion_result(db, pipeline_id, result)
     return JSONResponse(result)
 
@@ -331,7 +332,7 @@ async def vault_search(body: VaultSearchRequest, request: Request):
     check_scopes(request, "vault.read", "admin")
     _vault_workspace_id(request)
     embedding = await embed_vault_query(body.query)
-    async with rls_connection(request) as db:
+    async with vault_rls_connection(request) as db:
         matches = await search_vault_chunks(
             db,
             query=body.query,
@@ -351,7 +352,7 @@ async def vault_ask(body: VaultAskRequest, request: Request):
     check_scopes(request, "vault.read", "admin")
     _vault_workspace_id(request)
     embedding = await embed_vault_query(body.query)
-    async with rls_connection(request) as db:
+    async with vault_rls_connection(request) as db:
         matches = await search_vault_chunks(
             db,
             query=body.query,

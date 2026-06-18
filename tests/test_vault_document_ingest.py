@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 import zipfile
 
@@ -16,6 +17,7 @@ os.environ.setdefault("OLLAMA_URL", "http://localhost:11434")
 from brain.ingest.docx import extract_docx_text
 from brain.ingest.text import _chunk_text, _decode_text
 from brain.routes.vault import _vault_workspace_id
+from brain.services import vault_security
 
 
 def _docx_bytes(document_xml: str) -> bytes:
@@ -82,3 +84,41 @@ def test_vault_workspace_id_preserves_explicit_workspace() -> None:
 
     assert _vault_workspace_id(request) == "tax-workspace"
     assert request.state.workspace_id == "tax-workspace"
+
+
+@pytest.mark.asyncio
+async def test_vault_rls_connection_maps_scoped_service_to_platform_admin(
+    monkeypatch,
+) -> None:
+    seen = {}
+
+    @asynccontextmanager
+    async def fake_rls_context_connection(ctx, *, set_app_role=False):
+        seen["ctx"] = ctx
+        seen["set_app_role"] = set_app_role
+        yield "vault-conn"
+
+    monkeypatch.setattr(
+        vault_security,
+        "rls_context_connection",
+        fake_rls_context_connection,
+    )
+    request = SimpleNamespace(
+        state=SimpleNamespace(
+            actor_type="service",
+            role=None,
+            scopes=["vault.write"],
+            user_id="endpoint_service",
+            user_sub="endpoint_service",
+            workspace_id=None,
+        )
+    )
+
+    async with vault_security.vault_rls_connection(request) as conn:
+        assert conn == "vault-conn"
+
+    assert seen["set_app_role"] is True
+    assert seen["ctx"].role == "platform_admin"
+    assert seen["ctx"].user_id == "endpoint_service"
+    assert seen["ctx"].workspace_id == "personal"
+    assert request.state.workspace_id == "personal"
