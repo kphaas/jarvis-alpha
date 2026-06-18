@@ -328,3 +328,14 @@ def test_chat_final_response_keeps_sources_when_requested():
 
     assert "https://example.com/schedule" in response
     assert "[1]" in response
+
+
+def test_chat_final_response_strips_sources_when_user_says_no_links():
+    response = _strip_unrequested_source_references(
+        "It starts Friday at 3 PM ET [1]. Source: https://example.com/schedule",
+        "Use Beacon but do not give me links.",
+    )
+
+    assert response == "It starts Friday at 3 PM ET."
+    assert "https://" not in response
+    assert "Source:" not in response
