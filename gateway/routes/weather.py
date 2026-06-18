@@ -57,21 +57,6 @@ def _authorize_gateway_call(authorization: str) -> None:
         raise HTTPException(status_code=403, detail="Invalid gateway token")
 
 
-def _configured_coordinate(name: str) -> float:
-    try:
-        return float(get_secret(name))
-    except KeyError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"{name} is not configured on Gateway",
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"{name} is not a valid coordinate",
-        ) from exc
-
-
 def _coordinates(
     latitude: float | None, longitude: float | None
 ) -> tuple[float, float]:
@@ -80,16 +65,13 @@ def _coordinates(
             status_code=422,
             detail="latitude and longitude must be provided together",
         )
-    lat = (
-        latitude
-        if latitude is not None
-        else _configured_coordinate("WEATHER_HOME_LATITUDE")
-    )
-    lon = (
-        longitude
-        if longitude is not None
-        else _configured_coordinate("WEATHER_HOME_LONGITUDE")
-    )
+    if latitude is None or longitude is None:
+        raise HTTPException(
+            status_code=422,
+            detail="latitude and longitude are required",
+        )
+    lat = latitude
+    lon = longitude
     if not -90 <= lat <= 90:
         raise HTTPException(status_code=422, detail="latitude is out of range")
     if not -180 <= lon <= 180:
