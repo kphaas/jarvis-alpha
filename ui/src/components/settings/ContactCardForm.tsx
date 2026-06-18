@@ -6,6 +6,23 @@ import { SettingsStatusLine, type SaveState } from './SettingsStatusLine'
 import { EMPTY_CONTACT, toContactForm, type ContactFormDraft } from './personalDataForms'
 import type { Profile } from './types'
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+function isEmailValid(value: string) {
+  return !value.trim() || EMAIL_RE.test(value.trim().toLowerCase())
+}
+
+function formatPhone(value: string) {
+  const digits = value.replace(/\D/g, '')
+  const normalized = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits
+  if (normalized.length !== 10) return value
+  return `${normalized.slice(0, 3)}-${normalized.slice(3, 6)}-${normalized.slice(6)}`
+}
+
+function isPhoneValid(value: string) {
+  return !value.trim() || /^\d{3}-\d{3}-\d{4}$/.test(formatPhone(value.trim()))
+}
+
 export function ContactCardForm({ profiles, onSaved }: { profiles: Profile[]; onSaved: () => void }) {
   const { theme } = useAppStore()
   const isDark = theme === 'dark'
@@ -17,6 +34,8 @@ export function ContactCardForm({ profiles, onSaved }: { profiles: Profile[]; on
   const [state, setState] = useState<SaveState>('idle')
   const [message, setMessage] = useState('')
   const form = profile ? drafts[profile.id] ?? toContactForm(profile.personal_data) : EMPTY_CONTACT
+  const emailInvalid = Boolean(form.email && !isEmailValid(form.email))
+  const phoneInvalid = Boolean(form.phone && !isPhoneValid(form.phone))
 
   function updateForm(field: keyof ContactFormDraft, value: string) {
     if (!profile) return
@@ -31,16 +50,22 @@ export function ContactCardForm({ profiles, onSaved }: { profiles: Profile[]; on
 
   async function save() {
     if (!profile) return
+    if (emailInvalid || phoneInvalid) {
+      setState('error')
+      setMessage('Fix email or phone before saving')
+      return
+    }
     setState('saving')
     setMessage('')
+    const formattedPhone = formatPhone(form.phone.trim())
     try {
       await apiJson(`/v1/settings/users/${profile.id}/personal-data`, {
         method: 'PUT',
         body: JSON.stringify({
           legal_name: form.legal_name || null,
           preferred_name: form.preferred_name || null,
-          email: form.email || null,
-          phone: form.phone || null,
+          email: form.email.trim().toLowerCase() || null,
+          phone: formattedPhone || null,
           birthday: form.birthday || null,
           notes: form.notes || null,
         }),
@@ -71,13 +96,19 @@ export function ContactCardForm({ profiles, onSaved }: { profiles: Profile[]; on
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <input placeholder="Legal name" value={form.legal_name} onChange={e => updateForm('legal_name', e.target.value)} className={`px-3 py-2 rounded-lg border ${border} ${inputBg} text-sm focus:outline-none`} />
         <input placeholder="Preferred name" value={form.preferred_name} onChange={e => updateForm('preferred_name', e.target.value)} className={`px-3 py-2 rounded-lg border ${border} ${inputBg} text-sm focus:outline-none`} />
-        <input placeholder="Email" value={form.email} onChange={e => updateForm('email', e.target.value)} className={`px-3 py-2 rounded-lg border ${border} ${inputBg} text-sm focus:outline-none`} />
-        <input placeholder="Phone" value={form.phone} onChange={e => updateForm('phone', e.target.value)} className={`px-3 py-2 rounded-lg border ${border} ${inputBg} text-sm focus:outline-none`} />
+        <label className="space-y-1">
+          <input type="email" placeholder="Email" value={form.email} aria-invalid={emailInvalid} onChange={e => updateForm('email', e.target.value)} className={`w-full px-3 py-2 rounded-lg border ${emailInvalid ? 'border-rose-500/60' : border} ${inputBg} text-sm focus:outline-none`} />
+          {emailInvalid ? <span className="block text-xs text-rose-400">Use an email like name@example.com.</span> : null}
+        </label>
+        <label className="space-y-1">
+          <input inputMode="tel" placeholder="Phone 555-555-5555" value={form.phone} aria-invalid={phoneInvalid} onBlur={() => updateForm('phone', formatPhone(form.phone))} onChange={e => updateForm('phone', e.target.value)} className={`w-full px-3 py-2 rounded-lg border ${phoneInvalid ? 'border-rose-500/60' : border} ${inputBg} text-sm focus:outline-none`} />
+          {phoneInvalid ? <span className="block text-xs text-rose-400">Use a 10 digit phone like 555-555-5555.</span> : null}
+        </label>
         <input type="date" value={form.birthday} onChange={e => updateForm('birthday', e.target.value)} className={`px-3 py-2 rounded-lg border ${border} ${inputBg} text-sm focus:outline-none`} />
         <input placeholder="Notes" value={form.notes} onChange={e => updateForm('notes', e.target.value)} className={`px-3 py-2 rounded-lg border ${border} ${inputBg} text-sm focus:outline-none`} />
       </div>
       <SettingsStatusLine state={state} message={message} />
-      <button onClick={save} disabled={state === 'saving' || !profile} className="w-full min-h-11 inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-sm font-mono hover:bg-emerald-500/30 disabled:opacity-40 transition-colors">
+      <button onClick={save} disabled={state === 'saving' || !profile || emailInvalid || phoneInvalid} className="w-full min-h-11 inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-sm font-mono hover:bg-emerald-500/30 disabled:opacity-40 transition-colors">
         <UserRound size={14} />
         {state === 'saving' ? 'Saving...' : 'Save Contact'}
       </button>
