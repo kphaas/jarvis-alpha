@@ -16,6 +16,7 @@ domains:
   - news                     # News + media feeds
   - geo                      # Geocoding, mapping, places
   - weather                  # Weather + forecasts
+  - web-search               # Web search, answer, and retrieval APIs
   - utility                  # FX, IP geolocation, open data
 
 auth_types:

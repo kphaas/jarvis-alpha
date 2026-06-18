@@ -532,6 +532,7 @@ async def test_internet_health_reports_provider_configuration(monkeypatch):
     assert result["provider_redundancy_status"] == "single_provider"
     assert result["missing_provider_count"] == 1
     assert result["providers"][0]["provider"] == "brave"
+    assert result["providers"][0]["data_source_id"] == "brave-search"
     assert result["providers"][0]["configured"] is True
     assert result["providers"][0]["circuit_open"] is False
 
@@ -558,6 +559,10 @@ async def test_internet_health_reports_redundant_provider_configuration(monkeypa
     assert result["provider_redundancy_ok"] is True
     assert result["provider_redundancy_status"] == "redundant"
     assert result["missing_provider_count"] == 0
+    assert [provider["data_source_id"] for provider in result["providers"]] == [
+        "brave-search",
+        "perplexity-search",
+    ]
 
 
 @pytest.mark.asyncio

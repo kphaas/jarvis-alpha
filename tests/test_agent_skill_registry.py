@@ -66,6 +66,16 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert skills["internet_scout.deep_research"].approval_tier == "T3"
     assert skills["internet_scout.browser_task"].approval_tier == "T4"
     assert skills["internet_scout.browser_task"].mutates_state is True
+    assert sorted(
+        skills["internet_scout.search"].metadata["manifest"]["egress"][
+            "data_source_ids"
+        ]
+    ) == ["brave-search", "perplexity-search"]
+    assert sorted(
+        skills["internet_scout.deep_research"].metadata["manifest"]["egress"][
+            "data_source_ids"
+        ]
+    ) == ["brave-search", "perplexity-search"]
     assert skills["internet_scout.search"].metadata["execution_path"] == (
         "fastapi_route"
     )
@@ -108,6 +118,8 @@ def test_active_external_data_skills_reference_vendored_data_sources():
 
     data_sources = load_data_source_registry(DEFAULT_DATA_SOURCE_REGISTRY_ROOT)
     assert data_sources["open-meteo"].domain == "weather"
+    assert data_sources["brave-search"].domain == "web-search"
+    assert data_sources["perplexity-search"].domain == "web-search"
 
     assert_skill_data_source_coverage(INITIAL_SKILLS, data_sources)
 

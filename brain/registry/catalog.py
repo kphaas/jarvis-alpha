@@ -25,6 +25,7 @@ def _skill_metadata(
     egress_mode: str = "none",
     provider: str | None = None,
     data_source_id: str | None = None,
+    data_source_ids: list[str] | None = None,
     allowed_hosts: list[str] | None = None,
     compensation: str = "not_applicable",
     test_ref: str = "tests/test_agent_skill_registry.py",
@@ -44,6 +45,8 @@ def _skill_metadata(
     }
     if data_source_id is not None:
         egress["data_source_id"] = data_source_id
+    if data_source_ids:
+        egress["data_source_ids"] = data_source_ids
 
     metadata: dict[str, Any] = {
         "manifest": {
@@ -1108,6 +1111,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             model_policy="gateway_search_provider_order",
             egress_mode="gateway",
             provider="beacon",
+            data_source_ids=["brave-search", "perplexity-search"],
             test_ref="tests/test_internet_scout_chat_adapter.py",
             runbook_ref="docs/adr/ADR-0019-beacon-internet-scout.md",
             extra={
@@ -1136,6 +1140,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             model_policy="gateway_search_provider_order",
             egress_mode="gateway",
             provider="beacon",
+            data_source_ids=["brave-search", "perplexity-search"],
             test_ref="tests/test_internet_scout_chat_adapter.py",
             runbook_ref="docs/adr/ADR-0019-beacon-internet-scout.md",
             extra={
