@@ -127,7 +127,6 @@ def test_at0_voice_polish_removes_robotic_weather_preamble() -> None:
     assert "Please note" not in polished
 
 
-
 def test_eval_sports_schedule_suggests_web_search() -> None:
     suggestion = suggest_web_for_chat(
         query="What time does USMNT play tomorrow?",

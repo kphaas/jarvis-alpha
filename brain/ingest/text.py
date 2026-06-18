@@ -6,7 +6,7 @@ import httpx
 from fastapi import Request
 
 from brain.core.config import OLLAMA_URL
-from brain.db.rls import rls_connection
+from brain.services import vault_security
 from jarvis_common.logging_config import get_logger
 
 CHUNK_SIZE = 512
@@ -91,7 +91,7 @@ async def ingest_extracted_text(
     embedded_count = 0
 
     try:
-        async with rls_connection(request) as db:
+        async with vault_security.vault_rls_connection(request) as db:
             await db.execute("DELETE FROM vault_chunks WHERE document_id = $1", doc_id)
             for index, chunk in enumerate(chunks):
                 embedding = await _embed_text(chunk)

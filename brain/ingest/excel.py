@@ -5,8 +5,8 @@ from collections.abc import Sequence
 import openpyxl
 from fastapi import Request
 
+from brain.services import vault_security
 from jarvis_common.logging_config import get_logger
-from brain.db.rls import rls_connection
 
 logger = get_logger("alpha_brain")
 
@@ -102,7 +102,7 @@ async def ingest_excel(
         row_count = 0
         excel_row_num = 2
 
-        async with rls_connection(request) as db:
+        async with vault_security.vault_rls_connection(request) as db:
             await db.execute(create_sql)
 
             col_list = ", ".join(_quote_ident(c) for c in column_names)
