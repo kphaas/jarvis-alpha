@@ -104,6 +104,11 @@ SOURCE_LINK_REQUEST_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+NEGATIVE_SOURCE_LINK_REQUEST_RE = re.compile(
+    r"\b(?:do\s+not|don't|dont|no|without|skip|hide)\b"
+    r"[^.!?\n]{0,40}\b(?:sources?|citations?|links?|urls?|websites?)\b",
+    re.IGNORECASE,
+)
 RAW_URL_RE = re.compile(r"https?://[^\s)\]>\"']+")
 MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(https?://[^\s)]+\)")
 INLINE_SOURCE_URL_RE = re.compile(
@@ -838,6 +843,8 @@ JARVIS_SYSTEM_PROMPT = (
     "run, say the answer needs Beacon verification instead of guessing. Do not "
     "show source URLs, website names, or bracketed citations in normal chat "
     "unless Ken explicitly asks for a link, source, citation, URL, or website. "
+    "When Ken explicitly asks for a source link, website link, source URL, "
+    "or cited source, include the full URL from Beacon evidence. "
     "If Beacon evidence supports the answer, say Beacon checked it or Beacon "
     "verified it naturally."
 )
@@ -906,7 +913,10 @@ def _polish_model_response(text: str, response_surface: AskResponseSurface) -> s
 
 
 def _user_requested_source_links(user_msg: str) -> bool:
-    return bool(SOURCE_LINK_REQUEST_RE.search(user_msg or ""))
+    normalized = user_msg or ""
+    if NEGATIVE_SOURCE_LINK_REQUEST_RE.search(normalized):
+        return False
+    return bool(SOURCE_LINK_REQUEST_RE.search(normalized))
 
 
 def _strip_unrequested_source_references(text: str, user_msg: str) -> str:
