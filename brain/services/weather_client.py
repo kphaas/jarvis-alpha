@@ -14,10 +14,9 @@ from urllib.parse import urlencode
 
 from brain.config.node_addresses import GATEWAY_URL
 from brain.config.secrets import get_secret
+from brain.services.web_agent_settings import get_home_weather_coordinates
 
 GATEWAY_WEATHER_TIMEOUT_SEC = 15
-WEATHER_HOME_LATITUDE_SECRET = "WEATHER_HOME_LATITUDE"
-WEATHER_HOME_LONGITUDE_SECRET = "WEATHER_HOME_LONGITUDE"
 
 
 class WeatherGatewayError(RuntimeError):
@@ -25,7 +24,6 @@ class WeatherGatewayError(RuntimeError):
 
 
 def _gateway_weather_current_sync(params: dict[str, Any]) -> dict[str, Any]:
-    params = _with_alpha_home_coordinates(params)
     base = GATEWAY_URL.rstrip("/")
     query = urlencode(
         {key: value for key, value in params.items() if value is not None}
@@ -81,36 +79,18 @@ def _gateway_weather_current_sync(params: dict[str, Any]) -> dict[str, Any]:
 async def get_current_weather(params: dict[str, Any] | None = None) -> dict[str, Any]:
     """Read current weather without blocking the event loop."""
 
-    resolved_params = _with_alpha_home_coordinates(dict(params or {}))
+    resolved_params = await _with_alpha_home_coordinates(dict(params or {}))
     return await asyncio.to_thread(_gateway_weather_current_sync, resolved_params)
 
 
-def _with_alpha_home_coordinates(params: dict[str, Any]) -> dict[str, Any]:
-    """Send Alpha-owned home coordinates to Gateway when caller omits coords."""
+async def _with_alpha_home_coordinates(params: dict[str, Any]) -> dict[str, Any]:
+    """Send Alpha-owned DB home coordinates to Gateway when caller omits coords."""
     if params.get("latitude") is not None or params.get("longitude") is not None:
         return params
 
-    latitude = _secret_or_none(WEATHER_HOME_LATITUDE_SECRET)
-    longitude = _secret_or_none(WEATHER_HOME_LONGITUDE_SECRET)
-    if latitude is None or longitude is None:
+    coordinates = await get_home_weather_coordinates()
+    if coordinates is None:
         return params
 
-    try:
-        resolved = {
-            **params,
-            "latitude": float(latitude),
-            "longitude": float(longitude),
-        }
-    except ValueError as exc:
-        raise WeatherGatewayError(
-            "alpha weather home coordinates are not valid floats"
-        ) from exc
-    return resolved
-
-
-def _secret_or_none(name: str) -> str | None:
-    try:
-        value = get_secret(name).strip()
-    except KeyError:
-        return None
-    return value or None
+    latitude, longitude = coordinates
+    return {**params, "latitude": latitude, "longitude": longitude}

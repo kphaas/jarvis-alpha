@@ -53,6 +53,9 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/auth/set-admin-pin": ["write", "security_write"],
     "GET /v1/auth/session": ["auth"],
     "POST /v1/auth/session-cookie": ["auth"],
+    # Settings — PI/config reads are security reads; writes are admin-scoped.
+    "GET /v1/settings/web-agent": ["read", "security_read"],
+    "PUT /v1/settings/web-agent/home-location": ["write", "security_write"],
     # Admin
     "POST /v1/admin": ["admin"],
     # Destructive
