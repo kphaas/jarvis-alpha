@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
 from brain.routes import settings_identity
@@ -247,6 +248,30 @@ async def test_save_profile_personal_data():
     assert response.profile_id == "ken"
     assert response.email == "ken@example.test"
     assert response.data_classification == "personal_information"
+
+
+def test_profile_personal_data_normalizes_contact_fields():
+    payload = ProfilePersonalDataIn(
+        email="KEN@EXAMPLE.COM",
+        phone="(404) 555-1212",
+    )
+
+    assert payload.email == "ken@example.com"
+    assert payload.phone == "404-555-1212"
+
+
+@pytest.mark.parametrize(
+    "email", ["ken", "ken@", "@example.com", "ken example@example.com"]
+)
+def test_profile_personal_data_rejects_invalid_email(email):
+    with pytest.raises(ValidationError, match="email must look like name@example.com"):
+        ProfilePersonalDataIn(email=email)
+
+
+@pytest.mark.parametrize("phone", ["555-1212", "abc", "223-456-78901"])
+def test_profile_personal_data_rejects_invalid_phone(phone):
+    with pytest.raises(ValidationError, match="phone must be 10 digits"):
+        ProfilePersonalDataIn(phone=phone)
 
 
 @pytest.mark.asyncio
