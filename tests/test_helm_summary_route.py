@@ -539,6 +539,30 @@ async def test_beacon_summary_degrades_when_health_unavailable(monkeypatch) -> N
 
 def test_helm_summary_route_is_read_classified() -> None:
     assert classify_route("GET", "/v1/helm/summary") == ["read", "security_read"]
+    assert classify_route("GET", "/v1/helm/self") == ["read", "security_read"]
+
+
+@pytest.mark.asyncio
+async def test_helm_self_requires_helm_read_scope() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await helm.helm_self(_request(), _user_id="ken")
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_helm_self_returns_runtime_model(monkeypatch) -> None:
+    @asynccontextmanager
+    async def fake_rls_connection(_request: object):
+        yield object()
+
+    monkeypatch.setattr(helm, "rls_connection", fake_rls_connection)
+
+    response = await helm.helm_self(_request(scopes=["helm.read"]), _user_id="ken")
+
+    assert response.identity.user_facing_name == "AT-0"
+    assert "AT-0 self model" in response.prompt_context
+    assert any(capability.id == "verified_web" for capability in response.capabilities)
 
 
 @pytest.mark.asyncio

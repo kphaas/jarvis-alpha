@@ -33,6 +33,7 @@ from brain.memory.semantic_commands import (
 )
 from brain.middleware.scopes import check_scopes
 from brain.routing.router import route
+from brain.services.at0_self_model import build_at0_self_model, is_at0_self_query
 from brain.services.internet_scout.chat_adapter import (
     InternetChatContext,
     build_chat_internet_context,
@@ -169,6 +170,7 @@ def _build_enriched_prompt(
     memory_context: str,
     internet_context: str | None,
     web_suggestion_context: str | None = None,
+    at0_self_context: str | None = None,
     response_surface: AskResponseSurface | None = None,
     personality_id: AskPersonalityId | None = None,
     user_msg: str,
@@ -181,6 +183,7 @@ def _build_enriched_prompt(
         not memory_context
         and not internet_context
         and not web_suggestion_context
+        and not at0_self_context
         and not response_style_context
     ):
         return user_msg
@@ -210,6 +213,8 @@ def _build_enriched_prompt(
             )
     elif memory_context:
         parts.append(f"Context from memory:\n{memory_context}")
+    if at0_self_context:
+        parts.append(at0_self_context)
     if response_style_context:
         parts.append(response_style_context)
     parts.append(f"User: {user_msg}")
@@ -1085,10 +1090,15 @@ async def chat_completions(body: CompletionRequest, request: Request):
         )
     memory_injected = bool(context)
     sensitivity = _internet_sensitivity(request)
-    web_suggestion = suggest_web_for_chat(
-        query=user_msg,
-        internet_mode=body.internet_mode,
-        sensitivity=sensitivity,
+    at0_self_requested = is_at0_self_query(user_msg)
+    web_suggestion = (
+        None
+        if at0_self_requested
+        else suggest_web_for_chat(
+            query=user_msg,
+            internet_mode=body.internet_mode,
+            sensitivity=sensitivity,
+        )
     )
     if web_suggestion:
         logger.info(
@@ -1117,6 +1127,22 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 requested_mode=body.internet_mode,
                 thread_id=thread_id,
             )
+    at0_self_context: str | None = None
+    if at0_self_requested:
+        try:
+            async with rls_connection(request) as conn:
+                at0_self = await build_at0_self_model(conn)
+            at0_self_context = at0_self.prompt_context
+        except Exception as exc:
+            logger.warning(
+                "AT0_SELF_CONTEXT_UNAVAILABLE",
+                extra={
+                    "event": "AT0_SELF_CONTEXT_UNAVAILABLE",
+                    "thread_id": thread_id,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            at0_self_context = (await build_at0_self_model(None)).prompt_context
     enriched = _build_enriched_prompt(
         memory_context=context,
         internet_context=internet_context.prompt_context if internet_context else None,
@@ -1125,6 +1151,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
             if web_suggestion and not internet_context
             else None
         ),
+        at0_self_context=at0_self_context,
         response_surface=body.response_surface,
         personality_id=body.personality_id,
         user_msg=user_msg,

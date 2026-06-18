@@ -252,6 +252,18 @@ def test_chat_enriched_prompt_keeps_memory_and_internet_boundaries_separate():
     assert prompt.endswith("User: What changed today?")
 
 
+def test_chat_enriched_prompt_includes_at0_self_context():
+    prompt = _build_enriched_prompt(
+        memory_context="",
+        internet_context=None,
+        at0_self_context="AT-0 self model: runtime capability facts.",
+        user_msg="What can you do?",
+    )
+
+    assert "AT-0 self model: runtime capability facts." in prompt
+    assert prompt.endswith("User: What can you do?")
+
+
 def test_chat_enriched_prompt_prioritizes_beacon_over_stale_memory():
     prompt = _build_enriched_prompt(
         memory_context=(
