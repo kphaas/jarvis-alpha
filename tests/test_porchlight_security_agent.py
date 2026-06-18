@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -2188,6 +2189,219 @@ def test_runtime_exposure_fails_suspicious_process():
 
     assert result.status == "fail"
     assert "python3 -m http.server" in result.detail
+
+
+TAILSCALE_NODE_MAP = {
+    "brain": {"ssh_target": "jarvisbrain@jarvis-brain.tail40ed36.ts.net"},
+    "gateway": {"ssh_target": "gate@jarvis-gateway.tail40ed36.ts.net"},
+    "endpoint": {"ssh_target": "jarvisendpoint@jarvis-endpoint.tail40ed36.ts.net"},
+    "sandbox": {"ssh_target": "jarvissand@jarvis-sandbox.tail40ed36.ts.net"},
+}
+
+
+def _tailscale_status_payload(*, extra_peers=None):
+    peers = {
+        "gateway": {
+            "HostName": "jarvis-gateway",
+            "DNSName": "jarvis-gateway.tail40ed36.ts.net.",
+            "TailscaleIPs": ["100.98.18.51"],
+            "Online": True,
+            "LastSeen": "0001-01-01T00:00:00Z",
+            "OS": "macOS",
+        },
+        "endpoint": {
+            "HostName": "jarvis-endpoint",
+            "DNSName": "jarvis-endpoint.tail40ed36.ts.net.",
+            "TailscaleIPs": ["100.87.223.31"],
+            "Online": True,
+            "LastSeen": "0001-01-01T00:00:00Z",
+            "OS": "macOS",
+        },
+        "sandbox": {
+            "HostName": "jarvis-sandbox",
+            "DNSName": "jarvis-sandbox.tail40ed36.ts.net.",
+            "TailscaleIPs": ["100.73.63.9"],
+            "Online": True,
+            "LastSeen": "0001-01-01T00:00:00Z",
+            "OS": "macOS",
+        },
+    }
+    if extra_peers:
+        peers.update(extra_peers)
+    return {
+        "BackendState": "Running",
+        "CurrentTailnet": {"Name": "tailnet.test"},
+        "Self": {
+            "HostName": "jarvis-brain",
+            "DNSName": "jarvis-brain.tail40ed36.ts.net.",
+            "TailscaleIPs": ["100.64.166.22"],
+            "Online": True,
+            "LastSeen": "0001-01-01T00:00:00Z",
+            "OS": "macOS",
+        },
+        "Peer": peers,
+    }
+
+
+def _authorized_keys_payload(text="ssh-ed25519 AAAATEST porchlight\n"):
+    encoded = text.encode()
+    return {
+        "exists": True,
+        "mode": "600",
+        "size": len(encoded),
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+    }
+
+
+def _configured_tailscale_env(monkeypatch, *, acl_policy=None, key_hash=None):
+    acl_policy = acl_policy or {
+        "acls": [{"action": "accept", "src": ["tag:jarvis"], "dst": ["tag:jarvis:*"]}],
+        "ssh": [
+            {
+                "action": "check",
+                "src": ["tag:jarvis-admin"],
+                "dst": ["tag:jarvis"],
+                "users": ["autogroup:nonroot"],
+            }
+        ],
+    }
+    key_hash = key_hash or _authorized_keys_payload()["sha256"]
+    monkeypatch.setenv("TAILSCALE_API_KEY", "tskey-test")
+    monkeypatch.setenv(
+        "PORCHLIGHT_TAILSCALE_ACL_SHA256",
+        porchlight._canonical_json_hash(acl_policy),
+    )
+    monkeypatch.setenv(
+        "PORCHLIGHT_AUTHORIZED_KEYS_SHA256",
+        ",".join(f"{node}={key_hash}" for node in TAILSCALE_NODE_MAP),
+    )
+    return acl_policy
+
+
+def _tailscale_command(status_payload, acl_policy):
+    def fake_command(args, **_kwargs):
+        if args[:2] == ["/opt/homebrew/bin/tailscale", "status"]:
+            return porchlight.CommandResult(0, json.dumps(status_payload), "")
+        if args and args[0] == "curl":
+            return porchlight.CommandResult(0, json.dumps(acl_policy), "")
+        raise AssertionError(args)
+
+    return fake_command
+
+
+def _tailscale_ssh(*, run_ssh=False, key_payload=None):
+    key_payload = key_payload or _authorized_keys_payload()
+
+    def fake_ssh(_target, command):
+        if "debug prefs" in command:
+            return porchlight.CommandResult(
+                0,
+                "Warning: client/server version mismatch\n"
+                + json.dumps({"RunSSH": run_ssh}),
+                "",
+            )
+        if "authorized_keys" in command:
+            return porchlight.CommandResult(0, json.dumps(key_payload), "")
+        raise AssertionError(command)
+
+    return fake_ssh
+
+
+def test_tailscale_ssh_posture_passes_when_nodes_acl_and_keys_match(monkeypatch):
+    monkeypatch.setattr(porchlight, "remote_ssh_probe_enabled", lambda: True)
+    acl_policy = _configured_tailscale_env(monkeypatch)
+
+    result = porchlight.check_tailscale_ssh_posture(
+        node_map=TAILSCALE_NODE_MAP,
+        command=_tailscale_command(_tailscale_status_payload(), acl_policy),
+        ssh=_tailscale_ssh(),
+        now=datetime(2026, 6, 18, 12, 0, tzinfo=UTC),
+    )
+
+    assert result.status == "pass"
+    assert result.metadata["acl"]["checked"] is True
+    assert result.metadata["expected_nodes"]["brain"]["online"] is True
+
+
+def test_tailscale_ssh_posture_fails_for_stale_devices(monkeypatch):
+    monkeypatch.setattr(porchlight, "remote_ssh_probe_enabled", lambda: True)
+    acl_policy = _configured_tailscale_env(monkeypatch)
+    status_payload = _tailscale_status_payload(
+        extra_peers={
+            "old-tv": {
+                "HostName": "old-tv",
+                "DNSName": "old-tv.tail40ed36.ts.net.",
+                "TailscaleIPs": ["100.1.1.1"],
+                "Online": False,
+                "LastSeen": "2026-04-20T00:00:00Z",
+                "OS": "tvOS",
+            }
+        }
+    )
+
+    result = porchlight.check_tailscale_ssh_posture(
+        node_map=TAILSCALE_NODE_MAP,
+        command=_tailscale_command(status_payload, acl_policy),
+        ssh=_tailscale_ssh(),
+        now=datetime(2026, 6, 18, 12, 0, tzinfo=UTC),
+    )
+
+    assert result.status == "fail"
+    assert "stale Tailscale devices" in result.detail
+
+
+def test_tailscale_ssh_posture_fails_for_unapproved_tailscale_ssh(monkeypatch):
+    monkeypatch.setattr(porchlight, "remote_ssh_probe_enabled", lambda: True)
+    acl_policy = _configured_tailscale_env(monkeypatch)
+
+    result = porchlight.check_tailscale_ssh_posture(
+        node_map=TAILSCALE_NODE_MAP,
+        command=_tailscale_command(_tailscale_status_payload(), acl_policy),
+        ssh=_tailscale_ssh(run_ssh=True),
+        now=datetime(2026, 6, 18, 12, 0, tzinfo=UTC),
+    )
+
+    assert result.status == "fail"
+    assert "Tailscale SSH is enabled but not allowlisted" in result.detail
+
+
+def test_tailscale_ssh_posture_fails_for_authorized_key_hash_drift(monkeypatch):
+    monkeypatch.setattr(porchlight, "remote_ssh_probe_enabled", lambda: True)
+    acl_policy = _configured_tailscale_env(monkeypatch, key_hash="0" * 64)
+
+    result = porchlight.check_tailscale_ssh_posture(
+        node_map=TAILSCALE_NODE_MAP,
+        command=_tailscale_command(_tailscale_status_payload(), acl_policy),
+        ssh=_tailscale_ssh(),
+        now=datetime(2026, 6, 18, 12, 0, tzinfo=UTC),
+    )
+
+    assert result.status == "fail"
+    assert "authorized_keys hash drift" in result.detail
+
+
+def test_tailscale_ssh_posture_warns_when_acl_token_or_baselines_missing(monkeypatch):
+    monkeypatch.setattr(porchlight, "remote_ssh_probe_enabled", lambda: True)
+    monkeypatch.setattr(
+        porchlight,
+        "get_secret",
+        lambda name: (_ for _ in ()).throw(KeyError(name)),
+    )
+    monkeypatch.delenv("TAILSCALE_API_KEY", raising=False)
+    monkeypatch.delenv("TAILSCALE_API_TOKEN", raising=False)
+    monkeypatch.delenv("PORCHLIGHT_TAILSCALE_API_TOKEN", raising=False)
+    monkeypatch.delenv("PORCHLIGHT_AUTHORIZED_KEYS_SHA256", raising=False)
+
+    result = porchlight.check_tailscale_ssh_posture(
+        node_map=TAILSCALE_NODE_MAP,
+        command=_tailscale_command(_tailscale_status_payload(), {}),
+        ssh=_tailscale_ssh(),
+        now=datetime(2026, 6, 18, 12, 0, tzinfo=UTC),
+    )
+
+    assert result.status == "warn"
+    assert "Tailscale API token is not configured" in result.detail
+    assert "authorized_keys hash baseline is not configured" in result.detail
 
 
 def test_financial_security_posture_warns_when_unconfigured(monkeypatch):

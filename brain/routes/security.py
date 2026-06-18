@@ -103,6 +103,7 @@ PORCHLIGHT_REQUIRED_CHECKS = (
     "outbound_egress_drift",
     "host_integrity",
     "runtime_exposure",
+    "tailscale_ssh_posture",
     "sweep_tls_report_intake",
     "financial_security_posture",
     "github_branch_protection_drift",

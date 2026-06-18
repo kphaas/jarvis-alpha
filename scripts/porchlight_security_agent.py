@@ -22,7 +22,7 @@ from datetime import UTC, date, datetime, timedelta
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
@@ -304,6 +304,7 @@ EGRESS_ALLOWED_HOSTS = {
     "api.perplexity.ai",
     "api.pushover.net",
     "api.search.brave.com",
+    "api.tailscale.com",
     "aws.amazon.com",
     "brave.com",
     "cloudbilling.googleapis.com",
@@ -332,6 +333,18 @@ EGRESS_NON_EGRESS_PATH_PARTS = (("brain", "agents", "privacy_scrub", "data"),)
 EGRESS_NON_EGRESS_FILES = {
     "brain/routes/honeypot.py",
     "brain/services/internet_scout/search_quality_evals.py",
+}
+TAILSCALE_DEFAULT_BIN = "/opt/homebrew/bin/tailscale"
+TAILSCALE_API_BASE = os.getenv(
+    "PORCHLIGHT_TAILSCALE_API_BASE",
+    "https://api.tailscale.com/api/v2",
+)
+TAILSCALE_DEFAULT_STALE_AFTER_DAYS = 30
+TAILSCALE_EXPECTED_DNS_BY_NODE = {
+    "brain": "jarvis-brain.tail40ed36.ts.net",
+    "gateway": "jarvis-gateway.tail40ed36.ts.net",
+    "endpoint": "jarvis-endpoint.tail40ed36.ts.net",
+    "sandbox": "jarvis-sandbox.tail40ed36.ts.net",
 }
 EXPECTED_EXTERNAL_LISTENERS = (
     ("python", "8186"),
@@ -3718,6 +3731,499 @@ def check_runtime_exposure(
     )
 
 
+def _int_config(
+    name: str, default: int, *, minimum: int = 1, maximum: int = 3650
+) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(minimum, min(maximum, value))
+
+
+def _json_object_from_output(output: str) -> dict:
+    start = output.find("{")
+    if start < 0:
+        raise json.JSONDecodeError("missing JSON object", output, 0)
+    parsed = json.loads(output[start:])
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _tailscale_bin() -> str:
+    return (
+        os.getenv("PORCHLIGHT_TAILSCALE_BIN", TAILSCALE_DEFAULT_BIN).strip()
+        or "tailscale"
+    )
+
+
+def _normalize_dns_name(value: object) -> str:
+    return str(value or "").strip().rstrip(".").lower()
+
+
+def _tailnet_dns_from_ssh_target(value: object) -> str | None:
+    target = str(value or "").strip()
+    if not target:
+        return None
+    host = target.rsplit("@", 1)[-1]
+    host = host.split(":", 1)[0]
+    normalized = _normalize_dns_name(host)
+    return normalized if normalized.endswith(".ts.net") else None
+
+
+def _expected_tailscale_dns_by_node(node_map: dict[str, object]) -> dict[str, str]:
+    expected = dict(TAILSCALE_EXPECTED_DNS_BY_NODE)
+    for node, info in node_map.items():
+        if not isinstance(info, dict):
+            continue
+        dns = _tailnet_dns_from_ssh_target(info.get("ssh_target"))
+        if dns:
+            expected[str(node)] = dns
+    return expected
+
+
+def _parse_tailscale_time(value: object) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw or raw.startswith("0001-01-01"):
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _tailscale_nodes_from_status(payload: dict) -> list[dict[str, object]]:
+    nodes: list[dict[str, object]] = []
+
+    def add_node(raw: object, role: str) -> None:
+        if not isinstance(raw, dict):
+            return
+        nodes.append(
+            {
+                "role": role,
+                "hostname": str(raw.get("HostName") or ""),
+                "dns": _normalize_dns_name(raw.get("DNSName")),
+                "ips": list(raw.get("TailscaleIPs") or []),
+                "online": bool(raw.get("Online")),
+                "last_seen": str(raw.get("LastSeen") or ""),
+                "os": str(raw.get("OS") or ""),
+                "tags": list(raw.get("Tags") or []),
+            }
+        )
+
+    add_node(payload.get("Self"), "self")
+    for peer in (payload.get("Peer") or {}).values():
+        add_node(peer, "peer")
+    return nodes
+
+
+def _tailscale_node_label(node: dict[str, object]) -> str:
+    return str(node.get("dns") or node.get("hostname") or "unknown")
+
+
+def _node_matches_allowed_stale(node: dict[str, object], allowed: set[str]) -> bool:
+    names = {
+        str(node.get("hostname") or "").lower(),
+        str(node.get("dns") or "").lower(),
+    }
+    return bool(names & allowed)
+
+
+def _tailscale_api_token() -> str | None:
+    return (
+        _secret_or_env("PORCHLIGHT_TAILSCALE_API_TOKEN")
+        or _secret_or_env("TAILSCALE_API_KEY")
+        or _secret_or_env("TAILSCALE_API_TOKEN")
+    )
+
+
+def _tailscale_tailnet_name(status_payload: dict | None = None) -> str | None:
+    configured = _secret_or_env("PORCHLIGHT_TAILSCALE_TAILNET") or _secret_or_env(
+        "TAILSCALE_TAILNET"
+    )
+    if configured:
+        return configured
+    tailnet = (status_payload or {}).get("CurrentTailnet")
+    if isinstance(tailnet, dict):
+        return str(tailnet.get("Name") or "").strip() or None
+    return None
+
+
+def _tailscale_api_get(
+    path: str,
+    *,
+    command: Callable[..., CommandResult] = run_command,
+) -> tuple[int, dict]:
+    token = _tailscale_api_token()
+    if not token:
+        return 0, {"message": "missing_token"}
+    result = command(
+        [
+            "curl",
+            "-sS",
+            "--max-time",
+            "20",
+            "-H",
+            f"Authorization: Bearer {token}",
+            f"{TAILSCALE_API_BASE.rstrip('/')}{path}",
+        ],
+        timeout=25,
+    )
+    if result.returncode != 0:
+        return result.returncode, {
+            "message": (result.stderr or result.stdout).strip()[:500]
+        }
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return 1, {"message": "invalid_json"}
+    return 0, payload if isinstance(payload, dict) else {"message": "invalid_json"}
+
+
+def _canonical_json_hash(payload: dict) -> str:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _expected_acl_hash() -> str | None:
+    value = _secret_or_env("PORCHLIGHT_TAILSCALE_ACL_SHA256")
+    if value and re.fullmatch(r"[a-fA-F0-9]{64}", value.strip()):
+        return value.strip().lower()
+    return None
+
+
+def _expected_authorized_key_hashes() -> dict[str, str]:
+    raw = (
+        _secret_or_env("PORCHLIGHT_AUTHORIZED_KEYS_SHA256")
+        or _secret_or_env("PORCHLIGHT_AUTHORIZED_KEYS_EXPECTED_SHA256")
+        or ""
+    ).strip()
+    if not raw:
+        return {}
+    parsed: dict[str, str] = {}
+    if raw.startswith("{"):
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(payload, dict):
+            for node, digest in payload.items():
+                digest_text = str(digest).strip().lower()
+                if re.fullmatch(r"[a-f0-9]{64}", digest_text):
+                    parsed[str(node).strip().lower()] = digest_text
+        return parsed
+    for item in raw.split(","):
+        if "=" not in item:
+            continue
+        node, digest = item.split("=", 1)
+        digest = digest.strip().lower()
+        if re.fullmatch(r"[a-f0-9]{64}", digest):
+            parsed[node.strip().lower()] = digest
+    return parsed
+
+
+TAILSCALE_PREFS_COMMAND = (
+    'tsbin="${PORCHLIGHT_TAILSCALE_BIN:-/opt/homebrew/bin/tailscale}"; '
+    'if [ -x "$tsbin" ]; then "$tsbin" debug prefs; '
+    "elif command -v tailscale >/dev/null 2>&1; then tailscale debug prefs; "
+    'else echo \'{"error":"tailscale_missing"}\'; exit 127; fi'
+)
+AUTHORIZED_KEYS_COMMAND = r"""python3 - <<'PY'
+import hashlib
+import json
+import os
+
+path = os.path.expanduser("~/.ssh/authorized_keys")
+payload = {"path": path, "exists": os.path.exists(path)}
+if payload["exists"]:
+    stat_result = os.stat(path)
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    payload.update(
+        mode=format(stat_result.st_mode & 0o777, "o"),
+        size=stat_result.st_size,
+        sha256=digest.hexdigest(),
+    )
+print(json.dumps(payload, sort_keys=True))
+PY"""
+
+
+def _prefs_run_ssh_enabled(payload: dict) -> bool | None:
+    value = payload.get("RunSSH")
+    return value if isinstance(value, bool) else None
+
+
+def _acl_payload_policy(payload: dict) -> dict:
+    nested = payload.get("acl")
+    return nested if isinstance(nested, dict) else payload
+
+
+def _risky_tailscale_ssh_rules(policy: dict) -> list[str]:
+    risky: list[str] = []
+    rules = policy.get("ssh")
+    if not isinstance(rules, list):
+        return risky
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            continue
+        src = [str(item) for item in rule.get("src") or []]
+        dst = [str(item) for item in rule.get("dst") or []]
+        users = [str(item) for item in rule.get("users") or []]
+        action = str(rule.get("action") or "")
+        broad_src = any(item in {"*", "autogroup:member"} for item in src)
+        broad_dst = any(item in {"*", "autogroup:member"} for item in dst)
+        root_access = any(item == "root" for item in users)
+        if broad_src or broad_dst or (root_access and action != "check"):
+            risky.append(
+                f"ssh[{index}] action={action or 'unknown'} src={src} dst={dst} users={users}"
+            )
+    return risky
+
+
+def check_tailscale_ssh_posture(
+    node_map: dict[str, object] | None = None,
+    *,
+    command: Callable[..., CommandResult] = run_command,
+    ssh: Callable[[str, str], CommandResult] = run_ssh,
+    now: datetime | None = None,
+) -> CheckResult:
+    now = now or datetime.now(UTC)
+    node_map = node_map or {}
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    status_result = command([_tailscale_bin(), "status", "--json"], timeout=20)
+    if status_result.returncode != 0:
+        return CheckResult(
+            name="tailscale_ssh_posture",
+            status="warn",
+            severity="medium",
+            summary="Could not inspect Tailscale device posture.",
+            detail=(status_result.stderr or status_result.stdout).strip()[:500],
+        )
+
+    try:
+        status_payload = _json_object_from_output(status_result.stdout)
+    except json.JSONDecodeError:
+        return CheckResult(
+            name="tailscale_ssh_posture",
+            status="warn",
+            severity="medium",
+            summary="Tailscale status output was not valid JSON.",
+            detail=status_result.stdout.strip()[:500],
+        )
+
+    nodes = _tailscale_nodes_from_status(status_payload)
+    node_by_dns = {
+        str(node.get("dns")): node for node in nodes if str(node.get("dns") or "")
+    }
+    expected_dns_by_node = _expected_tailscale_dns_by_node(node_map)
+    expected_status: dict[str, dict[str, object]] = {}
+    for node, dns in expected_dns_by_node.items():
+        observed = node_by_dns.get(dns)
+        expected_status[node] = {
+            "expected_dns": dns,
+            "present": observed is not None,
+            "online": bool(observed and observed.get("online")),
+        }
+        if observed is None:
+            issues.append(f"{node}: missing expected Tailscale device {dns}")
+        elif not observed.get("online"):
+            issues.append(f"{node}: expected Tailscale device {dns} is offline")
+
+    stale_after_days = _int_config(
+        "PORCHLIGHT_TAILSCALE_STALE_AFTER_DAYS",
+        TAILSCALE_DEFAULT_STALE_AFTER_DAYS,
+    )
+    stale_cutoff = now - timedelta(days=stale_after_days)
+    allowed_stale = _csv_config_set("PORCHLIGHT_TAILSCALE_ALLOWED_STALE_DEVICES")
+    stale_devices: list[dict[str, object]] = []
+    for node in nodes:
+        if node.get("online") or _node_matches_allowed_stale(node, allowed_stale):
+            continue
+        last_seen = _parse_tailscale_time(node.get("last_seen"))
+        if last_seen and last_seen < stale_cutoff:
+            stale_devices.append(
+                {
+                    "hostname": node.get("hostname"),
+                    "dns": node.get("dns"),
+                    "last_seen": last_seen.isoformat(),
+                    "os": node.get("os"),
+                }
+            )
+    if stale_devices:
+        labels = [
+            f"{item.get('dns') or item.get('hostname')} last_seen={item.get('last_seen')}"
+            for item in stale_devices[:8]
+        ]
+        issues.append("stale Tailscale devices: " + "; ".join(labels))
+
+    remote_enabled = remote_ssh_probe_enabled()
+    allowed_tailscale_ssh_nodes = _csv_config_set(
+        "PORCHLIGHT_TAILSCALE_SSH_ALLOWED_NODES"
+    )
+    prefs_by_node: dict[str, dict[str, object]] = {}
+    authorized_keys_by_node: dict[str, dict[str, object]] = {}
+    expected_key_hashes = _expected_authorized_key_hashes()
+
+    if not remote_enabled:
+        warnings.append(
+            "remote SSH probe is not enabled; node SSH posture was not checked"
+        )
+    else:
+        for node, info in node_map.items():
+            if not isinstance(info, dict) or not info.get("ssh_target"):
+                warnings.append(f"{node}: missing ssh_target for posture probe")
+                continue
+            target = str(info["ssh_target"])
+
+            prefs_result = ssh(target, TAILSCALE_PREFS_COMMAND)
+            if prefs_result.returncode != 0:
+                warnings.append(
+                    f"{node}: tailscale prefs probe failed: "
+                    f"{(prefs_result.stderr or prefs_result.stdout).strip()[:160]}"
+                )
+            else:
+                try:
+                    prefs = _json_object_from_output(prefs_result.stdout)
+                except json.JSONDecodeError:
+                    warnings.append(f"{node}: tailscale prefs probe returned non-JSON")
+                else:
+                    run_ssh_enabled = _prefs_run_ssh_enabled(prefs)
+                    prefs_by_node[str(node)] = {"RunSSH": run_ssh_enabled}
+                    if (
+                        run_ssh_enabled
+                        and str(node).lower() not in allowed_tailscale_ssh_nodes
+                    ):
+                        issues.append(
+                            f"{node}: Tailscale SSH is enabled but not allowlisted"
+                        )
+
+            keys_result = ssh(target, AUTHORIZED_KEYS_COMMAND)
+            if keys_result.returncode != 0:
+                warnings.append(
+                    f"{node}: authorized_keys probe failed: "
+                    f"{(keys_result.stderr or keys_result.stdout).strip()[:160]}"
+                )
+                continue
+            try:
+                keys_payload = _json_object_from_output(keys_result.stdout)
+            except json.JSONDecodeError:
+                warnings.append(f"{node}: authorized_keys probe returned non-JSON")
+                continue
+            authorized_keys_by_node[str(node)] = keys_payload
+            if not keys_payload.get("exists"):
+                warnings.append(f"{node}: authorized_keys is missing")
+                continue
+            mode = str(keys_payload.get("mode") or "")
+            try:
+                numeric_mode = int(mode, 8)
+            except ValueError:
+                numeric_mode = 0
+            if numeric_mode & 0o022:
+                issues.append(
+                    f"{node}: authorized_keys is group/world writable mode {mode}"
+                )
+            observed_hash = str(keys_payload.get("sha256") or "").lower()
+            expected_hash = expected_key_hashes.get(str(node).lower())
+            if expected_hash and observed_hash != expected_hash:
+                issues.append(f"{node}: authorized_keys hash drift")
+            elif not expected_hash:
+                warnings.append(
+                    f"{node}: authorized_keys hash baseline is not configured"
+                )
+
+    acl_metadata: dict[str, object] = {"checked": False}
+    tailnet_name = _tailscale_tailnet_name(status_payload)
+    if not _tailscale_api_token():
+        warnings.append(
+            "Tailscale API token is not configured; ACL drift was not checked"
+        )
+    elif not tailnet_name:
+        warnings.append("Tailscale tailnet name is unknown; ACL drift was not checked")
+    else:
+        rc, acl_payload = _tailscale_api_get(
+            f"/tailnet/{quote(tailnet_name, safe='')}/acl",
+            command=command,
+        )
+        if rc != 0 or acl_payload.get("message"):
+            warnings.append(
+                "Tailscale ACL API probe failed: "
+                f"{str(acl_payload.get('message') or 'request_failed')[:160]}"
+            )
+        else:
+            policy = _acl_payload_policy(acl_payload)
+            acl_hash = _canonical_json_hash(policy)
+            expected_hash = _expected_acl_hash()
+            risky_rules = _risky_tailscale_ssh_rules(policy)
+            acl_metadata = {
+                "checked": True,
+                "sha256": acl_hash,
+                "ssh_rule_count": len(policy.get("ssh") or [])
+                if isinstance(policy.get("ssh"), list)
+                else 0,
+                "risky_ssh_rules": risky_rules,
+            }
+            if risky_rules:
+                issues.append(
+                    "broad Tailscale SSH ACL rule(s): " + "; ".join(risky_rules[:4])
+                )
+            if expected_hash and acl_hash != expected_hash:
+                issues.append("Tailscale ACL hash drift")
+            elif not expected_hash:
+                warnings.append("Tailscale ACL hash baseline is not configured")
+
+    metadata = {
+        "backend_state": status_payload.get("BackendState"),
+        "tailnet": tailnet_name,
+        "device_count": len(nodes),
+        "expected_nodes": expected_status,
+        "stale_after_days": stale_after_days,
+        "stale_devices": stale_devices,
+        "tailscale_ssh": prefs_by_node,
+        "authorized_keys": authorized_keys_by_node,
+        "acl": acl_metadata,
+        "warnings": warnings,
+        "issues": issues,
+    }
+
+    if issues:
+        return CheckResult(
+            name="tailscale_ssh_posture",
+            status="fail",
+            severity="high",
+            summary="Tailscale/SSH posture needs remediation.",
+            detail="; ".join(issues[:8]),
+            metadata=metadata,
+        )
+    if warnings:
+        return CheckResult(
+            name="tailscale_ssh_posture",
+            status="warn",
+            severity="medium",
+            summary="Tailscale/SSH posture has monitoring gaps to close.",
+            detail="; ".join(warnings[:8]),
+            metadata=metadata,
+        )
+    return CheckResult(
+        name="tailscale_ssh_posture",
+        status="pass",
+        severity="info",
+        summary=(
+            f"Tailscale/SSH posture checked {len(nodes)} device(s), "
+            f"{len(authorized_keys_by_node)} authorized_keys file(s), and ACL drift."
+        ),
+        metadata=metadata,
+    )
+
+
 def _pip_audit_counts(payload: dict) -> dict[str, int]:
     counts = _severity_counts()
     for dependency in payload.get("dependencies") or []:
@@ -4772,6 +5278,7 @@ def run_sweep(args: argparse.Namespace) -> dict[str, object]:
         check_outbound_egress_drift(),
         check_host_integrity(),
         check_runtime_exposure(),
+        check_tailscale_ssh_posture(node_map=node_map),
         check_sweep_tls_report_intake(),
         check_financial_security_posture(),
         check_github_branch_protection_drift(),
