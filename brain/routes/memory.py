@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-import re
 from typing import Literal
 from uuid import NAMESPACE_DNS, UUID, uuid5
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from brain.db.rls import rls_connection
 from brain.memory.memory import MemoryService, SEMANTIC_CAP
+from brain.memory.semantic_commands import (
+    MemoryCategory,
+    MemoryFactValidationError,
+    sanitize_semantic_fact,
+)
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
 from jarvis_common.logging_config import get_logger
@@ -16,32 +20,19 @@ from jarvis_common.logging_config import get_logger
 router = APIRouter()
 logger = get_logger("alpha_brain")
 
-MemoryCategory = Literal[
-    "preference",
-    "person",
-    "project",
-    "constraint",
-    "health",
-    "child_profile",
-]
-
-_CONTROL_TEXT = re.compile(
-    r"\b(ignore|disregard|override|bypass)\b.{0,80}\b("
-    r"system|developer|previous|prior|instruction|policy|safety|guardrail"
-    r")\b",
-    re.IGNORECASE,
-)
-_SECRET_TEXT = re.compile(
-    r"\b(api[_ -]?key|bearer token|password|private key|secret)\b",
-    re.IGNORECASE,
-)
-
 
 class SemanticMemoryItem(BaseModel):
     id: str
     fact: str
     category: str
     source: str
+    provenance: dict[str, object] = Field(default_factory=dict)
+    review_status: Literal["active", "pending_review", "rejected", "archived"] = (
+        "active"
+    )
+    review_reason: str | None = None
+    reviewed_at: str | None = None
+    reviewed_by: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -60,6 +51,7 @@ class MemorySummaryResponse(BaseModel):
     user_id: str
     semantic_cap: int = SEMANTIC_CAP
     semantic_count: int
+    semantic_review_count: int = 0
     episodic_count: int
     working_count: int
     semantic: list[SemanticMemoryItem]
@@ -71,10 +63,26 @@ class SaveSemanticMemoryRequest(BaseModel):
 
     fact: str = Field(min_length=3, max_length=1000)
     category: MemoryCategory = "project"
+    source_surface: str | None = Field(default=None, min_length=2, max_length=80)
+    source_thread_id: str | None = Field(default=None, min_length=1, max_length=160)
+    source_message_id: str | None = Field(default=None, min_length=1, max_length=160)
+    source_action: str | None = Field(default=None, min_length=2, max_length=80)
 
 
 class SaveSemanticMemoryResponse(BaseModel):
     status: Literal["saved", "not_saved"]
+    result: dict[str, object]
+
+
+class ReviewSemanticMemoryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["approve", "reject", "archive"]
+    note: str | None = Field(default=None, max_length=300)
+
+
+class ReviewSemanticMemoryResponse(BaseModel):
+    status: Literal["reviewed", "not_found", "error"]
     result: dict[str, object]
 
 
@@ -96,20 +104,32 @@ async def get_memory_legacy(
     request: Request,
     _user_id: str = Depends(require_auth),
 ) -> MemorySummaryResponse:
-    return await get_memory_summary(request=request)
+    return await get_memory_summary(
+        request=request,
+        semantic_limit=100,
+        working_limit=25,
+    )
 
 
 @router.get("/v1/memory/summary", response_model=MemorySummaryResponse)
 async def get_memory_summary(
     request: Request,
+    semantic_limit: int = Query(default=100, ge=1, le=100),
+    working_limit: int = Query(default=25, ge=1, le=100),
     _user_id: str = Depends(require_auth),
 ) -> MemorySummaryResponse:
     uid = _request_user_uuid(request)
     async with rls_connection(request) as conn:
-        snapshot = await MemoryService().summarize(conn=conn, user_id=uid)
+        snapshot = await MemoryService().summarize(
+            conn=conn,
+            user_id=uid,
+            semantic_limit=semantic_limit,
+            working_limit=working_limit,
+        )
     return MemorySummaryResponse(
         user_id=str(uid),
         semantic_count=snapshot["semantic_count"],
+        semantic_review_count=snapshot["semantic_review_count"],
         episodic_count=snapshot["episodic_count"],
         working_count=snapshot["working_count"],
         semantic=[_semantic_item(row) for row in snapshot["semantic"]],
@@ -124,7 +144,10 @@ async def save_semantic_memory(
     _user_id: str = Depends(require_auth),
 ) -> SaveSemanticMemoryResponse:
     check_scopes(request, "memory.write", "admin")
-    fact = _sanitize_fact(body.fact)
+    try:
+        fact = sanitize_semantic_fact(body.fact)
+    except MemoryFactValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail) from exc
     uid = _request_user_uuid(request)
     async with rls_connection(request) as conn:
         result = await MemoryService().save_semantic(
@@ -132,6 +155,7 @@ async def save_semantic_memory(
             user_id=uid,
             fact=fact,
             category=body.category,
+            provenance=_save_provenance(request, body),
         )
     logger.info(
         "MEMORY_EXPLICIT_SAVE",
@@ -140,12 +164,50 @@ async def save_semantic_memory(
             "user_id": str(uid),
             "category": body.category,
             "saved": result.get("saved"),
+            "review_required": result.get("review_required"),
         },
     )
     return SaveSemanticMemoryResponse(
         status="saved" if result.get("saved") else "not_saved",
         result=result,
     )
+
+
+@router.post(
+    "/v1/memory/semantic/{memory_id}/review",
+    response_model=ReviewSemanticMemoryResponse,
+)
+async def review_semantic_memory(
+    memory_id: UUID,
+    body: ReviewSemanticMemoryRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> ReviewSemanticMemoryResponse:
+    check_scopes(request, "memory.write", "admin")
+    uid = _request_user_uuid(request)
+    async with rls_connection(request) as conn:
+        result = await MemoryService().review_semantic(
+            conn=conn,
+            user_id=uid,
+            memory_id=memory_id,
+            action=body.action,
+            reviewed_by=_review_actor(request),
+            note=body.note,
+        )
+    status = str(result.get("status") or "error")
+    logger.info(
+        "MEMORY_SEMANTIC_REVIEW",
+        extra={
+            "event": "MEMORY_SEMANTIC_REVIEW",
+            "user_id": str(uid),
+            "memory_id": str(memory_id),
+            "action": body.action,
+            "status": status,
+        },
+    )
+    if status not in {"reviewed", "not_found", "error"}:
+        status = "error"
+    return ReviewSemanticMemoryResponse(status=status, result=result)
 
 
 @router.post("/v1/memory/forget", response_model=ForgetMemoryResponse)
@@ -191,13 +253,30 @@ def _request_user_uuid(request: Request) -> UUID:
         return uuid5(NAMESPACE_DNS, str(user_id))
 
 
-def _sanitize_fact(fact: str) -> str:
-    normalized = " ".join(fact.strip().split())
-    if _CONTROL_TEXT.search(normalized):
-        raise HTTPException(status_code=422, detail="memory_fact_rejected_control_text")
-    if _SECRET_TEXT.search(normalized):
-        raise HTTPException(status_code=422, detail="memory_fact_rejected_secret_text")
-    return normalized
+def _save_provenance(
+    request: Request,
+    body: SaveSemanticMemoryRequest,
+) -> dict[str, object]:
+    provenance: dict[str, object] = {
+        "source_surface": body.source_surface or "memory_api",
+        "source_route": str(getattr(request.url, "path", "") or "/v1/memory/semantic"),
+        "source_action": body.source_action or "explicit_save",
+        "actor_type": str(getattr(request.state, "actor_type", "user") or "user"),
+        "actor_role": str(getattr(request.state, "role", "user") or "user"),
+    }
+    if body.source_thread_id:
+        provenance["source_thread_id"] = body.source_thread_id
+    if body.source_message_id:
+        provenance["source_message_id"] = body.source_message_id
+    return provenance
+
+
+def _review_actor(request: Request) -> str:
+    return (
+        str(getattr(request.state, "user_sub", None) or "")
+        or str(getattr(request.state, "user_id", None) or "")
+        or "unknown"
+    )
 
 
 def _semantic_item(row: dict) -> SemanticMemoryItem:
@@ -206,6 +285,11 @@ def _semantic_item(row: dict) -> SemanticMemoryItem:
         fact=str(row["fact"]),
         category=str(row["category"]),
         source=str(row["source"]),
+        provenance=_dict_value(row.get("provenance")),
+        review_status=_review_status(row.get("review_status")),
+        review_reason=_optional_str(row.get("review_reason")),
+        reviewed_at=_iso(row.get("reviewed_at")),
+        reviewed_by=_optional_str(row.get("reviewed_by")),
         created_at=_iso(row.get("created_at")),
         updated_at=_iso(row.get("updated_at")),
     )
@@ -227,3 +311,19 @@ def _iso(value: object) -> str | None:
     if callable(isoformat):
         return str(isoformat())
     return str(value) if value else None
+
+
+def _optional_str(value: object) -> str | None:
+    return str(value) if value else None
+
+
+def _dict_value(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
+
+
+def _review_status(
+    value: object,
+) -> Literal["active", "pending_review", "rejected", "archived"]:
+    if value in {"active", "pending_review", "rejected", "archived"}:
+        return value
+    return "active"
