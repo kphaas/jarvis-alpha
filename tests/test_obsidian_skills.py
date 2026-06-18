@@ -2,7 +2,12 @@ from decimal import Decimal
 
 import pytest
 
-from brain.skills.obsidian import ObsidianSkillError, notes_search, tasks_create
+from brain.skills.obsidian import (
+    ObsidianSkillError,
+    notes_search,
+    notes_write_private_digest,
+    tasks_create,
+)
 from brain.skills.policy_gate import SkillInvocation, SkillPolicyDecision
 from brain.skills.runner import SkillCall
 
@@ -58,6 +63,85 @@ async def test_notes_search_returns_ranked_vault_matches(tmp_path):
     assert result["count"] == 1
     assert result["results"][0]["path"] == "Projects/Alpha.md"
     assert "Dream mode" in result["results"][0]["excerpt"]
+
+
+@pytest.mark.asyncio
+async def test_notes_write_private_digest_creates_idempotent_searchable_note(tmp_path):
+    first = await notes_write_private_digest(
+        _call(
+            "notes.write_private_digest",
+            {
+                "_vault_root": str(tmp_path),
+                "title": "Ken Resume Digest",
+                "body": "Private Alpha vault summary for a Staff Platform role.",
+                "tags": ["career/private", "#talent-ops"],
+                "document_id": "doc-123",
+                "source_name": "Ken Resume.pdf",
+            },
+            idempotency_key="resume-digest-1",
+        )
+    )
+    second = await notes_write_private_digest(
+        _call(
+            "notes.write_private_digest",
+            {
+                "_vault_root": str(tmp_path),
+                "title": "Ken Resume Digest",
+                "body": "Private Alpha vault summary for a Staff Platform role.",
+            },
+            idempotency_key="resume-digest-1",
+        )
+    )
+
+    note_path = tmp_path / "AT-0" / "Private Document Digests" / "ken-resume-digest.md"
+    content = note_path.read_text(encoding="utf-8")
+    search = await notes_search(
+        _call(
+            "notes.search",
+            {
+                "_vault_root": str(tmp_path),
+                "query": "Staff Platform",
+                "max_results": 5,
+            },
+        )
+    )
+
+    assert first["status"] == "created"
+    assert first["path"] == "AT-0/Private Document Digests/ken-resume-digest.md"
+    assert second["status"] == "exists"
+    assert content.count("jarvis-note-id:resume-digest-1") == 1
+    assert "private: true" in content
+    assert 'source: "alpha-vault-digest"' in content
+    assert 'document_id: "doc-123"' in content
+    assert "Private Alpha vault summary" in content
+    assert search["count"] == 1
+    assert search["results"][0]["path"] == first["path"]
+
+
+@pytest.mark.asyncio
+async def test_notes_write_private_digest_refuses_to_clobber_existing_note(tmp_path):
+    target_dir = tmp_path / "AT-0" / "Private Document Digests"
+    target_dir.mkdir(parents=True)
+    (target_dir / "ken-resume-digest.md").write_text(
+        "# Handwritten note\nDo not overwrite me.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ObsidianSkillError,
+        match="target_exists_without_digest_marker",
+    ):
+        await notes_write_private_digest(
+            _call(
+                "notes.write_private_digest",
+                {
+                    "_vault_root": str(tmp_path),
+                    "title": "Ken Resume Digest",
+                    "body": "Generated digest.",
+                },
+                idempotency_key="resume-digest-2",
+            )
+        )
 
 
 @pytest.mark.asyncio
@@ -135,5 +219,35 @@ async def test_tasks_create_rejects_unsafe_paths(tmp_path, path, key_suffix):
                     "path": path,
                 },
                 idempotency_key=f"unsafe-{key_suffix}",
+            )
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "key_suffix"),
+    [
+        ("../Digest.md", "traversal"),
+        ("/tmp/Digest.md", "absolute"),
+        (".secret/Digest.md", "hidden"),
+        ("Digest.txt", "nonmarkdown"),
+    ],
+)
+async def test_notes_write_private_digest_rejects_unsafe_paths(
+    tmp_path,
+    path,
+    key_suffix,
+):
+    with pytest.raises((ObsidianSkillError, ValueError)):
+        await notes_write_private_digest(
+            _call(
+                "notes.write_private_digest",
+                {
+                    "_vault_root": str(tmp_path),
+                    "title": "Unsafe digest",
+                    "body": "Should not write.",
+                    "path": path,
+                },
+                idempotency_key=f"unsafe-digest-{key_suffix}",
             )
         )

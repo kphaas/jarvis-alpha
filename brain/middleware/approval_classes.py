@@ -346,8 +346,8 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/security/mcp/registry": ["read"],
     # --- Vault — reads T1, writes T2 ---
     "GET /v1/vault/pipeline": ["read"],
-    "POST /v1/vault/ask": ["write", "external_call", "cost_incurring"],
-    "POST /v1/vault/search": ["write"],
+    "POST /v1/vault/ask": ["read", "external_call", "cost_incurring"],
+    "POST /v1/vault/search": ["read"],
     "POST /v1/vault/pipeline/{pipeline_id}/confirm": ["write"],
     # --- Logs — POST diagnose is T2 ---
     "POST /v1/logs/diagnose": ["write", "security_read"],
