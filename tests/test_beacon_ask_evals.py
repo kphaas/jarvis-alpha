@@ -22,9 +22,7 @@ def test_eval_beacon_evidence_is_authority_over_stale_memory() -> None:
         user_msg="Find the official OpenAI API reference URL.",
     )
 
-    assert prompt.index("Internet context from Alpha Beacon") < prompt.index(
-        "Context from memory"
-    )
+    assert prompt.index("Beacon evidence") < prompt.index("Context from memory")
     assert "If memory conflicts with Beacon, follow Beacon" in prompt
     assert "https://platform.openai.com/docs/api-reference" in prompt
 
@@ -33,13 +31,13 @@ def test_eval_docs_url_answer_prefers_source_url_over_endpoint_example() -> None
     prompt = chat._build_enriched_prompt(
         memory_context="Memory says the answer is https://beta.openai.com/docs.",
         internet_context=(
-            "Beacon internet mode: Deep research\n"
+            "Beacon mode: Deep research\n"
             "Beacon citation quality: supported\n"
             "If the user asks for a documentation page, docs URL, source URL, "
             "or official link, answer with the cited Source URL; do not substitute "
             "API endpoint examples from citation text unless the user asks for an "
             "API endpoint.\n"
-            "Cited Beacon evidence:\n"
+            "Beacon evidence:\n"
             "Answer target: source URL\n"
             "Preferred answer URL: "
             "https://platform.openai.com/docs/api-reference/responses [1]\n"

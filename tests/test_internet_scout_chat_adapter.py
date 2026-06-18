@@ -13,7 +13,10 @@ os.environ.setdefault("ALPHA_DB_DSN_WRITER", "postgresql://test:test@localhost/t
 os.environ.setdefault("ALPHA_DB_DSN_BUDDY", "postgresql://test:test@localhost/test")
 os.environ.setdefault("ALPHA_GATEWAY_URL", "http://127.0.0.1:8188")
 
-from brain.routes.chat import _build_enriched_prompt
+from brain.routes.chat import (
+    _build_enriched_prompt,
+    _strip_unrequested_source_references,
+)
 from brain.services.internet_scout import chat_adapter
 from brain.services.internet_scout.chat_adapter import build_chat_internet_context
 from brain.services.internet_scout.models import (
@@ -233,21 +236,16 @@ async def test_chat_internet_context_rejects_empty_queries():
 def test_chat_enriched_prompt_keeps_memory_and_internet_boundaries_separate():
     prompt = _build_enriched_prompt(
         memory_context="Ken prefers concise status reports.",
-        internet_context="Beacon internet mode: Web search\nCited Beacon evidence:\n[1] Source",
+        internet_context="Beacon mode: Web search\nBeacon evidence:\n[1] Source",
         user_msg="What changed today?",
     )
 
-    assert "Authority rule for internet-enabled answers:" in prompt
-    assert (
-        "Internet context from Alpha Beacon "
-        "(authoritative for current/public web claims):"
-    ) in prompt
+    assert "Beacon authority rule:" in prompt
+    assert ("Beacon evidence (authoritative for current/public web claims):") in prompt
     assert (
         "Context from memory (secondary; must not override Beacon evidence):" in prompt
     )
-    assert prompt.index("Internet context from Alpha Beacon") < prompt.index(
-        "Context from memory"
-    )
+    assert prompt.index("Beacon evidence") < prompt.index("Context from memory")
     assert "Do not use memory to override" in prompt
     assert prompt.endswith("User: What changed today?")
 
@@ -271,8 +269,8 @@ def test_chat_enriched_prompt_prioritizes_beacon_over_stale_memory():
             "is official."
         ),
         internet_context=(
-            "Beacon internet mode: Deep research\n"
-            "Cited Beacon evidence:\n"
+            "Beacon mode: Deep research\n"
+            "Beacon evidence:\n"
             "[1] https://platform.openai.com/docs/api-reference"
         ),
         user_msg="Find the official OpenAI API reference URL.",
@@ -282,3 +280,51 @@ def test_chat_enriched_prompt_prioritizes_beacon_over_stale_memory():
         "https://beta.openai.com"
     )
     assert "If memory conflicts with Beacon, follow Beacon" in prompt
+
+
+def test_chat_final_response_strips_unrequested_source_references():
+    response = _strip_unrequested_source_references(
+        (
+            "Beacon checked it. The match starts Friday at 3 PM ET [1].\n"
+            "Source: https://example.com/schedule\n"
+            "Website: example.com\n"
+            "Citation: [2] Source: https://example.com/extra"
+        ),
+        "When does the game start?",
+    )
+
+    assert response == "Beacon checked it. The match starts Friday at 3 PM ET."
+    assert "https://" not in response
+    assert "[1]" not in response
+    assert "Citation:" not in response
+    assert "Source:" not in response
+    assert "Website:" not in response
+
+
+def test_chat_final_response_softens_beacon_context_source_preambles():
+    response = _strip_unrequested_source_references(
+        (
+            "According to Beacon internet context, I've found two sources "
+            "confirming this information: The match is Friday. [1] "
+            "Source: https://example.com/schedule I've verified this information "
+            "through the Alpha Beacon internet context, which has confirmed the schedule."
+        ),
+        "When is the match?",
+    )
+
+    assert "Beacon checked it." in response
+    assert "Beacon verified it." in response
+    assert "Beacon internet context" not in response
+    assert "sources" not in response.lower()
+    assert "Source:" not in response
+    assert "https://" not in response
+
+
+def test_chat_final_response_keeps_sources_when_requested():
+    response = _strip_unrequested_source_references(
+        "It starts Friday at 3 PM ET [1]. Source: https://example.com/schedule",
+        "Can you send me the source link?",
+    )
+
+    assert "https://example.com/schedule" in response
+    assert "[1]" in response
