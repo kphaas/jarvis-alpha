@@ -44,7 +44,7 @@ DEFAULT_SCOPES = {
         "forge.llm.call",
         "health.read",
     ],
-    "endpoint": ["health.read", "school_email.read"],
+    "endpoint": ["health.read", "school_email.read", "vault.write"],
     # Least-privilege: print may only call the internal LLM completion route.
     "print": ["llm:complete"],
 }
