@@ -42,20 +42,21 @@ async def enqueue_browser_task_approval(
     parameters_hash = browser_task_parameters_hash(request, decision)
     description = browser_task_approval_description(request, decision)
     try:
-        queue_id = await conn.fetchval(
-            """
-            SELECT public.enqueue_approval_request(
-                $1::text[], $2, $3, $4, $5, $6, $7
+        async with conn.transaction():
+            queue_id = await conn.fetchval(
+                """
+                SELECT public.enqueue_approval_request(
+                    $1::text[], $2, $3, $4, $5, $6, $7
+                )
+                """,
+                list(BROWSER_TASK_APPROVAL_ACTION_CLASSES),
+                decision.tier,
+                actor_sub,
+                actor_type,
+                description,
+                parameters_hash,
+                nonce,
             )
-            """,
-            list(BROWSER_TASK_APPROVAL_ACTION_CLASSES),
-            decision.tier,
-            actor_sub,
-            actor_type,
-            description,
-            parameters_hash,
-            nonce,
-        )
     except asyncpg.UniqueViolationError:
         existing_id = await conn.fetchval(
             """

@@ -4,10 +4,12 @@ from uuid import uuid4
 
 import pytest
 
+from brain.services.internet_scout import browser_approvals
 from brain.services.internet_scout.browser_approvals import (
     BrowserApprovalError,
     browser_task_approval_description,
     browser_task_parameters_hash,
+    enqueue_browser_task_approval,
     consume_browser_task_approval,
     require_approved_browser_task,
 )
@@ -37,6 +39,66 @@ def test_browser_task_hash_is_stable_and_description_omits_raw_task_text():
     assert "public.example.test" not in description
     assert "Beacon browser-use approval" in description
     assert "urls=1" in description
+
+
+@pytest.mark.asyncio
+async def test_enqueue_browser_task_approval_recovers_duplicate_pending(monkeypatch):
+    class DuplicatePendingApproval(Exception):
+        pass
+
+    existing_queue_id = uuid4()
+
+    class FakeTransaction:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            self.conn.transaction_entries += 1
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConn:
+        transaction_entries = 0
+        lookup_args = None
+
+        def transaction(self):
+            return FakeTransaction(self)
+
+        async def fetchval(self, query, *args):
+            if "enqueue_approval_request" in query:
+                raise DuplicatePendingApproval("duplicate")
+            if "FROM public.alpha_approval_queue" in query:
+                self.lookup_args = args
+                return existing_queue_id
+            raise AssertionError(query)
+
+    monkeypatch.setattr(
+        browser_approvals.asyncpg,
+        "UniqueViolationError",
+        DuplicatePendingApproval,
+    )
+    request = InternetScoutRequest(
+        query="open example.com",
+        tool_hint=InternetTool.BROWSER_USE,
+        needs_interaction=True,
+    )
+    decision = evaluate_policy(request)
+    conn = FakeConn()
+
+    queue_id = await enqueue_browser_task_approval(
+        conn,
+        request=request,
+        decision=decision,
+        actor_sub="ken",
+        actor_type="user",
+        nonce="nonce",
+    )
+
+    assert queue_id == existing_queue_id
+    assert conn.transaction_entries == 1
+    assert conn.lookup_args[0] == "ken"
+    assert len(conn.lookup_args[1]) == 64
 
 
 @pytest.mark.asyncio
