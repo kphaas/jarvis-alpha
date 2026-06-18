@@ -65,6 +65,8 @@ KNOWN_NON_EGRESS: tuple[tuple[str, str], ...] = (
     # Deterministic Beacon search-quality eval fixtures; no runtime egress.
     ("brain/services/internet_scout/search_quality_evals.py", "api.openai.com"),
     ("brain/services/internet_scout/search_quality_evals.py", "platform.openai.com"),
+    # Static DOCX XML namespace identifier; not fetched over the network.
+    ("brain/ingest/docx.py", "schemas.openxmlformats.org"),
 )
 
 
