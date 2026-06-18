@@ -69,6 +69,61 @@ class FakeMemoryService:
             ],
         }
 
+    async def telemetry(
+        self,
+        *,
+        conn: object,
+        user_id: UUID,
+        recent_limit: int = 20,
+    ) -> dict:
+        return {
+            "semantic_metrics": {
+                "total_semantic": 6,
+                "active_semantic": 4,
+                "pending_review": 1,
+                "rejected": 1,
+                "archived": 0,
+                "semantic_saves_24h": 2,
+                "semantic_saves_7d": 5,
+                "review_required_24h": 1,
+            },
+            "buddy_metrics": {
+                "memory_buddy_events_7d": 3,
+                "unread_memory_buddy_events": 2,
+                "high_priority_buddy_events": 1,
+            },
+            "source_surfaces_7d": [
+                {"label": "at0_chat", "count": 3},
+                {"label": "ask_pages", "count": 2},
+            ],
+            "categories_7d": [{"label": "health", "count": 1}],
+            "recent_semantic_saves": [
+                {
+                    "id": "33333333-3333-4333-8333-333333333333",
+                    "category": "health",
+                    "review_status": "pending_review",
+                    "review_reason": "sensitive_category",
+                    "source_surface": "at0_chat",
+                    "source_action": "slash_memory_command",
+                    "buddy_event_id": "44444444-4444-4444-8444-444444444444",
+                    "created_at": datetime(2026, 6, 18, tzinfo=UTC),
+                    "updated_at": datetime(2026, 6, 18, tzinfo=UTC),
+                }
+            ][:recent_limit],
+            "recent_buddy_events": [
+                {
+                    "id": "44444444-4444-4444-8444-444444444444",
+                    "event_type": "alert",
+                    "title": "Memory review needed",
+                    "priority": 3,
+                    "read": False,
+                    "source": "semantic_memory_review",
+                    "memory_id": "33333333-3333-4333-8333-333333333333",
+                    "created_at": datetime(2026, 6, 18, tzinfo=UTC),
+                }
+            ][:recent_limit],
+        }
+
     async def save_semantic(
         self,
         *,
@@ -137,6 +192,30 @@ async def test_memory_summary_is_bounded_to_current_user(
     assert response.semantic[0].review_status == "pending_review"
     assert response.semantic[0].provenance["source_surface"] == "memory_api"
     assert response.working[0].summary == "Recent Ask exchange."
+
+
+@pytest.mark.asyncio
+async def test_memory_telemetry_omits_raw_fact_text(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(memory_route, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(memory_route, "MemoryService", FakeMemoryService)
+
+    response = await memory_route.get_memory_telemetry(
+        request=_request(),
+        recent_limit=10,
+    )
+
+    assert response.status == "ok"
+    assert response.user_id == str(uuid5(NAMESPACE_DNS, "ken"))
+    assert response.metrics.pending_review == 1
+    assert response.metrics.review_required_24h == 1
+    assert response.metrics.memory_buddy_events_7d == 3
+    assert response.source_surfaces_7d[0].label == "at0_chat"
+    assert response.recent_semantic_saves[0].source_action == "slash_memory_command"
+    assert response.recent_semantic_saves[0].buddy_event_id
+    assert response.recent_buddy_events[0].source == "semantic_memory_review"
+    assert not hasattr(response.recent_semantic_saves[0], "fact")
 
 
 @pytest.mark.asyncio

@@ -58,6 +58,58 @@ class MemorySummaryResponse(BaseModel):
     working: list[WorkingMemoryItem]
 
 
+class MemoryTelemetryMetrics(BaseModel):
+    total_semantic: int = 0
+    active_semantic: int = 0
+    pending_review: int = 0
+    rejected: int = 0
+    archived: int = 0
+    semantic_saves_24h: int = 0
+    semantic_saves_7d: int = 0
+    review_required_24h: int = 0
+    memory_buddy_events_7d: int = 0
+    unread_memory_buddy_events: int = 0
+    high_priority_buddy_events: int = 0
+
+
+class MemoryTelemetryCount(BaseModel):
+    label: str
+    count: int
+
+
+class MemoryTelemetrySemanticEvent(BaseModel):
+    id: str
+    category: str
+    review_status: Literal["active", "pending_review", "rejected", "archived"]
+    review_reason: str | None = None
+    source_surface: str
+    source_action: str
+    buddy_event_id: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class MemoryTelemetryBuddyEvent(BaseModel):
+    id: str
+    event_type: str
+    title: str
+    priority: int
+    read: bool
+    source: str | None = None
+    memory_id: str | None = None
+    created_at: str | None = None
+
+
+class MemoryTelemetryResponse(BaseModel):
+    status: Literal["ok"] = "ok"
+    user_id: str
+    metrics: MemoryTelemetryMetrics
+    source_surfaces_7d: list[MemoryTelemetryCount]
+    categories_7d: list[MemoryTelemetryCount]
+    recent_semantic_saves: list[MemoryTelemetrySemanticEvent]
+    recent_buddy_events: list[MemoryTelemetryBuddyEvent]
+
+
 class SaveSemanticMemoryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -134,6 +186,48 @@ async def get_memory_summary(
         working_count=snapshot["working_count"],
         semantic=[_semantic_item(row) for row in snapshot["semantic"]],
         working=[_working_item(row) for row in snapshot["working"]],
+    )
+
+
+@router.get("/v1/memory/telemetry", response_model=MemoryTelemetryResponse)
+async def get_memory_telemetry(
+    request: Request,
+    recent_limit: int = Query(default=20, ge=1, le=50),
+    _user_id: str = Depends(require_auth),
+) -> MemoryTelemetryResponse:
+    uid = _request_user_uuid(request)
+    async with rls_connection(request) as conn:
+        telemetry = await MemoryService().telemetry(
+            conn=conn,
+            user_id=uid,
+            recent_limit=recent_limit,
+        )
+    semantic_metrics = _dict_value(telemetry.get("semantic_metrics"))
+    buddy_metrics = _dict_value(telemetry.get("buddy_metrics"))
+    return MemoryTelemetryResponse(
+        user_id=str(uid),
+        metrics=MemoryTelemetryMetrics(
+            **{
+                **semantic_metrics,
+                **buddy_metrics,
+            }
+        ),
+        source_surfaces_7d=[
+            _telemetry_count(row)
+            for row in _list_of_dicts(telemetry.get("source_surfaces_7d"))
+        ],
+        categories_7d=[
+            _telemetry_count(row)
+            for row in _list_of_dicts(telemetry.get("categories_7d"))
+        ],
+        recent_semantic_saves=[
+            _telemetry_semantic_event(row)
+            for row in _list_of_dicts(telemetry.get("recent_semantic_saves"))
+        ],
+        recent_buddy_events=[
+            _telemetry_buddy_event(row)
+            for row in _list_of_dicts(telemetry.get("recent_buddy_events"))
+        ],
     )
 
 
@@ -306,6 +400,40 @@ def _working_item(row: dict) -> WorkingMemoryItem:
     )
 
 
+def _telemetry_count(row: dict) -> MemoryTelemetryCount:
+    return MemoryTelemetryCount(
+        label=str(row.get("label") or "unknown"),
+        count=int(row.get("count") or 0),
+    )
+
+
+def _telemetry_semantic_event(row: dict) -> MemoryTelemetrySemanticEvent:
+    return MemoryTelemetrySemanticEvent(
+        id=str(row.get("id") or ""),
+        category=str(row.get("category") or "unknown"),
+        review_status=_review_status(row.get("review_status")),
+        review_reason=_optional_str(row.get("review_reason")),
+        source_surface=str(row.get("source_surface") or "unknown"),
+        source_action=str(row.get("source_action") or "unknown"),
+        buddy_event_id=_optional_str(row.get("buddy_event_id")),
+        created_at=_iso(row.get("created_at")),
+        updated_at=_iso(row.get("updated_at")),
+    )
+
+
+def _telemetry_buddy_event(row: dict) -> MemoryTelemetryBuddyEvent:
+    return MemoryTelemetryBuddyEvent(
+        id=str(row.get("id") or ""),
+        event_type=str(row.get("event_type") or "system"),
+        title=str(row.get("title") or "Memory event"),
+        priority=int(row.get("priority") or 0),
+        read=bool(row.get("read")),
+        source=_optional_str(row.get("source")),
+        memory_id=_optional_str(row.get("memory_id")),
+        created_at=_iso(row.get("created_at")),
+    )
+
+
 def _iso(value: object) -> str | None:
     isoformat = getattr(value, "isoformat", None)
     if callable(isoformat):
@@ -321,9 +449,20 @@ def _dict_value(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
+def _list_of_dicts(value: object) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
 def _review_status(
     value: object,
 ) -> Literal["active", "pending_review", "rejected", "archived"]:
-    if value in {"active", "pending_review", "rejected", "archived"}:
+    if isinstance(value, str) and value in {
+        "active",
+        "pending_review",
+        "rejected",
+        "archived",
+    }:
         return value
     return "active"
