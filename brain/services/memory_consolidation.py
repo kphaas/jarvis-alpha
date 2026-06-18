@@ -276,6 +276,7 @@ async def collect_memory_consolidation_report(
         SELECT id::text, fact, category, source, created_at, updated_at
         FROM alpha_semantic_memory
         WHERE user_id = $1
+          AND COALESCE(review_status, 'active') IN ('active', 'pending_review')
         ORDER BY updated_at DESC, created_at DESC
         LIMIT $2
         """,

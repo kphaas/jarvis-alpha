@@ -24,13 +24,22 @@ def _request(*, scopes: list[str] | None = None, role: str = "user"):
 
 
 class FakeMemoryService:
-    saved: list[tuple[UUID, str, str]] = []
+    saved: list[tuple[UUID, str, str, dict[str, object]]] = []
+    reviewed: list[tuple[UUID, UUID, str, str, str | None]] = []
     forgotten: list[tuple[UUID, str]] = []
     working_forgets: list[UUID] = []
 
-    async def summarize(self, *, conn: object, user_id: UUID) -> dict:
+    async def summarize(
+        self,
+        *,
+        conn: object,
+        user_id: UUID,
+        semantic_limit: int = 100,
+        working_limit: int = 25,
+    ) -> dict:
         return {
             "semantic_count": 1,
+            "semantic_review_count": 1,
             "episodic_count": 2,
             "working_count": 3,
             "semantic": [
@@ -39,6 +48,11 @@ class FakeMemoryService:
                     "fact": "Beacon should beat stale memory.",
                     "category": "constraint",
                     "source": "explicit",
+                    "provenance": {"source_surface": "memory_api"},
+                    "review_status": "pending_review",
+                    "review_reason": "sensitive_category",
+                    "reviewed_at": None,
+                    "reviewed_by": None,
                     "created_at": datetime(2026, 6, 12, tzinfo=UTC),
                     "updated_at": datetime(2026, 6, 12, tzinfo=UTC),
                 }
@@ -62,9 +76,34 @@ class FakeMemoryService:
         user_id: UUID,
         fact: str,
         category: str,
+        provenance: dict[str, object] | None = None,
+        review_status: str | None = None,
+        review_reason: str | None = None,
     ) -> dict:
-        self.saved.append((user_id, fact, category))
-        return {"saved": True, "fact": fact, "category": category}
+        self.saved.append((user_id, fact, category, provenance or {}))
+        return {
+            "saved": True,
+            "fact": fact,
+            "category": category,
+            "review_required": category in {"health", "child_profile"},
+        }
+
+    async def review_semantic(
+        self,
+        *,
+        conn: object,
+        user_id: UUID,
+        memory_id: UUID,
+        action: str,
+        reviewed_by: str,
+        note: str | None = None,
+    ) -> dict:
+        self.reviewed.append((user_id, memory_id, action, reviewed_by, note))
+        return {
+            "status": "reviewed",
+            "memory_id": str(memory_id),
+            "review_status": "active",
+        }
 
     async def forget_by_topic(self, conn: object, user_id: UUID, topic: str) -> int:
         self.forgotten.append((user_id, topic))
@@ -92,8 +131,11 @@ async def test_memory_summary_is_bounded_to_current_user(
     assert response.status == "ok"
     assert response.user_id == str(uuid5(NAMESPACE_DNS, "ken"))
     assert response.semantic_count == 1
+    assert response.semantic_review_count == 1
     assert response.working_count == 3
     assert response.semantic[0].fact == "Beacon should beat stale memory."
+    assert response.semantic[0].review_status == "pending_review"
+    assert response.semantic[0].provenance["source_surface"] == "memory_api"
     assert response.working[0].summary == "Recent Ask exchange."
 
 
@@ -155,6 +197,52 @@ async def test_save_semantic_memory_sanitizes_and_stores(
             uuid5(NAMESPACE_DNS, "ken"),
             "Ken wants Beacon evidence visible.",
             "project",
+            {
+                "actor_role": "user",
+                "actor_type": "user",
+                "source_action": "explicit_save",
+                "source_route": "/v1/memory/summary",
+                "source_surface": "memory_api",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_review_semantic_memory_requires_scope_and_records_actor(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = FakeMemoryService()
+    monkeypatch.setattr(memory_route, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(memory_route, "MemoryService", lambda: service)
+    memory_id = UUID("11111111-1111-4111-8111-111111111111")
+
+    with pytest.raises(HTTPException) as exc:
+        await memory_route.review_semantic_memory(
+            memory_id=memory_id,
+            body=memory_route.ReviewSemanticMemoryRequest(action="approve"),
+            request=_request(),
+        )
+
+    assert exc.value.status_code == 403
+
+    response = await memory_route.review_semantic_memory(
+        memory_id=memory_id,
+        body=memory_route.ReviewSemanticMemoryRequest(
+            action="archive",
+            note="No longer relevant.",
+        ),
+        request=_request(scopes=["memory.write"]),
+    )
+
+    assert response.status == "reviewed"
+    assert service.reviewed == [
+        (
+            uuid5(NAMESPACE_DNS, "ken"),
+            memory_id,
+            "archive",
+            "ken",
+            "No longer relevant.",
         )
     ]
 

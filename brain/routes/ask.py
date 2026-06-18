@@ -1,13 +1,18 @@
 import time
 import httpx
 from uuid import NAMESPACE_DNS, UUID, uuid5
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from jarvis_common.logging_config import get_logger
 from brain.core.config import ALPHA_NODE, OLLAMA_URL
 from brain.core.models import EMBED_MODEL
 from brain.db.rls import rls_connection
 from brain.memory.memory import MemoryService
+from brain.memory.semantic_commands import (
+    MemoryFactValidationError,
+    memory_save_response_text,
+    parse_memory_command,
+)
 from brain.routing.router import route
 
 
@@ -93,6 +98,43 @@ async def _log_ask(
 @router.post("/ask", response_model=AskResponse)
 async def ask(body: AskRequest, request: Request) -> AskResponse:
     memory = MemoryService()
+
+    try:
+        memory_command = parse_memory_command(body.prompt)
+    except MemoryFactValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail) from exc
+
+    if memory_command is not None:
+        from brain.middleware.scopes import check_scopes
+
+        check_scopes(request, "memory.write", "admin")
+        uid = _user_uuid(getattr(request.state, "user_id", None) or "anon")
+        async with rls_connection(request) as conn:
+            result = await memory.save_semantic(
+                conn=conn,
+                user_id=uid,
+                fact=memory_command.fact,
+                category=memory_command.category,
+                provenance={
+                    "source_surface": "ask_pages",
+                    "source_route": "/v1/ask",
+                    "source_session_id": body.session_id,
+                    "source_action": "slash_memory_command",
+                    "actor_type": str(
+                        getattr(request.state, "actor_type", "user") or "user"
+                    ),
+                    "actor_role": str(getattr(request.state, "role", "user") or "user"),
+                },
+            )
+        return AskResponse(
+            mode="system",
+            result=memory_save_response_text(
+                saved=bool(result.get("saved")),
+                category=memory_command.category,
+                reason=result.get("reason"),
+                review_required=result.get("review_required"),
+            ),
+        )
 
     # Handle /forget command
     if body.prompt.strip().lower().startswith("/forget"):

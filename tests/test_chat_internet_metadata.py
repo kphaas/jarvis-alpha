@@ -717,6 +717,119 @@ def test_thread_messages_return_flattened_web_suggestion_metadata() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_memory_command_saves_semantic_without_model_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = FakeConn()
+    saved: list[tuple[UUID, str, str, dict[str, object]]] = []
+    route_called = False
+    embed_called = False
+
+    @asynccontextmanager
+    async def fake_rls_connection(_request: object):
+        yield conn
+
+    class FakeMemoryService:
+        async def save_semantic(
+            self,
+            *,
+            conn: object,
+            user_id: UUID,
+            fact: str,
+            category: str,
+            provenance: dict[str, object] | None = None,
+            review_status: str | None = None,
+            review_reason: str | None = None,
+        ) -> dict[str, object]:
+            saved.append((user_id, fact, category, provenance or {}))
+            return {"saved": True, "fact": fact, "category": category}
+
+    async def fake_get_or_create_thread(*_args: object, **_kwargs: object) -> str:
+        return str(THREAD_ID)
+
+    async def fake_embed(_text: str) -> list[float]:
+        nonlocal embed_called
+        embed_called = True
+        raise AssertionError("memory command should not embed or route to a model")
+
+    async def fake_route(*_args: object, **_kwargs: object):
+        nonlocal route_called
+        route_called = True
+        raise AssertionError("memory command should not call the model router")
+
+    monkeypatch.setattr(chat, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(chat, "MemoryService", FakeMemoryService)
+    monkeypatch.setattr(chat, "_get_or_create_thread", fake_get_or_create_thread)
+    monkeypatch.setattr(chat, "_embed", fake_embed)
+    monkeypatch.setattr(chat, "route", fake_route)
+
+    body = chat.CompletionRequest(
+        messages=[
+            {
+                "role": "user",
+                "content": "/memory preference Ken prefers concise memory notes.",
+            }
+        ],
+        model="auto",
+        thread_id=str(THREAD_ID),
+    )
+    request = cast(
+        Request,
+        SimpleNamespace(
+            state=SimpleNamespace(
+                user_id="ken",
+                role="user",
+                actor_type="user",
+                scopes=["memory.write"],
+            )
+        ),
+    )
+
+    response = await chat.chat_completions(body, request)
+    chunks = [
+        chunk.decode() if isinstance(chunk, bytes) else str(chunk)
+        async for chunk in response.body_iterator
+    ]
+    stream = "".join(chunks)
+    streamed_text = "".join(
+        str(payload.get("delta", ""))
+        for frame in stream.split("\n\n")
+        if frame.startswith("data: {")
+        for payload in [json.loads(frame.removeprefix("data: "))]
+        if payload.get("done") is not True
+    )
+
+    assert route_called is False
+    assert embed_called is False
+    assert streamed_text == "Saved to semantic memory as preference."
+    assert saved == [
+        (
+            UUID("17eaebb1-d614-5558-bf31-df498d7a61b6"),
+            "Ken prefers concise memory notes.",
+            "preference",
+            {
+                "actor_role": "user",
+                "actor_type": "user",
+                "request_model": "auto",
+                "source_action": "slash_memory_command",
+                "source_route": "/v1/chat/completions",
+                "source_surface": "at0_chat",
+                "source_thread_id": str(THREAD_ID),
+            },
+        )
+    ]
+    message_inserts = [
+        args
+        for query, args in conn.execute_calls
+        if "INSERT INTO chat_messages" in query
+    ]
+    assert len(message_inserts) == 2
+    assert message_inserts[0][1] == "user"
+    assert message_inserts[1][1] == "assistant"
+    assert message_inserts[1][3] == chat.MEMORY_COMMAND_MODEL
+
+
+@pytest.mark.asyncio
 async def test_chat_short_circuits_insufficient_beacon_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

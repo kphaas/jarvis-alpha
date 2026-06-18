@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import json
+import re
+from typing import Any
 from uuid import UUID
 
 import asyncpg
-import re
 
-from jarvis_common.logging_config import get_logger
 from brain.services.spark_memory_grounding import load_spark_memory_grounding
 from brain.services.spark_personality_memory import (
     fetch_personality_memory,
     personality_memory_context,
 )
+from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_memory")
 
@@ -195,6 +196,7 @@ class MemoryService:
                         END AS category_boost
                     FROM alpha_semantic_memory
                     WHERE user_id = $1
+                      AND COALESCE(review_status, 'active') IN ('active', 'pending_review')
                 )
                 SELECT fact, category, source
                 FROM ranked
@@ -214,6 +216,7 @@ class MemoryService:
             SELECT fact, category, source
             FROM alpha_semantic_memory
             WHERE user_id = $1
+              AND COALESCE(review_status, 'active') IN ('active', 'pending_review')
             ORDER BY updated_at DESC, created_at DESC
             LIMIT $2
             """,
@@ -360,14 +363,48 @@ class MemoryService:
         user_id: UUID,
         fact: str,
         category: str,
+        *,
+        provenance: dict[str, Any] | None = None,
+        review_status: str | None = None,
+        review_reason: str | None = None,
     ) -> dict:
         payload = await conn.fetchval(
             """
-            SELECT public.save_semantic_memory($1::uuid, $2, $3)
+            SELECT public.save_semantic_memory_with_provenance(
+              $1::uuid, $2, $3, $4::jsonb, $5, $6
+            )
             """,
             user_id,
             fact,
             category,
+            json.dumps(provenance or {}, sort_keys=True),
+            review_status,
+            review_reason,
+        )
+        if isinstance(payload, str):
+            return json.loads(payload)
+        return dict(payload)
+
+    async def review_semantic(
+        self,
+        conn: asyncpg.Connection,
+        user_id: UUID,
+        memory_id: UUID,
+        action: str,
+        reviewed_by: str,
+        note: str | None = None,
+    ) -> dict:
+        payload = await conn.fetchval(
+            """
+            SELECT public.review_semantic_memory(
+              $1::uuid, $2::uuid, $3, $4, $5
+            )
+            """,
+            user_id,
+            memory_id,
+            action,
+            reviewed_by,
+            note,
         )
         if isinstance(payload, str):
             return json.loads(payload)
@@ -403,9 +440,12 @@ class MemoryService:
         """Return a bounded review snapshot without embeddings or raw internals."""
         semantic_rows = await conn.fetch(
             """
-            SELECT id::text, fact, category, source, created_at, updated_at
+            SELECT id::text, fact, category, source, provenance,
+                   review_status, review_reason, reviewed_at, reviewed_by,
+                   created_at, updated_at
             FROM alpha_semantic_memory
             WHERE user_id = $1
+              AND COALESCE(review_status, 'active') <> 'archived'
             ORDER BY updated_at DESC, created_at DESC
             LIMIT $2
             """,
@@ -413,7 +453,21 @@ class MemoryService:
             semantic_limit,
         )
         semantic_count = await conn.fetchval(
-            "SELECT COUNT(*) FROM alpha_semantic_memory WHERE user_id = $1",
+            """
+            SELECT COUNT(*)
+            FROM alpha_semantic_memory
+            WHERE user_id = $1
+              AND COALESCE(review_status, 'active') <> 'archived'
+            """,
+            user_id,
+        )
+        semantic_review_count = await conn.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM alpha_semantic_memory
+            WHERE user_id = $1
+              AND review_status = 'pending_review'
+            """,
             user_id,
         )
         conversation_counts = await conn.fetch(
@@ -443,8 +497,28 @@ class MemoryService:
         }
         return {
             "semantic_count": int(semantic_count or 0),
+            "semantic_review_count": int(semantic_review_count or 0),
             "episodic_count": tier_counts.get("episodic", 0),
             "working_count": tier_counts.get("working", 0),
-            "semantic": [dict(row) for row in semantic_rows],
+            "semantic": [_semantic_summary_row(row) for row in semantic_rows],
             "working": [dict(row) for row in working_rows],
         }
+
+
+def _semantic_summary_row(row: asyncpg.Record) -> dict[str, Any]:
+    payload = dict(row)
+    payload["provenance"] = _json_object(payload.get("provenance"))
+    return payload
+
+
+def _json_object(value: object) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return {str(key): item for key, item in value.items()}
+    if isinstance(value, str) and value.strip():
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(decoded, dict):
+            return {str(key): item for key, item in decoded.items()}
+    return {}

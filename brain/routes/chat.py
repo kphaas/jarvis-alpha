@@ -24,6 +24,12 @@ from brain.core.models import EMBED_MODEL, LOCAL_CHAT
 from brain.db.pool import get_pool
 from brain.db.rls import rls_connection
 from brain.memory.memory import MemoryService
+from brain.memory.semantic_commands import (
+    MemoryFactValidationError,
+    memory_save_response_text,
+    parse_memory_command,
+)
+from brain.middleware.scopes import check_scopes
 from brain.routing.router import route
 from brain.services.internet_scout.chat_adapter import (
     InternetChatContext,
@@ -51,6 +57,7 @@ THREAD_CAP_ACTIVE_FILTER = (
 )
 InternetMode = Literal["none", "web_search", "deep_research"]
 BEACON_INSUFFICIENT_MODEL = "beacon/insufficient-evidence"
+MEMORY_COMMAND_MODEL = "alpha/memory-command"
 BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
     [
         "Authority rule for internet-enabled answers:",
@@ -805,15 +812,74 @@ def _append_sse_delta(delta_parts: list[str], chunk: str) -> None:
 async def chat_completions(body: CompletionRequest, request: Request):
     start = time.monotonic()
     user_id = _user_id(request)
-    memory = MemoryService()
+    user_msg = next(
+        (m["content"] for m in reversed(body.messages) if m.get("role") == "user"), ""
+    )
 
+    try:
+        memory_command = parse_memory_command(user_msg)
+    except MemoryFactValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail) from exc
+
+    if memory_command is not None:
+        check_scopes(request, "memory.write", "admin")
+
+    memory = MemoryService()
     thread_id = await _get_or_create_thread(
         request, user_id, body.thread_id, body.project_id
     )
 
-    user_msg = next(
-        (m["content"] for m in reversed(body.messages) if m.get("role") == "user"), ""
-    )
+    if memory_command is not None:
+        uid = uuid5(NAMESPACE_DNS, user_id)
+        async with rls_connection(request) as conn:
+            result = await memory.save_semantic(
+                conn=conn,
+                user_id=uid,
+                fact=memory_command.fact,
+                category=memory_command.category,
+                provenance={
+                    "source_surface": "at0_chat",
+                    "source_route": "/v1/chat/completions",
+                    "source_thread_id": thread_id,
+                    "source_action": "slash_memory_command",
+                    "request_model": body.model,
+                    "actor_type": str(
+                        getattr(request.state, "actor_type", "user") or "user"
+                    ),
+                    "actor_role": str(getattr(request.state, "role", "user") or "user"),
+                },
+            )
+        result_text = memory_save_response_text(
+            saved=bool(result.get("saved")),
+            category=memory_command.category,
+            reason=result.get("reason"),
+            review_required=result.get("review_required"),
+        )
+        await _save_message(request, thread_id, user_id, "user", user_msg)
+
+        async def _memory_command_generator():
+            async for chunk in _stream_deterministic_response(
+                text=result_text,
+                model_label=MEMORY_COMMAND_MODEL,
+                thread_id=thread_id,
+            ):
+                yield chunk
+            latency = int((time.monotonic() - start) * 1000)
+            await _save_message(
+                request,
+                thread_id,
+                user_id,
+                "assistant",
+                result_text,
+                model_used=MEMORY_COMMAND_MODEL,
+                memory_injected=False,
+                latency_ms=latency,
+            )
+
+        return StreamingResponse(
+            _memory_command_generator(),
+            media_type="text/event-stream",
+        )
 
     embedding = await _embed(user_msg)
     uid = uuid5(NAMESPACE_DNS, user_id)
