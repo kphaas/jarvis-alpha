@@ -72,8 +72,8 @@ BEACON_INSUFFICIENT_MODEL = "beacon/insufficient-evidence"
 MEMORY_COMMAND_MODEL = "alpha/memory-command"
 BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
     [
-        "Authority rule for internet-enabled answers:",
-        "- Treat accepted Alpha Beacon evidence as the source of truth for "
+        "Beacon authority rule:",
+        "- Treat accepted Beacon evidence as the source of truth for "
         "current/public web claims.",
         "- This includes official-source, URL, citation, release, pricing, "
         "legal, medical, market, schedule, and other time-sensitive claims.",
@@ -86,18 +86,34 @@ BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
 WEB_SUGGESTION_BOUNDARY_RULE = "\n".join(
     [
         "Smart Web Suggestion boundary:",
-        "- Alpha suggested web research for this turn, but Beacon internet "
-        "search has not run yet.",
-        "- Do not claim that Alpha Beacon verified the answer, crawled the "
+        "- Alpha suggested web research for this turn, but Beacon has not run yet.",
+        "- Do not claim that Beacon verified the answer, crawled the "
         "web, or used internet evidence.",
         "- For schedules, scores, fixtures, kickoff times, opponents, live "
         "status, current rankings, rosters, or future event dates, do not answer "
         "from memory or local model knowledge. Say Beacon/web verification is "
         "needed.",
-        "- If answering from memory or local model knowledge, label the answer "
-        "as unverified and invite the user to enable the suggested web mode.",
+        "- If answering from memory or local model knowledge, say Beacon "
+        "verification is needed.",
     ]
 )
+SOURCE_LINK_REQUEST_RE = re.compile(
+    r"\b("
+    r"sources?|citations?|cites?|references?|links?|urls?|websites?|"
+    r"web\s+sites?|documentation|docs?|source\s+url|website\s+link"
+    r")\b",
+    re.IGNORECASE,
+)
+RAW_URL_RE = re.compile(r"https?://[^\s)\]>\"']+")
+MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(https?://[^\s)]+\)")
+INLINE_SOURCE_URL_RE = re.compile(
+    r"(?i)\s*(?:Citation:\s*)?(?:\[(?:\d+(?:\s*,\s*\d+)*)\]\s*)?"
+    r"Source:\s*https?://[^\s)\]>\"']+"
+)
+SOURCE_LINE_RE = re.compile(
+    r"(?im)^\s*(?:sources?|citations?|references?|websites?|links?)\s*:.*(?:\n|$)"
+)
+BRACKET_CITATION_RE = re.compile(r"\s*\[(?:\d+(?:\s*,\s*\d+)*)\]")
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -192,7 +208,7 @@ def _build_enriched_prompt(
     if internet_context:
         parts.append(BEACON_INTERNET_AUTHORITY_RULE)
         parts.append(
-            "Internet context from Alpha Beacon "
+            "Beacon evidence "
             "(authoritative for current/public web claims):\n"
             f"{internet_context}"
         )
@@ -793,14 +809,14 @@ async def _auto_name_thread(
 # ── SSE streaming ──────────────────────────────────────────────────────────────
 
 JARVIS_SYSTEM_PROMPT = (
-    "You are AT-0, Ken's private AI companion in Helm, backed by the JARVIS/Alpha "
+    "You are AT-0, Ken's private AI companion in Helm, backed by the Alpha "
     "self-hosted infrastructure owned by Kenneth Haas. The system runs on three "
     "core nodes: Brain (Mac Studio M2 Ultra, orchestrator), Gateway (Mac Mini, "
     "internet egress), and Endpoint (Mac Mini M1, UI). You are not a cloud "
     "service; you are a private, self-hosted system. Use AT-0 as your "
     "user-facing name. Otto and Auto are accepted casual pronunciations or "
-    "spellings. JARVIS is the infrastructure and legacy backend identity; do "
-    "not introduce yourself as JARVIS unless Ken specifically asks about JARVIS. "
+    "spellings. JARVIS is only a legacy/backend family name; do not mention "
+    "JARVIS unless Ken specifically asks about JARVIS. "
     "Always answer as AT-0. Be direct, concise, and technically precise, "
     "but use a natural spoken voice when the user is in Ask or Voice mode. "
     "Sound like a capable operator talking to Ken: calm, specific, lightly warm, "
@@ -815,12 +831,15 @@ JARVIS_SYSTEM_PROMPT = (
     "For voice-friendly answers, prefer one to three short paragraphs, name the "
     "answer first, and put caveats after the useful part. "
     "When memory context is provided, use it for stable personal context. "
-    "When Alpha Beacon internet context is provided, treat accepted Beacon evidence "
+    "When Beacon evidence is provided, treat accepted Beacon evidence "
     "as authoritative for current/public web claims. For date-specific sports, "
     "events, schedules, scores, news, prices, releases, and other current or "
-    "future public facts, do not rely on local model memory. If Beacon internet "
-    "context is not provided, say the answer needs Beacon/web verification "
-    "instead of guessing."
+    "future public facts, do not rely on local model memory. If Beacon has not "
+    "run, say the answer needs Beacon verification instead of guessing. Do not "
+    "show source URLs, website names, or bracketed citations in normal chat "
+    "unless Ken explicitly asks for a link, source, citation, URL, or website. "
+    "If Beacon evidence supports the answer, say Beacon checked it or Beacon "
+    "verified it naturally."
 )
 
 
@@ -886,17 +905,89 @@ def _polish_model_response(text: str, response_surface: AskResponseSurface) -> s
     return polished or text.strip()
 
 
+def _user_requested_source_links(user_msg: str) -> bool:
+    return bool(SOURCE_LINK_REQUEST_RE.search(user_msg or ""))
+
+
+def _strip_unrequested_source_references(text: str, user_msg: str) -> str:
+    if _user_requested_source_links(user_msg):
+        return text.strip()
+
+    cleaned = MARKDOWN_LINK_RE.sub(r"\1", text)
+    cleaned = re.sub(
+        r"(?is)\bAccording to (?:the )?Beacon(?: internet context)?,?\s+"
+        r"I(?:'ve| have) found\s+\w+\s+sources?\s+confirming "
+        r"(?:this information|it):\s*",
+        "Beacon checked it. ",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?is)\bI(?:'ve| have) verified this information through "
+        r"(?:the )?(?:Alpha\s+)?Beacon(?: internet context)?\b.*?"
+        r"(?:[.!?](?:\s+|$)|$)",
+        "Beacon verified it. ",
+        cleaned,
+    )
+    cleaned = INLINE_SOURCE_URL_RE.sub("", cleaned)
+    cleaned = re.sub(
+        r"(?im)^\s*(?:[-*]\s*)?(?:sources?|citations?|references?|websites?|links?)\s*:.*(?:\n|$)",
+        "",
+        cleaned,
+    )
+    cleaned = SOURCE_LINE_RE.sub("", cleaned)
+    cleaned = RAW_URL_RE.sub("", cleaned)
+    cleaned = BRACKET_CITATION_RE.sub("", cleaned)
+    cleaned = re.sub(
+        r"(?i)\b(?:Alpha\s+Beacon\s+internet\s+context|Beacon\s+internet\s+context)\b",
+        "Beacon",
+        cleaned,
+    )
+    cleaned = re.sub(r"(?i)\bAlpha\s+Beacon\b", "Beacon", cleaned)
+    cleaned = re.sub(
+        r"(?i)\b(?:source|citation|reference|website|link)s?:\s*",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)\b(?:official\s+)?sources?\s+confirm(?:ing|ed)?\b",
+        "Beacon verified",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)\bbased on official sources\b", "verified by Beacon", cleaned
+    )
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"[ \t]+([,.!?;:])", r"\1", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _finalize_model_response(
+    text: str,
+    response_surface: AskResponseSurface,
+    user_msg: str,
+) -> str:
+    polished = _polish_model_response(text, response_surface)
+    stripped = _strip_unrequested_source_references(polished, user_msg)
+    return stripped or polished.strip() or text.strip()
+
+
 async def _stream_single(
     prompt: str,
     mode: str,
     thread_id: str,
     model_label: str,
+    user_msg: str,
     response_surface: AskResponseSurface = "chat",
 ) -> AsyncGenerator[str, None]:
     """Stream tokens from router → SSE events."""
     jarvis_prompt = f"{JARVIS_SYSTEM_PROMPT}\n\n{_runtime_context_prompt()}\n\n{prompt}"
     result = await route(jarvis_prompt, mode)
-    text = _polish_model_response(result.get("result", ""), response_surface)
+    text = _finalize_model_response(
+        result.get("result", ""),
+        response_surface,
+        user_msg,
+    )
     model_used = result.get("mode", mode)
 
     words = text.split(" ")
@@ -934,7 +1025,11 @@ async def _stream_deterministic_response(
 
 
 async def _stream_council(
-    prompt: str, models: list[str], thread_id: str, show_council: bool
+    prompt: str,
+    models: list[str],
+    thread_id: str,
+    show_council: bool,
+    user_msg: str,
 ) -> AsyncGenerator[str, None]:
     """Parallel council calls → optional per-model stream → synthesis."""
     tasks = {m: asyncio.create_task(route(prompt, m)) for m in models}
@@ -951,7 +1046,10 @@ async def _stream_council(
                 {"council_model": m, "thread_id": thread_id, "done": False}
             )
             yield f"data: {meta}\n\n"
-            for word in res.get("result", "").split(" "):
+            model_text = _strip_unrequested_source_references(
+                res.get("result", ""), user_msg
+            )
+            for word in model_text.split(" "):
                 chunk = json.dumps(
                     {"delta": word + " ", "council_model": m, "thread_id": thread_id}
                 )
@@ -959,16 +1057,22 @@ async def _stream_council(
                 await asyncio.sleep(0.005)
 
     council_text = "\n\n".join(
-        f"[{m.upper()}]: {r.get('result', '')}" for m, r in results.items()
+        f"[{m.upper()}]: {_strip_unrequested_source_references(r.get('result', ''), user_msg)}"
+        for m, r in results.items()
     )
     synth_prompt = (
         f"Synthesize these responses into one clear answer:\n\n{council_text}\n\n"
         f"Original question: {prompt}"
     )
     synth_result = await route(synth_prompt, "local")
-    synth_text = synth_result.get("result", "")
+    synth_text = _strip_unrequested_source_references(
+        synth_result.get("result", ""), user_msg
+    )
 
-    council_summary = {m: r.get("result", "") for m, r in results.items()}
+    council_summary = {
+        m: _strip_unrequested_source_references(r.get("result", ""), user_msg)
+        for m, r in results.items()
+    }
     for word in synth_text.split(" "):
         chunk = json.dumps(
             {
@@ -1222,13 +1326,20 @@ async def chat_completions(body: CompletionRequest, request: Request):
         models = body.council_models if body.council_models else [body.model]
 
         if is_council:
-            gen = _stream_council(enriched, models, thread_id, body.show_council)
+            gen = _stream_council(
+                enriched,
+                models,
+                thread_id,
+                body.show_council,
+                user_msg,
+            )
         else:
             gen = _stream_single(
                 enriched,
                 body.model,
                 thread_id,
                 body.model,
+                user_msg,
                 response_surface=body.response_surface,
             )
 
