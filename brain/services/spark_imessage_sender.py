@@ -24,6 +24,8 @@ from brain.services.bluebubbles_client import (
 )
 
 SPARK_IMESSAGE_SEND_ENABLED = "SPARK_IMESSAGE_SEND_ENABLED"
+SPARK_IMESSAGE_SEND_BASE_URL = "SPARK_IMESSAGE_SEND_BASE_URL"
+SPARK_IMESSAGE_SEND_PASSWORD = "SPARK_IMESSAGE_SEND_PASSWORD"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,11 +48,18 @@ class SparkIMessageSendClient:
         timeout_s: float = BLUEBUBBLES_TIMEOUT_SEC,
     ) -> None:
         self.base_url = (
-            base_url or _optional_config("BLUEBUBBLES_BASE_URL") or ""
+            base_url
+            or _optional_config(SPARK_IMESSAGE_SEND_BASE_URL)
+            or _optional_config("BLUEBUBBLES_BASE_URL")
+            or ""
         ).rstrip("/")
         if not self.base_url:
             self.base_url = DEFAULT_BLUEBUBBLES_BASE_URL
-        self.password = password or _required_config("BLUEBUBBLES_PASSWORD")
+        self.password = (
+            password
+            or _optional_config(SPARK_IMESSAGE_SEND_PASSWORD)
+            or _required_config("BLUEBUBBLES_PASSWORD")
+        )
         self.send_enabled = (
             _send_enabled_from_config() if send_enabled is None else bool(send_enabled)
         )
