@@ -19,11 +19,15 @@ from brain.services.vault_recall import (
     search_vault_chunks,
     vault_context_block,
 )
+from brain.services.vault_security import (
+    can_read_vault,
+    ensure_vault_workspace,
+    vault_rls_connection,
+)
 
 
 router = APIRouter(prefix="/v1", tags=["ask"])
 logger = get_logger("alpha_brain")
-DEFAULT_VAULT_WORKSPACE_ID = "personal"
 
 
 def _user_uuid(user_id: str) -> UUID:
@@ -38,20 +42,11 @@ def _principal_id(request: Request) -> str:
 
 
 def _can_read_vault(request: Request) -> bool:
-    actor_type = getattr(request.state, "actor_type", "user")
-    role = getattr(request.state, "role", None)
-    if actor_type == "user" and role == "admin":
-        return True
-    scopes = set(getattr(request.state, "scopes", []) or [])
-    return "*" in scopes or "vault.read" in scopes
+    return can_read_vault(request)
 
 
 def _ensure_vault_workspace(request: Request) -> None:
-    workspace_id = getattr(request.state, "workspace_id", None)
-    if isinstance(workspace_id, str) and workspace_id.strip():
-        request.state.workspace_id = workspace_id.strip()
-        return
-    request.state.workspace_id = DEFAULT_VAULT_WORKSPACE_ID
+    ensure_vault_workspace(request)
 
 
 class AskRequest(BaseModel):
@@ -199,18 +194,20 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
                 embedding=embedding,
                 principal_id=raw_user_id,
             )
-            vault_context = ""
-            if _can_read_vault(request):
-                try:
+
+        vault_context = ""
+        if _can_read_vault(request):
+            try:
+                async with vault_rls_connection(request) as conn:
                     vault_matches = await search_vault_chunks(
                         conn,
                         query=body.prompt,
                         embedding=vault_embedding,
                         limit=5,
                     )
-                    vault_context = vault_context_block(vault_matches)
-                except Exception as exc:
-                    logger.warning("vault recall unavailable for ask: %s", exc)
+                vault_context = vault_context_block(vault_matches)
+            except Exception as exc:
+                logger.warning("vault recall unavailable for ask: %s", exc)
 
         enriched_prompt = body.prompt
         context_blocks = []
