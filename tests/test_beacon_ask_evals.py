@@ -85,3 +85,57 @@ def test_eval_smart_web_suggestion_does_not_silently_search() -> None:
     assert suggestion is not None
     assert suggestion.requires_confirmation is True
     assert suggestion.mode == "deep_research"
+
+
+def test_at0_voice_surface_injects_style_context() -> None:
+    prompt = chat._build_enriched_prompt(
+        memory_context="",
+        internet_context=None,
+        response_surface="voice",
+        personality_id="calm_operator",
+        user_msg="How is the weather?",
+    )
+
+    assert "AT-0 interaction style:" in prompt
+    assert "Surface: Voice" in prompt
+    assert "Calm Operator" in prompt
+    assert "do not correct him" in prompt
+    assert "User: How is the weather?" in prompt
+
+
+def test_at0_plain_chat_without_style_keeps_prompt_unwrapped() -> None:
+    prompt = chat._build_enriched_prompt(
+        memory_context="",
+        internet_context=None,
+        user_msg="Hello",
+    )
+
+    assert prompt == "Hello"
+
+
+def test_at0_voice_polish_removes_robotic_weather_preamble() -> None:
+    polished = chat._polish_model_response(
+        "According to Open-Meteo, which is a reliable source for current "
+        "weather conditions, it is 72 F, feeling like 73 F. Please note that "
+        "conditions can change.",
+        "voice",
+    )
+
+    assert polished.startswith("Open-Meteo has it as")
+    assert "reliable source for current weather conditions" not in polished
+    assert "feeling like 73 degrees" in polished
+    assert "Please note" not in polished
+
+
+
+def test_eval_sports_schedule_suggests_web_search() -> None:
+    suggestion = suggest_web_for_chat(
+        query="What time does USMNT play tomorrow?",
+        internet_mode="none",
+        sensitivity="normal",
+    )
+
+    assert suggestion is not None
+    assert suggestion.mode == "web_search"
+    assert suggestion.reason == "sports_schedule_likely"
+    assert suggestion.confidence == "high"

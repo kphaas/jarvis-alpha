@@ -32,6 +32,9 @@ class WebSuggestion:
 
 _CURRENT_TERMS = (
     "today",
+    "tomorrow",
+    "tonight",
+    "yesterday",
     "latest",
     "current",
     "recent",
@@ -50,6 +53,45 @@ _CURRENT_TERMS = (
     "score",
     "status",
     "ceo",
+)
+
+_SPORTS_EVENT_TERMS = (
+    "fifa",
+    "world cup",
+    "usmnt",
+    "uswnt",
+    "soccer",
+    "football",
+    "match",
+    "fixture",
+    "kickoff",
+    "kick off",
+    "opponent",
+    "game",
+    "score",
+    "standings",
+    "play",
+    "playing",
+)
+
+_TIME_QUESTION_TERMS = (
+    "when",
+    "what time",
+    "which day",
+    "schedule",
+    "fixture",
+    "today",
+    "tomorrow",
+    "tonight",
+    "this week",
+    "next",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
 )
 
 _SOURCE_TERMS = (
@@ -105,6 +147,9 @@ def suggest_web_for_chat(
     explicit_search = any(term in lowered for term in _SEARCH_TERMS)
     source_intent = any(term in lowered for term in _SOURCE_TERMS)
     current_intent = any(term in lowered for term in _CURRENT_TERMS)
+    sports_schedule_intent = any(
+        term in lowered for term in _SPORTS_EVENT_TERMS
+    ) and any(term in lowered for term in _TIME_QUESTION_TERMS)
     private_intent = any(term in lowered for term in _PRIVATE_TERMS)
 
     if private_intent and not (explicit_search or source_intent):
@@ -136,6 +181,14 @@ def suggest_web_for_chat(
             mode="web_search",
             reason="source_requested",
             confidence="medium",
+            query=clean_query,
+        )
+
+    if sports_schedule_intent:
+        return WebSuggestion(
+            mode="web_search",
+            reason="sports_schedule_likely",
+            confidence="high",
             query=clean_query,
         )
 

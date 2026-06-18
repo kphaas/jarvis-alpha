@@ -10,10 +10,12 @@ Routes:
 """
 
 import json
+import re
 import time
 import asyncio
 import httpx
 from collections.abc import Mapping
+from datetime import datetime
 from uuid import UUID, uuid4, uuid5, NAMESPACE_DNS
 from typing import AsyncGenerator, Literal
 from fastapi import APIRouter, Request, HTTPException
@@ -56,6 +58,15 @@ THREAD_CAP_ACTIVE_FILTER = (
     f"AND (pinned = TRUE OR updated_at >= now() - INTERVAL '{THREAD_CAP_RETENTION_DAYS} days')"
 )
 InternetMode = Literal["none", "web_search", "deep_research"]
+AskResponseSurface = Literal["chat", "voice", "avatar"]
+AskPersonalityId = Literal[
+    "loyal_sidekick",
+    "playful_buddy",
+    "calm_operator",
+    "brave_droid",
+    "sleepy_soft",
+    "sarcastic_witty",
+]
 BEACON_INSUFFICIENT_MODEL = "beacon/insufficient-evidence"
 MEMORY_COMMAND_MODEL = "alpha/memory-command"
 BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
@@ -78,6 +89,10 @@ WEB_SUGGESTION_BOUNDARY_RULE = "\n".join(
         "search has not run yet.",
         "- Do not claim that Alpha Beacon verified the answer, crawled the "
         "web, or used internet evidence.",
+        "- For schedules, scores, fixtures, kickoff times, opponents, live "
+        "status, current rankings, rosters, or future event dates, do not answer "
+        "from memory or local model knowledge. Say Beacon/web verification is "
+        "needed.",
         "- If answering from memory or local model knowledge, label the answer "
         "as unverified and invite the user to enable the suggested web mode.",
     ]
@@ -109,6 +124,13 @@ class CompletionRequest(BaseModel):
     show_council: bool = False
     internet_mode: InternetMode = Field(
         default="none", description="none|web_search|deep_research"
+    )
+    response_surface: AskResponseSurface = Field(
+        default="chat", description="chat|voice|avatar"
+    )
+    personality_id: AskPersonalityId | None = Field(
+        default=None,
+        description="Bounded AT-0 personality style selected by Helm.",
     )
     web_suggestion_acceptance: WebSuggestionAcceptance | None = Field(
         default=None,
@@ -147,9 +169,20 @@ def _build_enriched_prompt(
     memory_context: str,
     internet_context: str | None,
     web_suggestion_context: str | None = None,
+    response_surface: AskResponseSurface | None = None,
+    personality_id: AskPersonalityId | None = None,
     user_msg: str,
 ) -> str:
-    if not memory_context and not internet_context and not web_suggestion_context:
+    response_style_context = _response_style_prompt(
+        response_surface=response_surface,
+        personality_id=personality_id,
+    )
+    if (
+        not memory_context
+        and not internet_context
+        and not web_suggestion_context
+        and not response_style_context
+    ):
         return user_msg
 
     parts: list[str] = []
@@ -177,6 +210,8 @@ def _build_enriched_prompt(
             )
     elif memory_context:
         parts.append(f"Context from memory:\n{memory_context}")
+    if response_style_context:
+        parts.append(response_style_context)
     parts.append(f"User: {user_msg}")
     return "\n\n".join(parts)
 
@@ -192,6 +227,75 @@ def _web_suggestion_prompt_context(suggestion: WebSuggestion | None) -> str | No
             f"- Requires user confirmation: {suggestion.requires_confirmation}",
         ]
     )
+
+
+PERSONALITY_STYLE_PROMPTS: dict[AskPersonalityId, str] = {
+    "loyal_sidekick": (
+        "Loyal Sidekick: warm, steady, and useful. Treat Ken like the person "
+        "you are working alongside; no stiff system-status wording."
+    ),
+    "playful_buddy": (
+        "Playful Buddy: bright and lightly playful, but still concise. Use a "
+        "little human warmth without turning the answer into a bit."
+    ),
+    "calm_operator": (
+        "Calm Operator: quiet, direct, and operational. Lead with the answer, "
+        "then the one detail that matters."
+    ),
+    "brave_droid": (
+        "Brave Droid: upbeat and mission-ready. Keep confidence high without "
+        "sounding mechanical."
+    ),
+    "sleepy_soft": (
+        "Sleepy Soft: gentle, slower, and cozy. Short sentences, no pressure."
+    ),
+    "sarcastic_witty": (
+        "Sarcastic Witty: dry and quick, but never dismissive. One light aside "
+        "is enough."
+    ),
+}
+
+
+def _response_style_prompt(
+    *,
+    response_surface: AskResponseSurface | None,
+    personality_id: AskPersonalityId | None,
+) -> str | None:
+    surface = response_surface or "chat"
+    style = PERSONALITY_STYLE_PROMPTS.get(personality_id) if personality_id else None
+    if not style and surface == "chat":
+        return None
+
+    lines = [
+        "AT-0 interaction style:",
+        "- Ken may call you Otto, Auto, AT-0, or JARVIS. Treat those as valid "
+        "references in casual use; do not correct him. Prefer AT-0, Otto, or "
+        "Auto in user-facing replies; treat JARVIS as the private infrastructure "
+        "name unless Ken asks about that system.",
+        "- Convert ISO timestamps, dates, and weather observation times into "
+        "natural spoken language. Do not read raw values like 2026-06-18T17:00 "
+        "unless Ken asks for the exact machine timestamp.",
+        "- For weather and quick current-status answers, do not start with "
+        "'According to'. Start with the answer, then cite the source after the "
+        "useful part if a citation is needed.",
+    ]
+    if surface == "voice":
+        lines.append(
+            "- Surface: Voice. Use one or two short spoken paragraphs. No markdown "
+            "headings unless Ken explicitly asks for a structured list."
+        )
+    elif surface == "avatar":
+        lines.append(
+            "- Surface: Avatar. Keep it brief and spoken; the avatar is the UI, "
+            "so do not narrate interface sections."
+        )
+    else:
+        lines.append(
+            "- Surface: Chat. Keep the answer scannable, but avoid robotic preambles."
+        )
+    if style:
+        lines.append(f"- Personality: {style}")
+    return "\n".join(lines)
 
 
 def _should_short_circuit_internet_response(
@@ -684,24 +788,110 @@ async def _auto_name_thread(
 # ── SSE streaming ──────────────────────────────────────────────────────────────
 
 JARVIS_SYSTEM_PROMPT = (
-    "You are JARVIS, a private AI assistant running on a personal multi-node infrastructure "
-    "owned by Kenneth Haas. You run on three core nodes: Brain (Mac Studio M2 Ultra, orchestrator), "
-    "Gateway (Mac Mini, internet egress), and Endpoint (Mac Mini M1, UI). "
-    "You are not a cloud service — you are a private, self-hosted system. "
-    "Always answer as JARVIS. Be direct, concise, and technically precise. "
+    "You are AT-0, Ken's private AI companion in Helm, backed by the JARVIS/Alpha "
+    "self-hosted infrastructure owned by Kenneth Haas. The system runs on three "
+    "core nodes: Brain (Mac Studio M2 Ultra, orchestrator), Gateway (Mac Mini, "
+    "internet egress), and Endpoint (Mac Mini M1, UI). You are not a cloud "
+    "service; you are a private, self-hosted system. Use AT-0 as your "
+    "user-facing name. Otto and Auto are accepted casual pronunciations or "
+    "spellings. JARVIS is the infrastructure and legacy backend identity; do "
+    "not introduce yourself as JARVIS unless Ken specifically asks about JARVIS. "
+    "Always answer as AT-0. Be direct, concise, and technically precise, "
+    "but use a natural spoken voice when the user is in Ask or Voice mode. "
+    "Sound like a capable operator talking to Ken: calm, specific, lightly warm, "
+    "and comfortable using contractions. Avoid robotic preambles, excessive section "
+    "labels, and compliance-style phrasing unless the topic truly needs it. "
+    "Do not say things like 'functioning within normal parameters', 'please note', "
+    "or 'as a private AI assistant' in everyday voice answers. "
+    "If Ken calls you Otto, Auto, AT-0, or JARVIS, accept the name as yours and "
+    "do not correct him in casual conversation. "
+    "When citing weather, dates, or observed timestamps, say them naturally for "
+    "a human listener instead of reading raw ISO timestamps. "
+    "For voice-friendly answers, prefer one to three short paragraphs, name the "
+    "answer first, and put caveats after the useful part. "
     "When memory context is provided, use it for stable personal context. "
     "When Alpha Beacon internet context is provided, treat accepted Beacon evidence "
-    "as authoritative for current/public web claims."
+    "as authoritative for current/public web claims. For date-specific sports, "
+    "events, schedules, scores, news, prices, releases, and other current or "
+    "future public facts, do not rely on local model memory. If Beacon internet "
+    "context is not provided, say the answer needs Beacon/web verification "
+    "instead of guessing."
 )
 
 
+def _runtime_context_prompt() -> str:
+    now = datetime.now().astimezone()
+    hour = now.strftime("%I").lstrip("0") or "0"
+    minute = now.strftime("%M")
+    meridiem = now.strftime("%p")
+    timestamp = (
+        f"{now.strftime('%A, %B')} {now.day}, {now.year} "
+        f"at {hour}:{minute} {meridiem} {now.tzname() or ''}".strip()
+    )
+    return (
+        f"Runtime context: current local time is {timestamp}. "
+        "Use this only to phrase dates and times naturally when relevant."
+    )
+
+
+def _polish_model_response(text: str, response_surface: AskResponseSurface) -> str:
+    if response_surface not in {"voice", "avatar"}:
+        return text
+
+    polished = text.strip()
+    if not polished:
+        return polished
+
+    replacements = [
+        (
+            r"(?i)\baccording to Open-Meteo,\s*which is a reliable source for current weather conditions,\s*",
+            "Open-Meteo has it as ",
+        ),
+        (r"(?i)\baccording to Open-Meteo,\s*", "Open-Meteo has it as "),
+        (
+            r"(?i),?\s*which is a reliable source for current weather conditions",
+            "",
+        ),
+        (
+            r"(?i)\bfeeling like ([0-9]+)\s*F\b",
+            r"feeling like \1 degrees",
+        ),
+    ]
+    for pattern, replacement in replacements:
+        polished = re.sub(pattern, replacement, polished)
+
+    sentence_removals = [
+        r"(?is)(^|(?<=[.!?])\s+)Please note that\b.*?(?:[.!?](?:\s+|$)|$)",
+        r"(?is)(^|(?<=[.!?])\s+)Keep in mind that\b.*?(?:[.!?](?:\s+|$)|$)",
+        r"(?is)(^|(?<=[.!?])\s+)Now,\s+about the weather\b.*?(?:[.!?](?:\s+|$)|$)",
+        r"(?is)(^|(?<=[.!?])\s+)First,\s+let'?s check on your voice test\b.*?(?:[.!?](?:\s+|$)|$)",
+    ]
+    for pattern in sentence_removals:
+        polished = re.sub(pattern, " ", polished)
+
+    polished = re.sub(
+        r"(?i)\bEverything sounds clear and crisp to me\.\s*You're good to go!",
+        "Mic sounds clear.",
+        polished,
+    )
+    polished = re.sub(r"\s+\[Cited source:\s*([0-9]+)\]", r" [\1]", polished)
+    polished = re.sub(r"(?is)\s+Please note that\b.*$", "", polished)
+    polished = re.sub(r"(?is)\s+Keep in mind that\b.*$", "", polished)
+    polished = re.sub(r"\s{2,}", " ", polished).strip()
+    return polished or text.strip()
+
+
 async def _stream_single(
-    prompt: str, mode: str, thread_id: str, model_label: str
+    prompt: str,
+    mode: str,
+    thread_id: str,
+    model_label: str,
+    response_surface: AskResponseSurface = "chat",
 ) -> AsyncGenerator[str, None]:
     """Stream tokens from router → SSE events."""
-    jarvis_prompt = f"{JARVIS_SYSTEM_PROMPT}\n\n{prompt}"
+    jarvis_prompt = f"{JARVIS_SYSTEM_PROMPT}\n\n{_runtime_context_prompt()}\n\n{prompt}"
     result = await route(jarvis_prompt, mode)
-    text = result.get("result", "")
+    text = _polish_model_response(result.get("result", ""), response_surface)
     model_used = result.get("mode", mode)
 
     words = text.split(" ")
@@ -935,6 +1125,8 @@ async def chat_completions(body: CompletionRequest, request: Request):
             if web_suggestion and not internet_context
             else None
         ),
+        response_surface=body.response_surface,
+        personality_id=body.personality_id,
         user_msg=user_msg,
     )
 
@@ -1005,7 +1197,13 @@ async def chat_completions(body: CompletionRequest, request: Request):
         if is_council:
             gen = _stream_council(enriched, models, thread_id, body.show_council)
         else:
-            gen = _stream_single(enriched, body.model, thread_id, body.model)
+            gen = _stream_single(
+                enriched,
+                body.model,
+                thread_id,
+                body.model,
+                response_surface=body.response_surface,
+            )
 
         async for chunk in gen:
             _append_sse_delta(delta_parts, chunk)
