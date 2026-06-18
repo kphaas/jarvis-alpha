@@ -199,7 +199,6 @@ async def test_helm_voice_falls_back_to_alpha_session_token_for_backend(
     assert calls["headers"]["Authorization"] == "Bearer alpha-session-token"
 
 
-
 def test_helm_voice_speak_route_is_t2_security_write_classified() -> None:
     assert classify_route("POST", "/v1/helm/voice/speak") == [
         "write",

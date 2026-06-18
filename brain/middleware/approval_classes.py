@@ -127,11 +127,12 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Memory reads — T1 ---
     "GET /v1/memory": ["read"],
     "GET /v1/memory/search": ["read"],
-    # --- ADR-0026 reviewed memory consolidation writes — T5, never security_write ---
-    "POST /v1/memory/consolidation/proposals": ["memory_consolidation_reviewed_write"],
-    "POST /v1/memory/consolidation/proposals/{proposal_id}/execute": [
-        "memory_consolidation_reviewed_write"
-    ],
+    # --- ADR-0026 reviewed memory consolidation bridge ---
+    # Proposal creation and execution own their proposal-specific T5 approval
+    # queue/validation in-route. The outer middleware must pass them through so
+    # the route can create or consume the exact reviewed-write approval item.
+    "POST /v1/memory/consolidation/proposals": ["write"],
+    "POST /v1/memory/consolidation/proposals/{proposal_id}/execute": ["write"],
     "POST /v1/memory/consolidation/proposals/{proposal_id}/revert": [
         "memory_consolidation_reviewed_write"
     ],

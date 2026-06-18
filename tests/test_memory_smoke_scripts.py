@@ -7,6 +7,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUN_SMOKE = REPO_ROOT / "scripts" / "run_smoke.sh"
 MEMORY_SECDEF_SMOKE = REPO_ROOT / "scripts" / "smoke_memory_secdef.sh"
+DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "jarvisalpha_deploy.sh"
 PUBLIC_REVOKE_MIGRATION = (
     REPO_ROOT
     / "brain"
@@ -59,6 +60,15 @@ def test_memory_secdef_smoke_checks_current_memory_functions() -> None:
     assert "memory_secdef_smoke" in source
     assert "ALPHA_WRITER_DB_PASSWORD" in source
     assert "source = 'semantic_memory_review'\n     OR" not in source
+
+
+def test_deploy_runs_memory_core_smoke_as_post_deploy_gate() -> None:
+    source = _script_text(DEPLOY_SCRIPT)
+
+    assert "smoke_memory_core.py" in source
+    assert "JARVIS_ALPHA_SKIP_MEMORY_CORE_SMOKE" in source
+    assert 'MEMORY_CORE_SMOKE_BASE_URL="$settings_base_url"' in source
+    assert 'MEMORY_CORE_SMOKE_DB_SSH_TARGET="$BRAIN"' in source
 
 
 def test_semantic_memory_public_execute_revoke_migration_is_guarded() -> None:
