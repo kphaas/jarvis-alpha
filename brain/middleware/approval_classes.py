@@ -56,6 +56,15 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # Settings — PI/config reads are security reads; writes are admin-scoped.
     "GET /v1/settings/web-agent": ["read", "security_read"],
     "PUT /v1/settings/web-agent/home-location": ["write", "security_write"],
+    "GET /v1/settings/identity": ["read", "security_read"],
+    "POST /v1/settings/users": ["write", "security_write"],
+    "PUT /v1/settings/users/{profile_id}/personal-data": [
+        "write",
+        "security_write",
+    ],
+    "PUT /v1/settings/relationships": ["write", "security_write"],
+    "DELETE /v1/settings/relationships/{relationship_id}": ["destructive"],
+    "PUT /v1/settings/personal-data/home-address": ["write", "security_write"],
     # Admin
     "POST /v1/admin": ["admin"],
     # Destructive

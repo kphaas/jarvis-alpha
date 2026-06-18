@@ -2,57 +2,13 @@ import { useEffect, useState } from 'react'
 import { CheckCircle, Loader2, MapPin, Save, XCircle } from 'lucide-react'
 import { apiJson } from '../../lib/apiFetch'
 import { useAppStore } from '../../store'
-
-interface HomeLocation {
-  label: string
-  postal_code?: string | null
-  city?: string | null
-  region?: string | null
-  country: string
-  latitude: number
-  longitude: number
-  updated_at?: string | null
-  updated_by_profile_id?: string | null
-  data_classification: 'personal_information'
-}
-
-interface WebAgentSettings {
-  home_location: HomeLocation | null
-  storage_classification: 'alpha_db_personal_settings'
-}
-
-interface FormState {
-  label: string
-  postal_code: string
-  city: string
-  region: string
-  country: string
-  latitude: string
-  longitude: string
-}
-
-const EMPTY_FORM: FormState = {
-  label: 'Home',
-  postal_code: '',
-  city: '',
-  region: '',
-  country: 'US',
-  latitude: '',
-  longitude: '',
-}
-
-function toForm(location: HomeLocation | null): FormState {
-  if (!location) return EMPTY_FORM
-  return {
-    label: location.label,
-    postal_code: location.postal_code ?? '',
-    city: location.city ?? '',
-    region: location.region ?? '',
-    country: location.country,
-    latitude: String(location.latitude),
-    longitude: String(location.longitude),
-  }
-}
+import { WebAgentLocationFields } from './WebAgentLocationFields'
+import {
+  EMPTY_WEB_AGENT_LOCATION_FORM,
+  toWebAgentLocationForm,
+  type WebAgentLocationFormState,
+  type WebAgentSettings,
+} from './webAgentLocationTypes'
 
 export function WebAgentLocationForm() {
   const { theme } = useAppStore()
@@ -60,8 +16,7 @@ export function WebAgentLocationForm() {
   const border = isDark ? 'border-white/10' : 'border-[#141414]/10'
   const subtle = isDark ? 'bg-white/5' : 'bg-[#141414]/5'
   const inputBg = isDark ? 'bg-white/5' : 'bg-[#141414]/5'
-
-  const [form, setForm] = useState<FormState>(EMPTY_FORM)
+  const [form, setForm] = useState<WebAgentLocationFormState>(EMPTY_WEB_AGENT_LOCATION_FORM)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [result, setResult] = useState<'idle' | 'success' | 'error'>('idle')
@@ -73,11 +28,10 @@ export function WebAgentLocationForm() {
     setMessage('')
     try {
       const settings = await apiJson<WebAgentSettings>('/v1/settings/web-agent')
-      setForm(toForm(settings.home_location))
+      setForm(toWebAgentLocationForm(settings.home_location))
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Failed to load Web Agent settings'
       setResult('error')
-      setMessage(msg)
+      setMessage(e instanceof Error ? e.message : 'Failed to load Web Agent settings')
     } finally {
       setLoading(false)
     }
@@ -87,7 +41,7 @@ export function WebAgentLocationForm() {
     void loadSettings()
   }, [])
 
-  function update<K extends keyof FormState>(key: K, value: FormState[K]) {
+  function update<K extends keyof WebAgentLocationFormState>(key: K, value: WebAgentLocationFormState[K]) {
     setForm(current => ({ ...current, [key]: value }))
   }
 
@@ -116,13 +70,12 @@ export function WebAgentLocationForm() {
           longitude,
         }),
       })
-      setForm(toForm(settings.home_location))
+      setForm(toWebAgentLocationForm(settings.home_location))
       setResult('success')
       setMessage('Home location saved')
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Failed to save home location'
       setResult('error')
-      setMessage(msg)
+      setMessage(e instanceof Error ? e.message : 'Failed to save home location')
     } finally {
       setSaving(false)
     }
@@ -152,36 +105,7 @@ export function WebAgentLocationForm() {
             <div className={`h-10 rounded-lg ${inputBg} animate-pulse`} />
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="space-y-1 sm:col-span-2">
-              <span className="text-[10px] font-mono uppercase opacity-40">Label</span>
-              <input value={form.label} onChange={e => update('label', e.target.value)} className={`w-full px-3 py-2 rounded-lg border ${border} ${inputBg} text-sm focus:outline-none`} />
-            </label>
-            <label className="space-y-1">
-              <span className="text-[10px] font-mono uppercase opacity-40">ZIP</span>
-              <input value={form.postal_code} onChange={e => update('postal_code', e.target.value)} className={`w-full px-3 py-2 rounded-lg border ${border} ${inputBg} text-sm focus:outline-none`} />
-            </label>
-            <label className="space-y-1">
-              <span className="text-[10px] font-mono uppercase opacity-40">Country</span>
-              <input value={form.country} onChange={e => update('country', e.target.value.toUpperCase())} maxLength={2} className={`w-full px-3 py-2 rounded-lg border ${border} ${inputBg} text-sm font-mono focus:outline-none`} />
-            </label>
-            <label className="space-y-1">
-              <span className="text-[10px] font-mono uppercase opacity-40">City</span>
-              <input value={form.city} onChange={e => update('city', e.target.value)} className={`w-full px-3 py-2 rounded-lg border ${border} ${inputBg} text-sm focus:outline-none`} />
-            </label>
-            <label className="space-y-1">
-              <span className="text-[10px] font-mono uppercase opacity-40">State</span>
-              <input value={form.region} onChange={e => update('region', e.target.value)} className={`w-full px-3 py-2 rounded-lg border ${border} ${inputBg} text-sm focus:outline-none`} />
-            </label>
-            <label className="space-y-1">
-              <span className="text-[10px] font-mono uppercase opacity-40">Latitude</span>
-              <input value={form.latitude} onChange={e => update('latitude', e.target.value)} inputMode="decimal" className={`w-full px-3 py-2 rounded-lg border ${border} ${inputBg} text-sm font-mono focus:outline-none`} />
-            </label>
-            <label className="space-y-1">
-              <span className="text-[10px] font-mono uppercase opacity-40">Longitude</span>
-              <input value={form.longitude} onChange={e => update('longitude', e.target.value)} inputMode="decimal" className={`w-full px-3 py-2 rounded-lg border ${border} ${inputBg} text-sm font-mono focus:outline-none`} />
-            </label>
-          </div>
+          <WebAgentLocationFields form={form} update={update} />
         )}
 
         {result !== 'idle' && (
@@ -191,11 +115,7 @@ export function WebAgentLocationForm() {
           </div>
         )}
 
-        <button
-          onClick={saveLocation}
-          disabled={loading || saving}
-          className="min-h-11 w-full inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-sm font-mono hover:bg-emerald-500/30 disabled:opacity-40 transition-colors"
-        >
+        <button onClick={saveLocation} disabled={loading || saving} className="min-h-11 w-full inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-sm font-mono hover:bg-emerald-500/30 disabled:opacity-40 transition-colors">
           {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
           {saving ? 'Saving...' : 'Save Location'}
         </button>

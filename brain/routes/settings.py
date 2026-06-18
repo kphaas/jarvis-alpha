@@ -22,16 +22,21 @@ def _profile_id(request: Request) -> str:
     return str(getattr(request.state, "profile_id", None) or request.state.user_id)
 
 
+def _admin(request: Request) -> str:
+    check_scopes(request, "admin")
+    return _profile_id(request)
+
+
 @router.get("/web-agent", response_model=WebAgentSettingsResponse)
 async def get_web_agent_settings(
     request: Request,
     _user_id: str = Depends(require_auth),
 ) -> WebAgentSettingsResponse:
-    check_scopes(request, "admin")
+    profile_id = _admin(request)
 
     async with platform_admin_connection(
         source="http",
-        audit_actor=f"settings_web_agent_read:{_profile_id(request)}",
+        audit_actor=f"settings_web_agent_read:{profile_id}",
     ) as conn:
         return await fetch_web_agent_settings(conn)
 
@@ -42,8 +47,7 @@ async def put_web_agent_home_location(
     request: Request,
     _user_id: str = Depends(require_auth),
 ) -> WebAgentSettingsResponse:
-    check_scopes(request, "admin")
-    profile_id = _profile_id(request)
+    profile_id = _admin(request)
 
     async with platform_admin_connection(
         source="http",
