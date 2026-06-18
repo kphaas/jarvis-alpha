@@ -2254,6 +2254,7 @@ def _authorized_keys_payload(text="ssh-ed25519 AAAATEST porchlight\n"):
 
 
 def _configured_tailscale_env(monkeypatch, *, acl_policy=None, key_hash=None):
+    monkeypatch.setattr(porchlight, "current_node_name", lambda: None)
     acl_policy = acl_policy or {
         "acls": [{"action": "accept", "src": ["tag:jarvis"], "dst": ["tag:jarvis:*"]}],
         "ssh": [
@@ -2382,6 +2383,7 @@ def test_tailscale_ssh_posture_fails_for_authorized_key_hash_drift(monkeypatch):
 
 def test_tailscale_ssh_posture_warns_when_acl_token_or_baselines_missing(monkeypatch):
     monkeypatch.setattr(porchlight, "remote_ssh_probe_enabled", lambda: True)
+    monkeypatch.setattr(porchlight, "current_node_name", lambda: None)
     monkeypatch.setattr(
         porchlight,
         "get_secret",
