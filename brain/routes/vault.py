@@ -6,10 +6,12 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from brain.db.rls import rls_connection
+from brain.ingest.docx import ingest_docx
 from brain.middleware.scopes import check_scopes
-from brain.storage.archive import archive_document
-from brain.ingest.pdf import ingest_pdf
 from brain.ingest.excel import ingest_excel
+from brain.ingest.pdf import ingest_pdf
+from brain.ingest.text import ingest_plain_text
+from brain.storage.archive import archive_document
 
 import hashlib  # noqa: F401
 
@@ -27,6 +29,44 @@ VALID_CLASSIFICATIONS = (
 )
 
 router = APIRouter(prefix="/v1/vault", tags=["vault"])
+
+
+async def _pipeline_document_row(db, pipeline_id: str):
+    row = await db.fetchrow(
+        """
+        SELECT
+          vp.id,
+          vp.filename,
+          vp.local_path,
+          vp.content_type,
+          COALESCE(vd.id, fallback_vd.id) AS doc_id,
+          COALESCE(vd.classification, fallback_vd.classification) AS classification
+        FROM vault_pipeline vp
+        LEFT JOIN vault_documents vd ON vd.id = vp.document_id
+        LEFT JOIN LATERAL (
+          SELECT id, classification
+          FROM vault_documents
+          WHERE filename = vp.filename
+          ORDER BY created_at DESC
+          LIMIT 1
+        ) fallback_vd ON vp.document_id IS NULL
+        WHERE vp.id = $1
+        """,
+        pipeline_id,
+    )
+    if not row or not row["doc_id"]:
+        raise HTTPException(status_code=404, detail="Pipeline entry not found")
+    return row
+
+
+async def _mark_ingestion_result(db, pipeline_id: str, result: dict) -> None:
+    error = result.get("error")
+    await db.execute(
+        "UPDATE vault_pipeline SET stage = $1, error = $2 WHERE id = $3",
+        "ingest_error" if error else "ingested",
+        str(error) if error else None,
+        pipeline_id,
+    )
 
 
 @router.post("/upload")
@@ -71,11 +111,12 @@ async def vault_upload(
         row = await db.fetchrow(
             """
             INSERT INTO vault_pipeline
-              (filename, content_type, local_path, size_bytes, stage, uploaded_by, workspace_id)
+              (document_id, filename, content_type, local_path, size_bytes, stage, uploaded_by, workspace_id)
             VALUES
-              ($1, $2, $3, $4, 'inbox', $5, $6)
+              ($1, $2, $3, $4, $5, 'inbox', $6, $7)
             RETURNING id
             """,
+            uuid.UUID(doc_id),
             filename,
             content_type,
             local_path,
@@ -131,16 +172,7 @@ async def vault_pipeline_list(request: Request):
 async def vault_pipeline_confirm(pipeline_id: str, request: Request):
     check_scopes(request, "vault.write", "admin")
     async with rls_connection(request) as db:
-        row = await db.fetchrow(
-            "SELECT vp.id, vp.filename, vp.local_path, vp.content_type, "
-            "vd.id as doc_id, vd.classification "
-            "FROM vault_pipeline vp "
-            "JOIN vault_documents vd ON vd.filename = vp.filename "
-            "WHERE vp.id = $1",
-            pipeline_id,
-        )
-        if not row:
-            raise HTTPException(status_code=404, detail="Pipeline entry not found")
+        row = await _pipeline_document_row(db, pipeline_id)
 
         result = await archive_document(
             local_path=row["local_path"],
@@ -183,23 +215,55 @@ async def vault_ingest_pdf(
     check_scopes(request, "vault.write", "admin")
     file_bytes = await file.read()
     async with rls_connection(request) as db:
-        row = await db.fetchrow(
-            "SELECT vd.id, vd.classification FROM vault_pipeline vp "
-            "JOIN vault_documents vd ON vd.filename = vp.filename "
-            "WHERE vp.id = $1",
-            pipeline_id,
-        )
-        if not row:
-            raise HTTPException(404, "Pipeline entry not found")
-        result = await ingest_pdf(
-            file_bytes=file_bytes,
-            doc_id=str(row["id"]),
-            request=request,
-        )
-        await db.execute(
-            "UPDATE vault_pipeline SET stage = 'ingested' WHERE id = $1",
-            pipeline_id,
-        )
+        row = await _pipeline_document_row(db, pipeline_id)
+    result = await ingest_pdf(
+        file_bytes=file_bytes,
+        doc_id=str(row["doc_id"]),
+        request=request,
+    )
+    async with rls_connection(request) as db:
+        await _mark_ingestion_result(db, pipeline_id, result)
+    return JSONResponse(result)
+
+
+@router.post("/ingest/docx")
+async def vault_ingest_docx(
+    request: Request,
+    file: UploadFile = File(...),
+    pipeline_id: str = Form(...),
+):
+    check_scopes(request, "vault.write", "admin")
+    file_bytes = await file.read()
+    async with rls_connection(request) as db:
+        row = await _pipeline_document_row(db, pipeline_id)
+    result = await ingest_docx(
+        file_bytes=file_bytes,
+        doc_id=str(row["doc_id"]),
+        request=request,
+    )
+    async with rls_connection(request) as db:
+        await _mark_ingestion_result(db, pipeline_id, result)
+    return JSONResponse(result)
+
+
+@router.post("/ingest/text")
+async def vault_ingest_text(
+    request: Request,
+    file: UploadFile = File(...),
+    pipeline_id: str = Form(...),
+):
+    check_scopes(request, "vault.write", "admin")
+    file_bytes = await file.read()
+    async with rls_connection(request) as db:
+        row = await _pipeline_document_row(db, pipeline_id)
+    result = await ingest_plain_text(
+        file_bytes=file_bytes,
+        filename=file.filename or "unknown.txt",
+        doc_id=str(row["doc_id"]),
+        request=request,
+    )
+    async with rls_connection(request) as db:
+        await _mark_ingestion_result(db, pipeline_id, result)
     return JSONResponse(result)
 
 
@@ -212,24 +276,15 @@ async def vault_ingest_excel(
     check_scopes(request, "vault.write", "admin")
     file_bytes = await file.read()
     async with rls_connection(request) as db:
-        row = await db.fetchrow(
-            "SELECT vd.id FROM vault_pipeline vp "
-            "JOIN vault_documents vd ON vd.filename = vp.filename "
-            "WHERE vp.id = $1",
-            pipeline_id,
-        )
-        if not row:
-            raise HTTPException(404, "Pipeline entry not found")
-        result = await ingest_excel(
-            file_bytes=file_bytes,
-            filename=file.filename or "unknown.xlsx",
-            doc_id=str(row["id"]),
-            request=request,
-        )
-        await db.execute(
-            "UPDATE vault_pipeline SET stage = 'ingested' WHERE id = $1",
-            pipeline_id,
-        )
+        row = await _pipeline_document_row(db, pipeline_id)
+    result = await ingest_excel(
+        file_bytes=file_bytes,
+        filename=file.filename or "unknown.xlsx",
+        doc_id=str(row["doc_id"]),
+        request=request,
+    )
+    async with rls_connection(request) as db:
+        await _mark_ingestion_result(db, pipeline_id, result)
     return JSONResponse(result)
 
 
