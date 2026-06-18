@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import type { ReactNode } from "react";
-import { Cpu, Globe, Monitor, FlaskConical } from 'lucide-react';
+import { Cpu, Globe, Monitor, FlaskConical, MailCheck } from 'lucide-react';
 import { apiFetch, apiJson } from "../lib/apiFetch";
 
 const REFRESH_MS = 60_000;
@@ -81,6 +81,30 @@ interface BeaconHealthPayload {
   checks: Record<string, BeaconHealthCheck>;
   retention: BeaconRetentionReport;
   checked_at: string;
+}
+
+interface At0MailGraphHealth {
+  status: "ok" | "failed";
+  trigger: string;
+  checked_at: string;
+  mailboxes_checked: number;
+  messages_seen: number;
+  graph_roles: string[];
+  missing_graph_roles: string[];
+  current_send_failures: number;
+  stuck_sending_count: number;
+  last_sent_at: string | null;
+  error_type: string | null;
+  requires_attention: boolean;
+}
+
+interface At0MailHealthPayload {
+  status: string;
+  requires_attention: boolean;
+  age_minutes: number | null;
+  message_count: number;
+  draft_count: number;
+  latest_graph_health: At0MailGraphHealth | null;
 }
 
 interface PendingApprovalItem {
@@ -171,6 +195,13 @@ function beaconStatusColor(status: string): string {
   return "#ef4444";
 }
 
+function at0MailStatusColor(status: string, requiresAttention?: boolean): string {
+  if (requiresAttention) return "#ef4444";
+  if (status === "ok") return "#22c55e";
+  if (status === "running") return "#f59e0b";
+  return "#ef4444";
+}
+
 function metadataNumber(
   metadata: Record<string, unknown> | undefined,
   key: string
@@ -241,6 +272,9 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
   const [beaconApprovals, setBeaconApprovals] = useState<PendingApprovalItem[]>([]);
   const [beaconLoading, setBeaconLoading] = useState(true);
   const [beaconErr, setBeaconErr] = useState(false);
+  const [at0MailHealth, setAt0MailHealth] = useState<At0MailHealthPayload | null>(null);
+  const [at0MailLoading, setAt0MailLoading] = useState(true);
+  const [at0MailErr, setAt0MailErr] = useState(false);
 
   const fetchSummary = useCallback(async () => {
     try {
@@ -325,19 +359,35 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
     }
   }, []);
 
+  const fetchAt0Mail = useCallback(async () => {
+    setAt0MailLoading(true);
+    setAt0MailErr(false);
+    try {
+      const health = await apiJson<At0MailHealthPayload>("/v1/at0-mail/health");
+      setAt0MailHealth(health);
+    } catch {
+      setAt0MailHealth(null);
+      setAt0MailErr(true);
+    } finally {
+      setAt0MailLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchSummary();
     fetchAgents();
     fetchTemporalStorage();
     fetchBeacon();
+    fetchAt0Mail();
     const t = setInterval(() => {
       fetchSummary();
       fetchAgents();
       fetchTemporalStorage();
       fetchBeacon();
+      fetchAt0Mail();
     }, REFRESH_MS);
     return () => clearInterval(t);
-  }, [fetchSummary, fetchAgents, fetchTemporalStorage, fetchBeacon]);
+  }, [fetchSummary, fetchAgents, fetchTemporalStorage, fetchBeacon, fetchAt0Mail]);
 
   const sectionStyle = {
     background: card,
@@ -388,6 +438,7 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
               fetchAgents();
               fetchTemporalStorage();
               fetchBeacon();
+              fetchAt0Mail();
             }}
             style={{ fontSize: 12, padding: "6px 12px", borderRadius: 6, border: `1px solid ${border}`, background: "transparent", color: text, cursor: "pointer" }}
           >
@@ -568,6 +619,80 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
                 </div>
                 <div style={{ fontSize: 11, color: muted, marginTop: 10 }}>
                   Checked {new Date(beaconHealth.checked_at).toLocaleTimeString()} · raw web content remains untrusted evidence only
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      </div>
+
+      {/* Herald Graph Send Health */}
+      <div style={sectionStyle}>
+        <div style={sectionHeader}>
+          <span style={labelStyle}>Herald Graph Send Health</span>
+          {at0MailHealth && (
+            <span style={{
+              fontSize: 11,
+              color: at0MailStatusColor(at0MailHealth.status, at0MailHealth.requires_attention),
+              fontWeight: 700,
+              textTransform: "uppercase",
+            }}>
+              {at0MailHealth.status}
+            </span>
+          )}
+        </div>
+        <div style={{ padding: "14px 16px" }}>
+          {at0MailLoading && (
+            <span style={{ fontSize: 12, color: muted }}>Loading…</span>
+          )}
+          {!at0MailLoading && at0MailErr && (
+            <span style={{ fontSize: 12, color: "#f59e0b" }}>Herald mail health unavailable</span>
+          )}
+          {!at0MailLoading && !at0MailErr && at0MailHealth && (() => {
+            const graph = at0MailHealth.latest_graph_health;
+            const graphOk = graph != null && !graph.requires_attention && graph.status === "ok";
+            const hasMailSend = graph?.graph_roles.includes("Mail.Send") ?? false;
+            return (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 14 }}>
+                  <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Graph Monitor</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 700, color: graphOk ? "#22c55e" : "#ef4444" }}>
+                      <MailCheck className="w-4 h-4" />
+                      {graph?.status ?? "missing"}
+                    </div>
+                    <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
+                      {graph ? `${graph.trigger} · ${new Date(graph.checked_at).toLocaleTimeString()}` : "No monitor row"}
+                    </div>
+                  </div>
+                  <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Mail.Send</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: hasMailSend ? "#22c55e" : "#ef4444" }}>
+                      {hasMailSend ? "present" : "missing"}
+                    </div>
+                    <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
+                      Missing: {graph?.missing_graph_roles.length ? graph.missing_graph_roles.join(", ") : "none"}
+                    </div>
+                  </div>
+                  <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Send State</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: graph && (graph.current_send_failures > 0 || graph.stuck_sending_count > 0) ? "#ef4444" : text }}>
+                      {graph?.current_send_failures ?? 0} failed · {graph?.stuck_sending_count ?? 0} stuck
+                    </div>
+                    <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
+                      Last sent {graph?.last_sent_at ? new Date(graph.last_sent_at).toLocaleString() : "never"}
+                    </div>
+                  </div>
+                  <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Mailboxes</div>
+                    <div style={{ fontSize: 18, fontWeight: 700 }}>{graph?.mailboxes_checked ?? 0}</div>
+                    <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
+                      {at0MailHealth.message_count} messages · {at0MailHealth.draft_count} drafts
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: muted }}>
+                  Top-level health age {at0MailHealth.age_minutes ?? "—"} min · requires attention: {at0MailHealth.requires_attention ? "yes" : "no"}
                 </div>
               </>
             );

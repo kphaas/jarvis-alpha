@@ -113,6 +113,27 @@ interface SendResponse {
   sent_at: string
 }
 
+interface GraphHealth {
+  status: 'ok' | 'failed'
+  trigger: string
+  checked_at: string
+  mailboxes_checked: number
+  messages_seen: number
+  graph_roles: string[]
+  missing_graph_roles: string[]
+  current_send_failures: number
+  stuck_sending_count: number
+  last_sent_at: string | null
+  error_type: string | null
+  requires_attention: boolean
+}
+
+interface HealthResponse {
+  status: string
+  requires_attention: boolean
+  latest_graph_health: GraphHealth | null
+}
+
 const ALL_MAILBOXES = 'all'
 
 function timeText(value: string | null) {
@@ -145,6 +166,14 @@ function Pill({ label }: { label: string }) {
   )
 }
 
+function graphHealthTone(health: GraphHealth | null | undefined) {
+  if (!health) return 'border-zinc-400/30 bg-zinc-500/10 text-zinc-400'
+  if (health.requires_attention || health.status !== 'ok') {
+    return 'border-rose-400/30 bg-rose-500/10 text-rose-300'
+  }
+  return 'border-emerald-400/30 bg-emerald-500/10 text-emerald-300'
+}
+
 export default function Herald() {
   const { theme } = useAppStore()
   const isDark = theme === 'dark'
@@ -155,6 +184,7 @@ export default function Herald() {
   const strong = isDark ? 'text-white' : 'text-[#141414]'
 
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
+  const [health, setHealth] = useState<HealthResponse | null>(null)
   const [mailboxes, setMailboxes] = useState<string[]>([])
   const [selectedMailbox, setSelectedMailbox] = useState(ALL_MAILBOXES)
   const [messages, setMessages] = useState<MailMessage[]>([])
@@ -168,11 +198,12 @@ export default function Herald() {
   const load = useCallback(async () => {
     try {
       const mailboxQuery = selectedMailbox === ALL_MAILBOXES ? '' : `&mailbox=${encodeURIComponent(selectedMailbox)}`
-      const [mailboxRes, dashboardRes, messageRes, draftRes] = await Promise.all([
+      const [mailboxRes, dashboardRes, messageRes, draftRes, healthRes] = await Promise.all([
         apiJson<MailboxList>('/v1/at0-mail/mailboxes'),
         apiJson<Dashboard>('/v1/at0-mail/dashboard'),
         apiJson<MessageList>(`/v1/at0-mail/messages?limit=12${mailboxQuery}`),
         apiJson<DraftList>(`/v1/at0-mail/drafts?status=all&limit=12${mailboxQuery}`),
+        apiJson<HealthResponse>('/v1/at0-mail/health'),
       ])
       setMailboxes(mailboxRes.mailboxes)
       if (selectedMailbox !== ALL_MAILBOXES && !mailboxRes.mailboxes.includes(selectedMailbox)) {
@@ -181,6 +212,7 @@ export default function Herald() {
       setDashboard(dashboardRes)
       setMessages(messageRes.messages)
       setDrafts(draftRes.drafts)
+      setHealth(healthRes)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load Herald')
@@ -213,6 +245,7 @@ export default function Herald() {
   }, [dashboard, selectedMailbox])
 
   const selectedLabel = selectedMailbox === ALL_MAILBOXES ? 'all inboxes' : selectedMailbox
+  const graphHealth = health?.latest_graph_health ?? null
 
   const selectMailbox = (mailbox: string) => {
     setLoading(true)
@@ -303,6 +336,35 @@ export default function Herald() {
       </div>
 
       <div className={`flex flex-col gap-3 rounded-xl border p-3 ${border} ${panel}`}>
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+          <div className={`rounded-lg border p-3 ${border} ${strongPanel}`}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${graphHealthTone(graphHealth)}`}>
+                {graphHealth ? `Graph send ${graphHealth.status}` : 'Graph send unknown'}
+              </span>
+              <span className={`text-[10px] font-mono uppercase ${muted}`}>
+                {graphHealth ? `checked ${timeText(graphHealth.checked_at)}` : 'no monitor row'}
+              </span>
+            </div>
+            <div className={`mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] ${muted}`}>
+              <span>Mailboxes <span className={strong}>{graphHealth?.mailboxes_checked ?? 0}</span></span>
+              <span>Mail.Send <span className={graphHealth?.graph_roles.includes('Mail.Send') ? 'text-emerald-300' : 'text-rose-300'}>
+                {graphHealth?.graph_roles.includes('Mail.Send') ? 'present' : 'missing'}
+              </span></span>
+              <span>Failures <span className={graphHealth?.current_send_failures ? 'text-rose-300' : strong}>
+                {graphHealth?.current_send_failures ?? 0}
+              </span></span>
+              <span>Stuck <span className={graphHealth?.stuck_sending_count ? 'text-rose-300' : strong}>
+                {graphHealth?.stuck_sending_count ?? 0}
+              </span></span>
+              <span>Last sent <span className={strong}>{timeText(graphHealth?.last_sent_at ?? null)}</span></span>
+            </div>
+          </div>
+          <div className={`rounded-lg border p-3 ${border} ${strongPanel}`}>
+            <div className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>Send mode</div>
+            <div className={`mt-2 text-sm font-bold ${strong}`}>Approved drafts only</div>
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
