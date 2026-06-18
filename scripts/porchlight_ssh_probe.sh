@@ -66,6 +66,41 @@ payload = {
 print(json.dumps(payload, sort_keys=True))
 PY
     ;;
+  "porchlight tailscale-prefs")
+    exec /bin/sh -lc '
+      tsbin="${PORCHLIGHT_TAILSCALE_BIN:-/opt/homebrew/bin/tailscale}"
+      if [ -x "$tsbin" ]; then
+        "$tsbin" debug prefs
+      elif command -v tailscale >/dev/null 2>&1; then
+        tailscale debug prefs
+      else
+        echo "{\"error\":\"tailscale_missing\"}"
+        exit 127
+      fi
+    '
+    ;;
+  "porchlight authorized-keys")
+    exec python3 - <<'PY'
+import hashlib
+import json
+import os
+
+path = os.path.expanduser("~/.ssh/authorized_keys")
+payload = {"path": path, "exists": os.path.exists(path)}
+if payload["exists"]:
+    stat_result = os.stat(path)
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    payload.update(
+        mode=format(stat_result.st_mode & 0o777, "o"),
+        size=stat_result.st_size,
+        sha256=digest.hexdigest(),
+    )
+print(json.dumps(payload, sort_keys=True))
+PY
+    ;;
   porchlight\ jwt-exp\ ALPHA_SERVICE_TOKEN\ *|porchlight\ jwt-exp\ ALPHA_SENTINEL_SERVICE_TOKEN\ *)
     set -- ${SSH_ORIGINAL_COMMAND}
     secret_name="${3:-}"

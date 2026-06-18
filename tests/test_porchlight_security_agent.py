@@ -2293,14 +2293,14 @@ def _tailscale_ssh(*, run_ssh=False, key_payload=None):
     key_payload = key_payload or _authorized_keys_payload()
 
     def fake_ssh(_target, command):
-        if "debug prefs" in command:
+        if command == "porchlight tailscale-prefs":
             return porchlight.CommandResult(
                 0,
                 "Warning: client/server version mismatch\n"
                 + json.dumps({"RunSSH": run_ssh}),
                 "",
             )
-        if "authorized_keys" in command:
+        if command == "porchlight authorized-keys":
             return porchlight.CommandResult(0, json.dumps(key_payload), "")
         raise AssertionError(command)
 
