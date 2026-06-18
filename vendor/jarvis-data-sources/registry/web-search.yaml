@@ -1,0 +1,56 @@
+# Web search, answer, and retrieval APIs.
+
+- id: brave-search
+  name: Brave Search API
+  domain: web-search
+  url: https://brave.com/search/api/
+  api_base_url: https://api.search.brave.com/res/v1
+  auth:
+    type: api-key
+    notes: |
+      Uses the X-Subscription-Token request header. Brave enforces rate limits
+      with a one-second sliding window and returns X-RateLimit-* headers for
+      second and monthly windows. Current public Search plan capacity is 50 QPS.
+  pricing: freemium
+  free_tier: $5 monthly credits; current Search plan is $5 per 1,000 requests
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - public-web-search
+    - cited-search
+    - agent-grounding
+    - search-redundancy
+  notes: |
+    Alpha Beacon uses Brave as one Gateway-owned public search provider. Do not
+    send PHI or secrets in queries. Budget counters and circuit breakers should
+    stay enabled because billing and rate limits are request-metered.
+  last_verified: 2026-06-18
+  review_cadence_days: 30
+
+- id: perplexity-search
+  name: Perplexity Search API
+  domain: web-search
+  url: https://docs.perplexity.ai/docs/search/quickstart
+  api_base_url: https://api.perplexity.ai
+  auth:
+    type: bearer
+    notes: |
+      Uses a bearer API key. The Search API POST /search endpoint is documented
+      at 50 requests/second with a burst size of 50, independent of usage tier.
+  pricing: paid
+  free_tier: null
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - public-web-search
+    - ranked-results
+    - cited-search
+    - search-redundancy
+  notes: |
+    Search API returns raw ranked web results and is separate from Sonar prose
+    answer generation. Pricing is currently request-metered with no token costs
+    for Search API calls. Do not send PHI or secrets in queries.
+  last_verified: 2026-06-18
+  review_cadence_days: 30

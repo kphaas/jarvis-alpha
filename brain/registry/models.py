@@ -33,6 +33,7 @@ CostMode = Literal["none", "local", "cloud"]
 
 _SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
 _AGENT_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_DATA_SOURCE_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 class SkillRuntimeManifest(BaseModel):
@@ -55,7 +56,20 @@ class SkillEgressManifest(BaseModel):
         max_length=96,
         pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
     )
+    data_source_ids: list[str] = Field(default_factory=list)
     allowed_hosts: list[str] = Field(default_factory=list)
+
+    @field_validator("data_source_ids")
+    @classmethod
+    def validate_data_source_ids(cls, value: list[str]) -> list[str]:
+        seen: set[str] = set()
+        for source_id in value:
+            if not _DATA_SOURCE_ID_RE.match(source_id):
+                raise ValueError("data_source_ids entries must be kebab-case")
+            if source_id in seen:
+                raise ValueError("data_source_ids entries must be unique")
+            seen.add(source_id)
+        return value
 
 
 class SkillAuditManifest(BaseModel):

@@ -147,6 +147,10 @@ class _SearchProviderCircuit:
 
 
 _SEARCH_PROVIDERS = ("brave", "perplexity")
+_SEARCH_PROVIDER_DATA_SOURCE_IDS = {
+    "brave": "brave-search",
+    "perplexity": "perplexity-search",
+}
 _SEARCH_CIRCUITS: dict[str, _SearchProviderCircuit] = {
     provider: _SearchProviderCircuit(failures=[]) for provider in _SEARCH_PROVIDERS
 }
@@ -663,6 +667,7 @@ def _search_provider_health(provider: str) -> dict[str, object]:
     budget = _search_provider_budget(provider)
     return {
         "provider": provider,
+        "data_source_id": _SEARCH_PROVIDER_DATA_SOURCE_IDS[provider],
         "configured": _search_provider_key(provider) is not None,
         "circuit_open": cooldown_remaining_s is not None,
         "failure_count": len(circuit.failures),

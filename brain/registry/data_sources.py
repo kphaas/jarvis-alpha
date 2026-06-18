@@ -24,8 +24,13 @@ ACTIVE_GATEWAY_EXTERNAL_DATA_DOMAINS = frozenset(
         "news",
         "utility",
         "weather",
+        "web-search",
     }
 )
+
+EXTERNAL_DATA_DOMAIN_BY_SKILL_DOMAIN = {
+    "internet_scout": "web-search",
+}
 
 
 @dataclass(frozen=True)
@@ -121,21 +126,22 @@ def evaluate_skill_data_source_coverage(
             continue
 
         manifest = SkillManifestV1.model_validate(skill.metadata["manifest"])
-        data_source_id = manifest.egress.data_source_id
-        if not data_source_id:
-            gaps.append(f"{skill.name}: missing manifest.egress.data_source_id")
+        data_source_ids = _skill_data_source_ids(manifest)
+        if not data_source_ids:
+            gaps.append(f"{skill.name}: missing manifest.egress data source id")
             continue
 
-        data_source = data_sources.get(data_source_id)
-        if data_source is None:
-            gaps.append(f"{skill.name}: unknown data source id {data_source_id!r}")
-            continue
+        for data_source_id in data_source_ids:
+            data_source = data_sources.get(data_source_id)
+            if data_source is None:
+                gaps.append(f"{skill.name}: unknown data source id {data_source_id!r}")
+                continue
 
-        if not _domains_match(required_domain, data_source.domain):
-            gaps.append(
-                f"{skill.name}: data source {data_source_id!r} has domain "
-                f"{data_source.domain!r}, expected {required_domain!r}"
-            )
+            if not _domains_match(required_domain, data_source.domain):
+                gaps.append(
+                    f"{skill.name}: data source {data_source_id!r} has domain "
+                    f"{data_source.domain!r}, expected {required_domain!r}"
+                )
 
     return gaps
 
@@ -173,9 +179,23 @@ def _required_external_data_domain(skill: SkillSpec) -> str | None:
     if manifest.egress.mode != "gateway":
         return None
 
+    if manifest.side_effect_class != "read":
+        return None
+
     if skill.domain in ACTIVE_GATEWAY_EXTERNAL_DATA_DOMAINS:
         return skill.domain
+    mapped_domain = EXTERNAL_DATA_DOMAIN_BY_SKILL_DOMAIN.get(skill.domain)
+    if mapped_domain in ACTIVE_GATEWAY_EXTERNAL_DATA_DOMAINS:
+        return mapped_domain
     return None
+
+
+def _skill_data_source_ids(manifest: SkillManifestV1) -> list[str]:
+    data_source_ids: list[str] = []
+    if manifest.egress.data_source_id:
+        data_source_ids.append(manifest.egress.data_source_id)
+    data_source_ids.extend(manifest.egress.data_source_ids)
+    return list(dict.fromkeys(data_source_ids))
 
 
 def _domains_match(skill_domain: str, source_domain: str) -> bool:
