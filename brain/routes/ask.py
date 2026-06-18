@@ -9,10 +9,16 @@ from brain.core.models import EMBED_MODEL
 from brain.db.rls import rls_connection
 from brain.memory.memory import MemoryService
 from brain.routing.router import route
+from brain.services.vault_recall import (
+    embed_vault_query,
+    search_vault_chunks,
+    vault_context_block,
+)
 
 
 router = APIRouter(prefix="/v1", tags=["ask"])
 logger = get_logger("alpha_brain")
+DEFAULT_VAULT_WORKSPACE_ID = "personal"
 
 
 def _user_uuid(user_id: str) -> UUID:
@@ -24,6 +30,23 @@ def _user_uuid(user_id: str) -> UUID:
 
 def _principal_id(request: Request) -> str:
     return str(getattr(request.state, "user_id", None) or "anon")
+
+
+def _can_read_vault(request: Request) -> bool:
+    actor_type = getattr(request.state, "actor_type", "user")
+    role = getattr(request.state, "role", None)
+    if actor_type == "user" and role == "admin":
+        return True
+    scopes = set(getattr(request.state, "scopes", []) or [])
+    return "*" in scopes or "vault.read" in scopes
+
+
+def _ensure_vault_workspace(request: Request) -> None:
+    workspace_id = getattr(request.state, "workspace_id", None)
+    if isinstance(workspace_id, str) and workspace_id.strip():
+        request.state.workspace_id = workspace_id.strip()
+        return
+    request.state.workspace_id = DEFAULT_VAULT_WORKSPACE_ID
 
 
 class AskRequest(BaseModel):
@@ -118,6 +141,10 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
     start_time = time.monotonic()
     try:
         embedding = await _embed(body.prompt)
+        vault_embedding = None
+        if _can_read_vault(request):
+            _ensure_vault_workspace(request)
+            vault_embedding = await embed_vault_query(body.prompt)
         raw_user_id = _principal_id(request)
         uid = _user_uuid(raw_user_id)
 
@@ -130,10 +157,27 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
                 embedding=embedding,
                 principal_id=raw_user_id,
             )
+            vault_context = ""
+            if _can_read_vault(request):
+                try:
+                    vault_matches = await search_vault_chunks(
+                        conn,
+                        query=body.prompt,
+                        embedding=vault_embedding,
+                        limit=5,
+                    )
+                    vault_context = vault_context_block(vault_matches)
+                except Exception as exc:
+                    logger.warning("vault recall unavailable for ask: %s", exc)
 
         enriched_prompt = body.prompt
+        context_blocks = []
         if context:
-            enriched_prompt = f"Context from memory:\n{context}\n\nUser: {body.prompt}"
+            context_blocks.append(f"Context from memory:\n{context}")
+        if vault_context:
+            context_blocks.append(vault_context)
+        if context_blocks:
+            enriched_prompt = "\n\n".join(context_blocks) + f"\n\nUser: {body.prompt}"
 
         result_dict = await route(enriched_prompt, body.mode)
 

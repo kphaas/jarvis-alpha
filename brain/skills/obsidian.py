@@ -21,10 +21,13 @@ from brain.skills.runner import SkillCall
 
 MAX_SEARCH_RESULTS = 50
 MAX_NOTE_BYTES = 512 * 1024
+MAX_DIGEST_BODY_CHARS = 50_000
 MAX_SEARCH_FILES = 5000
 DEFAULT_TASKS_INBOX = "Inbox.md"
+DEFAULT_PRIVATE_DIGEST_DIR = "AT-0/Private Document Digests"
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 TAG_RE = re.compile(r"^#?[A-Za-z0-9_/-]{1,80}$")
+NOTE_DIGEST_ID_RE = TASK_ID_RE
 IGNORED_DIRS = {
     ".git",
     ".obsidian",
@@ -94,6 +97,48 @@ class TasksCreatePayload(BaseModel):
         return sorted(set(tags))
 
 
+class NotesWritePrivateDigestPayload(BaseModel):
+    title: str = Field(min_length=1, max_length=180)
+    body: str = Field(min_length=1, max_length=MAX_DIGEST_BODY_CHARS)
+    tags: list[str] = Field(default_factory=list, max_length=12)
+    path: str | None = Field(default=None, max_length=240)
+    document_id: str | None = Field(default=None, max_length=120)
+    source_name: str | None = Field(default=None, max_length=240)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("title must be non-empty")
+        if any(token in value for token in ("\n", "\r", "\x00", "<!--")):
+            raise ValueError("title contains unsupported markdown control text")
+        return normalized
+
+    @field_validator("body")
+    @classmethod
+    def validate_body(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("body contains unsupported control text")
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("body must be non-empty")
+        return normalized
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, value: list[str]) -> list[str]:
+        tags: list[str] = []
+        for raw_tag in value:
+            tag = raw_tag.strip()
+            if not tag:
+                continue
+            if not TAG_RE.match(tag):
+                raise ValueError(f"invalid note tag: {raw_tag}")
+            tags.append(tag.lstrip("#"))
+        return sorted(set(tags))
+
+
 async def notes_search(call: SkillCall) -> dict[str, Any]:
     payload = NotesSearchPayload.model_validate(_public_payload(call))
     root = _vault_root(call.payload)
@@ -142,6 +187,46 @@ async def notes_search(call: SkillCall) -> dict[str, Any]:
     }
 
 
+async def notes_write_private_digest(call: SkillCall) -> dict[str, Any]:
+    idempotency_key = call.invocation.idempotency_key
+    if not idempotency_key or not NOTE_DIGEST_ID_RE.match(idempotency_key):
+        raise ObsidianSkillError("valid_idempotency_key_required")
+
+    payload = NotesWritePrivateDigestPayload.model_validate(_public_payload(call))
+    root = _vault_root(call.payload)
+    target = _safe_markdown_file(
+        root,
+        payload.path or _default_private_digest_path(payload.title),
+    )
+    marker = _note_marker(idempotency_key)
+    note_text = _private_digest_markdown(payload, idempotency_key)
+
+    created = False
+    lock_path = _lock_path(root)
+    with lock_path.open("a", encoding="utf-8") as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            existing = target.read_text(encoding="utf-8") if target.exists() else ""
+            if marker in existing:
+                status = "exists"
+            elif existing.strip():
+                raise ObsidianSkillError("target_exists_without_digest_marker")
+            else:
+                _atomic_write_text(target, note_text)
+                created = True
+                status = "created"
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    return {
+        "status": status,
+        "created": created,
+        "path": target.relative_to(root).as_posix(),
+        "idempotency_key": idempotency_key,
+        "marker": marker,
+    }
+
+
 async def tasks_create(call: SkillCall) -> dict[str, Any]:
     idempotency_key = call.invocation.idempotency_key
     if not idempotency_key or not TASK_ID_RE.match(idempotency_key):
@@ -179,6 +264,7 @@ async def tasks_create(call: SkillCall) -> dict[str, Any]:
 def obsidian_skill_handlers() -> dict[str, Any]:
     return {
         "notes.search": notes_search,
+        "notes.write_private_digest": notes_write_private_digest,
         "tasks.create": tasks_create,
     }
 
@@ -211,6 +297,10 @@ def _default_tasks_inbox() -> str:
         return get_secret("OBSIDIAN_TASKS_INBOX")
     except KeyError:
         return DEFAULT_TASKS_INBOX
+
+
+def _default_private_digest_path(title: str) -> str:
+    return f"{DEFAULT_PRIVATE_DIGEST_DIR}/{_slugify(title)}.md"
 
 
 def _safe_dir(root: Path, requested: str | None) -> Path:
@@ -287,6 +377,51 @@ def _task_line(payload: TasksCreatePayload, idempotency_key: str) -> str:
 
 def _task_marker(idempotency_key: str) -> str:
     return f"<!-- jarvis-task-id:{idempotency_key} -->"
+
+
+def _note_marker(idempotency_key: str) -> str:
+    return f"<!-- jarvis-note-id:{idempotency_key} -->"
+
+
+def _private_digest_markdown(
+    payload: NotesWritePrivateDigestPayload,
+    idempotency_key: str,
+) -> str:
+    tags = payload.tags or ["private"]
+    lines = [
+        "---",
+        "private: true",
+        'source: "alpha-vault-digest"',
+        f'title: "{_yaml_escape(payload.title)}"',
+    ]
+    if payload.document_id:
+        lines.append(f'document_id: "{_yaml_escape(payload.document_id)}"')
+    if payload.source_name:
+        lines.append(f'source_name: "{_yaml_escape(payload.source_name)}"')
+    lines.append("tags:")
+    lines.extend(f'  - "{_yaml_escape(tag)}"' for tag in tags)
+    lines.extend(
+        [
+            "---",
+            "",
+            f"# {payload.title}",
+            "",
+            payload.body.strip(),
+            "",
+            _note_marker(idempotency_key),
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", value.strip().lower()).strip("-")
+    return slug[:80] or "document-digest"
+
+
+def _yaml_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _append_line(existing: str, line: str) -> str:
