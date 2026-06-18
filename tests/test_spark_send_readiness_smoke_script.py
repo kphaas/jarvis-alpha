@@ -39,3 +39,24 @@ def test_spark_send_readiness_smoke_script_is_non_live_canary() -> None:
     assert "--data-binary" not in text
     assert "request_json" not in text
     assert "post_json" not in text
+
+
+def test_spark_send_readiness_launchagent_is_scheduled() -> None:
+    plist = Path("launchagents/com.jarvis.alpha.spark-send-readiness.template.plist")
+    start = Path("scripts/start_alpha_spark_send_readiness.sh")
+    install = Path("scripts/install_launchagents.py")
+    pull = Path("scripts/jarvisalpha_pull.sh")
+
+    plist_text = plist.read_text(encoding="utf-8")
+    start_text = start.read_text(encoding="utf-8")
+    install_text = install.read_text(encoding="utf-8")
+    pull_text = pull.read_text(encoding="utf-8")
+
+    assert "com.jarvis.alpha.spark-send-readiness" in plist_text
+    assert "StartInterval" in plist_text
+    assert "<integer>3600</integer>" in plist_text
+    assert "start_alpha_spark_send_readiness.sh" in plist_text
+    assert "smoke_spark_send_readiness.sh" in start_text
+    assert "alpha_spark_send_readiness.log" in start_text
+    assert "com.jarvis.alpha.spark-send-readiness" in install_text
+    assert "alpha-spark-send-readiness" in pull_text

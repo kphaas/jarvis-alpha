@@ -153,6 +153,10 @@ needs_reload_school_email() {
   service_has_changes_matching "alpha-school-email" '(^launchagents/com\.jarvis\.alpha\.(school-email|gmail-health|at0-mail|at0-mail-health)\.template\.plist$|^scripts/start_alpha_(school_email|gmail_health|at0_mail|at0_mail_health)\.sh$|^scripts/install_launchagents\.py$)'
 }
 
+needs_reload_spark_send_readiness() {
+  service_has_changes_matching "alpha-spark-send-readiness" '(^launchagents/com\.jarvis\.alpha\.spark-send-readiness\.template\.plist$|^scripts/start_alpha_spark_send_readiness\.sh$|^scripts/smoke_spark_send_readiness\.sh$|^scripts/install_launchagents\.py$)'
+}
+
 needs_reload_sweep_cert() {
   service_has_changes_matching "alpha-sweep-cert-renewal" "(^launchagents/com\\.jarvis\\.alpha\\.sweep-cert-renewal\\.${NODE_SHORT}\\.template\\.plist$|^launchagents/com\\.jarvis\\.alpha\\.sweep-cert-renewal\\.template\\.plist$|^scripts/install_launchagents\\.py$)"
 }
@@ -516,6 +520,39 @@ if [ "$NODE_SHORT" = "brain" ] && needs_reload_school_email; then
 elif [ "$NODE_SHORT" = "brain" ]; then
   emit skip restart node="$NODE_SHORT" service="alpha-school-email" reason="no_launchagent_changes"
   mark_service_checked "alpha-school-email"
+fi
+
+SPARK_SEND_READINESS_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.spark-send-readiness.plist"
+if [ "$NODE_SHORT" = "brain" ] && needs_reload_spark_send_readiness; then
+  echo ""
+  echo "Refreshing Spark send readiness LaunchAgent..."
+  SPARK_CANARY_START=$(time_ms)
+  INSTALL_LOG=$(mktemp)
+  if ! python3 "${REPO_DIR}/scripts/install_launchagents.py" --node brain >"$INSTALL_LOG" 2>&1; then
+    SPARK_CANARY_DUR=$(($(time_ms) - SPARK_CANARY_START))
+    INSTALL_ERR=$(tail -5 "$INSTALL_LOG" | tr '\n' ' ' | cut -c1-300)
+    rm -f "$INSTALL_LOG"
+    emit fail restart node="$NODE_SHORT" service="alpha-spark-send-readiness" dur_ms="$SPARK_CANARY_DUR" error="$INSTALL_ERR"
+    echo "❌ Spark send readiness LaunchAgent install failed"
+    exit 1
+  fi
+  rm -f "$INSTALL_LOG"
+  if [ -f "$SPARK_SEND_READINESS_PLIST" ]; then
+    launchctl unload "$SPARK_SEND_READINESS_PLIST" 2>/dev/null || true
+    launchctl load "$SPARK_SEND_READINESS_PLIST"
+    SPARK_CANARY_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.spark-send-readiness" {print $1}' | head -1)
+    [ "$SPARK_CANARY_PID" = "-" ] && SPARK_CANARY_PID=0
+    echo "✅ Spark send readiness LaunchAgent refreshed"
+    emit ok restart node="$NODE_SHORT" service="alpha-spark-send-readiness" pid="${SPARK_CANARY_PID:-0}" dur_ms=$(($(time_ms) - SPARK_CANARY_START))
+  else
+    emit fail restart node="$NODE_SHORT" service="alpha-spark-send-readiness" dur_ms=$(($(time_ms) - SPARK_CANARY_START)) error="plist missing after install"
+    echo "❌ Spark send readiness LaunchAgent plist missing after install"
+    exit 1
+  fi
+  mark_service_checked "alpha-spark-send-readiness"
+elif [ "$NODE_SHORT" = "brain" ]; then
+  emit skip restart node="$NODE_SHORT" service="alpha-spark-send-readiness" reason="no_launchagent_changes"
+  mark_service_checked "alpha-spark-send-readiness"
 fi
 
 SWEEP_CERT_LABEL="com.jarvis.alpha.sweep-cert-renewal.${NODE_SHORT}"

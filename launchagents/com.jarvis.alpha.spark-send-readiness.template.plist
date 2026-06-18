@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jarvis.alpha.spark-send-readiness</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>{{HOME}}/jarvis-alpha/scripts/start_alpha_spark_send_readiness.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>{{HOME}}/jarvis-alpha</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>JARVIS_NODE</key>
+    <string>brain</string>
+    <key>SECRETS_FILE</key>
+    <string>{{HOME}}/jarvis/.secrets</string>
+    <key>GIT_TERMINAL_PROMPT</key>
+    <string>0</string>
+  </dict>
+
+  <key>StartInterval</key>
+  <integer>3600</integer>
+
+  <key>StandardOutPath</key>
+  <string>{{HOME}}/jarvis-alpha/logs/alpha_spark_send_readiness.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{HOME}}/jarvis-alpha/logs/alpha_spark_send_readiness_error.log</string>
+</dict>
+</plist>
