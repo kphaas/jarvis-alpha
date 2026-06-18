@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from brain.db.rls import rls_connection
 from brain.ingest.docx import ingest_docx
@@ -11,6 +12,12 @@ from brain.middleware.scopes import check_scopes
 from brain.ingest.excel import ingest_excel
 from brain.ingest.pdf import ingest_pdf
 from brain.ingest.text import ingest_plain_text
+from brain.routing.router import route
+from brain.services.vault_recall import (
+    embed_vault_query,
+    search_vault_chunks,
+    vault_context_block,
+)
 from brain.storage.archive import archive_document
 
 import hashlib  # noqa: F401
@@ -31,6 +38,18 @@ VALID_CLASSIFICATIONS = (
 DEFAULT_VAULT_WORKSPACE_ID = "personal"
 
 router = APIRouter(prefix="/v1/vault", tags=["vault"])
+
+
+class VaultSearchRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=500)
+    limit: int = Field(default=5, ge=1, le=20)
+
+
+class VaultAskRequest(VaultSearchRequest):
+    mode: str = Field(
+        default="local",
+        description="auto, local, claude, gemini, perplexity, council",
+    )
 
 
 def _vault_workspace_id(request: Request) -> str:
@@ -308,12 +327,62 @@ async def vault_ingest_excel(
 
 
 @router.post("/search")
-async def vault_search(request: Request):
+async def vault_search(body: VaultSearchRequest, request: Request):
     check_scopes(request, "vault.read", "admin")
-    return {"status": "stub", "results": []}
+    _vault_workspace_id(request)
+    embedding = await embed_vault_query(body.query)
+    async with rls_connection(request) as db:
+        matches = await search_vault_chunks(
+            db,
+            query=body.query,
+            limit=body.limit,
+            embedding=embedding,
+        )
+    return {
+        "status": "ok",
+        "query": body.query,
+        "count": len(matches),
+        "results": [match.to_public_dict() for match in matches],
+    }
 
 
 @router.post("/ask")
-async def vault_ask(request: Request):
+async def vault_ask(body: VaultAskRequest, request: Request):
     check_scopes(request, "vault.read", "admin")
-    return {"status": "stub", "answer": None}
+    _vault_workspace_id(request)
+    embedding = await embed_vault_query(body.query)
+    async with rls_connection(request) as db:
+        matches = await search_vault_chunks(
+            db,
+            query=body.query,
+            limit=body.limit,
+            embedding=embedding,
+        )
+
+    context = vault_context_block(matches)
+    if not context:
+        return {
+            "status": "ok",
+            "query": body.query,
+            "answer": (
+                "I could not find matching Alpha vault excerpts for that question."
+            ),
+            "mode": "none",
+            "sources": [],
+        }
+
+    prompt = (
+        "You are AT-0 answering from Alpha vault document excerpts. "
+        "Use only the supplied excerpts for document facts. If the excerpts do not "
+        "contain the answer, say the available vault documents do not show it.\n\n"
+        f"{context}\n\nQuestion: {body.query}"
+    )
+    result = await route(prompt, body.mode)
+    return {
+        "status": "ok",
+        "query": body.query,
+        "answer": result.get("result", ""),
+        "mode": result.get("mode", body.mode),
+        "sources": [match.to_public_dict() for match in matches],
+        "error": result.get("error"),
+    }

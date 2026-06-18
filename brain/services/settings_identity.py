@@ -18,6 +18,8 @@ MaxRating = Literal["all_ages", "age_8_plus", "teen", "adult"]
 
 PIN_PLACEHOLDER = "PLACEHOLDER_SET_BY_KEN"
 PERSONAL_DATA_SETTINGS_ID = 1
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+PHONE_DIGIT_RE = re.compile(r"\D+")
 
 
 class SettingsIdentityError(RuntimeError):
@@ -42,6 +44,28 @@ class ProfilePersonalDataIn(BaseModel):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @field_validator("email")
+    @classmethod
+    def _validate_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.lower()
+        if not EMAIL_RE.fullmatch(normalized):
+            raise ValueError("email must look like name@example.com")
+        return normalized
+
+    @field_validator("phone")
+    @classmethod
+    def _validate_phone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        digits = PHONE_DIGIT_RE.sub("", value)
+        if len(digits) == 11 and digits.startswith("1"):
+            digits = digits[1:]
+        if len(digits) != 10:
+            raise ValueError("phone must be 10 digits, like 555-555-5555")
+        return f"{digits[:3]}-{digits[3:6]}-{digits[6:]}"
 
 
 class ProfilePersonalData(ProfilePersonalDataIn):
