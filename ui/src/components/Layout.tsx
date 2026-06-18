@@ -8,7 +8,7 @@ import {
   FileText, Settings, Moon, Sun,
   User, ChevronRight, Lock, Unlock, RefreshCw,
   FolderOpen, Wrench, Fingerprint, Sparkles,
-  Inbox,
+  Inbox, MessageSquare,
 } from 'lucide-react'
 import type { Theme } from '../types'
 import { useAppStore } from '../store'
@@ -17,6 +17,7 @@ import { PinModal } from './PinModal'
 const NAV = [
   { group: 'OBSERVE', items: [
     { to: '/',          label: 'Home',         icon: Home          },
+    { to: '/ask',       label: 'Ask',          icon: MessageSquare },
     { to: '/briefing',  label: 'Briefing',     icon: Newspaper     },
   ]},
   { group: 'OPERATE', items: [

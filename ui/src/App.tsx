@@ -7,6 +7,7 @@ import { useAppStore } from './store'
 import { Suspense, lazy } from 'react'
 
 const Home = lazy(() => import('./pages/Home'))
+const Ask = lazy(() => import('./pages/Ask'))
 const Vault = lazy(() => import('./pages/Vault'))
 const Space = lazy(() => import('./pages/Space'))
 const Placeholder = lazy(() => import('./pages/Placeholder'))
@@ -41,7 +42,7 @@ export default function App() {
               <Suspense fallback={<div className="flex items-center justify-center h-screen text-zinc-500">Loading...</div>}>
                 <Routes>
                   <Route path="/" element={<Home />} />
-                  <Route path="/ask" element={<Navigate to="/" replace />} />
+                  <Route path="/ask" element={<Ask />} />
                   <Route path="/vault" element={<Vault />} />
                   <Route path="/space/:slug" element={<Space />} />
                   <Route path="/briefing" element={<Briefing />} />
