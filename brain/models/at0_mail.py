@@ -15,6 +15,10 @@ class At0MailScanResponse(BaseModel):
     draft_proposals_created: int
 
 
+class At0MailMailboxList(BaseModel):
+    mailboxes: list[str]
+
+
 class At0MailScanRunOut(BaseModel):
     id: UUID
     trigger: str
@@ -39,6 +43,7 @@ class At0MailCountRow(BaseModel):
 
 
 class At0MailDraftCountRow(BaseModel):
+    mailbox: str | None = None
     status: str
     count: int
 

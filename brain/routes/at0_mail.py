@@ -15,6 +15,7 @@ from brain.models.at0_mail import (
     At0MailDraftProposalOut,
     At0MailDraftStatusUpdate,
     At0MailHealthOut,
+    At0MailMailboxList,
     At0MailMessageList,
     At0MailMessageOut,
     At0MailScanResponse,
@@ -37,15 +38,45 @@ def _stale_after_minutes() -> int:
         return 180
 
 
+def _configured_mailboxes() -> tuple[str, ...]:
+    return configured_mailboxes()
+
+
+def _mailbox_or_400(mailbox: str | None) -> str | None:
+    if mailbox is None:
+        return None
+    normalized = mailbox.strip().lower()
+    if not normalized:
+        return None
+    if normalized not in _configured_mailboxes():
+        raise HTTPException(status_code=400, detail="Mailbox is not configured")
+    return normalized
+
+
 @router.post("/scan", response_model=At0MailScanResponse)
 async def scan_mailboxes(
     request: Request,
     _: str = Depends(require_auth),
     max_results: int = Query(default=25, ge=1, le=50),
+    mailbox: str | None = None,
 ) -> At0MailScanResponse:
     check_scopes(request, "at0_mail.scan", "herald.write")
-    result = await scan_at0_mail(max_results=max_results, trigger="api")
+    normalized = _mailbox_or_400(mailbox)
+    result = await scan_at0_mail(
+        max_results=max_results,
+        trigger="api",
+        mailboxes=(normalized,) if normalized else None,
+    )
     return At0MailScanResponse(**result.__dict__)
+
+
+@router.get("/mailboxes", response_model=At0MailMailboxList)
+async def get_mailboxes(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> At0MailMailboxList:
+    _check_read_scope(request)
+    return At0MailMailboxList(mailboxes=list(_configured_mailboxes()))
 
 
 @router.get("/dashboard", response_model=At0MailDashboardOut)
@@ -104,10 +135,8 @@ async def list_messages(
     if classification != "all":
         params.append(classification)
         filters.append(f"classification = ${len(params)}")
-    if mailbox:
-        normalized = mailbox.lower()
-        if normalized not in configured_mailboxes():
-            raise HTTPException(status_code=400, detail="Mailbox is not configured")
+    normalized = _mailbox_or_400(mailbox)
+    if normalized:
         params.append(normalized)
         filters.append(f"mailbox = ${len(params)}")
 
@@ -137,6 +166,7 @@ async def list_drafts(
     status: Literal["needs_review", "approved", "rejected", "all"] = Query(
         default="needs_review"
     ),
+    mailbox: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
 ) -> At0MailDraftProposalList:
     _check_read_scope(request)
@@ -145,6 +175,10 @@ async def list_drafts(
     if status != "all":
         params.append(status)
         filters.append(f"d.status = ${len(params)}")
+    normalized = _mailbox_or_400(mailbox)
+    if normalized:
+        params.append(normalized)
+        filters.append(f"d.mailbox = ${len(params)}")
     where = " AND ".join(filters) if filters else "TRUE"
     params.append(limit)
     async with get_pool().acquire() as conn:

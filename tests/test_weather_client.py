@@ -1,32 +1,24 @@
 import pytest
 
-from brain.config.secrets import clear_cache
 from brain.services import weather_client
-
-
-@pytest.fixture(autouse=True)
-def clear_weather_secret_cache(monkeypatch):
-    for name in (
-        "WEATHER_HOME_LATITUDE",
-        "WEATHER_HOME_LONGITUDE",
-        "GATEWAY_TOKEN",
-    ):
-        monkeypatch.delenv(name, raising=False)
-        clear_cache(name)
-    yield
-    clear_cache()
 
 
 @pytest.mark.asyncio
 async def test_weather_client_sends_alpha_home_coordinates(monkeypatch):
     seen: dict = {}
-    monkeypatch.setenv("WEATHER_HOME_LATITUDE", "34.028927")
-    monkeypatch.setenv("WEATHER_HOME_LONGITUDE", "-84.198578")
+
+    async def fake_home_coordinates():
+        return 12.3456, -65.4321
 
     def fake_gateway_call(params: dict) -> dict:
         seen.update(params)
         return {"status": "ok"}
 
+    monkeypatch.setattr(
+        weather_client,
+        "get_home_weather_coordinates",
+        fake_home_coordinates,
+    )
     monkeypatch.setattr(
         weather_client, "_gateway_weather_current_sync", fake_gateway_call
     )
@@ -36,21 +28,30 @@ async def test_weather_client_sends_alpha_home_coordinates(monkeypatch):
     assert result == {"status": "ok"}
     assert seen == {
         "location_label": "home",
-        "latitude": 34.028927,
-        "longitude": -84.198578,
+        "latitude": 12.3456,
+        "longitude": -65.4321,
     }
 
 
 @pytest.mark.asyncio
 async def test_weather_client_preserves_explicit_coordinates(monkeypatch):
     seen: dict = {}
-    monkeypatch.setenv("WEATHER_HOME_LATITUDE", "34.028927")
-    monkeypatch.setenv("WEATHER_HOME_LONGITUDE", "-84.198578")
+    home_coordinate_calls = 0
+
+    async def fake_home_coordinates():
+        nonlocal home_coordinate_calls
+        home_coordinate_calls += 1
+        return 12.3456, -65.4321
 
     def fake_gateway_call(params: dict) -> dict:
         seen.update(params)
         return {"status": "ok"}
 
+    monkeypatch.setattr(
+        weather_client,
+        "get_home_weather_coordinates",
+        fake_home_coordinates,
+    )
     monkeypatch.setattr(
         weather_client, "_gateway_weather_current_sync", fake_gateway_call
     )
@@ -63,6 +64,7 @@ async def test_weather_client_preserves_explicit_coordinates(monkeypatch):
         }
     )
 
+    assert home_coordinate_calls == 0
     assert seen == {
         "location_label": "custom",
         "latitude": 40.7128,

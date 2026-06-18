@@ -8,8 +8,6 @@ from gateway.routes.weather import current_weather
 def _secret(name: str) -> str:
     values = {
         "GATEWAY_TOKEN": "gateway-token",
-        "WEATHER_HOME_LATITUDE": "40.7128",
-        "WEATHER_HOME_LONGITUDE": "-74.0060",
     }
     return values[name]
 
@@ -61,27 +59,19 @@ async def test_current_weather_fetches_open_meteo_with_gateway_auth(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_current_weather_uses_configured_home_coordinates(monkeypatch):
-    seen: dict[str, float] = {}
-
-    def fake_fetch(latitude: float, longitude: float) -> dict:
-        seen["latitude"] = latitude
-        seen["longitude"] = longitude
-        return _provider_payload()
-
+async def test_current_weather_requires_explicit_coordinates(monkeypatch):
     monkeypatch.setattr("gateway.routes.weather.get_secret", _secret)
-    monkeypatch.setattr("gateway.routes.weather._fetch_open_meteo_sync", fake_fetch)
     weather._WEATHER_CACHE.clear()
 
-    response = await current_weather(
-        authorization="Bearer gateway-token",
-        latitude=None,
-        longitude=None,
-        location_label="home",
-    )
+    with pytest.raises(HTTPException) as exc:
+        await current_weather(
+            authorization="Bearer gateway-token",
+            latitude=None,
+            longitude=None,
+            location_label="home",
+        )
 
-    assert response.status == "ok"
-    assert seen == {"latitude": 40.7128, "longitude": -74.006}
+    assert exc.value.status_code == 422
 
 
 @pytest.mark.asyncio

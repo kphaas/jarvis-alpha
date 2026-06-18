@@ -21,6 +21,7 @@ interface CountRow {
 }
 
 interface DraftCountRow {
+  mailbox?: string | null
   status: string
   count: number
 }
@@ -44,6 +45,10 @@ interface Dashboard {
   message_counts: CountRow[]
   draft_counts: DraftCountRow[]
   latest_scan: ScanRun | null
+}
+
+interface MailboxList {
+  mailboxes: string[]
 }
 
 interface MailMessage {
@@ -94,6 +99,8 @@ interface ScanResponse {
   draft_proposals_created: number
 }
 
+const ALL_MAILBOXES = 'all'
+
 function timeText(value: string | null) {
   if (!value) return 'Never'
   const date = new Date(value)
@@ -134,6 +141,8 @@ export default function Herald() {
   const strong = isDark ? 'text-white' : 'text-[#141414]'
 
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
+  const [mailboxes, setMailboxes] = useState<string[]>([])
+  const [selectedMailbox, setSelectedMailbox] = useState(ALL_MAILBOXES)
   const [messages, setMessages] = useState<MailMessage[]>([])
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [loading, setLoading] = useState(true)
@@ -144,11 +153,17 @@ export default function Herald() {
 
   const load = useCallback(async () => {
     try {
-      const [dashboardRes, messageRes, draftRes] = await Promise.all([
+      const mailboxQuery = selectedMailbox === ALL_MAILBOXES ? '' : `&mailbox=${encodeURIComponent(selectedMailbox)}`
+      const [mailboxRes, dashboardRes, messageRes, draftRes] = await Promise.all([
+        apiJson<MailboxList>('/v1/at0-mail/mailboxes'),
         apiJson<Dashboard>('/v1/at0-mail/dashboard'),
-        apiJson<MessageList>('/v1/at0-mail/messages?limit=12'),
-        apiJson<DraftList>('/v1/at0-mail/drafts?limit=8'),
+        apiJson<MessageList>(`/v1/at0-mail/messages?limit=12${mailboxQuery}`),
+        apiJson<DraftList>(`/v1/at0-mail/drafts?limit=8${mailboxQuery}`),
       ])
+      setMailboxes(mailboxRes.mailboxes)
+      if (selectedMailbox !== ALL_MAILBOXES && !mailboxRes.mailboxes.includes(selectedMailbox)) {
+        setSelectedMailbox(ALL_MAILBOXES)
+      }
       setDashboard(dashboardRes)
       setMessages(messageRes.messages)
       setDrafts(draftRes.drafts)
@@ -158,34 +173,47 @@ export default function Herald() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [selectedMailbox])
 
   useEffect(() => {
     load()
   }, [load])
 
   const totals = useMemo(() => {
+    const inSelectedMailbox = (mailbox?: string | null) => (
+      selectedMailbox === ALL_MAILBOXES || mailbox === selectedMailbox
+    )
     const countFor = (classification: string) =>
       dashboard?.message_counts
-        .filter((row) => row.classification === classification)
+        .filter((row) => row.classification === classification && inSelectedMailbox(row.mailbox))
         .reduce((sum, row) => sum + row.count, 0) ?? 0
-    const draftNeedsReview = dashboard?.draft_counts.find((row) => row.status === 'needs_review')?.count ?? 0
+    const draftNeedsReview = dashboard?.draft_counts
+      .filter((row) => row.status === 'needs_review' && inSelectedMailbox(row.mailbox))
+      .reduce((sum, row) => sum + row.count, 0) ?? 0
     return {
       leads: countFor('lead'),
       support: countFor('support'),
       press: countFor('press') + countFor('partner') + countFor('investor'),
       drafts: draftNeedsReview,
     }
-  }, [dashboard])
+  }, [dashboard, selectedMailbox])
+
+  const selectedLabel = selectedMailbox === ALL_MAILBOXES ? 'all inboxes' : selectedMailbox
+
+  const selectMailbox = (mailbox: string) => {
+    setLoading(true)
+    setSelectedMailbox(mailbox)
+  }
 
   const runScan = async () => {
     setScanning(true)
     setNotice(null)
     try {
-      const result = await apiJson<ScanResponse>('/v1/at0-mail/scan?max_results=25', {
+      const mailboxQuery = selectedMailbox === ALL_MAILBOXES ? '' : `&mailbox=${encodeURIComponent(selectedMailbox)}`
+      const result = await apiJson<ScanResponse>(`/v1/at0-mail/scan?max_results=25${mailboxQuery}`, {
         method: 'POST',
       })
-      setNotice(`Scan complete: ${result.messages_new} new / ${result.draft_proposals_created} drafts`)
+      setNotice(`Scan complete for ${selectedLabel}: ${result.messages_new} new / ${result.draft_proposals_created} drafts`)
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Scan failed')
@@ -238,8 +266,41 @@ export default function Herald() {
             className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-45"
           >
             {scanning ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            Scan
+            {selectedMailbox === ALL_MAILBOXES ? 'Scan all' : 'Scan inbox'}
           </button>
+        </div>
+      </div>
+
+      <div className={`flex flex-col gap-3 rounded-xl border p-3 ${border} ${panel}`}>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => selectMailbox(ALL_MAILBOXES)}
+            className={`min-h-10 max-w-full rounded-lg border px-3 text-left text-sm font-bold transition ${
+              selectedMailbox === ALL_MAILBOXES
+                ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-300'
+                : `${border} ${strongPanel} ${muted}`
+            }`}
+          >
+            All inboxes
+          </button>
+          {mailboxes.map((mailbox) => (
+            <button
+              key={mailbox}
+              type="button"
+              onClick={() => selectMailbox(mailbox)}
+              className={`min-h-10 max-w-full break-all rounded-lg border px-3 text-left text-sm font-bold transition ${
+                selectedMailbox === mailbox
+                  ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-300'
+                  : `${border} ${strongPanel} ${muted}`
+              }`}
+            >
+              {mailbox}
+            </button>
+          ))}
+        </div>
+        <div className={`break-all text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+          Viewing {selectedLabel}
         </div>
       </div>
 
@@ -276,7 +337,7 @@ export default function Herald() {
               <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>Recent mail</h2>
             </div>
             <span className={`text-[10px] font-mono uppercase ${muted}`}>
-              {loading ? 'Loading' : `${messages.length} shown`}
+              {loading ? 'Loading' : `${messages.length} shown · ${selectedLabel}`}
             </span>
           </div>
           <div className="mt-4 space-y-3">
@@ -307,7 +368,7 @@ export default function Herald() {
               <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>Draft review</h2>
             </div>
             <span className={`text-[10px] font-mono uppercase ${muted}`}>
-              Last scan {timeText(dashboard?.latest_scan?.finished_at ?? dashboard?.latest_scan?.started_at ?? null)}
+              {selectedLabel} · Last scan {timeText(dashboard?.latest_scan?.finished_at ?? dashboard?.latest_scan?.started_at ?? null)}
             </span>
           </div>
           <div className="mt-4 space-y-4">

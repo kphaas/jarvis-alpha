@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { User, Lock, CheckCircle, XCircle, Eye, EyeOff, KeyRound } from 'lucide-react'
 import { apiJson } from '../lib/apiFetch'
 import { useAppStore } from '../store'
+import { WebAgentLocationForm } from '../components/settings/WebAgentLocationForm'
 
 interface Profile {
   id: string
@@ -261,6 +262,8 @@ export default function Settings() {
         <h1 className={`font-serif italic text-3xl ${isDark ? 'text-white' : 'text-[#141414]'}`}>Settings</h1>
         <p className="text-[10px] font-mono uppercase opacity-40 mt-1">Alpha-2 · Profiles &amp; Security</p>
       </div>
+
+      <WebAgentLocationForm />
 
       <section className="space-y-3">
         <h2 className="text-xs font-mono uppercase opacity-40 tracking-widest">Family Profiles</h2>
