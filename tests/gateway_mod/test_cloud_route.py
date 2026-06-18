@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -49,6 +50,218 @@ def test_google_billing_request_does_not_accept_brain_credentials():
     assert fields == {"currency_code"}
     assert "service_account_info" not in fields
     assert "account_id" not in fields
+
+
+@pytest.mark.asyncio
+async def test_privacy_removal_dry_run_returns_noop_gateway_contract(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    request_id = uuid4()
+    target_id = "beenverified"
+
+    result = await cloud_routes.privacy_removal_dry_run(
+        cloud_routes.PrivacyRemovalDryRunRequest(
+            schema_version="privacy_gateway_dry_run.v1",
+            operation="privacy.removal.submit",
+            mode="dry_run",
+            egress_owner="gateway",
+            egress_mode="gateway_dry_run",
+            outbound_enabled=False,
+            would_send=False,
+            request_id=request_id,
+            subject_id=uuid4(),
+            target_id=target_id,
+            target_category="data_broker",
+            target_opt_out_method="web_form",
+            adapter_kind="gateway_web_form_dry_run",
+            authorization_id=uuid4(),
+            action_id=uuid4(),
+            request_payload_hash="sha256:" + "1" * 64,
+            idempotency_key_digest="hmac-sha256:" + "2" * 64,
+            approval_binding={
+                "approval_required": True,
+                "approval_queue_id": str(uuid4()),
+            },
+            allowed_effects=[],
+            blocked_effects=[
+                "public_http",
+                "browser_automation",
+                "email_send",
+                "sms_send",
+                "broker_form_submit",
+            ],
+            prepared_at=datetime.now(UTC),
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert result["status"] == "dry_run_ready"
+    assert result["request_id"] == str(request_id)
+    assert result["target_id"] == target_id
+    assert result["outbound_enabled"] is False
+    assert result["would_send"] is False
+
+
+@pytest.mark.asyncio
+async def test_privacy_removal_dry_run_rejects_allowed_effects(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+
+    with pytest.raises(HTTPException) as exc:
+        await cloud_routes.privacy_removal_dry_run(
+            cloud_routes.PrivacyRemovalDryRunRequest(
+                schema_version="privacy_gateway_dry_run.v1",
+                operation="privacy.removal.submit",
+                mode="dry_run",
+                egress_owner="gateway",
+                egress_mode="gateway_dry_run",
+                outbound_enabled=False,
+                would_send=False,
+                request_id=uuid4(),
+                subject_id=uuid4(),
+                target_id="beenverified",
+                target_category="data_broker",
+                target_opt_out_method="web_form",
+                adapter_kind="gateway_web_form_dry_run",
+                authorization_id=uuid4(),
+                request_payload_hash="sha256:" + "1" * 64,
+                idempotency_key_digest="hmac-sha256:" + "2" * 64,
+                approval_binding={"approval_required": True},
+                allowed_effects=["public_http"],
+                blocked_effects=[
+                    "public_http",
+                    "browser_automation",
+                    "email_send",
+                    "sms_send",
+                    "broker_form_submit",
+                ],
+                prepared_at=datetime.now(UTC),
+            ),
+            authorization="Bearer gateway-token",
+        )
+
+    assert exc.value.status_code == 400
+
+
+def _privacy_live_preflight_request(**overrides):
+    data = {
+        "schema_version": "privacy_gateway_live_preflight.v1",
+        "operation": "privacy.removal.live_preflight",
+        "mode": "live_preflight",
+        "egress_owner": "gateway",
+        "egress_mode": "gateway_live_preflight",
+        "live_enabled_requested": True,
+        "request_id": uuid4(),
+        "subject_id": uuid4(),
+        "target_id": "beenverified",
+        "target_category": "data_broker",
+        "target_opt_out_method": "web_form",
+        "adapter_kind": "beenverified_web_form_live_preflight",
+        "authorization_id": uuid4(),
+        "action_id": uuid4(),
+        "request_payload_hash": "sha256:" + "1" * 64,
+        "dry_run_payload_hash": "sha256:" + "2" * 64,
+        "idempotency_key_digest": "hmac-sha256:" + "3" * 64,
+        "approval_binding": {
+            "approval_required": True,
+            "approval_queue_id": str(uuid4()),
+            "approval_status": "approved",
+            "approval_decided_at": datetime.now(UTC).isoformat(),
+            "approval_parameters_hash": "4" * 64,
+            "approved_action_payload_hash": "sha256:" + "5" * 64,
+        },
+        "allowed_effects": ["target_http_get"],
+        "blocked_effects": [
+            "browser_automation",
+            "email_send",
+            "sms_send",
+            "broker_form_submit",
+            "pii_payload_submit",
+        ],
+        "prepared_at": datetime.now(UTC),
+    }
+    data.update(overrides)
+    return cloud_routes.PrivacyRemovalLivePreflightRequest(**data)
+
+
+@pytest.mark.asyncio
+async def test_privacy_live_preflight_defaults_to_kill_switch_disabled(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    monkeypatch.delenv("PRIVACY_EXECUTOR_LIVE_ENABLED", raising=False)
+
+    class ForbiddenClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("kill switch off must not create an HTTP client")
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", ForbiddenClient)
+    request = _privacy_live_preflight_request()
+
+    result = await cloud_routes.privacy_removal_live_preflight(
+        request,
+        authorization="Bearer gateway-token",
+    )
+
+    assert result["status"] == "live_disabled"
+    assert result["outbound_enabled"] is False
+    assert result["would_send"] is False
+    assert result["target_http_attempted"] is False
+    assert result["target_id"] == "beenverified"
+    assert result["adapter_kind"] == "beenverified_web_form_live_preflight"
+
+
+@pytest.mark.asyncio
+async def test_privacy_live_preflight_enabled_gets_fixed_target(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    monkeypatch.setenv("PRIVACY_EXECUTOR_LIVE_ENABLED", "true")
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "text/html", "content-length": "1234"}
+
+    class FakeClient:
+        def __init__(self, *, timeout: float, follow_redirects: bool):
+            seen["timeout"] = timeout
+            seen["follow_redirects"] = follow_redirects
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, *, headers):
+            seen["url"] = url
+            seen["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+    request = _privacy_live_preflight_request()
+
+    result = await cloud_routes.privacy_removal_live_preflight(
+        request,
+        authorization="Bearer gateway-token",
+    )
+
+    assert seen["url"] == "https://www.beenverified.com/app/optout/search"
+    assert seen["headers"]["User-Agent"] == "jarvis-alpha-privacy-preflight/1.0"
+    assert result["status"] == "live_preflight_passed"
+    assert result["outbound_enabled"] is True
+    assert result["would_send"] is False
+    assert result["target_http_attempted"] is True
+    assert result["target_http_status_code"] == 200
+    assert result["target_content_type"] == "text/html"
+
+
+@pytest.mark.asyncio
+async def test_privacy_live_preflight_rejects_other_targets(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+
+    with pytest.raises(HTTPException) as exc:
+        await cloud_routes.privacy_removal_live_preflight(
+            _privacy_live_preflight_request(target_id="mylife"),
+            authorization="Bearer gateway-token",
+        )
+
+    assert exc.value.status_code == 400
 
 
 @pytest.mark.asyncio

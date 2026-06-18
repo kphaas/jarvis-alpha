@@ -257,8 +257,28 @@ def test_restore_drill_reference_table_count_matches_current_baseline():
     text = (REPO_ROOT / "scripts" / "restore_drill_alpha.sh").read_text(
         encoding="utf-8"
     )
-    assert "REF_TABLES=77" in text
+    assert "REF_TABLES=97" in text
     assert "including views" in text
+
+
+def test_restore_drill_verifies_privacy_tables_and_force_rls():
+    text = (REPO_ROOT / "scripts" / "restore_drill_alpha.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "EXPECTED_PRIVACY_TABLES=16" in text
+    assert "EXPECTED_PRIVACY_FORCE_RLS_TABLES=16" in text
+    assert "table_name LIKE 'alpha_privacy_%'" in text
+    assert "c.relrowsecurity AND c.relforcerowsecurity" in text
+    assert (
+        "privacy_tables_${PRIVACY_TABLES}_expected_${EXPECTED_PRIVACY_TABLES}" in text
+    )
+    assert (
+        "privacy_force_rls_${PRIVACY_FORCE_RLS}_expected_"
+        "${EXPECTED_PRIVACY_FORCE_RLS_TABLES}" in text
+    )
+    assert "alpha_privacy_tables:$privacy_tables" in text
+    assert "alpha_privacy_force_rls_tables:$privacy_force_rls" in text
 
 
 def test_pg_backup_uses_atomic_rename():

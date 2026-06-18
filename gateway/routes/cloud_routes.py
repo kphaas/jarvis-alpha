@@ -8,8 +8,9 @@ from hashlib import sha256
 from html.parser import HTMLParser
 from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote, urldefrag, urljoin
+from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request
 import httpx
@@ -32,6 +33,19 @@ _adapters = {
     "claude": ClaudeAdapter(),
     "perplexity": PerplexityAdapter(),
     "gemini": GeminiAdapter(),
+}
+
+_PRIVACY_LIVE_ENABLED_ENV = "PRIVACY_EXECUTOR_LIVE_ENABLED"
+_PRIVACY_LIVE_TARGET_ID = "beenverified"
+_PRIVACY_LIVE_TARGET_URL = "https://www.beenverified.com/app/optout/search"
+_PRIVACY_LIVE_ADAPTER_KIND = "beenverified_web_form_live_preflight"
+_PRIVACY_LIVE_ALLOWED_EFFECTS = ["target_http_get"]
+_PRIVACY_LIVE_REQUIRED_BLOCKED = {
+    "browser_automation",
+    "email_send",
+    "sms_send",
+    "broker_form_submit",
+    "pii_payload_submit",
 }
 
 
@@ -118,6 +132,54 @@ class InternetCrawlRequest(BaseModel):
     max_bytes: int = Field(
         default=DEFAULT_MAX_CONTENT_BYTES, ge=1, le=DEFAULT_MAX_CONTENT_BYTES
     )
+
+
+class PrivacyRemovalDryRunRequest(BaseModel):
+    schema_version: Literal["privacy_gateway_dry_run.v1"]
+    operation: Literal["privacy.removal.submit"]
+    mode: Literal["dry_run"]
+    egress_owner: Literal["gateway"]
+    egress_mode: Literal["gateway_dry_run"]
+    outbound_enabled: Literal[False]
+    would_send: Literal[False]
+    request_id: UUID
+    subject_id: UUID
+    target_id: str = Field(min_length=1, max_length=200)
+    target_category: str = Field(min_length=1, max_length=100)
+    target_opt_out_method: str = Field(min_length=1, max_length=100)
+    adapter_kind: str = Field(min_length=1, max_length=100)
+    authorization_id: UUID
+    action_id: UUID | None = None
+    request_payload_hash: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    idempotency_key_digest: str = Field(pattern=r"^hmac-sha256:[a-f0-9]{64}$")
+    approval_binding: dict[str, object]
+    allowed_effects: list[str] = Field(default_factory=list)
+    blocked_effects: list[str] = Field(default_factory=list)
+    prepared_at: datetime
+
+
+class PrivacyRemovalLivePreflightRequest(BaseModel):
+    schema_version: Literal["privacy_gateway_live_preflight.v1"]
+    operation: Literal["privacy.removal.live_preflight"]
+    mode: Literal["live_preflight"]
+    egress_owner: Literal["gateway"]
+    egress_mode: Literal["gateway_live_preflight"]
+    live_enabled_requested: Literal[True]
+    request_id: UUID
+    subject_id: UUID
+    target_id: str = Field(min_length=1, max_length=200)
+    target_category: str = Field(min_length=1, max_length=100)
+    target_opt_out_method: str = Field(min_length=1, max_length=100)
+    adapter_kind: str = Field(min_length=1, max_length=100)
+    authorization_id: UUID
+    action_id: UUID | None = None
+    request_payload_hash: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    dry_run_payload_hash: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    idempotency_key_digest: str = Field(pattern=r"^hmac-sha256:[a-f0-9]{64}$")
+    approval_binding: dict[str, object]
+    allowed_effects: list[str] = Field(default_factory=list)
+    blocked_effects: list[str] = Field(default_factory=list)
+    prepared_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -966,6 +1028,189 @@ def _first_string(item: dict[object, object], keys: tuple[str, ...]) -> str | No
         if isinstance(value, str):
             return value
     return None
+
+
+@router.post("/privacy/removal/dry-run")
+async def privacy_removal_dry_run(
+    req: PrivacyRemovalDryRunRequest,
+    authorization: str = Header(...),
+):
+    """Validate a Privacy Agent dry-run envelope without public egress."""
+    _authorize_gateway_call(authorization)
+    if req.allowed_effects:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy dry-run must not request allowed effects",
+        )
+    required_blocked = {
+        "public_http",
+        "browser_automation",
+        "email_send",
+        "sms_send",
+        "broker_form_submit",
+    }
+    if not required_blocked.issubset(set(req.blocked_effects)):
+        raise HTTPException(
+            status_code=400,
+            detail="privacy dry-run blocked effects incomplete",
+        )
+
+    return {
+        "status": "dry_run_ready",
+        "schema_version": req.schema_version,
+        "gateway_path": "/v1/cloud/privacy/removal/dry-run",
+        "egress_owner": "gateway",
+        "egress_mode": "gateway_dry_run",
+        "outbound_enabled": False,
+        "would_send": False,
+        "request_id": str(req.request_id),
+        "target_id": req.target_id,
+        "adapter_kind": req.adapter_kind,
+        "idempotency_key_digest": req.idempotency_key_digest,
+        "accepted_at": datetime.now(UTC).isoformat(),
+    }
+
+
+@router.post("/privacy/removal/live-preflight")
+async def privacy_removal_live_preflight(
+    req: PrivacyRemovalLivePreflightRequest,
+    authorization: str = Header(...),
+):
+    """Run the one-target Privacy Agent live preflight behind a kill switch."""
+    _authorize_gateway_call(authorization)
+    _validate_privacy_live_preflight_request(req)
+
+    if not _privacy_live_enabled():
+        return _privacy_live_preflight_payload(
+            req,
+            status="live_disabled",
+            outbound_enabled=False,
+            target_http_attempted=False,
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            response = await client.get(
+                _PRIVACY_LIVE_TARGET_URL,
+                headers={"User-Agent": "jarvis-alpha-privacy-preflight/1.0"},
+            )
+    except httpx.RequestError:
+        return _privacy_live_preflight_payload(
+            req,
+            status="live_preflight_failed",
+            outbound_enabled=True,
+            target_http_attempted=True,
+            failure_class="request_error",
+        )
+
+    if response.status_code >= 400:
+        return _privacy_live_preflight_payload(
+            req,
+            status="live_preflight_failed",
+            outbound_enabled=True,
+            target_http_attempted=True,
+            target_http_status_code=response.status_code,
+            target_content_type=response.headers.get("content-type"),
+        )
+
+    return _privacy_live_preflight_payload(
+        req,
+        status="live_preflight_passed",
+        outbound_enabled=True,
+        target_http_attempted=True,
+        target_http_status_code=response.status_code,
+        target_content_type=response.headers.get("content-type"),
+        target_content_length=response.headers.get("content-length"),
+    )
+
+
+def _validate_privacy_live_preflight_request(
+    req: PrivacyRemovalLivePreflightRequest,
+) -> None:
+    if req.target_id != _PRIVACY_LIVE_TARGET_ID:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy live preflight target not allowed",
+        )
+    if req.target_opt_out_method != "web_form":
+        raise HTTPException(
+            status_code=400,
+            detail="privacy live preflight adapter not available",
+        )
+    if req.adapter_kind != _PRIVACY_LIVE_ADAPTER_KIND:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy live preflight adapter mismatch",
+        )
+    if req.allowed_effects != _PRIVACY_LIVE_ALLOWED_EFFECTS:
+        raise HTTPException(
+            status_code=400,
+            detail="privacy live preflight allowed effects invalid",
+        )
+    if not _PRIVACY_LIVE_REQUIRED_BLOCKED.issubset(set(req.blocked_effects)):
+        raise HTTPException(
+            status_code=400,
+            detail="privacy live preflight blocked effects incomplete",
+        )
+    binding = req.approval_binding
+    if binding.get("approval_status") != "approved":
+        raise HTTPException(
+            status_code=400,
+            detail="privacy live preflight approval not approved",
+        )
+    for key in (
+        "approval_queue_id",
+        "approval_decided_at",
+        "approval_parameters_hash",
+        "approved_action_payload_hash",
+    ):
+        if not isinstance(binding.get(key), str) or not binding[key]:
+            raise HTTPException(
+                status_code=400,
+                detail="privacy live preflight approval binding incomplete",
+            )
+
+
+def _privacy_live_enabled() -> bool:
+    return os.getenv(_PRIVACY_LIVE_ENABLED_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _privacy_live_preflight_payload(
+    req: PrivacyRemovalLivePreflightRequest,
+    *,
+    status: str,
+    outbound_enabled: bool,
+    target_http_attempted: bool,
+    failure_class: str | None = None,
+    target_http_status_code: int | None = None,
+    target_content_type: str | None = None,
+    target_content_length: str | None = None,
+) -> dict[str, object]:
+    return {
+        "status": status,
+        "schema_version": req.schema_version,
+        "gateway_path": "/v1/cloud/privacy/removal/live-preflight",
+        "egress_owner": "gateway",
+        "egress_mode": "gateway_live_preflight",
+        "outbound_enabled": outbound_enabled,
+        "would_send": False,
+        "target_http_attempted": target_http_attempted,
+        "request_id": str(req.request_id),
+        "target_id": req.target_id,
+        "target_url": _PRIVACY_LIVE_TARGET_URL,
+        "adapter_kind": req.adapter_kind,
+        "idempotency_key_digest": req.idempotency_key_digest,
+        "failure_class": failure_class,
+        "target_http_status_code": target_http_status_code,
+        "target_content_type": target_content_type,
+        "target_content_length": target_content_length,
+        "accepted_at": datetime.now(UTC).isoformat(),
+    }
 
 
 @router.post("/internet/fetch")

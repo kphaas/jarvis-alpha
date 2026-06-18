@@ -22,9 +22,11 @@ DRILL_DB="jarvis_alpha_drill"
 IMAGE="pgvector/pgvector:pg16"
 
 # Live Brain reference baseline (verified after privacy/security migrations,
-# 2026-06-05). Counts information_schema public entries, including views.
-REF_TABLES=77
+# 2026-06-17). Counts information_schema public entries, including views.
+REF_TABLES=97
 REF_TOLERANCE=2
+EXPECTED_PRIVACY_TABLES=16
+EXPECTED_PRIVACY_FORCE_RLS_TABLES=16
 
 # Tools
 JQ=$(command -v jq || true)
@@ -338,6 +340,8 @@ ROWS_REQLOG=$(psqlc "SELECT count(*) FROM jarvis_request_log" 2>/dev/null || ech
 ROWS_APPROVAL=$(psqlc "SELECT count(*) FROM alpha_approval_queue" 2>/dev/null || echo ERR)
 ROWS_NODES=$(psqlc "SELECT count(*) FROM alpha_node_registry" 2>/dev/null || echo ERR)
 HAS_CONVMEM=$(psqlc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='alpha_conversation_memory'")
+PRIVACY_TABLES=$(psqlc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'alpha_privacy_%'" 2>/dev/null || echo ERR)
+PRIVACY_FORCE_RLS=$(psqlc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relname LIKE 'alpha_privacy_%' AND c.relrowsecurity AND c.relforcerowsecurity" 2>/dev/null || echo ERR)
 
 VERIFY_PASS=true
 FAIL_REASONS=""
@@ -354,6 +358,12 @@ fi
 [[ "$ROWS_APPROVAL" == "ERR" ]] && add_fail "alpha_approval_queue_missing"
 [[ "$ROWS_NODES" == "ERR" || "$ROWS_NODES" -lt 1 ]] && add_fail "alpha_node_registry_${ROWS_NODES}"
 [[ "$HAS_CONVMEM" != "1" ]] && add_fail "alpha_conversation_memory_table_missing"
+if ! [[ "$PRIVACY_TABLES" =~ ^[0-9]+$ ]] || [[ "$PRIVACY_TABLES" -lt "$EXPECTED_PRIVACY_TABLES" ]]; then
+    add_fail "privacy_tables_${PRIVACY_TABLES}_expected_${EXPECTED_PRIVACY_TABLES}"
+fi
+if ! [[ "$PRIVACY_FORCE_RLS" =~ ^[0-9]+$ ]] || [[ "$PRIVACY_FORCE_RLS" -lt "$EXPECTED_PRIVACY_FORCE_RLS_TABLES" ]]; then
+    add_fail "privacy_force_rls_${PRIVACY_FORCE_RLS}_expected_${EXPECTED_PRIVACY_FORCE_RLS_TABLES}"
+fi
 
 if [[ "$RESTORE_PASS" != "true" ]]; then
     add_fail "pg_restore_errors=${RESTORE_ERR_COUNT}_pgaudit_only=${PGAUDIT_ERR_COUNT}"
@@ -384,6 +394,8 @@ if [[ -n "$JQ" ]]; then
         --arg rows_approval "$ROWS_APPROVAL" \
         --arg rows_nodes "$ROWS_NODES" \
         --arg has_convmem "$HAS_CONVMEM" \
+        --arg privacy_tables "$PRIVACY_TABLES" \
+        --arg privacy_force_rls "$PRIVACY_FORCE_RLS" \
         '{
             run_id:$run_id, host:$host, status:$status,
             source_dump:$source_dump, image:$image, container:$container,
@@ -395,7 +407,9 @@ if [[ -n "$JQ" ]]; then
                 jarvis_request_log:$rows_reqlog,
                 alpha_approval_queue:$rows_approval,
                 alpha_node_registry:$rows_nodes,
-                alpha_conversation_memory_table_present:$has_convmem
+                alpha_conversation_memory_table_present:$has_convmem,
+                alpha_privacy_tables:$privacy_tables,
+                alpha_privacy_force_rls_tables:$privacy_force_rls
             },
             fail_reasons:$fail_reasons
         }' > "$REPORT_JSON"
@@ -404,7 +418,7 @@ fi
 
 # ---------- 7. notify -----------------------------------------------------------
 if [[ "$DRILL_STATUS" == "pass" ]]; then
-    msg="Drill ${RUN_TS} · source ${LATEST##*/} · tables=${TABLE_COUNT}/${REF_TABLES} · rows: buddy=${ROWS_BUDDY} reqlog=${ROWS_REQLOG} approval=${ROWS_APPROVAL} nodes=${ROWS_NODES}"
+    msg="Drill ${RUN_TS} · source ${LATEST##*/} · tables=${TABLE_COUNT}/${REF_TABLES} · privacy=${PRIVACY_TABLES}/${EXPECTED_PRIVACY_TABLES} force_rls=${PRIVACY_FORCE_RLS}/${EXPECTED_PRIVACY_FORCE_RLS_TABLES} · rows: buddy=${ROWS_BUDDY} reqlog=${ROWS_REQLOG} approval=${ROWS_APPROVAL} nodes=${ROWS_NODES}"
     mm_notify info "Restore drill PASSED" "$msg"
     buddy_event system "Restore drill passed" "tables=${TABLE_COUNT} run=${RUN_TS}" 1
     log_json "$(make_event run_complete status=pass)"

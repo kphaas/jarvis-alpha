@@ -416,6 +416,32 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "write",
         "security_write",
     ],
+    "POST /v1/privacy/subjects/{subject_id}/authorizations": [
+        "write",
+        "security_write",
+    ],
+    "GET /v1/privacy/subjects/{subject_id}/authorizations": [
+        "read",
+        "security_read",
+    ],
+    "POST /v1/privacy/actions/{action_id}/removal-request": [
+        "write",
+        "security_write",
+    ],
+    "GET /v1/privacy/removal-requests": ["read", "security_read"],
+    "POST /v1/privacy/removal-requests/{request_id}/transition": [
+        "write",
+        "security_write",
+    ],
+    "POST /v1/privacy/removal-requests/{request_id}/dry-run": [
+        "write",
+        "security_write",
+    ],
+    "POST /v1/privacy/removal-requests/{request_id}/live-preflight": [
+        "write",
+        "security_write",
+        "external_call",
+    ],
     "GET /v1/privacy/targets": ["read", "security_read"],
     "POST /v1/privacy/targets/refresh": ["write", "security_write"],
     # --- ChatOps command ingress — read-only, token-authenticated by route ---
