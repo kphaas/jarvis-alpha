@@ -1,0 +1,144 @@
+# Financial market data sources.
+#
+# Quotes, fundamentals, macro economic data. Read-only.
+# Account aggregation and broker execution live in separate files.
+
+- id: polygon-io
+  name: Polygon.io
+  domain: financial-market
+  url: https://polygon.io/
+  api_base_url: https://api.polygon.io/
+  auth:
+    type: api-key
+    notes: |
+      Free tier: 5 req/min, end-of-day data only.
+      Stocks Starter ($29/mo): 100 req/min, 15-min delayed.
+      Stocks Advanced ($199/mo): unlimited, real-time.
+  pricing: freemium
+  free_tier: 5 req/min, EOD only
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - real-time-quotes
+    - historical-bars
+    - corporate-actions-feed
+    - options-data
+    - aggregates
+  notes: |
+    Already locked in jarvis-financial v1 plan for corporate actions feed.
+    Corporate actions endpoint is the killer feature — splits, dividends,
+    M&A all in one place.
+    Reference data quality is good. Some thin coverage on small-cap names.
+  last_verified: 2026-05-01
+  review_cadence_days: 90
+
+- id: fred
+  name: FRED (Federal Reserve Economic Data)
+  domain: financial-market
+  url: https://fred.stlouisfed.org/
+  api_base_url: https://api.stlouisfed.org/fred/
+  auth:
+    type: api-key
+    notes: |
+      Free key, instant signup at research.stlouisfed.org/docs/api/api_key.html.
+      120 req/min default rate limit.
+  pricing: free
+  free_tier: 120 req/min
+  license: public-domain          # US government data
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - macro-indicators
+    - interest-rates
+    - inflation-series
+    - employment-data
+    - regime-detection
+  notes: |
+    St. Louis Fed maintained. 800k+ economic time series.
+    Rock solid. Update lag is data-source dependent (some monthly, some quarterly).
+    Already locked for jarvis-financial regime detection use case.
+  last_verified: 2026-05-01
+  review_cadence_days: 365
+
+- id: alphavantage
+  name: Alpha Vantage
+  domain: financial-market
+  url: https://www.alphavantage.co/
+  api_base_url: https://www.alphavantage.co/query
+  auth:
+    type: api-key
+    notes: |
+      Free tier: 25 req/day, 5 req/min.
+      Premium tiers from $50/mo upward.
+  pricing: freemium
+  free_tier: 25 req/day, 5 req/min
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - quotes
+    - fundamentals
+    - fx-rates
+    - technical-indicators
+  notes: |
+    Free tier is too restrictive for any real workflow. Useful for one-off lookups.
+    Data quality is mid; Polygon is preferred for production financial work.
+    Keep registered as a backup vendor.
+  last_verified: 2026-05-01
+  review_cadence_days: 90
+
+- id: tiingo
+  name: Tiingo
+  domain: financial-market
+  url: https://www.tiingo.com/
+  api_base_url: https://api.tiingo.com/
+  auth:
+    type: api-key
+    notes: |
+      Free tier: 50 req/hour, 1000/day, US equity EOD only.
+      Power tier ($30/mo): 5000 req/hour, intraday data, news.
+  pricing: freemium
+  free_tier: 50 req/hour, EOD US equities
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - eod-equity-data
+    - fundamentals
+    - news-feed
+    - mutual-fund-data
+  notes: |
+    Strong on fundamentals quality and adjusted price history.
+    News API includes sentiment scores. Useful for v2 sentiment work.
+    Less broad than Polygon but cheaper at the lower end.
+  last_verified: 2026-05-01
+  review_cadence_days: 90
+
+- id: finnhub
+  name: Finnhub
+  domain: financial-market
+  url: https://finnhub.io/
+  api_base_url: https://finnhub.io/api/v1/
+  auth:
+    type: api-key
+    notes: |
+      Free tier: 60 req/min for US equities.
+      Paid tiers from $50/mo for global coverage and institutional data.
+  pricing: freemium
+  free_tier: 60 req/min, US equities only
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - quotes
+    - earnings-calendar
+    - insider-transactions
+    - news-with-sentiment
+    - sec-filings
+  notes: |
+    Strong free tier for US equities — 60 req/min is enough for many workflows.
+    Insider transactions endpoint is a useful alt-data signal.
+    Latency on real-time quotes is variable; not for HFT-style use.
+  last_verified: 2026-05-01
+  review_cadence_days: 90

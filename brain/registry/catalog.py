@@ -24,6 +24,7 @@ def _skill_metadata(
     model_policy: str | None = None,
     egress_mode: str = "none",
     provider: str | None = None,
+    data_source_id: str | None = None,
     allowed_hosts: list[str] | None = None,
     compensation: str = "not_applicable",
     test_ref: str = "tests/test_agent_skill_registry.py",
@@ -35,6 +36,14 @@ def _skill_metadata(
     Provider credentials, URLs, and secret names stay outside the manifest.
     This is governance metadata: risk, egress, runtime, cost, and audit shape.
     """
+
+    egress: dict[str, Any] = {
+        "mode": egress_mode,
+        "provider": provider,
+        "allowed_hosts": allowed_hosts or [],
+    }
+    if data_source_id is not None:
+        egress["data_source_id"] = data_source_id
 
     metadata: dict[str, Any] = {
         "manifest": {
@@ -53,11 +62,7 @@ def _skill_metadata(
                 "max_usd_per_call": max_usd_per_call,
                 "model_policy": model_policy,
             },
-            "egress": {
-                "mode": egress_mode,
-                "provider": provider,
-                "allowed_hosts": allowed_hosts or [],
-            },
+            "egress": egress,
             "audit": {
                 "event_name": "skill.invoke",
                 "redact_fields": ["token", "secret", "body"],
@@ -237,6 +242,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             rate_limit="30/minute/system",
             egress_mode="gateway",
             provider="open_meteo",
+            data_source_id="open-meteo",
             allowed_hosts=["api.open-meteo.com"],
             test_ref="tests/test_weather_skill.py",
             extra={
@@ -539,8 +545,8 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             test_ref="tests/test_obsidian_skills.py",
             extra={
                 "execution_path": "skill_runner",
-                "config_secret": "OBSIDIAN_VAULT_PATH",
-                "default_path_secret": "OBSIDIAN_TASKS_INBOX",
+                "config_secret": "OBSIDIAN_VAULT_PATH",  # pragma: allowlist secret
+                "default_path_secret": "OBSIDIAN_TASKS_INBOX",  # pragma: allowlist secret
             },
         ),
     ),
@@ -562,7 +568,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             test_ref="tests/test_obsidian_skills.py",
             extra={
                 "execution_path": "skill_runner",
-                "config_secret": "OBSIDIAN_VAULT_PATH",
+                "config_secret": "OBSIDIAN_VAULT_PATH",  # pragma: allowlist secret
             },
         ),
     ),
@@ -1303,9 +1309,9 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
         cost_daily_cap_usd=0.0,
         approval_policy={
             "writes": "approval_required",
-            "api_keys": "T3",
+            "api_keys": "T3",  # pragma: allowlist secret
             "service_tokens": "T3",
-            "db_passwords": "T4",
+            "db_passwords": "T4",  # pragma: allowlist secret
             "rollback": "required",
         },
         metadata={

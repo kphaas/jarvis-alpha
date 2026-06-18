@@ -1,0 +1,111 @@
+# Weather APIs and forecasts.
+
+- id: nws-api
+  name: National Weather Service (NWS) API
+  domain: weather
+  url: https://www.weather.gov/documentation/services-web-api
+  api_base_url: https://api.weather.gov/
+  auth:
+    type: none
+    notes: |
+      No auth. Requires User-Agent header identifying your app + contact email.
+      No published rate limit; observed ~30 req/sec ceiling.
+  pricing: free
+  free_tier: unlimited (fair use, US-only data)
+  license: public-domain
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - us-weather-forecasts
+    - weather-alerts
+    - radar-data
+    - station-observations
+  notes: |
+    US National Weather Service. Coverage is US + territories ONLY.
+    Two-step lookup pattern: lat/lon -> grid endpoint -> forecast endpoint.
+    Most authoritative US source; use this over OpenWeather when in US.
+  last_verified: 2026-05-01
+  review_cadence_days: 365
+
+- id: open-meteo
+  name: Open-Meteo
+  domain: weather
+  url: https://open-meteo.com/
+  api_base_url: https://api.open-meteo.com/v1/forecast
+  auth:
+    type: none
+    notes: |
+      Free public API requires no key. Commercial/customer API uses the
+      customer-api.open-meteo.com endpoint with an apikey query parameter.
+  pricing: freemium
+  free_tier: Non-commercial only; 10k calls/day, 5k/hour, 600/minute
+  license: cc-by-4.0
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - current-weather
+    - global-forecasts
+    - historical-weather
+    - air-quality
+  notes: |
+    Good fit for Alpha's current weather.current Gateway adapter: no key, global
+    forecast coverage, compact JSON, and explicit latitude/longitude queries.
+    Free service has no uptime guarantee and is limited to non-commercial use;
+    switch to the customer endpoint before any commercial AT-0 workflow relies
+    on it. Data is model-derived, so use NWS for authoritative US alerts.
+  last_verified: 2026-06-17
+  review_cadence_days: 90
+
+- id: openweather
+  name: OpenWeather
+  domain: weather
+  url: https://openweathermap.org/
+  api_base_url: https://api.openweathermap.org/
+  auth:
+    type: api-key
+    notes: |
+      Free: 1000 calls/day, current + 5-day/3-hour forecast, current weather only.
+      One Call API 3.0: 1000 calls/day free, then $0.0014/call.
+  pricing: freemium
+  free_tier: 1000 calls/day
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - global-weather
+    - global-forecasts
+    - historical-weather
+    - weather-maps
+  notes: |
+    Use when global coverage is needed (NWS is US-only).
+    Free tier is fine for personal use.
+    Historical data requires One Call 3.0 paid tier.
+  last_verified: 2026-05-01
+  review_cadence_days: 180
+
+- id: tomorrow-io
+  name: Tomorrow.io
+  domain: weather
+  url: https://www.tomorrow.io/
+  api_base_url: https://api.tomorrow.io/v4/
+  auth:
+    type: api-key
+    notes: |
+      Free: 500 calls/day, 25 calls/hour, 3 calls/sec.
+      Paid tiers from $99/mo.
+  pricing: freemium
+  free_tier: 500 calls/day, 25/hour
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - hyperlocal-forecasts
+    - air-quality
+    - pollen-data
+    - severe-weather-alerts
+    - climacell-style-radar
+  notes: |
+    Strongest in hyperlocal nowcasts and non-temperature data (pollen, AQI, fire risk).
+    Hourly limit is restrictive; not suitable for high-frequency polling.
+  last_verified: 2026-05-01
+  review_cadence_days: 180
