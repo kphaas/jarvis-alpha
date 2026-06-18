@@ -58,6 +58,13 @@ def main() -> int:
         "checks": sorted(checks_payload.keys())
         if isinstance(checks_payload, dict)
         else [],
+        "warning_checks": sorted(
+            name
+            for name, check in checks_payload.items()
+            if isinstance(check, dict) and check.get("status") == "warning"
+        )
+        if isinstance(checks_payload, dict)
+        else [],
     }
     if health.get("status") != "ok":
         _emit({"results": results, "error": "beacon health degraded"})

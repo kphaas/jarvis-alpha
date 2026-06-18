@@ -777,10 +777,16 @@ async def test_internet_health_marks_budget_exhausted_provider_unusable(monkeypa
 
     result = await cloud_routes.internet_health(authorization="Bearer gateway-token")
 
-    assert result["status"] == "degraded"
+    assert result["status"] == "warning"
     assert result["configured_provider_count"] == 2
     assert result["usable_provider_count"] == 1
-    assert result["provider_redundancy_status"] == "single_provider"
+    assert result["provider_redundancy_ok"] is False
+    assert result["provider_redundancy_status"] == "backup_budget_capped"
+    assert result["provider_warning_status"] == "backup_budget_capped"
+    assert result["primary_provider"] == "brave"
+    assert result["primary_provider_usable"] is True
+    assert result["budget_capped_provider_count"] == 1
+    assert result["budget_capped_backup_provider_count"] == 1
     perplexity = next(
         provider
         for provider in result["providers"]
@@ -788,6 +794,36 @@ async def test_internet_health_marks_budget_exhausted_provider_unusable(monkeypa
     )
     assert perplexity["budget_exhausted"] is True
     assert perplexity["daily_request_limit"] == 0
+
+
+@pytest.mark.asyncio
+async def test_internet_health_degrades_when_primary_provider_is_budget_exhausted(
+    monkeypatch,
+):
+    monkeypatch.setenv("BEACON_BRAVE_DAILY_SEARCH_LIMIT", "0")
+
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "BRAVE_SEARCH_API_KEY":
+            return "brave-token"
+        if name == "PERPLEXITY_API_KEY":
+            return "pplx-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+
+    result = await cloud_routes.internet_health(authorization="Bearer gateway-token")
+
+    assert result["status"] == "degraded"
+    assert result["usable_provider_count"] == 1
+    assert result["provider_redundancy_ok"] is False
+    assert result["provider_redundancy_status"] == "single_provider"
+    assert result["provider_warning_status"] is None
+    assert result["primary_provider"] == "brave"
+    assert result["primary_provider_usable"] is False
+    assert result["budget_capped_provider_count"] == 1
+    assert result["budget_capped_backup_provider_count"] == 0
 
 
 @pytest.mark.asyncio

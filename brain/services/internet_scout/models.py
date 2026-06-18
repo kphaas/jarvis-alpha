@@ -485,7 +485,7 @@ class InternetScoutLocalLLMResponse(BaseModel):
 
 class InternetScoutHealthCheck(BaseModel):
     ok: bool
-    status: Literal["ok", "degraded", "unavailable"]
+    status: Literal["ok", "warning", "degraded", "unavailable"]
     detail: str
     metadata: dict[str, object] = Field(default_factory=dict)
 
