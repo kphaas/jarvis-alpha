@@ -238,10 +238,10 @@ def _format_prompt_context(
         "Beacon only if useful. Do not show source URLs, website names, or "
         "bracketed citations unless the user explicitly asks for links, "
         "sources, citations, URLs, or websites.",
-        "Only when the user asks for a documentation page, docs URL, source URL, "
-        "or official link, answer with the cited Source URL; do not substitute "
-        "API endpoint examples from citation text unless the user asks for an "
-        "API endpoint.",
+        "When the user asks for a source link, website link, source URL, cited "
+        "source, documentation page, docs URL, or official link, include the "
+        "full cited Source URL; do not substitute API endpoint examples from "
+        "citation text unless the user asks for an API endpoint.",
     ]
     if response.quality.warnings:
         lines.append("Beacon quality warnings:")
