@@ -12,6 +12,7 @@ from pathlib import Path
 import ssl
 import sys
 import urllib.error
+from urllib.parse import urlencode
 import urllib.request
 from typing import Any
 
@@ -24,6 +25,8 @@ DEFAULT_BRAIN_BASE_URL = "https://jarvis-brain.tail40ed36.ts.net:8186"
 DEFAULT_GATEWAY_BASE_URL = "https://jarvis-gateway.tail40ed36.ts.net:8283"
 DEFAULT_ENDPOINT_BASE_URL = "https://jarvis-endpoint.tail40ed36.ts.net:4100"
 DEFAULT_SANDBOX_BASE_URL = "https://jarvis-sandbox.tail40ed36.ts.net:5001"
+DEFAULT_SMOKE_WEATHER_LATITUDE = 40.7128
+DEFAULT_SMOKE_WEATHER_LONGITUDE = -74.0060
 REQUIRED_SOURCE_IDS = ("open-meteo", "brave-search", "perplexity-search")
 SECRET_KEYS = ("GATEWAY_TOKEN", "ALPHA_SERVICE_TOKEN", "ALPHA_BRAIN_SERVICE_TOKEN")
 
@@ -63,6 +66,20 @@ def main() -> int:
         "--sandbox-base-url",
         default=os.getenv("ALPHA_SANDBOX_BASE_URL", DEFAULT_SANDBOX_BASE_URL),
     )
+    parser.add_argument(
+        "--weather-latitude",
+        type=float,
+        default=float(
+            os.getenv("ALPHA_SMOKE_WEATHER_LATITUDE", DEFAULT_SMOKE_WEATHER_LATITUDE)
+        ),
+    )
+    parser.add_argument(
+        "--weather-longitude",
+        type=float,
+        default=float(
+            os.getenv("ALPHA_SMOKE_WEATHER_LONGITUDE", DEFAULT_SMOKE_WEATHER_LONGITUDE)
+        ),
+    )
     args = parser.parse_args()
 
     results = {
@@ -77,6 +94,8 @@ def main() -> int:
             gateway_base_url=args.gateway_base_url,
             endpoint_base_url=args.endpoint_base_url,
             sandbox_base_url=args.sandbox_base_url,
+            weather_latitude=args.weather_latitude,
+            weather_longitude=args.weather_longitude,
             require_gateway_token=args.require_gateway_token,
         )
 
@@ -243,6 +262,8 @@ def _live_checks(
     gateway_base_url: str,
     endpoint_base_url: str,
     sandbox_base_url: str,
+    weather_latitude: float,
+    weather_longitude: float,
     require_gateway_token: bool,
 ) -> SmokeResult:
     detail: dict[str, Any] = {
@@ -263,7 +284,10 @@ def _live_checks(
         detail["weather_current"] = _json_request(
             "GET",
             gateway_base_url,
-            "/v1/weather/current",
+            _weather_current_path(
+                latitude=weather_latitude,
+                longitude=weather_longitude,
+            ),
             token=token,
         )
         detail["beacon_provider_health"] = _json_request(
@@ -277,6 +301,17 @@ def _live_checks(
         "passed" if _live_detail_passed(detail, require_gateway_token) else "failed"
     )
     return SmokeResult(status, detail)
+
+
+def _weather_current_path(*, latitude: float, longitude: float) -> str:
+    params = urlencode(
+        {
+            "latitude": f"{latitude:.6f}",
+            "longitude": f"{longitude:.6f}",
+            "location_label": "mvp-smoke",
+        }
+    )
+    return f"/v1/weather/current?{params}"
 
 
 def _skill_by_name(skill_name: str, skills: tuple[Any, ...]) -> Any:

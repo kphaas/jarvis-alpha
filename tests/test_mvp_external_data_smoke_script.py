@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from urllib.parse import parse_qs, urlsplit
 
 
 SCRIPT_PATH = Path("scripts/smoke_mvp_external_data.py")
@@ -58,6 +59,20 @@ def test_live_detail_requires_gateway_token_when_requested():
     assert not smoke_mvp_external_data._live_detail_passed(
         detail, require_gateway_token=True
     )
+
+
+def test_weather_current_path_includes_explicit_smoke_coordinates():
+    path = smoke_mvp_external_data._weather_current_path(
+        latitude=40.7128,
+        longitude=-74.006,
+    )
+    parsed = urlsplit(path)
+    params = parse_qs(parsed.query)
+
+    assert parsed.path == "/v1/weather/current"
+    assert params["latitude"] == ["40.712800"]
+    assert params["longitude"] == ["-74.006000"]
+    assert params["location_label"] == ["mvp-smoke"]
 
 
 def test_gateway_token_reads_configured_secret_file(monkeypatch, tmp_path):
