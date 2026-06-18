@@ -150,7 +150,7 @@ needs_restart_brain() {
 }
 
 needs_reload_school_email() {
-  service_has_changes_matching "alpha-school-email" '(^launchagents/com\.jarvis\.alpha\.(school-email|gmail-health|at0-mail)\.template\.plist$|^scripts/start_alpha_(school_email|gmail_health|at0_mail)\.sh$|^scripts/install_launchagents\.py$)'
+  service_has_changes_matching "alpha-school-email" '(^launchagents/com\.jarvis\.alpha\.(school-email|gmail-health|at0-mail|at0-mail-health)\.template\.plist$|^scripts/start_alpha_(school_email|gmail_health|at0_mail|at0_mail_health)\.sh$|^scripts/install_launchagents\.py$)'
 }
 
 needs_reload_sweep_cert() {
@@ -449,6 +449,7 @@ fi
 SCHOOL_EMAIL_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.school-email.plist"
 GMAIL_HEALTH_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.gmail-health.plist"
 AT0_MAIL_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.at0-mail.plist"
+AT0_MAIL_HEALTH_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.at0-mail-health.plist"
 if [ "$NODE_SHORT" = "brain" ] && needs_reload_school_email; then
   echo ""
   echo "Refreshing Alpha School Email LaunchAgent..."
@@ -497,6 +498,18 @@ if [ "$NODE_SHORT" = "brain" ] && needs_reload_school_email; then
   else
     emit fail restart node="$NODE_SHORT" service="alpha-at0-mail" dur_ms=$(($(time_ms) - SCHOOL_START)) error="plist missing after install"
     echo "❌ AT-0 Herald mail LaunchAgent plist missing after install"
+    exit 1
+  fi
+  if [ -f "$AT0_MAIL_HEALTH_PLIST" ]; then
+    launchctl unload "$AT0_MAIL_HEALTH_PLIST" 2>/dev/null || true
+    launchctl load "$AT0_MAIL_HEALTH_PLIST"
+    AT0_MAIL_HEALTH_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.at0-mail-health" {print $1}' | head -1)
+    [ "$AT0_MAIL_HEALTH_PID" = "-" ] && AT0_MAIL_HEALTH_PID=0
+    echo "✅ AT-0 Herald mail health LaunchAgent refreshed"
+    emit ok restart node="$NODE_SHORT" service="alpha-at0-mail-health" pid="${AT0_MAIL_HEALTH_PID:-0}" dur_ms=$(($(time_ms) - SCHOOL_START))
+  else
+    emit fail restart node="$NODE_SHORT" service="alpha-at0-mail-health" dur_ms=$(($(time_ms) - SCHOOL_START)) error="plist missing after install"
+    echo "❌ AT-0 Herald mail health LaunchAgent plist missing after install"
     exit 1
   fi
   mark_service_checked "alpha-school-email"
