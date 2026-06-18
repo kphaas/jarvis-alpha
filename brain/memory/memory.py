@@ -667,6 +667,8 @@ class MemoryService:
                         p.approval_queue_id IS NULL
                         OR q.id IS NULL
                         OR q.status NOT IN ('pending', 'approved')
+                        OR q.expires_at IS NULL
+                        OR q.expires_at <= now()
                       )
                 )::int AS dream_approval_mismatch_count,
                 COUNT(*) FILTER (

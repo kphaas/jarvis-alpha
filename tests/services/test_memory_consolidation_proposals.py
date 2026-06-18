@@ -13,6 +13,7 @@ from brain.services.memory_consolidation_proposals import (
     build_memory_consolidation_proposal_records,
     create_reviewed_memory_consolidation_proposals,
     enqueue_memory_consolidation_approval,
+    expire_stale_memory_consolidation_proposals,
 )
 
 
@@ -121,6 +122,7 @@ async def test_archive_proposal_marks_buddy_hold_after_queueing() -> None:
     assert len(proposals) == 1
     assert proposals[0].proposed_action == "archive_working"
     assert proposals[0].status == "queued"
+    assert "expire_stale_memory_consolidation_proposals" in conn.fetchval_calls[0][0]
     assert any(
         "enqueue_approval_request" in query for query, _args in conn.fetchval_calls
     )
@@ -157,6 +159,16 @@ async def test_enqueue_memory_consolidation_approval_is_t5_without_memory_text()
     )
     assert args[5] == record.parameters_hash
     assert "private Spark voice text" not in str(args)
+
+
+@pytest.mark.asyncio
+async def test_expire_stale_memory_consolidation_proposals_uses_secdef_function():
+    conn = FakeConn()
+
+    await expire_stale_memory_consolidation_proposals(conn)  # type: ignore[arg-type]
+
+    assert len(conn.calls) == 1
+    assert "expire_stale_memory_consolidation_proposals" in conn.calls[0][0]
 
 
 def _report() -> dict:

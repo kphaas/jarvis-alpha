@@ -224,6 +224,17 @@ def test_drill_has_inject_corrupt_failpath_test_flag():
     assert "INJECT_CORRUPT" in text
 
 
+def test_restore_drill_finds_macos_tool_paths_outside_login_path():
+    text = (REPO_ROOT / "scripts" / "restore_drill_alpha.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "find_tool()" in text
+    assert '"/opt/homebrew/bin/${name}"' in text
+    assert '"/usr/local/bin/${name}"' in text
+    assert "DOCKER=$(find_tool docker || true)" in text
+
+
 def test_pg_backup_calls_preflight():
     """pg_backup must short-circuit on preflight failure."""
     text = (REPO_ROOT / "scripts" / "pg_backup_alpha.sh").read_text(encoding="utf-8")
@@ -257,7 +268,7 @@ def test_restore_drill_reference_table_count_matches_current_baseline():
     text = (REPO_ROOT / "scripts" / "restore_drill_alpha.sh").read_text(
         encoding="utf-8"
     )
-    assert "REF_TABLES=97" in text
+    assert "REF_TABLES=105" in text
     assert "including views" in text
 
 

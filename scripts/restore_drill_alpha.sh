@@ -21,17 +21,40 @@ REPORT_JSON="${LOG_DIR}/restore_drill_${RUN_TS}.json"
 DRILL_DB="jarvis_alpha_drill"
 IMAGE="pgvector/pgvector:pg16"
 
-# Live Brain reference baseline (verified after privacy/security migrations,
-# 2026-06-17). Counts information_schema public entries, including views.
-REF_TABLES=97
+# Live Brain reference baseline (verified after memory observability/Spark
+# readiness work, 2026-06-18). Counts information_schema public entries,
+# including views.
+REF_TABLES=105
 REF_TOLERANCE=2
 EXPECTED_PRIVACY_TABLES=16
 EXPECTED_PRIVACY_FORCE_RLS_TABLES=16
 
 # Tools
-JQ=$(command -v jq || true)
-GPG=$(command -v gpg || true)
-DOCKER=$(command -v docker || true)
+find_tool() {
+    local name="$1"
+    local found
+    found=$(command -v "$name" 2>/dev/null || true)
+    if [[ -n "$found" ]]; then
+        printf '%s\n' "$found"
+        return 0
+    fi
+    local candidate
+    for candidate in \
+        "/opt/homebrew/bin/${name}" \
+        "/usr/local/bin/${name}" \
+        "/usr/bin/${name}" \
+        "/bin/${name}"; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+JQ=$(find_tool jq || true)
+GPG=$(find_tool gpg || true)
+DOCKER=$(find_tool docker || true)
 SHA256=$(command -v shasum >/dev/null 2>&1 && echo "shasum -a 256" || echo "sha256sum")
 
 mkdir -p "$TMP_DIR" "$LOG_DIR"
