@@ -19,6 +19,17 @@ class At0MailMailboxList(BaseModel):
     mailboxes: list[str]
 
 
+class At0SparkProfileOut(BaseModel):
+    spark_id: str
+    display_name: str
+    channel: str
+    voice: list[str]
+    reply_boundaries: list[str]
+    can_send: bool
+    requires_human_approval: bool
+    draft_engine: str
+
+
 class At0MailScanRunOut(BaseModel):
     id: UUID
     trigger: str

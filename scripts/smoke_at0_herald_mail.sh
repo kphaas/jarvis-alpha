@@ -134,6 +134,14 @@ elif label == "mailboxes":
     if not payload["mailboxes"]:
         raise SystemExit("FAIL mailboxes: no configured mailboxes returned")
     print(f"PASS mailboxes: count={len(payload['mailboxes'])}")
+elif label == "spark":
+    if payload.get("spark_id") != "at0-spark":
+        raise SystemExit(f"FAIL spark: unexpected spark_id={payload.get('spark_id')}")
+    if payload.get("can_send") is not False:
+        raise SystemExit("FAIL spark: can_send was not false")
+    if payload.get("requires_human_approval") is not True:
+        raise SystemExit("FAIL spark: requires_human_approval was not true")
+    print(f"PASS spark: profile={payload['spark_id']} draft_only=true")
 elif label == "dashboard":
     for field in ("message_counts", "draft_counts"):
         if not isinstance(payload.get(field), list):
@@ -159,8 +167,9 @@ PY
 request_json "POST" "scan" "/v1/at0-mail/scan?max_results=${MAX_RESULTS}"
 request_json "GET" "health" "/v1/at0-mail/health"
 request_json "GET" "mailboxes" "/v1/at0-mail/mailboxes"
+request_json "GET" "spark" "/v1/at0-mail/spark-profile"
 request_json "GET" "dashboard" "/v1/at0-mail/dashboard"
 request_json "GET" "messages" "/v1/at0-mail/messages?limit=1"
 request_json "GET" "drafts" "/v1/at0-mail/drafts?limit=1"
 
-echo "PASS at0-herald-mail smoke: scan, health, mailboxes, dashboard, messages, drafts reachable"
+echo "PASS at0-herald-mail smoke: scan, health, mailboxes, spark, dashboard, messages, drafts reachable"

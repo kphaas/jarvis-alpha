@@ -38,6 +38,19 @@ async def test_mailboxes_route_returns_configured_mailboxes(
 
 
 @pytest.mark.asyncio
+async def test_spark_profile_route_returns_draft_only_profile() -> None:
+    response = await at0_mail.get_spark_profile(
+        _request(["at0_mail.read"]),
+        "user",
+    )
+
+    assert response.spark_id == "at0-spark"
+    assert response.display_name == "AT-0 Spark"
+    assert response.can_send is False
+    assert response.requires_human_approval is True
+
+
+@pytest.mark.asyncio
 async def test_scan_can_target_one_configured_mailbox(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

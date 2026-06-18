@@ -19,10 +19,12 @@ from brain.models.at0_mail import (
     At0MailMessageList,
     At0MailMessageOut,
     At0MailScanResponse,
+    At0SparkProfileOut,
 )
 from brain.services.at0_mail_agent import scan_at0_mail
 from brain.services.at0_mail_graph_client import configured_mailboxes
 from brain.services.at0_mail_repository import dashboard_summary, health_summary
+from brain.services.at0_spark import at0_spark_profile
 
 router = APIRouter(prefix="/v1/at0-mail", tags=["at0-mail"])
 
@@ -77,6 +79,15 @@ async def get_mailboxes(
 ) -> At0MailMailboxList:
     _check_read_scope(request)
     return At0MailMailboxList(mailboxes=list(_configured_mailboxes()))
+
+
+@router.get("/spark-profile", response_model=At0SparkProfileOut)
+async def get_spark_profile(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> At0SparkProfileOut:
+    _check_read_scope(request)
+    return At0SparkProfileOut(**at0_spark_profile().to_payload())
 
 
 @router.get("/dashboard", response_model=At0MailDashboardOut)

@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from brain.db.pool import get_pool
 from brain.services.at0_mail_classifier import (
-    build_reply_draft,
     classify_at0_mail,
     should_create_draft,
 )
@@ -19,6 +18,7 @@ from brain.services.at0_mail_repository import (
     record_message,
     start_scan_run,
 )
+from brain.services.at0_spark import create_at0_spark_reply_draft
 
 
 @dataclass(frozen=True)
@@ -104,17 +104,17 @@ async def _scan_mailboxes(
                 messages_new += int(persisted.created)
                 if not persisted.created or not wants_draft:
                     continue
+                draft = create_at0_spark_reply_draft(
+                    message=message,
+                    classification=classification,
+                )
                 await record_draft_proposal(
                     conn,
                     message_id=persisted.id,
                     mailbox=message.mailbox,
                     recipient_email=message.sender_email,
                     reply_subject=_reply_subject(message.subject),
-                    proposed_body=build_reply_draft(
-                        classification=classification.classification,
-                        sender_name=message.sender_name,
-                        subject=message.subject,
-                    ),
+                    proposed_body=draft.proposed_body,
                 )
                 draft_proposals_created += 1
 
