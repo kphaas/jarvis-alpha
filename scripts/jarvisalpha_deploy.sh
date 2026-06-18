@@ -203,6 +203,50 @@ remote_pull() {
   fi
 }
 
+run_post_deploy_smokes() {
+  phase_header "POST-DEPLOY SMOKE"
+
+  if [[ "${JARVIS_SKIP_SETTINGS_SMOKE:-0}" == "1" || "${JARVIS_ALPHA_SKIP_SETTINGS_SMOKE:-0}" == "1" ]]; then
+    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "settings smoke" "SKIPPED (JARVIS_SKIP_SETTINGS_SMOKE=1)" ""
+    return 0
+  fi
+
+  local smoke_start=$SECONDS
+  local settings_base_url="${JARVIS_ALPHA_BRAIN_HEALTH_URL%/health}"
+  local settings_endpoint_url="${JARVIS_ALPHA_ENDPOINT_HEALTH_URL%/}/settings"
+  local smoke_out
+  local smoke_ec
+
+  smoke_out=$(
+    SETTINGS_SMOKE_BASE_URL="$settings_base_url" \
+    SETTINGS_SMOKE_ENDPOINT_URL="$settings_endpoint_url" \
+    SETTINGS_SMOKE_TOKEN_SSH_TARGET="$BRAIN" \
+      python3 "$REPO_DIR/scripts/smoke_settings.py" 2>&1
+  )
+  smoke_ec=$?
+  if [ $smoke_ec -ne 0 ]; then
+    step_fail "settings smoke" "failed"
+    echo "$smoke_out" >&2
+    return 1
+  fi
+
+  local smoke_summary
+  smoke_summary=$(printf '%s\n' "$smoke_out" | tail -1 | python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+checks = payload.get("checks", {})
+passed = [
+    name
+    for name, check in checks.items()
+    if isinstance(check, dict) and check.get("ok") is True
+]
+print(f"{len(passed)} checks passed")
+' 2>/dev/null || true)
+  step_ok "settings smoke" "${smoke_summary:-passed}" "$(fmt_s $((SECONDS - smoke_start)))"
+}
+
 cd "$REPO_DIR"
 
 # ══════════════════════════════════════════════════════════
@@ -346,6 +390,10 @@ if [ $DEPLOY_FAILED -eq 0 ]; then
   remote_pull "Brain" "$BRAIN" || exit 1
   remote_pull "Gateway" "$GATEWAY" || exit 1
   remote_pull "Endpoint" "$ENDPOINT" || exit 1
+fi
+
+if [ $DEPLOY_FAILED -eq 0 ]; then
+  run_post_deploy_smokes || DEPLOY_FAILED=1
 fi
 
 # ══════════════════════════════════════════════════════════
