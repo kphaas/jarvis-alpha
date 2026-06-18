@@ -632,6 +632,78 @@ class MemoryService:
             str(user_id),
             recent_limit,
         )
+        proposal_metrics = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE p.created_at >= now() - INTERVAL '7 days'
+                )::int AS dream_proposals_7d,
+                COUNT(*) FILTER (
+                    WHERE p.executable
+                      AND p.status IN ('pending_review', 'queued', 'approved')
+                )::int AS dream_reviewed_writes_open,
+                COUNT(*) FILTER (WHERE p.status = 'queued')::int
+                    AS dream_proposals_queued,
+                COUNT(*) FILTER (WHERE p.status = 'informational')::int
+                    AS dream_informational_open,
+                COUNT(*) FILTER (
+                    WHERE p.executable
+                      AND p.status = 'queued'
+                      AND q.status = 'approved'
+                )::int AS dream_approved_waiting_execution,
+                COUNT(*) FILTER (WHERE p.status = 'executed')::int
+                    AS dream_proposals_executed,
+                COUNT(*) FILTER (WHERE p.status = 'reverted')::int
+                    AS dream_proposals_reverted,
+                COUNT(*) FILTER (
+                    WHERE p.executable
+                      AND p.status IN ('pending_review', 'queued', 'approved')
+                      AND p.updated_at < now() - INTERVAL '48 hours'
+                )::int AS stale_dream_reviewed_writes,
+                COUNT(*) FILTER (
+                    WHERE p.executable
+                      AND p.status IN ('queued', 'approved')
+                      AND (
+                        p.approval_queue_id IS NULL
+                        OR q.id IS NULL
+                        OR q.status NOT IN ('pending', 'approved')
+                      )
+                )::int AS dream_approval_mismatch_count,
+                COUNT(*) FILTER (
+                    WHERE p.status = 'executed'
+                      AND l.proposal_id IS NULL
+                )::int AS dream_executed_without_ledger
+            FROM alpha_memory_consolidation_proposals p
+            LEFT JOIN alpha_approval_queue q
+              ON q.id = p.approval_queue_id
+            LEFT JOIN alpha_memory_consolidation_execution_ledger l
+              ON l.proposal_id = p.id
+             AND l.status = 'executed'
+            WHERE p.user_id = $1
+            """,
+            user_id,
+        )
+        recent_dream_proposals = await conn.fetch(
+            """
+            SELECT
+                p.id::text AS proposal_id,
+                p.proposed_action,
+                p.executable,
+                p.status,
+                p.approval_queue_id::text,
+                q.status AS approval_status,
+                p.created_at,
+                p.updated_at
+            FROM alpha_memory_consolidation_proposals p
+            LEFT JOIN alpha_approval_queue q
+              ON q.id = p.approval_queue_id
+            WHERE p.user_id = $1
+            ORDER BY p.updated_at DESC
+            LIMIT $2
+            """,
+            user_id,
+            recent_limit,
+        )
         return {
             "semantic_metrics": dict(semantic_metrics or {}),
             "source_surfaces_7d": [dict(row) for row in source_rows],
@@ -639,6 +711,8 @@ class MemoryService:
             "recent_semantic_saves": [dict(row) for row in recent_saves],
             "buddy_metrics": dict(buddy_metrics or {}),
             "recent_buddy_events": [dict(row) for row in recent_buddy_events],
+            "proposal_metrics": dict(proposal_metrics or {}),
+            "recent_dream_proposals": [dict(row) for row in recent_dream_proposals],
         }
 
 
