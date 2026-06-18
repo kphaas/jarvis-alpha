@@ -101,6 +101,7 @@ The initial seed covers foundation and near-term waves:
 - `smarthome.alarm_disarm`
 - `tasks.create`
 - `notes.search`
+- `notes.write_private_digest`
 
 ## Four-Lens Notes
 
@@ -240,6 +241,7 @@ The first non-notification Dream skills are now local-only Obsidian handlers:
 | Skill | State | Approval | Handler |
 |---|---|---|---|
 | `notes.search` | active | T1 | Searches markdown notes under `OBSIDIAN_VAULT_PATH`, skipping hidden and tool directories. |
+| `notes.write_private_digest` | active | T2 | Writes an idempotent private digest note under `AT-0/Private Document Digests` unless a safe vault-relative path is provided. |
 | `tasks.create` | active | T2 | Appends an Obsidian Tasks checkbox with a required idempotency marker. |
 
 Production configuration uses `OBSIDIAN_VAULT_PATH`; `tasks.create` optionally

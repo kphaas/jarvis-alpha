@@ -36,6 +36,7 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert "internet_scout.search" in names
     assert "internet_scout.deep_research" in names
     assert "internet_scout.browser_task" in names
+    assert "notes.write_private_digest" in names
     skills = {skill.name: skill for skill in INITIAL_SKILLS}
     assert skills["notify.send"].status == "active"
     assert skills["notify.send"].metadata["primary"] == "mattermost"
@@ -176,6 +177,8 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     )
     assert "helm_ask" in agents["internet_scout"].metadata["operator_surfaces"]
     assert "notify.send" in agents["dream_mode"].allowed_skills
+    assert "notes.write_private_digest" in agents["dream_mode"].allowed_skills
+    assert "notes.write" in agents["dream_mode"].allowed_scopes
     assert "notify.send" in agents["approval_triage"].allowed_skills
     assert agents["porchlight"].launch_label == "com.jarvis.alpha.porchlight"
     assert agents["porchlight"].metadata["mattermost_channel_key"] == "security_alerts"

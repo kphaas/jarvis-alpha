@@ -24,6 +24,7 @@ from brain.skills.handlers import all_skill_handlers, build_skill_runner
 from brain.skills.obsidian import (
     ObsidianSkillError,
     notes_search,
+    notes_write_private_digest,
     obsidian_skill_handlers,
     tasks_create,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "send_pushover",
     "ObsidianSkillError",
     "notes_search",
+    "notes_write_private_digest",
     "obsidian_skill_handlers",
     "tasks_create",
     "UniFiSkillError",
