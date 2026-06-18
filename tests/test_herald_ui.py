@@ -29,5 +29,6 @@ def test_herald_ui_splits_view_by_configured_mailbox() -> None:
     assert "/v1/at0-mail/messages?limit=12${mailboxQuery}" in source
     assert "/v1/at0-mail/drafts?limit=8${mailboxQuery}" in source
     assert "/v1/at0-mail/scan?max_results=25${mailboxQuery}" in source
+    assert "AT-0 Spark drafts" in source
     assert "fetch(" not in source
     assert "XMLHttpRequest" not in source

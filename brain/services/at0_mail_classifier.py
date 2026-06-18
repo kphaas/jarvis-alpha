@@ -102,50 +102,5 @@ def should_create_draft(classification: str) -> bool:
     return classification in {"lead", "support", "press", "partner", "investor"}
 
 
-def build_reply_draft(
-    *,
-    classification: str,
-    sender_name: str | None,
-    subject: str | None,
-) -> str:
-    greeting = f"Hi {sender_name.strip()}," if sender_name else "Hi,"
-    topic = subject.strip() if subject else "your note"
-    if classification == "support":
-        body = (
-            "Thanks for reaching out to At-0 support. I have your message and will "
-            "route it for review before we take action."
-        )
-    elif classification == "press":
-        body = (
-            "Thanks for reaching out about At-0. Ken reviews press requests directly, "
-            "and I will get this in front of him with the right context."
-        )
-    elif classification == "partner":
-        body = (
-            "Thanks for the partnership note. At-0 is focused on private AI infrastructure, "
-            "and I will review where this could fit before we respond with next steps."
-        )
-    elif classification == "investor":
-        body = (
-            "Thanks for reaching out. Ken reviews investor conversations personally, "
-            "and I will flag this for review before any follow-up."
-        )
-    else:
-        body = (
-            "Thanks for your interest in At-0. We are building private AI infrastructure "
-            "with human approval, domain isolation, and no data resale. I will route this "
-            "for review and follow up with next steps."
-        )
-
-    return "\n\n".join(
-        [
-            greeting,
-            body,
-            f"Context: {topic}",
-            "Best,\nAt-0",
-        ]
-    )
-
-
 def _contains_any(value: str, markers: tuple[str, ...]) -> bool:
     return any(marker in value for marker in markers)
