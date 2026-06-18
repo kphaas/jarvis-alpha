@@ -50,18 +50,18 @@ interface CoverageLane {
   checks: string[]
 }
 
-const EXPECTED_PORCHLIGHT_CHECKS = 22
+const EXPECTED_PORCHLIGHT_CHECKS = 23
 const PORCHLIGHT_STALE_AFTER_HOURS = 30
 
 const coverageLanes: CoverageLane[] = [
   {
     id: 'detect',
     title: 'Detection',
-    detail: 'Malware patterns, secret leakage, runtime exposure, honeypot, and data-boundary signals.',
+    detail: 'Malware patterns, secret leakage, runtime exposure, Tailscale posture, honeypot, and data-boundary signals.',
     tab: 'Porchlight',
     icon: Activity,
     agents: ['porchlight', 'tripwire', 'sentry'],
-    checks: ['code_malware_scan', 'secrets_leakage_scan', 'runtime_exposure'],
+    checks: ['code_malware_scan', 'secrets_leakage_scan', 'runtime_exposure', 'tailscale_ssh_posture'],
   },
   {
     id: 'exposure',
