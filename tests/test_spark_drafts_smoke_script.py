@@ -30,6 +30,10 @@ def test_spark_drafts_smoke_script_checks_draft_only_contract() -> None:
     assert "context_preview" in text
     assert "more than 8 messages returned" in text
     assert "can_send" in text
+    assert "never executes the approved-send endpoint" in text
+    assert "live-send scope" in text
+    assert "imessage.send" not in text
+    assert "/send" not in text
     assert "requires_human_approval" in text
     assert "durable_storage_allowed" in text
     assert "chat_guid_hash" not in text
