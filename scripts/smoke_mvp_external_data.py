@@ -25,6 +25,7 @@ DEFAULT_GATEWAY_BASE_URL = "https://jarvis-gateway.tail40ed36.ts.net:8283"
 DEFAULT_ENDPOINT_BASE_URL = "https://jarvis-endpoint.tail40ed36.ts.net:4100"
 DEFAULT_SANDBOX_BASE_URL = "https://jarvis-sandbox.tail40ed36.ts.net:5001"
 REQUIRED_SOURCE_IDS = ("open-meteo", "brave-search", "perplexity-search")
+SECRET_KEYS = ("GATEWAY_TOKEN", "ALPHA_SERVICE_TOKEN", "ALPHA_BRAIN_SERVICE_TOKEN")
 
 
 @dataclass(frozen=True)
@@ -315,21 +316,46 @@ def _skill_row(skill: Any) -> dict[str, Any]:
 
 
 def _gateway_token() -> str | None:
-    for name in ("GATEWAY_TOKEN", "ALPHA_SERVICE_TOKEN", "ALPHA_BRAIN_SERVICE_TOKEN"):
+    for name in SECRET_KEYS:
         value = os.getenv(name)
         if value:
             return value
+    file_token = _gateway_token_from_secret_files()
+    if file_token:
+        return file_token
     try:
         from jarvis_common.secrets import get_secret
     except Exception:
         return None
-    for name in ("GATEWAY_TOKEN", "ALPHA_SERVICE_TOKEN", "ALPHA_BRAIN_SERVICE_TOKEN"):
+    for name in SECRET_KEYS:
         try:
             value = get_secret(name).strip()
         except KeyError:
             continue
         if value:
             return value
+    return None
+
+
+def _gateway_token_from_secret_files() -> str | None:
+    paths: list[Path] = []
+    configured = os.getenv("SECRETS_FILE")
+    if configured:
+        paths.append(Path(configured).expanduser())
+    paths.extend([Path.home() / ".secrets", Path.home() / "jarvis" / ".secrets"])
+
+    for path in dict.fromkeys(paths):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            if key.strip() in SECRET_KEYS and value.strip():
+                return value.strip().strip("'\"")
     return None
 
 
@@ -359,13 +385,18 @@ def _json_request(
             context=ssl._create_unverified_context(),
         ) as response:
             raw = response.read().decode("utf-8")
-        payload = json.loads(raw) if raw else {}
+        try:
+            payload: Any = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            payload = None
         return {
             "status": "passed",
             "http_status": response.status,
+            "content_type": response.headers.get("Content-Type"),
             "payload_status": payload.get("status")
             if isinstance(payload, dict)
             else None,
+            "body_type": "json" if isinstance(payload, dict) else "text",
             "summary": _live_payload_summary(payload),
         }
     except urllib.error.HTTPError as exc:

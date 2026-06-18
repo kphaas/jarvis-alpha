@@ -58,3 +58,17 @@ def test_live_detail_requires_gateway_token_when_requested():
     assert not smoke_mvp_external_data._live_detail_passed(
         detail, require_gateway_token=True
     )
+
+
+def test_gateway_token_reads_configured_secret_file(monkeypatch, tmp_path):
+    secrets_file = tmp_path / ".secrets"
+    secrets_file.write_text(
+        "OTHER_TOKEN=ignored\nALPHA_SERVICE_TOKEN='service-token'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("GATEWAY_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHA_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHA_BRAIN_SERVICE_TOKEN", raising=False)
+    monkeypatch.setenv("SECRETS_FILE", str(secrets_file))
+
+    assert smoke_mvp_external_data._gateway_token() == "service-token"
