@@ -76,7 +76,7 @@ def test_browser_db_verification_requires_no_browser_run_events():
 
 def test_parse_json_from_stdout_uses_last_json_object():
     payload = smoke_mvp_user_paths._parse_json_from_stdout(
-        "log line\n{\"ignored\": true}\n{\"status\": \"passed\"}\n"
+        'log line\n{"ignored": true}\n{"status": "passed"}\n'
     )
 
     assert payload == {"status": "passed"}

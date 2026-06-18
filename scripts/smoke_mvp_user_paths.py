@@ -18,7 +18,6 @@ from pathlib import Path
 import shlex
 import ssl
 import subprocess
-import sys
 from typing import Any
 import urllib.error
 import urllib.request
@@ -283,8 +282,7 @@ def _browser_db_verification(
     approval_queue_id: str,
 ) -> SmokeResult:
     command_prefix = (
-        f"REQ_ID={shlex.quote(request_id)} "
-        f"QUEUE_ID={shlex.quote(approval_queue_id)} "
+        f"REQ_ID={shlex.quote(request_id)} QUEUE_ID={shlex.quote(approval_queue_id)} "
     )
     try:
         payload = _run_brain_python(
@@ -313,7 +311,9 @@ def _merge_browser_results(
 ) -> SmokeResult:
     detail = {**browser.detail, "db_verification": browser_db.detail}
     return SmokeResult(
-        "passed" if browser.status == "passed" and browser_db.status == "passed" else "failed",
+        "passed"
+        if browser.status == "passed" and browser_db.status == "passed"
+        else "failed",
         detail,
     )
 
@@ -469,7 +469,7 @@ def _emit(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, sort_keys=True))
 
 
-_WEATHER_REMOTE_PY = r'''
+_WEATHER_REMOTE_PY = r"""
 import asyncio
 import json
 
@@ -502,7 +502,7 @@ async def main():
 
 
 asyncio.run(main())
-'''
+"""
 
 
 _BROWSER_DB_REMOTE_PY = r'''
