@@ -28,7 +28,19 @@ VALID_CLASSIFICATIONS = (
     "50_SECRETS",
 )
 
+DEFAULT_VAULT_WORKSPACE_ID = "personal"
+
 router = APIRouter(prefix="/v1/vault", tags=["vault"])
+
+
+def _vault_workspace_id(request: Request) -> str:
+    workspace_id = getattr(request.state, "workspace_id", None)
+    if isinstance(workspace_id, str) and workspace_id.strip():
+        normalized = workspace_id.strip()
+        request.state.workspace_id = normalized
+        return normalized
+    request.state.workspace_id = DEFAULT_VAULT_WORKSPACE_ID
+    return DEFAULT_VAULT_WORKSPACE_ID
 
 
 async def _pipeline_document_row(db, pipeline_id: str):
@@ -76,6 +88,7 @@ async def vault_upload(
     classification: str = Form(default="10_PUBLIC"),
 ):
     check_scopes(request, "vault.write", "admin")
+    workspace_id = _vault_workspace_id(request)
     if classification not in VALID_CLASSIFICATIONS:
         raise HTTPException(status_code=400, detail="invalid classification")
 
@@ -106,7 +119,7 @@ async def vault_upload(
             classification,
             local_path,
             getattr(request.state, "user_id", None),
-            getattr(request.state, "workspace_id", None) or "personal",
+            workspace_id,
         )
         row = await db.fetchrow(
             """
@@ -122,7 +135,7 @@ async def vault_upload(
             local_path,
             size,
             getattr(request.state, "user_id", None),
-            getattr(request.state, "workspace_id", None) or "personal",
+            workspace_id,
         )
 
     pipeline_id = row["id"]
@@ -142,6 +155,7 @@ async def vault_upload(
 @router.get("/pipeline")
 async def vault_pipeline_list(request: Request):
     check_scopes(request, "vault.read", "admin")
+    _vault_workspace_id(request)
     async with rls_connection(request) as db:
         rows = await db.fetch(
             """
@@ -171,6 +185,7 @@ async def vault_pipeline_list(request: Request):
 @router.post("/pipeline/{pipeline_id}/confirm")
 async def vault_pipeline_confirm(pipeline_id: str, request: Request):
     check_scopes(request, "vault.write", "admin")
+    _vault_workspace_id(request)
     async with rls_connection(request) as db:
         row = await _pipeline_document_row(db, pipeline_id)
 
@@ -213,6 +228,7 @@ async def vault_ingest_pdf(
     pipeline_id: str = Form(...),
 ):
     check_scopes(request, "vault.write", "admin")
+    _vault_workspace_id(request)
     file_bytes = await file.read()
     async with rls_connection(request) as db:
         row = await _pipeline_document_row(db, pipeline_id)
@@ -233,6 +249,7 @@ async def vault_ingest_docx(
     pipeline_id: str = Form(...),
 ):
     check_scopes(request, "vault.write", "admin")
+    _vault_workspace_id(request)
     file_bytes = await file.read()
     async with rls_connection(request) as db:
         row = await _pipeline_document_row(db, pipeline_id)
@@ -253,6 +270,7 @@ async def vault_ingest_text(
     pipeline_id: str = Form(...),
 ):
     check_scopes(request, "vault.write", "admin")
+    _vault_workspace_id(request)
     file_bytes = await file.read()
     async with rls_connection(request) as db:
         row = await _pipeline_document_row(db, pipeline_id)
@@ -274,6 +292,7 @@ async def vault_ingest_excel(
     pipeline_id: str = Form(...),
 ):
     check_scopes(request, "vault.write", "admin")
+    _vault_workspace_id(request)
     file_bytes = await file.read()
     async with rls_connection(request) as db:
         row = await _pipeline_document_row(db, pipeline_id)
