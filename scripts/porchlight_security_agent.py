@@ -3927,13 +3927,15 @@ def _expected_authorized_key_hashes() -> dict[str, str]:
     return parsed
 
 
-TAILSCALE_PREFS_COMMAND = (
+TAILSCALE_PREFS_PROBE_COMMAND = "porchlight tailscale-prefs"
+AUTHORIZED_KEYS_PROBE_COMMAND = "porchlight authorized-keys"
+TAILSCALE_PREFS_SHELL_COMMAND = (
     'tsbin="${PORCHLIGHT_TAILSCALE_BIN:-/opt/homebrew/bin/tailscale}"; '
     'if [ -x "$tsbin" ]; then "$tsbin" debug prefs; '
     "elif command -v tailscale >/dev/null 2>&1; then tailscale debug prefs; "
     'else echo \'{"error":"tailscale_missing"}\'; exit 127; fi'
 )
-AUTHORIZED_KEYS_COMMAND = r"""python3 - <<'PY'
+AUTHORIZED_KEYS_SHELL_COMMAND = r"""python3 - <<'PY'
 import hashlib
 import json
 import os
@@ -4078,13 +4080,26 @@ def check_tailscale_ssh_posture(
             "remote SSH probe is not enabled; node SSH posture was not checked"
         )
     else:
+        local_node = current_node_name()
         for node, info in node_map.items():
             if not isinstance(info, dict) or not info.get("ssh_target"):
                 warnings.append(f"{node}: missing ssh_target for posture probe")
                 continue
             target = str(info["ssh_target"])
 
-            prefs_result = ssh(target, TAILSCALE_PREFS_COMMAND)
+            if str(node) == local_node:
+                prefs_result = command(
+                    ["/bin/sh", "-lc", TAILSCALE_PREFS_SHELL_COMMAND],
+                    timeout=20,
+                )
+                keys_result = command(
+                    ["/bin/sh", "-lc", AUTHORIZED_KEYS_SHELL_COMMAND],
+                    timeout=20,
+                )
+            else:
+                prefs_result = ssh(target, TAILSCALE_PREFS_PROBE_COMMAND)
+                keys_result = ssh(target, AUTHORIZED_KEYS_PROBE_COMMAND)
+
             if prefs_result.returncode != 0:
                 warnings.append(
                     f"{node}: tailscale prefs probe failed: "
@@ -4106,7 +4121,6 @@ def check_tailscale_ssh_posture(
                             f"{node}: Tailscale SSH is enabled but not allowlisted"
                         )
 
-            keys_result = ssh(target, AUTHORIZED_KEYS_COMMAND)
             if keys_result.returncode != 0:
                 warnings.append(
                     f"{node}: authorized_keys probe failed: "
