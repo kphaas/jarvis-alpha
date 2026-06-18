@@ -1054,6 +1054,82 @@ async def test_chat_routes_supported_beacon_prompt_before_stale_memory(
 
 
 @pytest.mark.asyncio
+async def test_chat_injects_at0_self_context_for_capability_questions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = FakeConn()
+    captured_prompts: list[str] = []
+
+    @asynccontextmanager
+    async def fake_rls_connection(_request: object):
+        yield conn
+
+    class FakeMemoryService:
+        async def build_context(self, **_kwargs: object) -> str:
+            return ""
+
+    async def fake_get_or_create_thread(*_args: object, **_kwargs: object) -> str:
+        return str(THREAD_ID)
+
+    async def fake_embed(_text: str) -> list[float]:
+        return []
+
+    async def fake_build_at0_self_model(_conn: object):
+        return SimpleNamespace(
+            prompt_context="AT-0 self model: verified web is degraded."
+        )
+
+    async def fake_build_chat_internet_context(*_args: object, **_kwargs: object):
+        raise AssertionError("Beacon must not run for self capability questions")
+
+    async def fake_route(prompt: str, mode: str):
+        captured_prompts.append(prompt)
+        return {"result": "I can answer from my runtime self model.", "mode": mode}
+
+    async def fake_store_memory_bg(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(chat, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(chat, "MemoryService", FakeMemoryService)
+    monkeypatch.setattr(chat, "_get_or_create_thread", fake_get_or_create_thread)
+    monkeypatch.setattr(chat, "_embed", fake_embed)
+    monkeypatch.setattr(chat, "build_at0_self_model", fake_build_at0_self_model)
+    monkeypatch.setattr(
+        chat,
+        "build_chat_internet_context",
+        fake_build_chat_internet_context,
+    )
+    monkeypatch.setattr(chat, "route", fake_route)
+    monkeypatch.setattr(chat, "_store_memory_bg", fake_store_memory_bg)
+
+    body = chat.CompletionRequest(
+        messages=[
+            {
+                "role": "user",
+                "content": "Can you search the internet?",
+            }
+        ],
+        model="auto",
+        thread_id=str(THREAD_ID),
+        internet_mode="none",
+    )
+    request = cast(
+        Request,
+        SimpleNamespace(state=SimpleNamespace(user_id="ken", role="adult")),
+    )
+
+    response = await chat.chat_completions(body, request)
+    _chunks = [
+        chunk.decode() if isinstance(chunk, bytes) else str(chunk)
+        async for chunk in response.body_iterator
+    ]
+
+    assert captured_prompts
+    assert "AT-0 self model: verified web is degraded." in captured_prompts[0]
+    assert "Smart Web Suggestion boundary" not in captured_prompts[0]
+
+
+@pytest.mark.asyncio
 async def test_chat_records_web_suggestion_acceptance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -18,9 +18,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from brain.config.secrets import get_secret
-from brain.db.rls import platform_admin_connection
+from brain.db.rls import platform_admin_connection, rls_connection
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
+from brain.services.at0_self_model import At0SelfModel, build_at0_self_model
 from brain.services.internet_scout.health import build_beacon_health
 from jarvis_common.logging_config import get_logger
 
@@ -1164,6 +1165,17 @@ async def helm_summary(
         ),
         beacon=beacon_summary,
     )
+
+
+@router.get("/self", response_model=At0SelfModel)
+async def helm_self(
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> At0SelfModel:
+    """Return AT-0's runtime-grounded identity and capability model."""
+    check_scopes(request, "helm.read", "admin")
+    async with rls_connection(request) as conn:
+        return await build_at0_self_model(conn)
 
 
 @router.get("/family/summary")
