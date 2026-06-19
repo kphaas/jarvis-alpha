@@ -1,7 +1,8 @@
-import { Link, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { ExternalLink } from 'lucide-react'
 import { useAppStore } from '../store'
-import { SPACES, getSpaceBySlug, getSpaceRoute } from '../lib/spaces'
+import { SPACES, getSpaceBySlug } from '../lib/spaces'
 
 export default function Space() {
   const { slug } = useParams<{ slug: string }>()
@@ -41,9 +42,11 @@ export default function Space() {
           {SPACES.map(item => {
             const isActive = item.slug === space?.slug
             return (
-              <Link
+              <a
                 key={item.slug}
-                to={getSpaceRoute(item)}
+                href={item.launchUrl}
+                target="_blank"
+                rel="noreferrer"
                 className={`rounded-lg border p-4 transition-all ${
                   isActive
                     ? isDark ? 'border-emerald-400 bg-emerald-400/10' : 'border-[#141414] bg-[#141414]/10'
@@ -52,10 +55,14 @@ export default function Space() {
               >
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-semibold">{item.label}</p>
-                  <span className="text-[9px] font-mono uppercase opacity-40">{item.status}</span>
+                  <span className="inline-flex items-center gap-1 text-[9px] font-mono uppercase opacity-50">
+                    <ExternalLink className="h-3 w-3" />
+                    Open
+                  </span>
                 </div>
                 <p className="mt-2 text-xs leading-5 opacity-55">{item.summary}</p>
-              </Link>
+                <p className="mt-3 text-[10px] font-mono uppercase opacity-40">{item.launchLabel}</p>
+              </a>
             )
           })}
         </div>
