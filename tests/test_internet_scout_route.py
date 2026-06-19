@@ -12,6 +12,7 @@ from brain.middleware.approval_classes import classify_route
 from brain.routes import internet_scout
 from brain.services.internet_scout.evidence import build_source_reference, content_hash
 from brain.services.internet_scout.models import (
+    BrowserActionAuditEvent,
     BrowserRunObservation,
     BrowserSandboxPolicy,
     EvidenceClaim,
@@ -555,6 +556,25 @@ async def test_internet_scout_browser_run_approved_executes_and_consumes(monkeyp
 
     class FakeBrowserRunner:
         async def execute(self, **kwargs):
+            await kwargs["audit_action"](
+                BrowserActionAuditEvent(
+                    sequence=1,
+                    action="navigate",
+                    status="started",
+                    host="public.example.test",
+                    url_hash="sha256:" + "4" * 64,
+                )
+            )
+            await kwargs["audit_action"](
+                BrowserActionAuditEvent(
+                    sequence=1,
+                    action="navigate",
+                    status="succeeded",
+                    host="public.example.test",
+                    url_hash="sha256:" + "4" * 64,
+                    elapsed_ms=12,
+                )
+            )
             observation = BrowserRunObservation(
                 url="https://public.example.test/result",
                 host="public.example.test",
@@ -591,6 +611,23 @@ async def test_internet_scout_browser_run_approved_executes_and_consumes(monkeyp
                 ),
                 evidence=packet,
                 observations=[observation],
+                action_audit=[
+                    BrowserActionAuditEvent(
+                        sequence=1,
+                        action="navigate",
+                        status="started",
+                        host="public.example.test",
+                        url_hash="sha256:" + "4" * 64,
+                    ),
+                    BrowserActionAuditEvent(
+                        sequence=1,
+                        action="navigate",
+                        status="succeeded",
+                        host="public.example.test",
+                        url_hash="sha256:" + "4" * 64,
+                        elapsed_ms=12,
+                    ),
+                ],
                 screenshots_review_required=True,
                 blocked_reasons=[],
             )
@@ -626,6 +663,16 @@ async def test_internet_scout_browser_run_approved_executes_and_consumes(monkeyp
     assert consume_calls == [approval_queue_id]
     assert FakeRepo.created[0]["status_override"] == "running"
     assert any(event.get("status") == "succeeded" for event in FakeRepo.events)
+    action_events = [
+        event
+        for event in FakeRepo.events
+        if event.get("event_type") == "browser_action"
+    ]
+    assert [event["status"] for event in action_events] == ["started", "succeeded"]
+    assert action_events[0]["metadata"]["raw_task_text_included"] is False
+    assert action_events[0]["metadata"]["raw_web_content_included"] is False
+    assert action_events[0]["metadata"]["credential_entry_allowed"] is False
+    assert action_events[0]["metadata"]["forms_allowed"] is False
     assert len(FakeRepo.stored) == 1
 
 

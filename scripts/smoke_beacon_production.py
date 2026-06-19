@@ -67,6 +67,24 @@ def main() -> int:
         else [],
     }
     results["gateway"] = _gateway_health_summary(checks_payload)
+    browser_runtime = _health_check_metadata(checks_payload, "browser_runtime")
+    if browser_runtime:
+        browser_limits = {
+            "runtime": browser_runtime.get("runtime"),
+            "timeout_ms": browser_runtime.get("timeout_ms"),
+            "max_steps": browser_runtime.get("max_steps"),
+            "max_runs_per_hour": browser_runtime.get("max_runs_per_hour"),
+        }
+        results["browser_runtime_limits"] = browser_limits
+        if _int(browser_runtime.get("timeout_ms")) > 60_000:
+            _emit({"results": results, "error": "browser timeout cap missing"})
+            return 6
+        if _int(browser_runtime.get("max_steps")) > 5:
+            _emit({"results": results, "error": "browser max-step cap missing"})
+            return 7
+        if _int(browser_runtime.get("max_runs_per_hour")) > 10:
+            _emit({"results": results, "error": "browser hourly quota cap missing"})
+            return 8
     if health.get("status") != "ok":
         _emit({"results": results, "error": "beacon health degraded"})
         return 2
@@ -210,6 +228,31 @@ def _call_json(
     if not isinstance(payload, dict):
         raise RuntimeError(f"{method} {path} returned non-object JSON")
     return payload
+
+
+def _health_check_metadata(
+    checks_payload: object,
+    check_name: str,
+) -> dict[str, object]:
+    if not isinstance(checks_payload, dict):
+        return {}
+    check = checks_payload.get(check_name)
+    if not isinstance(check, dict):
+        return {}
+    metadata = check.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _int(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return 0
 
 
 def _gateway_health_summary(checks_payload: object) -> dict[str, object]:

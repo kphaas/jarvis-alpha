@@ -47,7 +47,15 @@ Brain browser runtime:
 
 - `BEACON_BROWSER_RUNTIME=playwright`
 - `BEACON_BROWSER_SCREENSHOT_DIR=<writable directory>`
+- `BEACON_BROWSER_TIMEOUT_MS=20000` with a hard cap of 60000
+- `BEACON_BROWSER_MAX_STEPS=5` maximum; use a lower value for tighter runs
+- `BEACON_BROWSER_MAX_RUNS_PER_HOUR=3` by default
 - Playwright package version must match the runtime contract in code.
+
+The approved executor remains public-web-only. It blocks cross-host requests,
+downloads, forms, credential fields, and raw web content in audit metadata. Each
+executor action writes an append-only `alpha_internet_tool_events` row with
+`event_type='browser_action'`.
 
 Retention inventory:
 

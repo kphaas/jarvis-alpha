@@ -602,6 +602,27 @@ class BrowserSandboxPolicy(BaseModel):
     network_mode: Literal["public_web_only"] = "public_web_only"
 
 
+class BrowserActionAuditEvent(BaseModel):
+    sequence: int = Field(ge=0, le=100)
+    action: Literal[
+        "sandbox",
+        "runtime",
+        "navigate",
+        "inspect_controls",
+        "extract_text",
+        "screenshot",
+        "observe",
+    ]
+    status: Literal["started", "succeeded", "failed", "blocked"]
+    host: str | None = Field(default=None, max_length=255)
+    url_hash: str | None = Field(default=None, pattern=r"^sha256:[a-f0-9]{64}$")
+    elapsed_ms: int | None = Field(default=None, ge=0, le=120_000)
+    blocked_reason: str | None = Field(default=None, max_length=160)
+    content_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    screenshot_ref: str | None = Field(default=None, max_length=500)
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
 class BrowserRunObservation(BaseModel):
     url: str
     host: str
@@ -629,6 +650,9 @@ class InternetScoutBrowserRunResponse(BaseModel):
     evidence: InternetEvidencePacket
     observations: list[BrowserRunObservation] = Field(
         default_factory=list, max_length=10
+    )
+    action_audit: list[BrowserActionAuditEvent] = Field(
+        default_factory=list, max_length=100
     )
     screenshots_review_required: bool = True
     blocked_reasons: list[str] = Field(default_factory=list)

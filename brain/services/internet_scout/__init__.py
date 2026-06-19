@@ -6,6 +6,7 @@ stored evidence; Gateway owns guarded public egress and extraction.
 
 from brain.services.internet_scout.models import (
     BeaconConsumer,
+    BrowserActionAuditEvent,
     BrowserRunObservation,
     BrowserSandboxPolicy,
     EvidenceClaim,
@@ -42,6 +43,7 @@ from brain.services.internet_scout.browser_runner import (
     BrowserTaskRunner,
     PlaywrightBrowserTaskAdapter,
     browser_hourly_run_limit,
+    browser_max_steps_limit,
     build_browser_task_runner_from_env,
 )
 from brain.services.internet_scout.executor import InternetScoutExecutor
@@ -54,6 +56,7 @@ from brain.services.internet_scout.policy import evaluate_policy, select_tool
 
 __all__ = [
     "BeaconConsumer",
+    "BrowserActionAuditEvent",
     "BrowserRunObservation",
     "BrowserSandboxPolicy",
     "BrowserScreenshotStore",
@@ -91,6 +94,7 @@ __all__ = [
     "SourceQualityLevel",
     "SourceQualityStatus",
     "browser_hourly_run_limit",
+    "browser_max_steps_limit",
     "build_browser_task_runner_from_env",
     "evaluate_policy",
     "select_tool",
