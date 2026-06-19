@@ -2,6 +2,38 @@
   "$defs": {
     "HelmBeaconApprovalSummary": {
       "properties": {
+        "approved_24h": {
+          "default": 0,
+          "title": "Approved 24H",
+          "type": "integer"
+        },
+        "denied_24h": {
+          "default": 0,
+          "title": "Denied 24H",
+          "type": "integer"
+        },
+        "executed_24h": {
+          "default": 0,
+          "title": "Executed 24H",
+          "type": "integer"
+        },
+        "expired_24h": {
+          "default": 0,
+          "title": "Expired 24H",
+          "type": "integer"
+        },
+        "highest_pending_risk_tier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Highest Pending Risk Tier"
+        },
         "next_expires_at": {
           "anyOf": [
             {
@@ -17,6 +49,11 @@
         "pending_browser_approvals": {
           "default": 0,
           "title": "Pending Browser Approvals",
+          "type": "integer"
+        },
+        "window_hours": {
+          "default": 24,
+          "title": "Window Hours",
           "type": "integer"
         }
       },
@@ -88,6 +125,139 @@
         "runtime"
       ],
       "title": "HelmBeaconBrowserSummary",
+      "type": "object"
+    },
+    "HelmBeaconCitationQualitySummary": {
+      "properties": {
+        "insufficient": {
+          "default": 0,
+          "title": "Insufficient",
+          "type": "integer"
+        },
+        "official_source_count": {
+          "default": 0,
+          "title": "Official Source Count",
+          "type": "integer"
+        },
+        "prompt_injection_rejection_count": {
+          "default": 0,
+          "title": "Prompt Injection Rejection Count",
+          "type": "integer"
+        },
+        "rejected_citation_count": {
+          "default": 0,
+          "title": "Rejected Citation Count",
+          "type": "integer"
+        },
+        "status": {
+          "default": "unknown",
+          "title": "Status",
+          "type": "string"
+        },
+        "supported": {
+          "default": 0,
+          "title": "Supported",
+          "type": "integer"
+        },
+        "supported_rate_percent": {
+          "default": 0,
+          "title": "Supported Rate Percent",
+          "type": "integer"
+        },
+        "weak": {
+          "default": 0,
+          "title": "Weak",
+          "type": "integer"
+        },
+        "window_hours": {
+          "default": 24,
+          "title": "Window Hours",
+          "type": "integer"
+        }
+      },
+      "title": "HelmBeaconCitationQualitySummary",
+      "type": "object"
+    },
+    "HelmBeaconCostSummary": {
+      "properties": {
+        "beacon_request_count": {
+          "default": 0,
+          "title": "Beacon Request Count",
+          "type": "integer"
+        },
+        "budget_capped_backup_provider_count": {
+          "default": 0,
+          "title": "Budget Capped Backup Provider Count",
+          "type": "integer"
+        },
+        "budget_capped_provider_count": {
+          "default": 0,
+          "title": "Budget Capped Provider Count",
+          "type": "integer"
+        },
+        "detail": {
+          "default": "Beacon reports provider spend-guard state; exact per-request search cost is not recorded yet.",
+          "title": "Detail",
+          "type": "string"
+        },
+        "exact_cost_available": {
+          "default": false,
+          "title": "Exact Cost Available",
+          "type": "boolean"
+        },
+        "mode": {
+          "default": "spend_guard",
+          "title": "Mode",
+          "type": "string"
+        },
+        "primary_provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Primary Provider"
+        },
+        "primary_provider_usable": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Primary Provider Usable"
+        },
+        "provider_warning_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Warning Status"
+        },
+        "status": {
+          "default": "unknown",
+          "title": "Status",
+          "type": "string"
+        },
+        "window_hours": {
+          "default": 24,
+          "title": "Window Hours",
+          "type": "integer"
+        }
+      },
+      "title": "HelmBeaconCostSummary",
       "type": "object"
     },
     "HelmBeaconEvidenceSummary": {
@@ -223,8 +393,64 @@
       "title": "HelmBeaconLastRequest",
       "type": "object"
     },
+    "HelmBeaconLatencySummary": {
+      "properties": {
+        "avg_ms": {
+          "default": 0,
+          "title": "Avg Ms",
+          "type": "integer"
+        },
+        "max_ms": {
+          "default": 0,
+          "title": "Max Ms",
+          "type": "integer"
+        },
+        "p95_ms": {
+          "default": 0,
+          "title": "P95 Ms",
+          "type": "integer"
+        },
+        "sample_count": {
+          "default": 0,
+          "title": "Sample Count",
+          "type": "integer"
+        },
+        "slo_met_percent": {
+          "default": 0,
+          "title": "Slo Met Percent",
+          "type": "integer"
+        },
+        "slo_target_ms": {
+          "default": 20000,
+          "title": "Slo Target Ms",
+          "type": "integer"
+        },
+        "slow_request_count": {
+          "default": 0,
+          "title": "Slow Request Count",
+          "type": "integer"
+        },
+        "window_hours": {
+          "default": 24,
+          "title": "Window Hours",
+          "type": "integer"
+        }
+      },
+      "title": "HelmBeaconLatencySummary",
+      "type": "object"
+    },
     "HelmBeaconProviderSummary": {
       "properties": {
+        "budget_capped_backup_provider_count": {
+          "default": 0,
+          "title": "Budget Capped Backup Provider Count",
+          "type": "integer"
+        },
+        "budget_capped_provider_count": {
+          "default": 0,
+          "title": "Budget Capped Provider Count",
+          "type": "integer"
+        },
         "configured_provider_count": {
           "default": 0,
           "title": "Configured Provider Count",
@@ -234,6 +460,30 @@
           "default": 0,
           "title": "Missing Provider Count",
           "type": "integer"
+        },
+        "primary_provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Primary Provider"
+        },
+        "primary_provider_usable": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Primary Provider Usable"
         },
         "provider_order": {
           "items": {
@@ -251,6 +501,18 @@
           "default": "unavailable",
           "title": "Provider Redundancy Status",
           "type": "string"
+        },
+        "provider_warning_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Warning Status"
         },
         "required_provider_count": {
           "default": 0,
@@ -629,8 +891,17 @@
       "title": "Checked At",
       "type": "string"
     },
+    "citation_quality": {
+      "$ref": "#/$defs/HelmBeaconCitationQualitySummary"
+    },
+    "cost": {
+      "$ref": "#/$defs/HelmBeaconCostSummary"
+    },
     "evidence": {
       "$ref": "#/$defs/HelmBeaconEvidenceSummary"
+    },
+    "latency": {
+      "$ref": "#/$defs/HelmBeaconLatencySummary"
     },
     "provider": {
       "$ref": "#/$defs/HelmBeaconProviderSummary"

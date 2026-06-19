@@ -10,6 +10,7 @@ import {
   FolderOpen, Wrench, Fingerprint, Sparkles,
   Inbox,
   HeartPulse, Scale, Printer, Hammer, ExternalLink,
+  Gauge,
 } from 'lucide-react'
 import type { Theme } from '../types'
 import { useAppStore } from '../store'
@@ -24,6 +25,7 @@ const NAV = [
   { group: 'OPERATE', items: [
     { to: '/health',    label: 'Health',       icon: Activity      },
     { to: '/beacon',    label: 'Beacon',       icon: Globe         },
+    { to: '/beacon/ops', label: 'Beacon Ops',  icon: Gauge         },
     { to: '/errors',    label: 'Errors & Logs',icon: Bug           },
     { to: '/mesh',      label: 'Mesh',         icon: Network       },
     { to: '/agents',    label: 'Agents',       icon: Bot           },
@@ -88,7 +90,9 @@ export function Layout({ theme, children, monthSpend = 0, budget = 500, onRefres
   const subtle = isDark ? 'hover:bg-white/5' : 'hover:bg-[#141414]/5'
 
   const activeTab = location.pathname === '/' ? 'Home'
-    : NAV.flatMap(g => g.items).find(i => location.pathname.startsWith(i.to) && i.to !== '/')?.label
+    : [...NAV.flatMap(g => g.items)]
+        .sort((a, b) => b.to.length - a.to.length)
+        .find(i => location.pathname.startsWith(i.to) && i.to !== '/')?.label
     ?? SPACE_ITEMS.find(i => location.pathname.startsWith(i.to))?.label
     ?? ''
 
@@ -140,7 +144,7 @@ export function Layout({ theme, children, monthSpend = 0, budget = 500, onRefres
                 <NavLink
                   key={item.to}
                   to={item.to}
-                  end={item.to === '/'}
+                  end={item.to === '/' || item.to === '/beacon'}
                   className={({ isActive }) =>
                     `w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 text-sm font-medium ${
                       isActive
