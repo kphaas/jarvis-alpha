@@ -55,6 +55,8 @@ _SELF_QUERY_RE = re.compile(
     r"who\s+are\s+you|what\s+are\s+you|what\s+is\s+(?:at-?0|otto|auto|jarvis)|"
     r"are\s+you\s+(?:jarvis|otto|auto|at-?0)|"
     r"what\s+can\s+you\s+do|what\s+are\s+your\s+capabilit(?:y|ies)|"
+    r"(?:what\s+are\s+)?(?:your\s+)?current\s+capabilit(?:y|ies)|"
+    r"(?:can\s+you\s+)?know\s+yourself|"
     r"what\s+do\s+you\s+know\s+about\s+me|"
     r"do\s+you\s+know\s+(?:things|anything)\s+about\s+me|"
     r"what\s+modes?\s+(?:do\s+you\s+have|are\s+available)|"

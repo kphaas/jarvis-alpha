@@ -71,6 +71,7 @@ AskPersonalityId = Literal[
 BEACON_INSUFFICIENT_MODEL = "beacon/insufficient-evidence"
 MEMORY_COMMAND_MODEL = "alpha/memory-command"
 AT0_SELF_MODEL_LABEL = "alpha/at0-self-model"
+CONVERSATION_QUALITY_MODEL_LABEL = "alpha/conversation-quality-contract"
 BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
     [
         "Beacon authority rule:",
@@ -130,6 +131,14 @@ LOCAL_WEB_HOWTO_RE = re.compile(
     r"enable\s+(?:web\s+search|beacon)|use\s+beacon)\b",
     re.IGNORECASE,
 )
+LOCAL_SELF_CAPABILITY_RE = re.compile(
+    r"\b(?:what\s+can\s+you\s+do|what\s+you\s+can\s+do|"
+    r"what\s+are\s+your\s+capabilit(?:y|ies)|"
+    r"(?:your\s+)?current\s+capabilit(?:y|ies)|"
+    r"can\s+you\s+know\s+yourself|know\s+yourself|"
+    r"what\s+do\s+you\s+know\s+about\s+me)\b",
+    re.IGNORECASE,
+)
 CURRENT_FACT_SHORT_CIRCUIT_RE = re.compile(
     r"\b("
     r"today|tomorrow|tonight|yesterday|latest|current|recent|right\s+now|"
@@ -150,6 +159,36 @@ UNSUPPORTED_BEACON_ASSERTION_RE = re.compile(
     r"|I(?:'ve| have)\s+(?:checked|verified|confirmed|found)\b.*?\bBeacon\b.*?"
     r")"
     r"(?:[.!?](?:\s+|$)|$)"
+)
+CONVERSATION_QUALITY_REQUEST_RE = re.compile(
+    r"\b(?:conversation|conversational|chat|voice|tone|robotic|human|natural)\b"
+    r"(?s:.){0,120}"
+    r"\b(?:improve|better|quality|less\s+robotic|more\s+human|more\s+natural)\b"
+    r"|"
+    r"\b(?:improve|better|quality|less\s+robotic|more\s+human|more\s+natural)\b"
+    r"(?s:.){0,120}"
+    r"\b(?:conversation|conversational|chat|voice|tone|robotic|human|natural)\b",
+    re.IGNORECASE,
+)
+UNSUPPORTED_CONVERSATION_OPS_RE = re.compile(
+    r"(?is)(^|(?<=[.!?])\s+)"
+    r"(?:"
+    r"[^.!?]{0,160}\b(?:Beacon\s+update|update\s+(?:my\s+)?models?|"
+    r"refresh\s+(?:my\s+)?models?|latest\s+natural\s+language\s+processing|"
+    r"\bNLP\b|dialogue\s+management\s+techniques|latest\s+version\s+of\s+macOS|"
+    r"update\s+macOS|standard\s+procedure\s+for\s+system\s+updates)\b[^.!?]*"
+    r")"
+    r"(?:[.!?](?:\s+|$)|$)"
+)
+ROBOTIC_VOICE_REPLACEMENTS = (
+    (
+        re.compile(r"(?i)\bI am functioning within normal parameters\b"),
+        "I'm ready",
+    ),
+    (
+        re.compile(r"(?i)\bas a private AI assistant,?\s*"),
+        "",
+    ),
 )
 
 
@@ -321,8 +360,6 @@ def _response_style_prompt(
 ) -> str | None:
     surface = response_surface or "chat"
     style = PERSONALITY_STYLE_PROMPTS.get(personality_id) if personality_id else None
-    if not style and surface == "chat":
-        return None
 
     lines = [
         "AT-0 interaction style:",
@@ -340,19 +377,24 @@ def _response_style_prompt(
     if surface == "voice":
         lines.append(
             "- Surface: Voice. Default to one or two conversational sentences. "
-            "Keep normal answers under 60 words unless Ken asks for detail. "
+            "Keep normal answers under 45 words unless Ken asks for detail. "
             "Answer like a quick back-and-forth, not a report. No markdown, "
             "bullets, headings, source names, or long setup unless Ken "
             "explicitly asks."
         )
     elif surface == "avatar":
         lines.append(
-            "- Surface: Avatar. Keep it brief and spoken; the avatar is the UI, "
-            "so do not narrate interface sections."
+            "- Surface: Avatar. Use the briefest spoken version, usually under "
+            "35 words. The avatar is the UI, so do not narrate interface "
+            "sections, chat history, or visible controls."
         )
     else:
         lines.append(
-            "- Surface: Chat. Keep the answer scannable, but avoid robotic preambles."
+            "- Surface: Chat. Give the fuller useful answer. Be grounded and "
+            "specific, use short sections or bullets when they help, and include "
+            "tradeoffs or next steps when relevant. Do not invent backend updates, "
+            "model training, macOS updates, Beacon work, dates, versions, or "
+            "project status unless explicit context supports them."
         )
     if style:
         lines.append(f"- Personality: {style}")
@@ -370,9 +412,43 @@ def _should_short_circuit_web_suggestion(
         return False
 
     query = " ".join(suggestion.query.split())
-    if LOCAL_WEB_HOWTO_RE.search(query):
+    if LOCAL_WEB_HOWTO_RE.search(query) or LOCAL_SELF_CAPABILITY_RE.search(query):
         return False
     return bool(CURRENT_FACT_SHORT_CIRCUIT_RE.search(query))
+
+
+def _conversation_quality_response(
+    user_msg: str,
+    response_surface: AskResponseSurface,
+) -> str | None:
+    if not CONVERSATION_QUALITY_REQUEST_RE.search(user_msg):
+        return None
+    if response_surface == "voice":
+        return (
+            "Best path: separate chat and voice contracts, then test real turns "
+            "for tone, grounding, word count, and latency. We tune prompts, "
+            "memory, Beacon routing, and TTS from those failures."
+        )
+    if response_surface == "avatar":
+        return (
+            "Use separate contracts: detailed chat, brief voice, and minimal "
+            "avatar. Then tune from real conversation evals."
+        )
+    return (
+        "The best path is eval-driven, not random prompt tweaking.\n\n"
+        "- Chat should be fuller: grounded, structured, and useful, with bullets "
+        "or sections when they help.\n"
+        "- Voice should be short and conversational: one or two sentences, no "
+        "headings, no lists, and fewer caveats unless you ask.\n"
+        "- Avatar should be even tighter: the avatar is the focus, so the answer "
+        "should feel spoken rather than like chat history.\n"
+        "- Personality should shape tone and pacing, while safety, memory, and "
+        "Beacon rules stay consistent.\n"
+        "- Regression tests should score tone, hallucination, word count, bad "
+        "robotic phrases, source leakage, and current-fact routing.\n\n"
+        "Unsupported infrastructure-update claims should stay out unless there "
+        "is explicit operational work that actually supports them."
+    )
 
 
 def _web_verification_required_response(
@@ -401,7 +477,8 @@ def _at0_self_quick_response(
     )
     capability_requested = re.search(
         r"\b(?:what can you do|what you can do|what you can't do|"
-        r"what you can’t do|capabilit(?:y|ies)|modes?|yourself)\b",
+        r"what you can’t do|current capabilit(?:y|ies)|capabilit(?:y|ies)|"
+        r"modes?|yourself)\b",
         normalized,
     )
     if personal_context_requested and capability_requested:
@@ -953,6 +1030,11 @@ JARVIS_SYSTEM_PROMPT = (
     "For voice-friendly answers, prefer one to three short paragraphs, name the "
     "answer first, and put caveats after the useful part. "
     "When memory context is provided, use it for stable personal context. "
+    "For conversation-quality, chat, voice, avatar, or tone-improvement questions, "
+    "do not suggest fake operational fixes such as Beacon updates, model updates, "
+    "NLP refreshes, dialogue-management upgrades, macOS updates, or node software "
+    "updates unless explicit operational evidence is provided. Instead discuss "
+    "surface contracts, evals, memory grounding, Beacon routing, latency, and TTS. "
     "For project status, use only explicit context; do not invent version "
     "numbers, milestones, pipelines, or dates. "
     "When Beacon evidence is provided, treat accepted Beacon evidence "
@@ -1011,6 +1093,8 @@ def _polish_model_response(text: str, response_surface: AskResponseSurface) -> s
     ]
     for pattern, replacement in replacements:
         polished = re.sub(pattern, replacement, polished)
+    for pattern, replacement in ROBOTIC_VOICE_REPLACEMENTS:
+        polished = pattern.sub(replacement, polished)
 
     sentence_removals = [
         r"(?is)(^|(?<=[.!?])\s+)Please note that\b.*?(?:[.!?](?:\s+|$)|$)",
@@ -1035,6 +1119,13 @@ def _polish_model_response(text: str, response_surface: AskResponseSurface) -> s
 
 def _strip_unsupported_beacon_assertions(text: str) -> str:
     cleaned = UNSUPPORTED_BEACON_ASSERTION_RE.sub(" ", text)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+    return cleaned.strip()
+
+
+def _strip_unsupported_conversation_ops(text: str) -> str:
+    cleaned = UNSUPPORTED_CONVERSATION_OPS_RE.sub(" ", text)
     cleaned = re.sub(r"\s{2,}", " ", cleaned)
     cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
     return cleaned.strip()
@@ -1111,6 +1202,12 @@ def _finalize_model_response(
     stripped = _strip_unrequested_source_references(polished, user_msg)
     if not internet_verified:
         stripped = _strip_unsupported_beacon_assertions(stripped)
+    if CONVERSATION_QUALITY_REQUEST_RE.search(user_msg):
+        stripped = _strip_unsupported_conversation_ops(stripped)
+        if not stripped or UNSUPPORTED_CONVERSATION_OPS_RE.search(polished):
+            fallback = _conversation_quality_response(user_msg, response_surface)
+            if fallback:
+                return fallback
     return stripped or polished.strip() or text.strip()
 
 
@@ -1493,6 +1590,36 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 memory_injected=False,
                 latency_ms=latency,
                 internet_metadata=_internet_message_metadata(internet_context),
+            )
+            return
+
+        conversation_quality_text = _conversation_quality_response(
+            user_msg,
+            body.response_surface,
+        )
+        if conversation_quality_text:
+            async for chunk in _stream_deterministic_response(
+                text=conversation_quality_text,
+                model_label=CONVERSATION_QUALITY_MODEL_LABEL,
+                thread_id=thread_id,
+            ):
+                yield chunk
+
+            latency = int((time.monotonic() - start) * 1000)
+            await _save_message(
+                request,
+                thread_id,
+                user_id,
+                "assistant",
+                conversation_quality_text,
+                model_used=CONVERSATION_QUALITY_MODEL_LABEL,
+                memory_injected=False,
+                latency_ms=latency,
+                internet_metadata=(
+                    _internet_message_metadata(internet_context)
+                    if internet_context
+                    else _web_suggestion_message_metadata(web_suggestion)
+                ),
             )
             return
 
