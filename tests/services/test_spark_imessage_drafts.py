@@ -358,6 +358,64 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
 
 
 @pytest.mark.asyncio
+async def test_imessage_draft_supports_sweta_principal_without_ken_voice_leakage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault_root = _write_sweta_vault(tmp_path)
+    fake_client = FakeBodyClient(outbound_body="Sweta sent body for runtime preview")
+    calls: list[dict[str, object]] = []
+
+    async def fake_llm_call(**kwargs):
+        calls.append(kwargs)
+        return "Got it, I can take a look and send the update."
+
+    monkeypatch.setenv(drafts.SPARK_DRAFT_LLM_ENABLED_ENV, "true")
+
+    proposal = await drafts.create_imessage_draft_proposal(
+        vault_root=vault_root,
+        principal_id="sweta",
+        approval_id="sweta-imessage-ken-20260618-001",
+        reply_goal="Reply clearly and keep it warm.",
+        max_context_messages=5,
+        style_adjustments=("Keep it concise.",),
+        bluebubbles_client=fake_client,
+        approved_chat_guid="sweta-approved-chat-guid",
+        personality_memory_rows=[
+            {
+                "kind": "relationship",
+                "content": "Ken: partner; default draft_only; approval required True.",
+            }
+        ],
+        llm_call=fake_llm_call,
+    )
+
+    payload = proposal.to_payload(include_context_preview=True)
+    assert payload["principal_id"] == "sweta"
+    assert payload["conversation_summary"]["voice_principal_label"] == "Sweta"
+    assert payload["conversation_summary"]["reply_target_label"] == "Ken"
+    assert payload["context_preview"][1]["speaker"] == "Sweta"
+    assert fake_client.calls == [("sweta-approved-chat-guid", 5)]
+
+    assert len(calls) == 1
+    system_prompt = str(calls[0]["system_prompt"])
+    assert "You draft iMessage replies for Sweta." in system_prompt
+    assert "Sound like Sweta's best edited self." in system_prompt
+    assert "Sweta text-message calibration:" in system_prompt
+    assert "Ken is Sweta's partner." in system_prompt
+    assert "Sweta's principal voice file, Sweta's voice file wins." in system_prompt
+    assert "You draft iMessage replies for Ken." not in system_prompt
+    assert "Sound like Ken's best edited self." not in system_prompt
+    assert "Ken text-message calibration:" not in system_prompt
+    assert "Ken is Ken's partner." not in system_prompt
+
+    user_message = str(calls[0]["user_message"])
+    assert "Style adjustments Sweta selected:" in user_message
+    assert "2. Sweta: Sweta sent body for runtime preview" in user_message
+    assert "Write one draft reply Sweta can review." in user_message
+
+
+@pytest.mark.asyncio
 async def test_imessage_draft_flags_invented_logistics_and_context_drift(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -652,6 +710,94 @@ Prefer:
 | Relationship-specific approval granted | {relationship_specific_approval_granted} |
 | Parent minor context approval granted | {parent_minor_context_approval_granted} |
 | Legal or custody content | block if detected |
+
+- [x] Approved
+""",
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+def _write_sweta_vault(tmp_path: Path) -> Path:
+    principal_root = tmp_path / "spark" / "principals" / "sweta"
+    approvals = principal_root / "corpus_approvals"
+    approvals.mkdir(parents=True)
+    (principal_root / "sources.yml").write_text(
+        """
+version: 0.1.0
+principal: sweta
+approved_source_records:
+  - id: sweta-imessage-ken-20260618-001
+    source: imessage
+    record: spark/principals/sweta/corpus_approvals/imessage.md
+    status: approved
+durable_voice_sources:
+  - sent_messages_only
+""",
+        encoding="utf-8",
+    )
+    (principal_root / "voice.md").write_text(
+        """
+# Sweta Voice
+
+Approved voice markers:
+- Warm
+- Clear
+- Practical
+
+Approved recurring phrases:
+- sounds good
+- let me check
+
+Avoid sounding:
+- Robotic
+- Vague
+
+## Channel Style
+
+| Channel | Rule |
+|---|---|
+| Text | Warm, concise, direct |
+| Email | Clear and composed |
+
+## Text Message Calibration
+
+Prefer natural endings with a concrete next action Sweta would actually say:
+- Let me check and send you an update.
+
+## Accessibility Style
+
+Prefer:
+- Short lines
+
+## Judgment Style
+
+| Situation | Rule |
+|---|---|
+| Uncertainty | Say what needs to be checked |
+""",
+        encoding="utf-8",
+    )
+    _write_auto_context(tmp_path)
+    (approvals / "imessage.md").write_text(
+        """
+# Corpus Approval: Sweta iMessage One-To-One Thread
+
+| Field | Value |
+|---|---|
+| Approval ID | sweta-imessage-ken-20260618-001 |
+| Principal | sweta |
+| Source | imessage |
+| Source reference | relationship-thread-label: Ken |
+| Thread kind | one_to_one |
+| Requested max messages | 20 |
+
+| Flag | Value |
+|---|---|
+| Relationship-marked | yes |
+| Relationship-specific approval granted | yes |
+| Parent minor context approval granted | no |
+| Legal or custody content | no |
 
 - [x] Approved
 """,
