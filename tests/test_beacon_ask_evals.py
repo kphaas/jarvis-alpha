@@ -31,6 +31,7 @@ def test_eval_beacon_evidence_is_authority_over_stale_memory() -> None:
 def test_system_prompt_keeps_beacon_verification_silent_by_default() -> None:
     assert "Use Beacon evidence silently" in chat.JARVIS_SYSTEM_PROMPT
     assert "say Beacon checked it" not in chat.JARVIS_SYSTEM_PROMPT
+    assert "Beacon evidence supports" in chat.JARVIS_SYSTEM_PROMPT
 
 
 def test_eval_docs_url_answer_prefers_source_url_over_endpoint_example() -> None:
@@ -250,6 +251,21 @@ def test_at0_final_response_strips_verified_beacon_narration_by_default() -> Non
     assert finalized == "The USMNT match is Friday at 3 PM Eastern."
     assert "Beacon checked" not in finalized
     assert "source" not in finalized.lower()
+
+
+def test_at0_final_response_strips_beacon_evidence_support_sentence() -> None:
+    finalized = chat._finalize_model_response(
+        "The USMNT beat Australia 2-0 today. Beacon evidence supports this "
+        "information from official ussoccerplayers.com and ussoccer.com.",
+        "voice",
+        "Can you tell me the score of the U.S. men's soccer team today?",
+        internet_verified=True,
+    )
+
+    assert finalized == "The USMNT beat Australia 2-0 today."
+    assert "Beacon" not in finalized
+    assert "evidence" not in finalized.lower()
+    assert "ussoccer" not in finalized.lower()
 
 
 def test_at0_final_response_strips_beacon_evidence_preamble() -> None:

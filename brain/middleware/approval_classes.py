@@ -127,12 +127,16 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Memory reads — T1 ---
     "GET /v1/memory": ["read"],
     "GET /v1/memory/search": ["read"],
+    "GET /v1/memory/admin/dream-proposals": ["read"],
+    "POST /v1/memory/buddy-events/read": ["write"],
+    "POST /v1/memory/buddy-events/suppress-duplicates": ["write"],
     # --- ADR-0026 reviewed memory consolidation bridge ---
     # Proposal creation and execution own their proposal-specific T5 approval
     # queue/validation in-route. The outer middleware must pass them through so
     # the route can create or consume the exact reviewed-write approval item.
     "POST /v1/memory/consolidation/proposals": ["write"],
     "POST /v1/memory/consolidation/proposals/{proposal_id}/execute": ["write"],
+    "POST /v1/memory/consolidation/proposals/{proposal_id}/archive": ["write"],
     "POST /v1/memory/consolidation/proposals/{proposal_id}/revert": [
         "memory_consolidation_reviewed_write"
     ],
@@ -229,6 +233,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/vault/ingest/docx": ["write"],
     "POST /v1/vault/ingest/text": ["write"],
     "POST /v1/vault/ingest/excel": ["write"],
+    "POST /v1/vault/digests/private": ["write"],
     # --- Chat completions (OpenAI compat) ---
     "POST /v1/chat/completions": ["write", "external_call", "cost_incurring"],
     # --- Buddy events mark read — T2 write ---

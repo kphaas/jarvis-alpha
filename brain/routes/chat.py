@@ -165,8 +165,10 @@ UNSUPPORTED_BEACON_ASSERTION_RE = re.compile(
 UNREQUESTED_BEACON_NARRATION_RE = re.compile(
     r"(?is)(^|(?<=[.!?])\s+)"
     r"(?:"
-    r"Beacon\s+(?:checked|verified|confirmed|found|supported|used|looked\s+up|cross-checked)\b.*?"
+    r"Beacon(?:\s+(?:evidence|research|search|web|results?)){0,3}\s+"
+    r"(?:checked|verified|confirmed|found|supports?|supported|used|looked\s+up|cross-checked)\b.*?"
     r"|This\s+is\s+supported\s+by\s+Beacon\b.*?"
+    r"|(?:The\s+)?evidence\s+from\s+Beacon\b.*?"
     r"|I(?:'ve| have)\s+(?:checked|verified|confirmed|found)\b.*?\bBeacon\b.*?"
     r"|(?:Through|Using)\s+Beacon\b.*?"
     r")"
@@ -1109,8 +1111,9 @@ JARVIS_SYSTEM_PROMPT = (
     "When Ken explicitly asks for a source link, website link, source URL, "
     "or cited source, include the full URL from Beacon evidence. "
     "Use Beacon evidence silently in the answer. Do not say Beacon checked, "
-    "verified, found, or supported the answer unless Ken explicitly asks how "
-    "you verified it, asks for sources, or asks for links."
+    "verified, found, supported the answer, or that Beacon evidence supports "
+    "the answer unless Ken explicitly asks how you verified it, asks for "
+    "sources, or asks for links."
 )
 
 

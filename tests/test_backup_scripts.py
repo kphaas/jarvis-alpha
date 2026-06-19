@@ -292,6 +292,20 @@ def test_restore_drill_verifies_privacy_tables_and_force_rls():
     assert "alpha_privacy_force_rls_tables:$privacy_force_rls" in text
 
 
+def test_restore_drill_verifies_memory_tables_and_force_rls():
+    text = (REPO_ROOT / "scripts" / "restore_drill_alpha.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "EXPECTED_MEMORY_FORCE_RLS_TABLES=4" in text
+    assert "alpha_semantic_memory" in text
+    assert "alpha_conversation_memory" in text
+    assert "alpha_memory_consolidation_proposals" in text
+    assert "alpha_memory_consolidation_execution_ledger" in text
+    assert "memory_force_rls_${MEMORY_FORCE_RLS}_expected_" in text
+    assert "alpha_memory_force_rls_tables:$memory_force_rls" in text
+
+
 def test_pg_backup_uses_atomic_rename():
     text = (REPO_ROOT / "scripts" / "pg_backup_alpha.sh").read_text(encoding="utf-8")
     assert ".partial" in text, "must scp to .partial then atomic rename"

@@ -27,9 +27,11 @@ MONITOR_SOURCE = "memory_observability_monitor"
 class Thresholds:
     max_pending_review: int = 10
     max_review_required_24h: int = 5
+    max_dream_reviewed_writes_open: int = 0
     max_stale_dream_reviewed_writes: int = 0
     max_dream_approval_mismatch_count: int = 0
     max_dream_executed_without_ledger: int = 0
+    max_unread_memory_buddy_events: int = 500
     max_high_priority_unread: int = 10
     max_dream_approved_waiting_execution: int = 100
     alert_suppression_hours: int = 6
@@ -59,6 +61,11 @@ def thresholds_from_env(env: dict[str, str] | None = None) -> Thresholds:
             "MEMORY_OBS_MAX_REVIEW_REQUIRED_24H",
             defaults.max_review_required_24h,
         ),
+        max_dream_reviewed_writes_open=_env_int(
+            source,
+            "MEMORY_OBS_MAX_DREAM_REVIEWED_WRITES_OPEN",
+            defaults.max_dream_reviewed_writes_open,
+        ),
         max_stale_dream_reviewed_writes=_env_int(
             source,
             "MEMORY_OBS_MAX_STALE_DREAM_REVIEWED_WRITES",
@@ -73,6 +80,11 @@ def thresholds_from_env(env: dict[str, str] | None = None) -> Thresholds:
             source,
             "MEMORY_OBS_MAX_DREAM_EXECUTED_WITHOUT_LEDGER",
             defaults.max_dream_executed_without_ledger,
+        ),
+        max_unread_memory_buddy_events=_env_int(
+            source,
+            "MEMORY_OBS_MAX_UNREAD_MEMORY_BUDDY_EVENTS",
+            defaults.max_unread_memory_buddy_events,
         ),
         max_high_priority_unread=_env_int(
             source,
@@ -172,6 +184,18 @@ def evaluate_metrics(
             "Dream proposal executed without execution ledger row",
         ),
         (
+            "dream_reviewed_writes_open",
+            thresholds.max_dream_reviewed_writes_open,
+            "warn",
+            "Dream reviewed writes are waiting for operator action",
+        ),
+        (
+            "unread_memory_buddy_events",
+            thresholds.max_unread_memory_buddy_events,
+            "warn",
+            "unread memory Buddy events above operator-noise SLO",
+        ),
+        (
             "high_priority_buddy_events",
             thresholds.max_high_priority_unread,
             "warn",
@@ -202,6 +226,23 @@ def evaluate_metrics(
     if violations:
         return "warn", violations
     return "pass", []
+
+
+def rag_for_status(status: str) -> tuple[str, str, str]:
+    if status == "fail":
+        return "red", "🔴", "blocked"
+    if status == "warn":
+        return "yellow", "🟡", "at_risk"
+    return "green", "🟢", "on_track"
+
+
+def threshold_definitions(thresholds: Thresholds) -> dict[str, object]:
+    return {
+        "green": "No fail or warn threshold is breached.",
+        "yellow": "Only warn thresholds are breached; operator action is needed, but integrity checks are clean.",
+        "red": "At least one fail threshold is breached or the monitor errors.",
+        "values": thresholds.__dict__,
+    }
 
 
 def alert_fingerprint(status: str, violations: list[dict[str, object]]) -> str:
@@ -457,6 +498,7 @@ def build_report(
 ) -> dict[str, Any]:
     metrics = flatten_metrics(raw_metrics)
     status, violations = evaluate_metrics(metrics, thresholds)
+    rag, rag_icon, overall = rag_for_status(status)
     fingerprint = alert_fingerprint(status, violations) if violations else None
     recent_fingerprints = raw_metrics.get("recent_alert_fingerprints") or []
     if not isinstance(recent_fingerprints, list):
@@ -471,10 +513,14 @@ def build_report(
     )
     return {
         "status": status,
+        "rag": rag,
+        "rag_icon": rag_icon,
+        "overall": overall,
         "source": MONITOR_SOURCE,
         "checked_at": datetime.now(UTC).isoformat(),
         "metrics": metrics,
         "violations": violations,
+        "thresholds": threshold_definitions(thresholds),
         "fingerprint": fingerprint,
         "duplicate_suppressed": duplicate_suppressed,
         "alert_written": False,

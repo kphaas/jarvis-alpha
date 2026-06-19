@@ -82,6 +82,27 @@ class MemoryTelemetryMetrics(BaseModel):
     dream_executed_without_ledger: int = 0
 
 
+class MemoryHealthThresholds(BaseModel):
+    max_pending_review: int = 10
+    max_review_required_24h: int = 5
+    max_dream_reviewed_writes_open: int = 0
+    max_stale_dream_reviewed_writes: int = 0
+    max_dream_approval_mismatch_count: int = 0
+    max_dream_executed_without_ledger: int = 0
+    max_unread_memory_buddy_events: int = 500
+    max_high_priority_buddy_events: int = 10
+    max_dream_approved_waiting_execution: int = 100
+
+
+class MemoryHealthState(BaseModel):
+    rag: Literal["green", "yellow", "red"] = "green"
+    icon: Literal["🟢", "🟡", "🔴"] = "🟢"
+    overall: Literal["on_track", "at_risk", "blocked"] = "on_track"
+    label: str = "Memory green"
+    reasons: list[str] = Field(default_factory=list)
+    thresholds: MemoryHealthThresholds = Field(default_factory=MemoryHealthThresholds)
+
+
 class MemoryTelemetryCount(BaseModel):
     label: str
     count: int
@@ -117,6 +138,7 @@ class MemoryTelemetryDreamProposal(BaseModel):
     status: str
     approval_queue_id: str | None = None
     approval_status: str | None = None
+    approval_expires_at: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -124,6 +146,7 @@ class MemoryTelemetryDreamProposal(BaseModel):
 class MemoryTelemetryResponse(BaseModel):
     status: Literal["ok"] = "ok"
     user_id: str
+    state: MemoryHealthState = Field(default_factory=MemoryHealthState)
     metrics: MemoryTelemetryMetrics
     source_surfaces_7d: list[MemoryTelemetryCount]
     categories_7d: list[MemoryTelemetryCount]
@@ -151,6 +174,7 @@ class MemoryAdminUserInventoryItem(BaseModel):
 
 
 class MemoryAdminHealth(BaseModel):
+    state: MemoryHealthState = Field(default_factory=MemoryHealthState)
     principal_count: int = 0
     total_semantic: int = 0
     total_working: int = 0
@@ -176,6 +200,17 @@ class MemoryAdminUsersResponse(BaseModel):
     status: Literal["ok"] = "ok"
     health: MemoryAdminHealth = Field(default_factory=MemoryAdminHealth)
     users: list[MemoryAdminUserInventoryItem]
+
+
+class MemoryAdminDreamProposalItem(MemoryTelemetryDreamProposal):
+    principal_id: str
+    display_name: str
+    role: str = "unknown"
+
+
+class MemoryAdminDreamProposalsResponse(BaseModel):
+    status: Literal["ok"] = "ok"
+    proposals: list[MemoryAdminDreamProposalItem]
 
 
 class MemoryAdminUserDetailResponse(BaseModel):
@@ -222,6 +257,29 @@ class ReviewSemanticMemoryRequest(BaseModel):
 class ReviewSemanticMemoryResponse(BaseModel):
     status: Literal["reviewed", "not_found", "error"]
     result: dict[str, object]
+
+
+class MemoryBuddyEventsReadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    high_priority_only: bool = False
+
+
+class MemoryBuddyEventsSuppressRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    window_hours: int = Field(default=168, ge=1, le=720)
+    high_priority_only: bool = False
+
+
+class MemoryBuddyEventActionResponse(BaseModel):
+    status: Literal["marked_read", "duplicates_suppressed"]
+    marked_count: int = 0
+    suppressed_count: int = 0
+    marked_ids: list[str] = Field(default_factory=list)
+    suppressed_ids: list[str] = Field(default_factory=list)
+    window_hours: int | None = None
 
 
 class ForgetMemoryRequest(BaseModel):
@@ -291,15 +349,15 @@ async def get_memory_telemetry(
     semantic_metrics = _dict_value(telemetry.get("semantic_metrics"))
     buddy_metrics = _dict_value(telemetry.get("buddy_metrics"))
     proposal_metrics = _dict_value(telemetry.get("proposal_metrics"))
+    combined_metrics = {
+        **semantic_metrics,
+        **buddy_metrics,
+        **proposal_metrics,
+    }
     return MemoryTelemetryResponse(
         user_id=str(uid),
-        metrics=MemoryTelemetryMetrics(
-            **{
-                **semantic_metrics,
-                **buddy_metrics,
-                **proposal_metrics,
-            }
-        ),
+        state=_memory_health_state(combined_metrics),
+        metrics=MemoryTelemetryMetrics(**combined_metrics),
         source_surfaces_7d=[
             _telemetry_count(row)
             for row in _list_of_dicts(telemetry.get("source_surfaces_7d"))
@@ -341,6 +399,31 @@ async def list_memory_admin_users(
             _admin_user_inventory_item(row)
             for row in _list_of_dicts(inventory.get("users"))
         ],
+    )
+
+
+@router.get(
+    "/v1/memory/admin/dream-proposals",
+    response_model=MemoryAdminDreamProposalsResponse,
+)
+async def list_memory_admin_dream_proposals(
+    request: Request,
+    state: Literal["open", "all"] = Query(default="open"),
+    limit: int = Query(default=50, ge=1, le=100),
+    _user_id: str = Depends(require_auth),
+) -> MemoryAdminDreamProposalsResponse:
+    check_scopes(request, "memory.read", "admin")
+    async with platform_admin_connection(
+        source="http",
+        audit_actor=_review_actor(request),
+    ) as conn:
+        rows = await MemoryService().admin_dream_proposals(
+            conn=conn,
+            state=state,
+            limit=limit,
+        )
+    return MemoryAdminDreamProposalsResponse(
+        proposals=[_admin_dream_proposal_item(row) for row in rows],
     )
 
 
@@ -464,6 +547,69 @@ async def review_semantic_memory(
     if status not in {"reviewed", "not_found", "error"}:
         status = "error"
     return ReviewSemanticMemoryResponse(status=status, result=result)
+
+
+@router.post(
+    "/v1/memory/buddy-events/read",
+    response_model=MemoryBuddyEventActionResponse,
+)
+async def mark_memory_buddy_events_read(
+    body: MemoryBuddyEventsReadRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> MemoryBuddyEventActionResponse:
+    check_scopes(request, "memory.write", "admin")
+    uid = _request_user_uuid(request)
+    async with rls_connection(request) as conn:
+        result = await MemoryService().mark_memory_buddy_events_read(
+            conn=conn,
+            user_id=uid,
+            event_ids=body.event_ids,
+            high_priority_only=body.high_priority_only,
+            marked_by=_review_actor(request),
+        )
+    logger.info(
+        "MEMORY_BUDDY_EVENTS_MARKED_READ",
+        extra={
+            "event": "MEMORY_BUDDY_EVENTS_MARKED_READ",
+            "user_id": str(uid),
+            "marked_count": int(result.get("marked_count") or 0),
+            "high_priority_only": body.high_priority_only,
+        },
+    )
+    return MemoryBuddyEventActionResponse(**result)
+
+
+@router.post(
+    "/v1/memory/buddy-events/suppress-duplicates",
+    response_model=MemoryBuddyEventActionResponse,
+)
+async def suppress_duplicate_memory_buddy_events(
+    body: MemoryBuddyEventsSuppressRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> MemoryBuddyEventActionResponse:
+    check_scopes(request, "memory.write", "admin")
+    uid = _request_user_uuid(request)
+    async with rls_connection(request) as conn:
+        result = await MemoryService().suppress_duplicate_memory_buddy_events(
+            conn=conn,
+            user_id=uid,
+            window_hours=body.window_hours,
+            high_priority_only=body.high_priority_only,
+            suppressed_by=_review_actor(request),
+        )
+    logger.info(
+        "MEMORY_BUDDY_DUPLICATES_SUPPRESSED",
+        extra={
+            "event": "MEMORY_BUDDY_DUPLICATES_SUPPRESSED",
+            "user_id": str(uid),
+            "suppressed_count": int(result.get("suppressed_count") or 0),
+            "window_hours": body.window_hours,
+            "high_priority_only": body.high_priority_only,
+        },
+    )
+    return MemoryBuddyEventActionResponse(**result)
 
 
 @router.post("/v1/memory/forget", response_model=ForgetMemoryResponse)
@@ -615,6 +761,24 @@ def _telemetry_dream_proposal(row: dict) -> MemoryTelemetryDreamProposal:
         status=str(row.get("status") or "unknown"),
         approval_queue_id=_optional_str(row.get("approval_queue_id")),
         approval_status=_optional_str(row.get("approval_status")),
+        approval_expires_at=_iso(row.get("approval_expires_at")),
+        created_at=_iso(row.get("created_at")),
+        updated_at=_iso(row.get("updated_at")),
+    )
+
+
+def _admin_dream_proposal_item(row: dict) -> MemoryAdminDreamProposalItem:
+    return MemoryAdminDreamProposalItem(
+        principal_id=str(row.get("principal_id") or ""),
+        display_name=str(row.get("display_name") or "Unknown principal"),
+        role=str(row.get("role") or "unknown"),
+        proposal_id=str(row.get("proposal_id") or ""),
+        proposed_action=str(row.get("proposed_action") or "unknown"),
+        executable=bool(row.get("executable")),
+        status=str(row.get("status") or "unknown"),
+        approval_queue_id=_optional_str(row.get("approval_queue_id")),
+        approval_status=_optional_str(row.get("approval_status")),
+        approval_expires_at=_iso(row.get("approval_expires_at")),
         created_at=_iso(row.get("created_at")),
         updated_at=_iso(row.get("updated_at")),
     )
@@ -641,30 +805,132 @@ def _admin_user_inventory_item(row: dict) -> MemoryAdminUserInventoryItem:
 
 
 def _admin_health(row: dict[str, object]) -> MemoryAdminHealth:
-    return MemoryAdminHealth(
-        principal_count=int(row.get("principal_count") or 0),
-        total_semantic=int(row.get("total_semantic") or 0),
-        total_working=int(row.get("total_working") or 0),
-        total_episodic=int(row.get("total_episodic") or 0),
-        semantic_review_count=int(row.get("semantic_review_count") or 0),
-        dream_reviewed_writes_open=int(row.get("dream_reviewed_writes_open") or 0),
-        dream_approval_mismatch_count=int(
+    payload = {
+        "principal_count": int(row.get("principal_count") or 0),
+        "total_semantic": int(row.get("total_semantic") or 0),
+        "total_working": int(row.get("total_working") or 0),
+        "total_episodic": int(row.get("total_episodic") or 0),
+        "semantic_review_count": int(row.get("semantic_review_count") or 0),
+        "dream_reviewed_writes_open": int(row.get("dream_reviewed_writes_open") or 0),
+        "dream_approval_mismatch_count": int(
             row.get("dream_approval_mismatch_count") or 0
         ),
-        stale_dream_reviewed_writes=int(row.get("stale_dream_reviewed_writes") or 0),
-        dream_approved_waiting_execution=int(
+        "stale_dream_reviewed_writes": int(row.get("stale_dream_reviewed_writes") or 0),
+        "dream_approved_waiting_execution": int(
             row.get("dream_approved_waiting_execution") or 0
         ),
-        unread_memory_buddy_events=int(row.get("unread_memory_buddy_events") or 0),
-        high_priority_buddy_events=int(row.get("high_priority_buddy_events") or 0),
-        last_semantic_write_at=_iso(row.get("last_semantic_write_at")),
-        last_semantic_review_at=_iso(row.get("last_semantic_review_at")),
-        last_working_memory_at=_iso(row.get("last_working_memory_at")),
-        last_episodic_memory_at=_iso(row.get("last_episodic_memory_at")),
-        last_dream_extraction_at=_iso(row.get("last_dream_extraction_at")),
-        last_dream_proposal_update_at=_iso(row.get("last_dream_proposal_update_at")),
-        last_memory_alert_at=_iso(row.get("last_memory_alert_at")),
-        last_memory_activity_at=_iso(row.get("last_memory_activity_at")),
+        "unread_memory_buddy_events": int(row.get("unread_memory_buddy_events") or 0),
+        "high_priority_buddy_events": int(row.get("high_priority_buddy_events") or 0),
+        "last_semantic_write_at": _iso(row.get("last_semantic_write_at")),
+        "last_semantic_review_at": _iso(row.get("last_semantic_review_at")),
+        "last_working_memory_at": _iso(row.get("last_working_memory_at")),
+        "last_episodic_memory_at": _iso(row.get("last_episodic_memory_at")),
+        "last_dream_extraction_at": _iso(row.get("last_dream_extraction_at")),
+        "last_dream_proposal_update_at": _iso(row.get("last_dream_proposal_update_at")),
+        "last_memory_alert_at": _iso(row.get("last_memory_alert_at")),
+        "last_memory_activity_at": _iso(row.get("last_memory_activity_at")),
+    }
+    return MemoryAdminHealth(
+        state=_memory_health_state(payload),
+        **payload,
+    )
+
+
+def _memory_health_state(metrics: dict[str, object]) -> MemoryHealthState:
+    thresholds = MemoryHealthThresholds()
+    failures: list[str] = []
+    warnings: list[str] = []
+
+    def value(*keys: str) -> int:
+        for key in keys:
+            raw = metrics.get(key)
+            if raw is not None:
+                try:
+                    return int(raw)
+                except (TypeError, ValueError):
+                    return 0
+        return 0
+
+    fail_checks = [
+        (
+            "pending review",
+            value("pending_review", "semantic_review_count"),
+            thresholds.max_pending_review,
+        ),
+        (
+            "24h review",
+            value("review_required_24h"),
+            thresholds.max_review_required_24h,
+        ),
+        (
+            "stale Dream writes",
+            value("stale_dream_reviewed_writes"),
+            thresholds.max_stale_dream_reviewed_writes,
+        ),
+        (
+            "approval drift",
+            value("dream_approval_mismatch_count"),
+            thresholds.max_dream_approval_mismatch_count,
+        ),
+        (
+            "ledger drift",
+            value("dream_executed_without_ledger"),
+            thresholds.max_dream_executed_without_ledger,
+        ),
+    ]
+    warn_checks = [
+        (
+            "open Dream writes",
+            value("dream_reviewed_writes_open"),
+            thresholds.max_dream_reviewed_writes_open,
+        ),
+        (
+            "unread Buddy events",
+            value("unread_memory_buddy_events"),
+            thresholds.max_unread_memory_buddy_events,
+        ),
+        (
+            "high-priority Buddy events",
+            value("high_priority_buddy_events"),
+            thresholds.max_high_priority_buddy_events,
+        ),
+        (
+            "approved Dream writes waiting",
+            value("dream_approved_waiting_execution"),
+            thresholds.max_dream_approved_waiting_execution,
+        ),
+    ]
+    for label, current, maximum in fail_checks:
+        if current > maximum:
+            failures.append(f"{label} {current}>{maximum}")
+    for label, current, maximum in warn_checks:
+        if current > maximum:
+            warnings.append(f"{label} {current}>{maximum}")
+    if failures:
+        return MemoryHealthState(
+            rag="red",
+            icon="🔴",
+            overall="blocked",
+            label="Memory red",
+            reasons=failures + warnings,
+            thresholds=thresholds,
+        )
+    if warnings:
+        return MemoryHealthState(
+            rag="yellow",
+            icon="🟡",
+            overall="at_risk",
+            label="Memory yellow",
+            reasons=warnings,
+            thresholds=thresholds,
+        )
+    return MemoryHealthState(
+        rag="green",
+        icon="🟢",
+        overall="on_track",
+        label="Memory green",
+        reasons=[],
+        thresholds=thresholds,
     )
 
 
