@@ -60,7 +60,10 @@ def test_layout_renders_space_links_from_shared_registry() -> None:
 def test_space_page_uses_registry_for_domain_links() -> None:
     source = SPACE_PAGE.read_text(encoding="utf-8")
 
-    assert "import { SPACES, getSpaceBySlug, getSpaceRoute } from '../lib/spaces'" in source
+    assert (
+        "import { SPACES, getSpaceBySlug, getSpaceRoute } from '../lib/spaces'"
+        in source
+    )
     assert "const space = getSpaceBySlug(slug)" in source
     assert "SPACES.map(item" in source
     assert "to={getSpaceRoute(item)}" in source
