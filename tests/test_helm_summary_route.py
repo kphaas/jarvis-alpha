@@ -145,6 +145,11 @@ def _fake_beacon_summary() -> helm.HelmBeaconSummary:
             provider_redundancy_ok=False,
             provider_redundancy_status="single_provider",
             missing_provider_count=1,
+            provider_warning_status="backup_budget_capped",
+            primary_provider="brave",
+            primary_provider_usable=True,
+            budget_capped_provider_count=1,
+            budget_capped_backup_provider_count=1,
         ),
         browser=helm.HelmBeaconBrowserSummary(
             status="ok",
@@ -189,6 +194,37 @@ def _fake_beacon_summary() -> helm.HelmBeaconSummary:
                 updated_at=datetime(2026, 6, 12, 19, 0, tzinfo=UTC).isoformat(),
             ),
         ),
+        latency=helm.HelmBeaconLatencySummary(
+            window_hours=24,
+            sample_count=4,
+            avg_ms=1200,
+            p95_ms=2400,
+            max_ms=2600,
+            slo_target_ms=20000,
+            slow_request_count=0,
+            slo_met_percent=100,
+        ),
+        cost=helm.HelmBeaconCostSummary(
+            status="warning",
+            window_hours=24,
+            beacon_request_count=4,
+            budget_capped_provider_count=1,
+            budget_capped_backup_provider_count=1,
+            primary_provider="brave",
+            primary_provider_usable=True,
+            provider_warning_status="backup_budget_capped",
+        ),
+        citation_quality=helm.HelmBeaconCitationQualitySummary(
+            window_hours=24,
+            status="warning",
+            supported=3,
+            weak=1,
+            insufficient=0,
+            supported_rate_percent=75,
+            official_source_count=3,
+            rejected_citation_count=2,
+            prompt_injection_rejection_count=1,
+        ),
         retention=helm.HelmBeaconRetentionSummary(
             mode="report_only",
             evidence_retention_days=30,
@@ -200,6 +236,10 @@ def _fake_beacon_summary() -> helm.HelmBeaconSummary:
         approvals=helm.HelmBeaconApprovalSummary(
             pending_browser_approvals=0,
             next_expires_at=None,
+            approved_24h=1,
+            denied_24h=0,
+            executed_24h=1,
+            expired_24h=0,
         ),
         quality_canary=helm.HelmBeaconQualityCanarySummary(
             status="passed",
@@ -276,6 +316,11 @@ async def test_helm_summary_returns_redacted_counts(monkeypatch) -> None:
         "provider_redundancy_ok": False,
         "provider_redundancy_status": "single_provider",
         "missing_provider_count": 1,
+        "provider_warning_status": "backup_budget_capped",
+        "primary_provider": "brave",
+        "primary_provider_usable": True,
+        "budget_capped_provider_count": 1,
+        "budget_capped_backup_provider_count": 1,
     }
     assert payload["beacon"]["evidence"]["source_quality"] == {
         "supported": 3,
@@ -319,6 +364,11 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
             return {
                 "pending_browser_approvals": 2,
                 "next_expires_at": expires_at,
+                "approved_24h": 1,
+                "denied_24h": 1,
+                "executed_24h": 2,
+                "expired_24h": 3,
+                "highest_pending_risk_rank": 4,
             }
 
     async def fake_build_beacon_health(_conn) -> InternetScoutHealthResponse:
@@ -340,7 +390,12 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
                         "required_provider_count": 2,
                         "provider_redundancy_ok": False,
                         "provider_redundancy_status": "single_provider",
+                        "provider_warning_status": "backup_budget_capped",
                         "missing_provider_count": 1,
+                        "primary_provider": "brave",
+                        "primary_provider_usable": True,
+                        "budget_capped_provider_count": 1,
+                        "budget_capped_backup_provider_count": 1,
                         "providers": [{"provider": "brave", "api_key": "secret"}],
                     },
                 ),
@@ -379,6 +434,16 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
                             "rejected_citation_count": 3,
                             "official_source_count": 2,
                             "prompt_injection_rejection_count": 1,
+                        },
+                        "latency": {
+                            "window_hours": 24,
+                            "sample_count": 5,
+                            "avg_ms": 1200,
+                            "p95_ms": 2400,
+                            "max_ms": 2600,
+                            "slo_target_ms": 20000,
+                            "slow_request_count": 1,
+                            "slo_met_percent": 80,
                         },
                         "web_suggestion": {
                             "suggested": 6,
@@ -457,6 +522,11 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
         "provider_redundancy_ok": False,
         "provider_redundancy_status": "single_provider",
         "missing_provider_count": 1,
+        "provider_warning_status": "backup_budget_capped",
+        "primary_provider": "brave",
+        "primary_provider_usable": True,
+        "budget_capped_provider_count": 1,
+        "budget_capped_backup_provider_count": 1,
     }
     assert payload["browser"]["screenshot_store_ready"] is True
     assert payload["evidence"]["last_request"]["id"] == "request-1"
@@ -477,9 +547,52 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
         "accepted_matching_mode": 3,
         "accepted_after_confirmation": 3,
     }
+    assert payload["latency"] == {
+        "window_hours": 24,
+        "sample_count": 5,
+        "avg_ms": 1200,
+        "p95_ms": 2400,
+        "max_ms": 2600,
+        "slo_target_ms": 20000,
+        "slow_request_count": 1,
+        "slo_met_percent": 80,
+    }
+    assert payload["cost"] == {
+        "status": "warning",
+        "mode": "spend_guard",
+        "exact_cost_available": False,
+        "window_hours": 24,
+        "beacon_request_count": 5,
+        "budget_capped_provider_count": 1,
+        "budget_capped_backup_provider_count": 1,
+        "primary_provider": "brave",
+        "primary_provider_usable": True,
+        "provider_warning_status": "backup_budget_capped",
+        "detail": (
+            "Beacon reports provider spend-guard state; exact per-request search "
+            "cost is not recorded yet."
+        ),
+    }
+    assert payload["citation_quality"] == {
+        "window_hours": 24,
+        "status": "warning",
+        "supported": 4,
+        "weak": 1,
+        "insufficient": 1,
+        "supported_rate_percent": 67,
+        "official_source_count": 2,
+        "rejected_citation_count": 3,
+        "prompt_injection_rejection_count": 1,
+    }
     assert payload["approvals"] == {
         "pending_browser_approvals": 2,
         "next_expires_at": expires_at.isoformat(),
+        "window_hours": 24,
+        "approved_24h": 1,
+        "denied_24h": 1,
+        "executed_24h": 2,
+        "expired_24h": 3,
+        "highest_pending_risk_tier": "T4",
     }
     assert payload["quality_canary"] == {
         "status": "passed",
