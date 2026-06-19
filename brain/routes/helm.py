@@ -135,6 +135,11 @@ class HelmBeaconProviderSummary(BaseModel):
     provider_redundancy_ok: bool = False
     provider_redundancy_status: str = "unavailable"
     missing_provider_count: int = 0
+    provider_warning_status: str | None = None
+    primary_provider: str | None = None
+    primary_provider_usable: bool | None = None
+    budget_capped_provider_count: int = 0
+    budget_capped_backup_provider_count: int = 0
 
 
 class HelmBeaconBrowserSummary(BaseModel):
@@ -165,6 +170,46 @@ class HelmBeaconEvidenceSummary(BaseModel):
     last_request: HelmBeaconLastRequest | None = None
 
 
+class HelmBeaconLatencySummary(BaseModel):
+    window_hours: int = 24
+    sample_count: int = 0
+    avg_ms: int = 0
+    p95_ms: int = 0
+    max_ms: int = 0
+    slo_target_ms: int = 20_000
+    slow_request_count: int = 0
+    slo_met_percent: int = 0
+
+
+class HelmBeaconCitationQualitySummary(BaseModel):
+    window_hours: int = 24
+    status: str = "unknown"
+    supported: int = 0
+    weak: int = 0
+    insufficient: int = 0
+    supported_rate_percent: int = 0
+    official_source_count: int = 0
+    rejected_citation_count: int = 0
+    prompt_injection_rejection_count: int = 0
+
+
+class HelmBeaconCostSummary(BaseModel):
+    status: str = "unknown"
+    mode: str = "spend_guard"
+    exact_cost_available: bool = False
+    window_hours: int = 24
+    beacon_request_count: int = 0
+    budget_capped_provider_count: int = 0
+    budget_capped_backup_provider_count: int = 0
+    primary_provider: str | None = None
+    primary_provider_usable: bool | None = None
+    provider_warning_status: str | None = None
+    detail: str = (
+        "Beacon reports provider spend-guard state; exact per-request search "
+        "cost is not recorded yet."
+    )
+
+
 class HelmBeaconRetentionSummary(BaseModel):
     mode: str
     evidence_retention_days: int
@@ -177,6 +222,12 @@ class HelmBeaconRetentionSummary(BaseModel):
 class HelmBeaconApprovalSummary(BaseModel):
     pending_browser_approvals: int = 0
     next_expires_at: str | None = None
+    window_hours: int = 24
+    approved_24h: int = 0
+    denied_24h: int = 0
+    executed_24h: int = 0
+    expired_24h: int = 0
+    highest_pending_risk_tier: str | None = None
 
 
 class HelmBeaconQualityCanaryAlert(BaseModel):
@@ -223,6 +274,11 @@ class HelmBeaconSummary(BaseModel):
     provider: HelmBeaconProviderSummary
     browser: HelmBeaconBrowserSummary
     evidence: HelmBeaconEvidenceSummary
+    latency: HelmBeaconLatencySummary = Field(default_factory=HelmBeaconLatencySummary)
+    cost: HelmBeaconCostSummary = Field(default_factory=HelmBeaconCostSummary)
+    citation_quality: HelmBeaconCitationQualitySummary = Field(
+        default_factory=HelmBeaconCitationQualitySummary
+    )
     retention: HelmBeaconRetentionSummary
     approvals: HelmBeaconApprovalSummary
     quality_canary: HelmBeaconQualityCanarySummary = Field(
@@ -517,6 +573,88 @@ def _beacon_source_quality(
     )
 
 
+def _beacon_latency(metadata: Mapping[str, object]) -> HelmBeaconLatencySummary:
+    latency = _mapping_value(metadata.get("latency"))
+    return HelmBeaconLatencySummary(
+        window_hours=_metadata_int(latency, "window_hours") or 24,
+        sample_count=_metadata_int(latency, "sample_count"),
+        avg_ms=_metadata_int(latency, "avg_ms"),
+        p95_ms=_metadata_int(latency, "p95_ms"),
+        max_ms=_metadata_int(latency, "max_ms"),
+        slo_target_ms=_metadata_int(latency, "slo_target_ms") or 20_000,
+        slow_request_count=_metadata_int(latency, "slow_request_count"),
+        slo_met_percent=_metadata_int(latency, "slo_met_percent"),
+    )
+
+
+def _beacon_citation_quality(
+    metadata: Mapping[str, object],
+) -> HelmBeaconCitationQualitySummary:
+    quality = _beacon_source_quality(metadata)
+    total = quality.supported + quality.weak + quality.insufficient
+    supported_rate = round((quality.supported / total) * 100) if total else 0
+    if total == 0:
+        status = "unknown"
+    elif quality.insufficient > 0 or quality.prompt_injection_rejection_count > 0:
+        status = "warning"
+    elif quality.supported == total:
+        status = "ok"
+    else:
+        status = "mixed"
+    return HelmBeaconCitationQualitySummary(
+        window_hours=_metadata_int(metadata, "window_hours") or 24,
+        status=status,
+        supported=quality.supported,
+        weak=quality.weak,
+        insufficient=quality.insufficient,
+        supported_rate_percent=supported_rate,
+        official_source_count=quality.official_source_count,
+        rejected_citation_count=quality.rejected_citation_count,
+        prompt_injection_rejection_count=quality.prompt_injection_rejection_count,
+    )
+
+
+def _beacon_cost(
+    gateway_metadata: Mapping[str, object],
+    evidence_metadata: Mapping[str, object],
+) -> HelmBeaconCostSummary:
+    budget_capped_provider_count = _metadata_int(
+        gateway_metadata,
+        "budget_capped_provider_count",
+    )
+    budget_capped_backup_provider_count = _metadata_int(
+        gateway_metadata,
+        "budget_capped_backup_provider_count",
+    )
+    provider_warning_status = _metadata_str(
+        gateway_metadata,
+        "provider_warning_status",
+    )
+    primary_provider_usable = _metadata_value(
+        gateway_metadata,
+        "primary_provider_usable",
+    )
+    status = "ok"
+    if budget_capped_provider_count > 0 or provider_warning_status:
+        status = "warning"
+    if primary_provider_usable is False:
+        status = "degraded"
+    return HelmBeaconCostSummary(
+        status=status,
+        window_hours=_metadata_int(evidence_metadata, "window_hours") or 24,
+        beacon_request_count=_metadata_int(evidence_metadata, "total"),
+        budget_capped_provider_count=budget_capped_provider_count,
+        budget_capped_backup_provider_count=budget_capped_backup_provider_count,
+        primary_provider=_metadata_str(gateway_metadata, "primary_provider"),
+        primary_provider_usable=(
+            bool(primary_provider_usable)
+            if isinstance(primary_provider_usable, bool)
+            else None
+        ),
+        provider_warning_status=provider_warning_status,
+    )
+
+
 def _beacon_web_suggestion(
     metadata: Mapping[str, object],
 ) -> HelmBeaconWebSuggestionSummary:
@@ -607,20 +745,65 @@ def _datetime_or_none(value: object | None) -> str | None:
     return str(value)
 
 
+def _tier_from_rank(rank: int) -> str | None:
+    return {1: "T1", 2: "T2", 3: "T3", 4: "T4", 5: "T5"}.get(rank)
+
+
 async def _beacon_pending_browser_approvals(conn) -> HelmBeaconApprovalSummary:
     row = await conn.fetchrow(
         """
-        SELECT COUNT(*)::INTEGER AS pending_browser_approvals,
-               MIN(expires_at) AS next_expires_at
+        SELECT
+            COUNT(*) FILTER (
+                WHERE status = 'pending'
+                  AND (expires_at IS NULL OR expires_at > NOW())
+            )::INTEGER AS pending_browser_approvals,
+            MIN(expires_at) FILTER (
+                WHERE status = 'pending'
+                  AND (expires_at IS NULL OR expires_at > NOW())
+            ) AS next_expires_at,
+            COUNT(*) FILTER (
+                WHERE status = 'approved'
+                  AND requested_at >= NOW() - INTERVAL '24 hours'
+            )::INTEGER AS approved_24h,
+            COUNT(*) FILTER (
+                WHERE status = 'denied'
+                  AND requested_at >= NOW() - INTERVAL '24 hours'
+            )::INTEGER AS denied_24h,
+            COUNT(*) FILTER (
+                WHERE status = 'executed'
+                  AND requested_at >= NOW() - INTERVAL '24 hours'
+            )::INTEGER AS executed_24h,
+            COUNT(*) FILTER (
+                WHERE status = 'expired'
+                  AND requested_at >= NOW() - INTERVAL '24 hours'
+            )::INTEGER AS expired_24h,
+            MAX(
+                CASE risk_tier
+                    WHEN 'T5' THEN 5
+                    WHEN 'T4' THEN 4
+                    WHEN 'T3' THEN 3
+                    WHEN 'T2' THEN 2
+                    WHEN 'T1' THEN 1
+                    ELSE 0
+                END
+            ) FILTER (
+                WHERE status = 'pending'
+                  AND (expires_at IS NULL OR expires_at > NOW())
+            )::INTEGER AS highest_pending_risk_rank
         FROM public.alpha_approval_queue
-        WHERE status = 'pending'
-          AND (expires_at IS NULL OR expires_at > NOW())
-          AND action_class && ARRAY['beacon_browser_use']::TEXT[]
+        WHERE action_class && ARRAY['beacon_browser_use']::TEXT[]
         """
     )
     return HelmBeaconApprovalSummary(
         pending_browser_approvals=_int_value(row, "pending_browser_approvals"),
         next_expires_at=_datetime_or_none(_row_value(row, "next_expires_at")),
+        approved_24h=_int_value(row, "approved_24h"),
+        denied_24h=_int_value(row, "denied_24h"),
+        executed_24h=_int_value(row, "executed_24h"),
+        expired_24h=_int_value(row, "expired_24h"),
+        highest_pending_risk_tier=_tier_from_rank(
+            _int_value(row, "highest_pending_risk_rank"),
+        ),
     )
 
 
@@ -645,6 +828,9 @@ def _unavailable_beacon_summary() -> HelmBeaconSummary:
         evidence=HelmBeaconEvidenceSummary(
             status="unavailable",
         ),
+        latency=HelmBeaconLatencySummary(),
+        cost=HelmBeaconCostSummary(status="unknown"),
+        citation_quality=HelmBeaconCitationQualitySummary(status="unknown"),
         retention=HelmBeaconRetentionSummary(
             mode="report_only",
             evidence_retention_days=0,
@@ -712,6 +898,27 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
                 gateway_metadata,
                 "missing_provider_count",
             ),
+            provider_warning_status=_metadata_str(
+                gateway_metadata,
+                "provider_warning_status",
+            ),
+            primary_provider=_metadata_str(gateway_metadata, "primary_provider"),
+            primary_provider_usable=(
+                bool(_metadata_value(gateway_metadata, "primary_provider_usable"))
+                if isinstance(
+                    _metadata_value(gateway_metadata, "primary_provider_usable"),
+                    bool,
+                )
+                else None
+            ),
+            budget_capped_provider_count=_metadata_int(
+                gateway_metadata,
+                "budget_capped_provider_count",
+            ),
+            budget_capped_backup_provider_count=_metadata_int(
+                gateway_metadata,
+                "budget_capped_backup_provider_count",
+            ),
         ),
         browser=HelmBeaconBrowserSummary(
             status=browser_check.status if browser_check is not None else "unavailable",
@@ -751,6 +958,9 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
             web_suggestion=_beacon_web_suggestion(evidence_metadata),
             last_request=_beacon_last_request(evidence_metadata),
         ),
+        latency=_beacon_latency(evidence_metadata),
+        cost=_beacon_cost(gateway_metadata, evidence_metadata),
+        citation_quality=_beacon_citation_quality(evidence_metadata),
         retention=HelmBeaconRetentionSummary(
             mode=health.retention.mode,
             evidence_retention_days=health.retention.evidence_retention_days,

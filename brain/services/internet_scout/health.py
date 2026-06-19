@@ -35,6 +35,7 @@ _READINESS_CHECKS = (
 )
 _QUALITY_CANARY_HISTORY_LIMIT = 7
 _QUALITY_CANARY_STALE_AFTER_HOURS = 26
+_DEFAULT_ANSWER_LATENCY_SLO_MS = 20_000
 
 
 class _RequestRow(Protocol):
@@ -336,6 +337,37 @@ async def _recent_evidence_check(
           AND created_at >= NOW() - INTERVAL '24 hours'
         """
     )
+    latency_row = await conn.fetchrow(
+        """
+        SELECT
+            COUNT(*) FILTER (
+                WHERE status IN ('succeeded', 'failed', 'blocked')
+                  AND updated_at IS NOT NULL
+                  AND updated_at >= created_at
+            )::INTEGER AS sample_count,
+            COALESCE(ROUND(AVG(
+                EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000
+            ))::INTEGER, 0) AS avg_ms,
+            COALESCE(ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (
+                ORDER BY EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000
+            ))::INTEGER, 0) AS p95_ms,
+            COALESCE(ROUND(MAX(
+                EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000
+            ))::INTEGER, 0) AS max_ms,
+            COUNT(*) FILTER (
+                WHERE status IN ('succeeded', 'failed', 'blocked')
+                  AND updated_at IS NOT NULL
+                  AND updated_at >= created_at
+                  AND EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000 > $1
+            )::INTEGER AS slow_request_count
+        FROM public.alpha_internet_requests
+        WHERE created_at >= NOW() - INTERVAL '24 hours'
+          AND status IN ('succeeded', 'failed', 'blocked')
+          AND updated_at IS NOT NULL
+          AND updated_at >= created_at
+        """,
+        _answer_latency_slo_ms(),
+    )
     quality_canary_rows = await conn.fetch(
         """
         SELECT request_id, status, metadata, created_at
@@ -370,6 +402,7 @@ async def _recent_evidence_check(
             "blocked": int(row["blocked"] or 0) if row else 0,
             "last_request": _last_request_metadata(last_request),
             "source_quality": _quality_metadata(quality_row),
+            "latency": _latency_metadata(latency_row),
             "web_suggestion": _web_suggestion_metadata(
                 suggestion_row,
                 acceptance_row,
@@ -430,6 +463,40 @@ def _quality_metadata(row: _RequestRow | None) -> dict[str, object]:
             row,
             "prompt_injection_rejection_count",
         ),
+    }
+
+
+def _latency_metadata(row: _RequestRow | None) -> dict[str, object]:
+    target_ms = _answer_latency_slo_ms()
+    if row is None:
+        return _empty_latency_metadata(target_ms)
+    sample_count = _safe_int_row(row, "sample_count")
+    slow_request_count = _safe_int_row(row, "slow_request_count")
+    met_count = max(sample_count - slow_request_count, 0)
+    return {
+        "window_hours": 24,
+        "sample_count": sample_count,
+        "avg_ms": _safe_int_row(row, "avg_ms"),
+        "p95_ms": _safe_int_row(row, "p95_ms"),
+        "max_ms": _safe_int_row(row, "max_ms"),
+        "slo_target_ms": target_ms,
+        "slow_request_count": slow_request_count,
+        "slo_met_percent": round((met_count / sample_count) * 100)
+        if sample_count
+        else 0,
+    }
+
+
+def _empty_latency_metadata(target_ms: int) -> dict[str, object]:
+    return {
+        "window_hours": 24,
+        "sample_count": 0,
+        "avg_ms": 0,
+        "p95_ms": 0,
+        "max_ms": 0,
+        "slo_target_ms": target_ms,
+        "slow_request_count": 0,
+        "slo_met_percent": 0,
     }
 
 
@@ -610,6 +677,21 @@ def _int_row(row: _RequestRow, key: str) -> int:
     if isinstance(value, str) and value.isdecimal():
         return int(value)
     return 0
+
+
+def _safe_int_row(row: _RequestRow, key: str) -> int:
+    try:
+        return _int_row(row, key)
+    except (KeyError, TypeError):
+        return 0
+
+
+def _answer_latency_slo_ms() -> int:
+    try:
+        value = int(os.getenv("BEACON_ANSWER_LATENCY_SLO_MS", ""))
+    except ValueError:
+        return _DEFAULT_ANSWER_LATENCY_SLO_MS
+    return min(max(value, 1_000), 120_000)
 
 
 def _int_mapping(payload: dict[str, object], key: str) -> int:

@@ -66,7 +66,7 @@ References:
 | Browser action capability | Browser execution remains observation-first. It does not yet support structured click flows such as reservation navigation. | Partial | Click-only v2 supports approved element snapshots, same-host navigation, no credentials, no purchases, screenshots before/after, and per-click audit. |
 | MCP/tool ecosystem | Beacon is mostly internal Alpha routes, not a tool marketplace style integration layer. | Not started | Beacon exposes policy-scoped tool contracts for approved internal agents and optional MCP-facing consumers. |
 | Product-mode defaults | Focus mode request contract and Beacon UI selector are in progress. | Partial | Mode selector maps to source policies, provider strategy, extraction budget, and UI labels. |
-| Ops SLO dashboard | Health exists, but no one-page SLO dashboard for answer latency, cost, provider failures, citation quality, and browser approvals. | Partial | Health/observability page shows SLO cards, trend windows, and action items. |
+| Ops SLO dashboard | Beacon now has a one-page Ops dashboard for answer latency, provider state, spend-guard posture, citation quality, browser approvals, and operator actions. | Complete | `/beacon/ops` shows SLO cards, 24h windows, provider/cost/citation/browser sections, and action chips after deployed smoke. |
 
 ## Closure Plan
 
@@ -82,7 +82,7 @@ References:
 | 7 | Cache/rerank/index layer | Not started | Beacon reuses recent fetch/extract evidence safely, records cache hits, and supports local reranking. |
 | 8 | Browser approval UX v2 | Not started | Approvals page includes action timeline, before/after screenshots, host allowlist, and risk flags. |
 | 9 | Browser click-only v2 | Not started | Structured clicks are approved per target, no typing, no credentials, no purchases, no cross-host jumps. |
-| 10 | Ops/SLO dashboard | Not started | Health UI reports latency, cost, quality canary, provider state, browser approvals, and next operator action. |
+| 10 | Ops/SLO dashboard | Complete | Beacon Ops reports latency, cost guard, quality canary, provider state, browser approvals, and next operator action. |
 
 ## UX Improvement Notes
 
@@ -116,6 +116,6 @@ operator depth rather than basic answer visibility.
 
 The next best production workstream is:
 
-1. Ops/SLO dashboard.
-2. Browser approval UX v2.
-3. Durable web cache/rerank/index layer.
+1. Browser approval UX v2.
+2. Durable web cache/rerank/index layer.
+3. Eval harness breadth and scheduled reporting.

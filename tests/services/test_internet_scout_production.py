@@ -22,6 +22,7 @@ class FakeConn:
         recent_row: dict[str, int] | None = None,
         last_request_row: dict[str, object] | None = None,
         quality_row: dict[str, int] | None = None,
+        latency_row: dict[str, int] | None = None,
         suggestion_row: dict[str, int] | None = None,
         acceptance_row: dict[str, int] | None = None,
         quality_canary_row: dict[str, object] | None = None,
@@ -55,6 +56,13 @@ class FakeConn:
             "rejected_citation_count": 3,
             "official_source_count": 1,
             "prompt_injection_rejection_count": 1,
+        }
+        self.latency_row = latency_row or {
+            "sample_count": 3,
+            "avg_ms": 1000,
+            "p95_ms": 2400,
+            "max_ms": 2600,
+            "slow_request_count": 1,
         }
         self.suggestion_row = suggestion_row or {
             "suggested": 5,
@@ -124,6 +132,8 @@ class FakeConn:
             return self.suggestion_row
         if "chat_evidence_quality" in query:
             return self.quality_row
+        if "PERCENTILE_CONT" in query:
+            return self.latency_row
         if "ORDER BY created_at DESC" in query:
             return self.last_request_row
         return self.recent_row
@@ -335,6 +345,16 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
         "rejected_citation_count": 3,
         "official_source_count": 1,
         "prompt_injection_rejection_count": 1,
+    }
+    assert response.checks["recent_evidence"].metadata["latency"] == {
+        "window_hours": 24,
+        "sample_count": 3,
+        "avg_ms": 1000,
+        "p95_ms": 2400,
+        "max_ms": 2600,
+        "slo_target_ms": 20000,
+        "slow_request_count": 1,
+        "slo_met_percent": 67,
     }
     web_suggestion = response.checks["recent_evidence"].metadata["web_suggestion"]
     assert web_suggestion == {
