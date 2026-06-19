@@ -70,6 +70,7 @@ AskPersonalityId = Literal[
 ]
 BEACON_INSUFFICIENT_MODEL = "beacon/insufficient-evidence"
 MEMORY_COMMAND_MODEL = "alpha/memory-command"
+AT0_SELF_MODEL_LABEL = "alpha/at0-self-model"
 BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
     [
         "Beacon authority rule:",
@@ -93,8 +94,11 @@ WEB_SUGGESTION_BOUNDARY_RULE = "\n".join(
         "status, current rankings, rosters, or future event dates, do not answer "
         "from memory or local model knowledge. Say Beacon/web verification is "
         "needed.",
-        "- If answering from memory or local model knowledge, say Beacon "
-        "verification is needed.",
+        "- If the user is only asking how to use AT-0, Helm, Beacon, web search, "
+        "voice, or avatar mode, explain the local workflow instead of treating it "
+        "as a current public web claim.",
+        "- If answering a current/public fact from memory or local model knowledge, "
+        "say Beacon verification is needed.",
     ]
 )
 SOURCE_LINK_REQUEST_RE = re.compile(
@@ -119,6 +123,34 @@ SOURCE_LINE_RE = re.compile(
     r"(?im)^\s*(?:sources?|citations?|references?|websites?|links?)\s*:.*(?:\n|$)"
 )
 BRACKET_CITATION_RE = re.compile(r"\s*\[(?:\d+(?:\s*,\s*\d+)*)\]")
+LOCAL_WEB_HOWTO_RE = re.compile(
+    r"\bhow\s+(?:do|can|should)\s+i\b[^.!?\n]{0,120}"
+    r"\b(?:make\s+you\s+)?(?:search|browse|use\s+(?:the\s+)?web|"
+    r"access\s+(?:the\s+)?internet|turn\s+on\s+(?:web\s+search|beacon)|"
+    r"enable\s+(?:web\s+search|beacon)|use\s+beacon)\b",
+    re.IGNORECASE,
+)
+CURRENT_FACT_SHORT_CIRCUIT_RE = re.compile(
+    r"\b("
+    r"today|tomorrow|tonight|yesterday|latest|current|recent|right\s+now|"
+    r"this\s+week|this\s+month|next|what\s+time|when|schedule|score|status|"
+    r"weather|news|price|market|ceo|release\s+notes|changelog|version|"
+    r"game|match|fixture|kick\s*off|opponent|play|playing|standings|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+    r")\b",
+    re.IGNORECASE,
+)
+LEADING_MARKDOWN_HEADING_RE = re.compile(
+    r"(?s)^\s*(?:#{1,6}\s+[^\n]{1,80}\n+|\*\*[A-Z][^*\n]{3,80}\*\*\s*:?\s*)"
+)
+UNSUPPORTED_BEACON_ASSERTION_RE = re.compile(
+    r"(?is)(^|(?<=[.!?])\s+)"
+    r"(?:"
+    r"Beacon\s+(?:checked|verified|confirmed|found|says|has)\b.*?"
+    r"|I(?:'ve| have)\s+(?:checked|verified|confirmed|found)\b.*?\bBeacon\b.*?"
+    r")"
+    r"(?:[.!?](?:\s+|$)|$)"
+)
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -308,8 +340,10 @@ def _response_style_prompt(
     if surface == "voice":
         lines.append(
             "- Surface: Voice. Default to one or two conversational sentences. "
-            "Answer like a quick back-and-forth, not a report. Skip markdown, "
-            "headings, source names, and long setup unless Ken explicitly asks."
+            "Keep normal answers under 60 words unless Ken asks for detail. "
+            "Answer like a quick back-and-forth, not a report. No markdown, "
+            "bullets, headings, source names, or long setup unless Ken "
+            "explicitly asks."
         )
     elif surface == "avatar":
         lines.append(
@@ -330,10 +364,15 @@ def _should_short_circuit_web_suggestion(
 ) -> bool:
     if not suggestion:
         return False
-    return suggestion.reason in {
-        "sports_schedule_likely",
-        "current_information_likely",
-    }
+    if suggestion.reason == "sports_schedule_likely":
+        return True
+    if suggestion.reason != "current_information_likely":
+        return False
+
+    query = " ".join(suggestion.query.split())
+    if LOCAL_WEB_HOWTO_RE.search(query):
+        return False
+    return bool(CURRENT_FACT_SHORT_CIRCUIT_RE.search(query))
 
 
 def _web_verification_required_response(
@@ -345,6 +384,61 @@ def _web_verification_required_response(
     if suggestion.reason == "sports_schedule_likely":
         return "I need Beacon to check that before I answer. Use Web search for this one and I’ll give you the verified time."
     return "I need Beacon to verify that before I answer. Use Web search and I’ll keep it tight."
+
+
+def _at0_self_quick_response(
+    user_msg: str,
+    response_surface: AskResponseSurface,
+) -> str | None:
+    if response_surface not in {"voice", "avatar"}:
+        return None
+
+    normalized = " ".join(user_msg.lower().split())
+    personal_context_requested = re.search(
+        r"\b(?:what do you know about me|do you know (?:things|anything) about me|"
+        r"remember|memory|about me)\b",
+        normalized,
+    )
+    capability_requested = re.search(
+        r"\b(?:what can you do|what you can do|what you can't do|"
+        r"what you can’t do|capabilit(?:y|ies)|modes?|yourself)\b",
+        normalized,
+    )
+    if personal_context_requested and capability_requested:
+        return (
+            "I can chat, listen and speak, show up as the avatar, use approved "
+            "memory for stable context about you, and ask Beacon to verify "
+            "current public facts before I claim them."
+        )
+    if personal_context_requested:
+        return (
+            "I can use approved memory for stable context about you, your "
+            "projects, preferences, and household basics. I keep that minimal, "
+            "and I still need Beacon for current public facts."
+        )
+    if re.search(r"\b(?:search|browse|web|internet|beacon)\b", normalized):
+        return (
+            "Turn on Web search when you want me to use Beacon. For current "
+            "facts like sports times, I’ll wait for Beacon instead of guessing."
+        )
+    if re.search(r"\b(?:voice|talk|speak|hear|listen)\b", normalized):
+        return (
+            "Voice mode listens through Helm, transcribes your turn, then speaks "
+            "back using the personality voice you picked."
+        )
+    if re.search(
+        r"\b(?:who are you|what are you|jarvis|otto|auto|at-?0|yourself)\b",
+        normalized,
+    ):
+        return (
+            "I’m AT-0, your Helm chat, voice, and avatar companion. JARVIS/Alpha "
+            "is the private system behind me, not the name I should lead with."
+        )
+    return (
+        "I can chat, listen and speak, show up as the avatar, use approved memory "
+        "for stable context, check current facts with Beacon, and work with "
+        "approved Alpha summaries."
+    )
 
 
 def _should_short_circuit_internet_response(
@@ -859,6 +953,8 @@ JARVIS_SYSTEM_PROMPT = (
     "For voice-friendly answers, prefer one to three short paragraphs, name the "
     "answer first, and put caveats after the useful part. "
     "When memory context is provided, use it for stable personal context. "
+    "For project status, use only explicit context; do not invent version "
+    "numbers, milestones, pipelines, or dates. "
     "When Beacon evidence is provided, treat accepted Beacon evidence "
     "as authoritative for current/public web claims. For date-specific sports, "
     "events, schedules, scores, news, prices, releases, and other current or "
@@ -896,6 +992,8 @@ def _polish_model_response(text: str, response_surface: AskResponseSurface) -> s
     if not polished:
         return polished
 
+    polished = LEADING_MARKDOWN_HEADING_RE.sub("", polished).strip()
+    polished = re.sub(r"(?m)^\s*(?:[-*]|\d+[.)])\s+", "", polished)
     replacements = [
         (
             r"(?i)\baccording to Open-Meteo,\s*which is a reliable source for current weather conditions,\s*",
@@ -933,6 +1031,13 @@ def _polish_model_response(text: str, response_surface: AskResponseSurface) -> s
     polished = re.sub(r"(?is)\s+Keep in mind that\b.*$", "", polished)
     polished = re.sub(r"\s{2,}", " ", polished).strip()
     return polished or text.strip()
+
+
+def _strip_unsupported_beacon_assertions(text: str) -> str:
+    cleaned = UNSUPPORTED_BEACON_ASSERTION_RE.sub(" ", text)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+    return cleaned.strip()
 
 
 def _user_requested_source_links(user_msg: str) -> bool:
@@ -999,9 +1104,13 @@ def _finalize_model_response(
     text: str,
     response_surface: AskResponseSurface,
     user_msg: str,
+    *,
+    internet_verified: bool = False,
 ) -> str:
     polished = _polish_model_response(text, response_surface)
     stripped = _strip_unrequested_source_references(polished, user_msg)
+    if not internet_verified:
+        stripped = _strip_unsupported_beacon_assertions(stripped)
     return stripped or polished.strip() or text.strip()
 
 
@@ -1012,6 +1121,7 @@ async def _stream_single(
     model_label: str,
     user_msg: str,
     response_surface: AskResponseSurface = "chat",
+    internet_verified: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Stream tokens from router → SSE events."""
     jarvis_prompt = f"{JARVIS_SYSTEM_PROMPT}\n\n{_runtime_context_prompt()}\n\n{prompt}"
@@ -1020,6 +1130,7 @@ async def _stream_single(
         result.get("result", ""),
         response_surface,
         user_msg,
+        internet_verified=internet_verified,
     )
     model_used = result.get("mode", mode)
 
@@ -1385,6 +1496,37 @@ async def chat_completions(body: CompletionRequest, request: Request):
             )
             return
 
+        at0_self_text = (
+            _at0_self_quick_response(user_msg, body.response_surface)
+            if at0_self_requested
+            else None
+        )
+        if at0_self_text:
+            async for chunk in _stream_deterministic_response(
+                text=at0_self_text,
+                model_label=AT0_SELF_MODEL_LABEL,
+                thread_id=thread_id,
+            ):
+                yield chunk
+
+            latency = int((time.monotonic() - start) * 1000)
+            await _save_message(
+                request,
+                thread_id,
+                user_id,
+                "assistant",
+                at0_self_text,
+                model_used=AT0_SELF_MODEL_LABEL,
+                memory_injected=False,
+                latency_ms=latency,
+                internet_metadata=(
+                    _internet_message_metadata(internet_context)
+                    if internet_context
+                    else None
+                ),
+            )
+            return
+
         is_council = body.model == "council" or len(body.council_models) >= 2
         models = body.council_models if body.council_models else [body.model]
 
@@ -1404,6 +1546,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 body.model,
                 user_msg,
                 response_surface=body.response_surface,
+                internet_verified=bool(internet_context),
             )
 
         async for chunk in gen:

@@ -8,6 +8,7 @@ os.environ.setdefault("ALPHA_DB_DSN_BUDDY", "postgresql://test:test@localhost/te
 os.environ.setdefault("ALPHA_GATEWAY_URL", "http://127.0.0.1:8188")
 
 from brain.routes import chat
+from brain.services.at0_self_model import is_at0_self_query
 from brain.services.internet_scout.web_suggestion import suggest_web_for_chat
 from tests.test_chat_internet_metadata import (
     _insufficient_context,
@@ -97,6 +98,8 @@ def test_at0_voice_surface_injects_style_context() -> None:
     assert "AT-0 interaction style:" in prompt
     assert "Surface: Voice" in prompt
     assert "one or two conversational sentences" in prompt
+    assert "under 60 words" in prompt
+    assert "No markdown" in prompt
     assert "Calm Operator" in prompt
     assert "do not correct him" in prompt
     assert "User: How is the weather?" in prompt
@@ -124,6 +127,33 @@ def test_at0_voice_polish_removes_robotic_weather_preamble() -> None:
     assert "reliable source for current weather conditions" not in polished
     assert "feeling like 73 degrees" in polished
     assert "Please note" not in polished
+
+
+def test_at0_voice_polish_removes_markdown_heading() -> None:
+    polished = chat._polish_model_response(
+        "**Voice Processing Optimizations** We are close. The next move is "
+        "reducing the pause before speech starts.",
+        "voice",
+    )
+
+    assert (
+        polished
+        == "We are close. The next move is reducing the pause before speech starts."
+    )
+    assert "**" not in polished
+
+
+def test_at0_final_response_strips_unsupported_beacon_claim() -> None:
+    finalized = chat._finalize_model_response(
+        "Beacon checked our architecture and performance metrics. We are close "
+        "to a two-second voice response.",
+        "voice",
+        "How do we make voice feel near real time?",
+        internet_verified=False,
+    )
+
+    assert finalized == "We are close to a two-second voice response."
+    assert "Beacon checked" not in finalized
 
 
 def test_eval_sports_schedule_suggests_web_search() -> None:
@@ -154,3 +184,42 @@ def test_eval_sports_schedule_without_beacon_short_circuits_stale_answer() -> No
     assert "Beacon" in response
     assert "check" in response
     assert "3 PM" not in response
+
+
+def test_eval_avatar_web_howto_is_self_query_not_stale_fact() -> None:
+    query = "In avatar mode, how do I make you search the internet?"
+    suggestion = suggest_web_for_chat(
+        query=query,
+        internet_mode="none",
+        sensitivity="normal",
+    )
+
+    assert is_at0_self_query(query) is True
+    assert suggestion is not None
+    assert suggestion.reason == "current_information_likely"
+    assert chat._should_short_circuit_web_suggestion(suggestion) is False
+
+
+def test_at0_self_quick_response_is_concise_for_voice_capabilities() -> None:
+    response = chat._at0_self_quick_response(
+        "Can you explain what you can do, what you can’t do, and what you know about me?",
+        "voice",
+    )
+
+    assert response is not None
+    assert "I can chat" in response
+    assert "approved memory" in response
+    assert "Beacon" in response
+    assert len(response.split()) <= 40
+    assert "Please note" not in response
+
+
+def test_at0_self_quick_response_explains_web_search_without_fail_closed_copy() -> None:
+    response = chat._at0_self_quick_response(
+        "In avatar mode, how do I make you search the internet?",
+        "avatar",
+    )
+
+    assert response is not None
+    assert "Turn on Web search" in response
+    assert "I need Beacon to check" not in response

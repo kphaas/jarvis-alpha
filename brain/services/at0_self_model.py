@@ -55,8 +55,11 @@ _SELF_QUERY_RE = re.compile(
     r"who\s+are\s+you|what\s+are\s+you|what\s+is\s+(?:at-?0|otto|auto|jarvis)|"
     r"are\s+you\s+(?:jarvis|otto|auto|at-?0)|"
     r"what\s+can\s+you\s+do|what\s+are\s+your\s+capabilit(?:y|ies)|"
+    r"what\s+do\s+you\s+know\s+about\s+me|"
+    r"do\s+you\s+know\s+(?:things|anything)\s+about\s+me|"
     r"what\s+modes?\s+(?:do\s+you\s+have|are\s+available)|"
     r"can\s+you\s+(?:search|browse|use\s+the\s+web|access\s+the\s+internet|talk|speak|hear|listen|remember|use\s+memory|read\s+documents|use\s+the\s+vault)|"
+    r"how\s+(?:do|can)\s+i\s+(?:make\s+you\s+|turn\s+on\s+|enable\s+)?(?:search(?:\s+(?:the\s+)?internet)?|browse|use\s+(?:the\s+)?web|access\s+(?:the\s+)?internet|use\s+beacon|web\s+search)|"
     r"do\s+you\s+have\s+(?:web|internet|voice|memory|avatar|vault)|"
     r"how\s+do\s+you\s+work|what\s+is\s+your\s+setup|learn\s+about\s+yourself"
     r")\b",
