@@ -1,9 +1,26 @@
-import { CheckCircle2, ExternalLink, ShieldCheck, XCircle } from 'lucide-react'
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Clock3,
+  ExternalLink,
+  Layers3,
+  ShieldCheck,
+  XCircle,
+} from 'lucide-react'
 import type { BeaconEvidenceTransparency, BeaconEvidenceTransparencyItem } from '../../types/beacon'
 
 interface Props {
   transparency?: BeaconEvidenceTransparency
   isDark: boolean
+}
+
+type TrustTone = 'good' | 'warn' | 'bad' | 'neutral'
+
+interface TrustChip {
+  label: string
+  detail: string
+  tone: TrustTone
+  icon: 'check' | 'warn' | 'clock' | 'layers'
 }
 
 export function BeaconEvidenceTransparencyPanel({ transparency, isDark }: Props) {
@@ -13,6 +30,7 @@ export function BeaconEvidenceTransparencyPanel({ transparency, isDark }: Props)
   const panel = isDark ? 'bg-white/5' : 'bg-white/50'
   const mutedPanel = isDark ? 'bg-black/20' : 'bg-white/40'
   const total = transparency.accepted_sources.length + transparency.rejected_sources.length
+  const trustChips = buildTrustChips(transparency)
 
   return (
     <section className={`rounded-lg border p-4 ${border} ${panel}`}>
@@ -26,6 +44,15 @@ export function BeaconEvidenceTransparencyPanel({ transparency, isDark }: Props)
         <div className="flex flex-wrap gap-2">
           <PolicyPill label="Official host" active={transparency.official_source_required} />
           <PolicyPill label="Freshness" active={transparency.freshness_required} />
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <p className="text-[10px] font-mono uppercase tracking-widest opacity-45">Why this answer is trustworthy</p>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+          {trustChips.map((chip) => (
+            <TrustSummaryChip key={`${chip.label}-${chip.detail}`} chip={chip} border={border} />
+          ))}
         </div>
       </div>
 
@@ -86,8 +113,67 @@ function EvidenceBucket({
       </div>
       {items.length === 0 && <p className="mt-3 text-xs opacity-55">{empty}</p>}
       <div className="mt-3 space-y-3">
-        {items.slice(0, 5).map((item, index) => (
-          <EvidenceRow key={`${item.content_hash}-${item.source_url}-${index}`} item={item} border={border} accepted={accepted} />
+        {groupEvidence(items).slice(0, 6).map((group) => (
+          <EvidenceGroup key={group.key} group={group} border={border} accepted={accepted} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function TrustSummaryChip({ chip, border }: { chip: TrustChip; border: string }) {
+  const Icon = {
+    check: CheckCircle2,
+    warn: AlertTriangle,
+    clock: Clock3,
+    layers: Layers3,
+  }[chip.icon]
+  const toneClass = {
+    good: 'border-emerald-500/30 text-emerald-500',
+    warn: 'border-amber-500/30 text-amber-500',
+    bad: 'border-rose-500/30 text-rose-500',
+    neutral: 'border-white/10 opacity-70',
+  }[chip.tone]
+
+  return (
+    <div className={`rounded-lg border p-3 ${border}`}>
+      <div className={`flex items-center gap-2 ${toneClass}`}>
+        <Icon className="h-4 w-4 shrink-0" />
+        <p className="truncate text-xs font-semibold">{chip.label}</p>
+      </div>
+      <p className="mt-1 text-xs leading-5 opacity-60">{chip.detail}</p>
+    </div>
+  )
+}
+
+function EvidenceGroup({
+  group,
+  border,
+  accepted,
+}: {
+  group: EvidenceGroupModel
+  border: string
+  accepted: boolean
+}) {
+  return (
+    <div className={`rounded-lg border p-3 ${border}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold">{group.host}</p>
+          <p className="mt-1 text-[10px] font-mono uppercase tracking-widest opacity-45">
+            {group.items.length} source{group.items.length === 1 ? '' : 's'} grouped
+          </p>
+        </div>
+        <SourcePill label={group.quality.replaceAll('_', ' ')} />
+      </div>
+      <div className="mt-3 space-y-3">
+        {group.items.slice(0, 4).map((item, index) => (
+          <EvidenceRow
+            key={`${item.content_hash}-${item.source_url}-${index}`}
+            item={item}
+            border={border}
+            accepted={accepted}
+          />
         ))}
       </div>
     </div>
@@ -226,4 +312,120 @@ function formatTimestamp(value?: string | null) {
 
 function humanReason(reason: string) {
   return reason.replaceAll(':', ': ').replaceAll('_', ' ')
+}
+
+interface EvidenceGroupModel {
+  key: string
+  host: string
+  quality: string
+  items: BeaconEvidenceTransparencyItem[]
+}
+
+function groupEvidence(items: BeaconEvidenceTransparencyItem[]): EvidenceGroupModel[] {
+  const grouped = new Map<string, EvidenceGroupModel>()
+  for (const item of items) {
+    const key = `${item.host}|${item.source_quality}`
+    const existing = grouped.get(key)
+    if (existing) {
+      existing.items.push(item)
+      continue
+    }
+    grouped.set(key, {
+      key,
+      host: item.host,
+      quality: item.source_quality,
+      items: [item],
+    })
+  }
+  return Array.from(grouped.values()).sort((left, right) => {
+    if (right.items.length !== left.items.length) return right.items.length - left.items.length
+    return left.host.localeCompare(right.host)
+  })
+}
+
+function buildTrustChips(transparency: BeaconEvidenceTransparency): TrustChip[] {
+  const accepted = transparency.accepted_sources
+  const rejected = transparency.rejected_sources
+  const acceptedOfficialMatches = accepted.filter(
+    (item) => item.official_host_match,
+  ).length
+  const unsupportedBlocked = rejected.filter((item) => !item.claim_supported).length
+  const acceptedWithFetchedAt = accepted.filter((item) =>
+    Boolean(item.fetched_at),
+  ).length
+
+  return [
+    {
+      label: accepted.length ? 'Evidence accepted' : 'No accepted evidence',
+      detail: accepted.length
+        ? `${accepted.length} cited source${accepted.length === 1 ? '' : 's'} can support the answer.`
+        : 'Beacon will not present this as verified.',
+      tone: accepted.length ? 'good' : 'bad',
+      icon: accepted.length ? 'check' : 'warn',
+    },
+    {
+      label: officialChipLabel(transparency, acceptedOfficialMatches),
+      detail: officialChipDetail(transparency, acceptedOfficialMatches),
+      tone: officialChipTone(transparency, acceptedOfficialMatches),
+      icon: 'check',
+    },
+    {
+      label: unsupportedBlocked ? 'Unsupported blocked' : 'Claims supported',
+      detail: unsupportedBlocked
+        ? `${unsupportedBlocked} claim${unsupportedBlocked === 1 ? '' : 's'} failed support checks and stayed out.`
+        : 'Accepted claims passed citation-support checks.',
+      tone: unsupportedBlocked ? 'warn' : 'good',
+      icon: unsupportedBlocked ? 'warn' : 'check',
+    },
+    {
+      label: freshnessChipLabel(transparency, acceptedWithFetchedAt),
+      detail: freshnessChipDetail(transparency, acceptedWithFetchedAt),
+      tone: freshnessChipTone(transparency, acceptedWithFetchedAt),
+      icon: 'clock',
+    },
+    {
+      label: rejected.length ? 'Rejections visible' : 'No rejected sources',
+      detail: rejected.length
+        ? `${rejected.length} rejected source${rejected.length === 1 ? '' : 's'} grouped with reasons.`
+        : 'No source was excluded by the quality filter.',
+      tone: rejected.length ? 'warn' : 'good',
+      icon: rejected.length ? 'layers' : 'check',
+    },
+  ]
+}
+
+function officialChipLabel(transparency: BeaconEvidenceTransparency, matchCount: number) {
+  if (!transparency.official_source_required) return 'Official optional'
+  return matchCount ? 'Official matched' : 'Official missing'
+}
+
+function officialChipDetail(transparency: BeaconEvidenceTransparency, matchCount: number) {
+  if (!transparency.official_source_required) return 'This query did not require an official host.'
+  if (matchCount) {
+    return `${matchCount} accepted source${matchCount === 1 ? '' : 's'} matched required hosts.`
+  }
+  return 'Required official hosts did not pass the quality filter.'
+}
+
+function officialChipTone(transparency: BeaconEvidenceTransparency, matchCount: number): TrustTone {
+  if (!transparency.official_source_required) return 'neutral'
+  return matchCount ? 'good' : 'bad'
+}
+
+function freshnessChipLabel(transparency: BeaconEvidenceTransparency, fetchedCount: number) {
+  if (!transparency.freshness_required) return 'Freshness optional'
+  return fetchedCount ? 'Freshness checked' : 'Freshness missing'
+}
+
+function freshnessChipDetail(transparency: BeaconEvidenceTransparency, fetchedCount: number) {
+  if (!transparency.freshness_required) return 'The research plan did not require current evidence.'
+  if (fetchedCount) {
+    return `${fetchedCount} accepted source${fetchedCount === 1 ? '' : 's'} include fetch time.`
+  }
+  return 'No accepted source included a fetch timestamp.'
+}
+
+function freshnessChipTone(transparency: BeaconEvidenceTransparency, fetchedCount: number): TrustTone {
+  if (!transparency.freshness_required) return 'neutral'
+  return fetchedCount ? 'good' : 'warn'
 }
