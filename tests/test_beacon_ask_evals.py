@@ -96,6 +96,7 @@ def test_at0_voice_surface_injects_style_context() -> None:
 
     assert "AT-0 interaction style:" in prompt
     assert "Surface: Voice" in prompt
+    assert "one or two conversational sentences" in prompt
     assert "Calm Operator" in prompt
     assert "do not correct him" in prompt
     assert "User: How is the weather?" in prompt
@@ -136,3 +137,20 @@ def test_eval_sports_schedule_suggests_web_search() -> None:
     assert suggestion.mode == "web_search"
     assert suggestion.reason == "sports_schedule_likely"
     assert suggestion.confidence == "high"
+
+
+def test_eval_sports_schedule_without_beacon_short_circuits_stale_answer() -> None:
+    suggestion = suggest_web_for_chat(
+        query="Don't USA men's soccer play Friday at 3 PM EST?",
+        internet_mode="none",
+        sensitivity="normal",
+    )
+
+    assert suggestion is not None
+    assert chat._should_short_circuit_web_suggestion(suggestion) is True
+
+    response = chat._web_verification_required_response(suggestion, "voice")
+
+    assert "Beacon" in response
+    assert "check" in response
+    assert "3 PM" not in response
