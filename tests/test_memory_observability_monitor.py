@@ -85,6 +85,59 @@ def test_memory_observability_report_suppresses_duplicate_alert() -> None:
     assert duplicate["should_alert"] is False
 
 
+def test_memory_observability_report_includes_cleanup_result() -> None:
+    report = monitor.build_report(
+        raw_metrics={
+            "semantic_metrics": {},
+            "buddy_metrics": {},
+            "proposal_metrics": {},
+        },
+        thresholds=monitor.Thresholds(),
+        dry_run=True,
+        no_alert=False,
+        cleanup_result={"staled_proposals": 2, "released_holds": 1},
+    )
+
+    assert report["status"] == "pass"
+    assert report["cleanup"] == {"staled_proposals": 2, "released_holds": 1}
+
+
+def test_memory_observability_cleanup_runs_before_metric_fetch(
+    monkeypatch,
+    capsys,
+) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr("sys.argv", ["check_memory_observability.py"])
+    monkeypatch.setattr(monitor, "default_secrets_file", lambda: Path("/missing"))
+    monkeypatch.setattr(monitor, "load_secret_env", lambda _path: {})
+    monkeypatch.setattr(
+        monitor, "thresholds_from_env", lambda _env: monitor.Thresholds()
+    )
+
+    def fake_cleanup(_env):
+        calls.append("cleanup")
+        return {"staled_proposals": 1}
+
+    def fake_fetch(_env, _thresholds):
+        calls.append("fetch")
+        return {
+            "semantic_metrics": {},
+            "buddy_metrics": {},
+            "proposal_metrics": {},
+        }
+
+    monkeypatch.setattr(
+        monitor, "cleanup_stale_memory_consolidation_proposals", fake_cleanup
+    )
+    monkeypatch.setattr(monitor, "fetch_metrics", fake_fetch)
+
+    assert monitor.main() == 0
+    assert calls == ["cleanup", "fetch"]
+    payload = capsys.readouterr().out
+    assert '"staled_proposals": 1' in payload
+
+
 def test_memory_observability_sql_uses_aggregate_metrics_only() -> None:
     sql = monitor.metrics_sql(alert_suppression_hours=6).lower()
 
@@ -92,6 +145,14 @@ def test_memory_observability_sql_uses_aggregate_metrics_only() -> None:
     assert "alpha_semantic_memory" in sql
     assert "alpha_memory_consolidation_proposals" in sql
     assert "q.expires_at <= now()" in sql
+    assert "fact" not in sql
+    assert "evidence" not in sql
+
+
+def test_memory_observability_cleanup_sql_calls_secdef_function() -> None:
+    sql = monitor.cleanup_sql().lower()
+
+    assert "expire_stale_memory_consolidation_proposals" in sql
     assert "fact" not in sql
     assert "evidence" not in sql
 

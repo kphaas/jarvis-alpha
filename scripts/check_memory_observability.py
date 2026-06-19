@@ -389,6 +389,17 @@ def fetch_metrics(env: dict[str, str], thresholds: Thresholds) -> dict[str, Any]
     return result
 
 
+def cleanup_sql() -> str:
+    return "SELECT public.expire_stale_memory_consolidation_proposals()::text;"
+
+
+def cleanup_stale_memory_consolidation_proposals(env: dict[str, str]) -> dict[str, Any]:
+    """Expire stale Dream proposals before evaluating SLO drift."""
+
+    result = run_psql_json(cleanup_sql(), env)
+    return result if isinstance(result, dict) else {}
+
+
 def _sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -442,6 +453,7 @@ def build_report(
     thresholds: Thresholds,
     dry_run: bool,
     no_alert: bool,
+    cleanup_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     metrics = flatten_metrics(raw_metrics)
     status, violations = evaluate_metrics(metrics, thresholds)
@@ -467,6 +479,7 @@ def build_report(
         "duplicate_suppressed": duplicate_suppressed,
         "alert_written": False,
         "should_alert": should_alert,
+        "cleanup": cleanup_result or {},
     }
 
 
@@ -506,12 +519,14 @@ def main() -> int:
 
     thresholds = thresholds_from_env(env)
     try:
+        cleanup_result = cleanup_stale_memory_consolidation_proposals(env)
         raw_metrics = fetch_metrics(env, thresholds)
         report = build_report(
             raw_metrics=raw_metrics,
             thresholds=thresholds,
             dry_run=args.dry_run,
             no_alert=args.no_alert,
+            cleanup_result=cleanup_result,
         )
         if report["should_alert"]:
             event_id = post_buddy_event(
