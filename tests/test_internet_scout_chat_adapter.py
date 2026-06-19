@@ -298,7 +298,8 @@ def test_chat_final_response_strips_unrequested_source_references():
         "When does the game start?",
     )
 
-    assert response == "Beacon checked it. The match starts Friday at 3 PM ET."
+    assert response == "The match starts Friday at 3 PM ET."
+    assert "Beacon checked" not in response
     assert "https://" not in response
     assert "[1]" not in response
     assert "Citation:" not in response
@@ -317,8 +318,9 @@ def test_chat_final_response_softens_beacon_context_source_preambles():
         "When is the match?",
     )
 
-    assert "Beacon checked it." in response
-    assert "Beacon verified it." in response
+    assert response == "The match is Friday."
+    assert "Beacon checked" not in response
+    assert "Beacon verified" not in response
     assert "Beacon internet context" not in response
     assert "sources" not in response.lower()
     assert "Source:" not in response

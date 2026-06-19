@@ -28,6 +28,11 @@ def test_eval_beacon_evidence_is_authority_over_stale_memory() -> None:
     assert "https://platform.openai.com/docs/api-reference" in prompt
 
 
+def test_system_prompt_keeps_beacon_verification_silent_by_default() -> None:
+    assert "Use Beacon evidence silently" in chat.JARVIS_SYSTEM_PROMPT
+    assert "say Beacon checked it" not in chat.JARVIS_SYSTEM_PROMPT
+
+
 def test_eval_docs_url_answer_prefers_source_url_over_endpoint_example() -> None:
     prompt = chat._build_enriched_prompt(
         memory_context="Memory says the answer is https://beta.openai.com/docs.",
@@ -233,6 +238,34 @@ def test_at0_final_response_strips_unsupported_beacon_claim() -> None:
     assert "Beacon checked" not in finalized
 
 
+def test_at0_final_response_strips_verified_beacon_narration_by_default() -> None:
+    finalized = chat._finalize_model_response(
+        "The USMNT match is Friday at 3 PM Eastern. Beacon checked that "
+        "information for current/public web claims.",
+        "chat",
+        "When does the US men's soccer team play?",
+        internet_verified=True,
+    )
+
+    assert finalized == "The USMNT match is Friday at 3 PM Eastern."
+    assert "Beacon checked" not in finalized
+    assert "source" not in finalized.lower()
+
+
+def test_at0_final_response_strips_beacon_evidence_preamble() -> None:
+    finalized = chat._finalize_model_response(
+        "This is supported by Beacon's deep research evidence, which cites "
+        "multiple reliable sources. The official URL is the platform docs.",
+        "chat",
+        "What is the official URL?",
+        internet_verified=True,
+    )
+
+    assert finalized == "The official URL is the platform docs."
+    assert "Beacon" not in finalized
+    assert "sources" not in finalized
+
+
 def test_at0_final_response_replaces_fake_conversation_update_plan() -> None:
     finalized = chat._finalize_model_response(
         "**Update Conversational Models** Run a Beacon update from Alpha. "
@@ -276,8 +309,9 @@ def test_eval_sports_schedule_without_beacon_short_circuits_stale_answer() -> No
 
     response = chat._web_verification_required_response(suggestion, "voice")
 
-    assert "Beacon" in response
-    assert "check" in response
+    assert "web" in response.lower()
+    assert "check" in response.lower()
+    assert "Beacon" not in response
     assert "3 PM" not in response
 
 
@@ -361,7 +395,7 @@ def test_at0_self_quick_response_is_concise_for_voice_capabilities() -> None:
     assert response is not None
     assert "I can chat" in response
     assert "approved memory" in response
-    assert "Beacon" in response
+    assert "web search" in response
     assert len(response.split()) <= 40
     assert "Please note" not in response
 
