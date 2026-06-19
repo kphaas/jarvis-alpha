@@ -102,6 +102,35 @@ export interface BeaconQualitySummary {
   warnings: string[]
 }
 
+export interface BeaconEvidenceTransparencyItem {
+  source_url: string
+  host: string
+  content_hash: string
+  citation_text: string
+  claim?: string | null
+  accepted: boolean
+  rejection_reasons: string[]
+  confidence: 'low' | 'medium' | 'high'
+  source_quality: string
+  source_rank?: number | null
+  source_score: number
+  quality_reasons: string[]
+  claim_supported: boolean
+  claim_support_reasons: string[]
+  official_source_required: boolean
+  official_host_match: boolean
+  freshness_required: boolean
+  fetched_at?: string | null
+}
+
+export interface BeaconEvidenceTransparency {
+  accepted_sources: BeaconEvidenceTransparencyItem[]
+  rejected_sources: BeaconEvidenceTransparencyItem[]
+  official_source_required: boolean
+  required_source_hosts: string[]
+  freshness_required: boolean
+}
+
 export interface BeaconSynthesis {
   answerable: boolean
   status: 'supported' | 'weak' | 'insufficient'
@@ -147,6 +176,7 @@ export interface BeaconAnswerResponse {
   quality: BeaconQualitySummary
   synthesis: BeaconSynthesis
   research_report: BeaconResearchReport
+  evidence_transparency?: BeaconEvidenceTransparency
   answer_context: string
   raw_web_content_is_untrusted: boolean
 }

@@ -18,7 +18,7 @@ from brain.services.internet_scout.orchestrator import InternetScoutOrchestrator
 def test_answer_engine_evals_all_pass() -> None:
     results = run_answer_engine_evals()
 
-    assert len(results) >= 10
+    assert len(results) >= 11
     assert all(result.passed for result in results)
 
 
@@ -30,6 +30,7 @@ def test_answer_engine_eval_payload_groups_contracts() -> None:
     assert payload["case_groups"]["citation_surface"]["case_count"] == 1
     assert payload["case_groups"]["refusal_quality"]["case_count"] == 1
     assert payload["case_groups"]["deep_research"]["case_count"] == 1
+    assert payload["case_groups"]["evidence_transparency"]["case_count"] == 1
 
 
 def test_focus_mode_is_part_of_research_plan_contract() -> None:

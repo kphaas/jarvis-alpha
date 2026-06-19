@@ -40,6 +40,7 @@ def run_answer_engine_evals() -> list[AnswerEngineEvalResult]:
         _refusal_contract(by_name),
         _deep_research_contract(by_name),
         _provider_telemetry_contract(by_name),
+        _evidence_transparency_contract(by_name),
     ]
 
 
@@ -339,6 +340,69 @@ def _provider_telemetry_contract(
             "search_providers": details["research_search_providers"],
             "search_budget": details["research_search_budget"],
             "max_extracts": details["research_max_extracts"],
+        },
+        failures=tuple(failures),
+    )
+
+
+def _evidence_transparency_contract(
+    results: dict[str, SearchQualityEvalResult],
+) -> AnswerEngineEvalResult:
+    official = results["official_openai_source_beats_community"]
+    unsupported = results["unsupported_official_pricing_claim_fails_closed"]
+    current = results["current_fact_report_carries_plan_and_freshness_coverage"]
+    official_transparency = official.details["evidence_transparency"]
+    unsupported_transparency = unsupported.details["evidence_transparency"]
+    current_transparency = current.details["evidence_transparency"]
+
+    official_accepted = official_transparency["accepted_sources"]
+    official_rejected = official_transparency["rejected_sources"]
+    unsupported_rejected = unsupported_transparency["rejected_sources"]
+    current_accepted = current_transparency["accepted_sources"]
+    failures: list[str] = []
+
+    if not official_accepted or official_accepted[0]["official_host_match"] is not True:
+        failures.append("accepted_official_host_match")
+    if not official_rejected:
+        failures.append("rejected_sources")
+    else:
+        rejected = official_rejected[0]
+        if rejected["host"] != "community.openai.com":
+            failures.append("rejected_host")
+        if "official_host_mismatch" not in rejected["rejection_reasons"]:
+            failures.append("official_mismatch_reason")
+    if not unsupported_rejected:
+        failures.append("unsupported_rejected_source")
+    else:
+        unsupported_item = unsupported_rejected[0]
+        if unsupported_item["claim_supported"] is not False:
+            failures.append("claim_supported_flag")
+        if not unsupported_item["claim_support_reasons"]:
+            failures.append("claim_support_reasons")
+    if current_transparency["freshness_required"] is not True:
+        failures.append("freshness_required")
+    if not current_accepted or not current_accepted[0].get("fetched_at"):
+        failures.append("fetched_at")
+
+    return AnswerEngineEvalResult(
+        name="evidence_transparency_surfaces_operator_decisions",
+        eval_group="evidence_transparency",
+        passed=not failures,
+        details={
+            "official_accepted_hosts": [item["host"] for item in official_accepted],
+            "official_rejected_hosts": [item["host"] for item in official_rejected],
+            "official_rejection_reasons": (
+                official_rejected[0]["rejection_reasons"] if official_rejected else []
+            ),
+            "unsupported_claim_support_reasons": (
+                unsupported_rejected[0]["claim_support_reasons"]
+                if unsupported_rejected
+                else []
+            ),
+            "freshness_required": current_transparency["freshness_required"],
+            "current_fetched_at_present": bool(
+                current_accepted and current_accepted[0].get("fetched_at")
+            ),
         },
         failures=tuple(failures),
     )

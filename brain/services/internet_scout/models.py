@@ -410,6 +410,45 @@ class InternetScoutCitationQualitySummary(BaseModel):
     warnings: list[str] = Field(default_factory=list, max_length=20)
 
 
+class InternetScoutEvidenceTransparencyItem(BaseModel):
+    """Operator-visible evidence decision details for one cited source."""
+
+    source_url: str
+    host: str
+    content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    citation_text: str = Field(min_length=1, max_length=1000)
+    claim: str | None = Field(default=None, max_length=2000)
+    accepted: bool
+    rejection_reasons: list[str] = Field(default_factory=list, max_length=12)
+    confidence: Literal["low", "medium", "high"] = "medium"
+    source_quality: SourceQualityLevel = "general"
+    source_rank: int | None = Field(default=None, ge=1, le=25)
+    source_score: int = Field(default=0, ge=0, le=100)
+    quality_reasons: list[str] = Field(default_factory=list, max_length=10)
+    claim_supported: bool = True
+    claim_support_reasons: list[str] = Field(default_factory=list, max_length=8)
+    official_source_required: bool = False
+    official_host_match: bool = False
+    freshness_required: bool = False
+    fetched_at: datetime | None = None
+
+
+class InternetScoutEvidenceTransparency(BaseModel):
+    """Accepted and rejected evidence details for Beacon operator UX."""
+
+    accepted_sources: list[InternetScoutEvidenceTransparencyItem] = Field(
+        default_factory=list,
+        max_length=25,
+    )
+    rejected_sources: list[InternetScoutEvidenceTransparencyItem] = Field(
+        default_factory=list,
+        max_length=25,
+    )
+    official_source_required: bool = False
+    required_source_hosts: list[str] = Field(default_factory=list, max_length=20)
+    freshness_required: bool = False
+
+
 class InternetScoutSynthesisContract(BaseModel):
     """Rules a local model must follow when turning Beacon evidence into prose."""
 
@@ -507,6 +546,9 @@ class InternetScoutLocalLLMResponse(BaseModel):
     )
     research_report: InternetScoutResearchReport = Field(
         default_factory=InternetScoutResearchReport
+    )
+    evidence_transparency: InternetScoutEvidenceTransparency = Field(
+        default_factory=InternetScoutEvidenceTransparency
     )
     answer_context: str = Field(default="", max_length=12000)
     raw_web_content_is_untrusted: bool = True

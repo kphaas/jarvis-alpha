@@ -50,6 +50,18 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
     assert official.details["research_report_verified_claims"] == [
         "The OpenAI API reference is on platform.openai.com."
     ]
+    assert official.details["evidence_transparency_accepted_hosts"] == [
+        "platform.openai.com"
+    ]
+    assert official.details["evidence_transparency_rejected_hosts"] == [
+        "community.openai.com"
+    ]
+    official_transparency = official.details["evidence_transparency"]
+    assert official_transparency["accepted_sources"][0]["official_host_match"] is True
+    assert (
+        "official_host_mismatch"
+        in official_transparency["rejected_sources"][0]["rejection_reasons"]
+    )
     assert official.details["automatic_memory_write_allowed"] is False
     assert official.details["memory_promotion_review_required"] is True
 
@@ -75,6 +87,11 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
     assert unsupported.details["research_report_unsupported_claims"] == [
         "OpenAI charges $123 per request."
     ]
+    unsupported_transparency = unsupported.details["evidence_transparency"]
+    assert unsupported_transparency["rejected_sources"][0]["claim_supported"] is False
+    assert unsupported_transparency["rejected_sources"][0]["claim_support_reasons"] == [
+        "currency_marker_missing"
+    ]
 
     injection = results["prompt_injection_marker_rejects_citation"]
     assert injection.details["status"] == "insufficient"
@@ -84,6 +101,9 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
     assert current.details["status"] == "supported"
     assert "release_notes" in current.details["research_expected_source_types"]
     assert current.details["research_report_answerability"] == "answerable"
+    current_transparency = current.details["evidence_transparency"]
+    assert current_transparency["freshness_required"] is True
+    assert current_transparency["accepted_sources"][0]["fetched_at"]
 
     comparison = results["comparison_plan_requires_cross_check_and_two_sources"]
     assert comparison.details["status"] == "supported"
