@@ -694,6 +694,7 @@ class MemoryService:
                 p.status,
                 p.approval_queue_id::text,
                 q.status AS approval_status,
+                q.expires_at AS approval_expires_at,
                 p.created_at,
                 p.updated_at
             FROM alpha_memory_consolidation_proposals p
@@ -715,6 +716,128 @@ class MemoryService:
             "recent_buddy_events": [dict(row) for row in recent_buddy_events],
             "proposal_metrics": dict(proposal_metrics or {}),
             "recent_dream_proposals": [dict(row) for row in recent_dream_proposals],
+        }
+
+    async def mark_memory_buddy_events_read(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        user_id: UUID,
+        event_ids: list[UUID] | None = None,
+        high_priority_only: bool = False,
+        marked_by: str = "unknown",
+    ) -> dict[str, Any]:
+        """Mark memory-related Buddy events read for one RLS-visible user."""
+
+        event_id_values = [str(event_id) for event_id in event_ids or []] or None
+        rows = await conn.fetch(
+            """
+            WITH target AS (
+                SELECT id
+                FROM public.alpha_buddy_events
+                WHERE user_id = $1
+                  AND read = false
+                  AND ($2::uuid[] IS NULL OR id = ANY($2::uuid[]))
+                  AND ($3::boolean = false OR priority >= 3)
+                  AND (
+                    source = 'semantic_memory_review'
+                    OR source = 'memory_observability_monitor'
+                    OR payload ? 'memory_id'
+                    OR title ILIKE '%memory%'
+                  )
+            )
+            UPDATE public.alpha_buddy_events e
+               SET read = true,
+                   payload = jsonb_set(
+                       COALESCE(e.payload, '{}'::jsonb),
+                       '{memory_read}',
+                       jsonb_build_object(
+                           'marked_by', $4,
+                           'marked_at', now()::text
+                       ),
+                       true
+                   )
+              FROM target
+             WHERE e.id = target.id
+            RETURNING e.id::text
+            """,
+            str(user_id),
+            event_id_values,
+            high_priority_only,
+            marked_by,
+        )
+        marked_ids = [str(row["id"]) for row in rows]
+        return {
+            "status": "marked_read",
+            "marked_count": len(marked_ids),
+            "marked_ids": marked_ids,
+        }
+
+    async def suppress_duplicate_memory_buddy_events(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        user_id: UUID,
+        window_hours: int = 168,
+        high_priority_only: bool = False,
+        suppressed_by: str = "unknown",
+    ) -> dict[str, Any]:
+        """Mark duplicate unread memory Buddy events read, keeping the newest."""
+
+        rows = await conn.fetch(
+            """
+            WITH ranked AS (
+                SELECT
+                    id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY
+                            COALESCE(source, ''),
+                            COALESCE(payload->>'memory_id', ''),
+                            COALESCE(payload->>'proposal_id', ''),
+                            event_type,
+                            title
+                        ORDER BY created_at DESC, id DESC
+                    ) AS row_rank
+                FROM public.alpha_buddy_events
+                WHERE user_id = $1
+                  AND read = false
+                  AND created_at >= now() - make_interval(hours => $2::int)
+                  AND ($3::boolean = false OR priority >= 3)
+                  AND (
+                    source = 'semantic_memory_review'
+                    OR source = 'memory_observability_monitor'
+                    OR payload ? 'memory_id'
+                    OR title ILIKE '%memory%'
+                  )
+            )
+            UPDATE public.alpha_buddy_events e
+               SET read = true,
+                   payload = jsonb_set(
+                       COALESCE(e.payload, '{}'::jsonb),
+                       '{memory_suppression}',
+                       jsonb_build_object(
+                           'reason', 'duplicate',
+                           'suppressed_by', $4,
+                           'suppressed_at', now()::text
+                       ),
+                       true
+                   )
+              FROM ranked
+             WHERE e.id = ranked.id
+               AND ranked.row_rank > 1
+            RETURNING e.id::text
+            """,
+            str(user_id),
+            window_hours,
+            high_priority_only,
+            suppressed_by,
+        )
+        suppressed_ids = [str(row["id"]) for row in rows]
+        return {
+            "status": "duplicates_suppressed",
+            "suppressed_count": len(suppressed_ids),
+            "suppressed_ids": suppressed_ids,
+            "window_hours": window_hours,
         }
 
     async def admin_inventory(
@@ -959,6 +1082,74 @@ class MemoryService:
         )
         return dict(row or {})
 
+    async def admin_dream_proposals(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        state: str = "open",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return Dream proposal queue rows without raw proposal evidence."""
+
+        rows = await conn.fetch(
+            """
+            WITH identities AS (
+                SELECT
+                    p.id::text AS profile_id,
+                    p.display_name::text AS display_name,
+                    p.role::text AS role
+                FROM public.alpha_profiles p
+                WHERE COALESCE(p.active, true) = true
+                UNION
+                SELECT
+                    u.id::text AS profile_id,
+                    split_part(u.email::text, '@', 1) AS display_name,
+                    u.role::text AS role
+                FROM public.alpha_users u
+            )
+            SELECT
+                p.user_id::text AS principal_id,
+                COALESCE(
+                    NULLIF(i.display_name, ''),
+                    p.user_id::text
+                ) AS display_name,
+                COALESCE(NULLIF(i.role, ''), 'unknown') AS role,
+                p.id::text AS proposal_id,
+                p.proposed_action,
+                p.executable,
+                p.status,
+                p.approval_queue_id::text,
+                q.status AS approval_status,
+                q.expires_at AS approval_expires_at,
+                p.created_at,
+                p.updated_at
+            FROM public.alpha_memory_consolidation_proposals p
+            LEFT JOIN public.alpha_approval_queue q
+              ON q.id = p.approval_queue_id
+            LEFT JOIN identities i
+              ON i.profile_id = p.user_id::text
+            WHERE (
+                $1 = 'all'
+                OR (
+                    p.executable
+                    AND p.status IN ('pending_review', 'queued', 'approved')
+                )
+            )
+            ORDER BY
+                CASE
+                    WHEN p.executable
+                     AND p.status IN ('pending_review', 'queued', 'approved')
+                    THEN 0
+                    ELSE 1
+                END,
+                p.updated_at DESC
+            LIMIT $2
+            """,
+            state,
+            limit,
+        )
+        return [dict(row) for row in rows]
+
     async def admin_user_memory(
         self,
         conn: asyncpg.Connection,
@@ -1027,6 +1218,7 @@ class MemoryService:
                 p.status,
                 p.approval_queue_id::text,
                 q.status AS approval_status,
+                q.expires_at AS approval_expires_at,
                 p.created_at,
                 p.updated_at
             FROM public.alpha_memory_consolidation_proposals p

@@ -28,6 +28,7 @@ REF_TABLES=105
 REF_TOLERANCE=2
 EXPECTED_PRIVACY_TABLES=16
 EXPECTED_PRIVACY_FORCE_RLS_TABLES=16
+EXPECTED_MEMORY_FORCE_RLS_TABLES=4
 
 # Tools
 find_tool() {
@@ -363,6 +364,10 @@ ROWS_REQLOG=$(psqlc "SELECT count(*) FROM jarvis_request_log" 2>/dev/null || ech
 ROWS_APPROVAL=$(psqlc "SELECT count(*) FROM alpha_approval_queue" 2>/dev/null || echo ERR)
 ROWS_NODES=$(psqlc "SELECT count(*) FROM alpha_node_registry" 2>/dev/null || echo ERR)
 HAS_CONVMEM=$(psqlc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='alpha_conversation_memory'")
+HAS_SEMANTIC_MEMORY=$(psqlc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='alpha_semantic_memory'")
+HAS_MEMORY_PROPOSALS=$(psqlc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='alpha_memory_consolidation_proposals'")
+HAS_MEMORY_LEDGER=$(psqlc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='alpha_memory_consolidation_execution_ledger'")
+MEMORY_FORCE_RLS=$(psqlc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relname IN ('alpha_semantic_memory','alpha_conversation_memory','alpha_memory_consolidation_proposals','alpha_memory_consolidation_execution_ledger') AND c.relrowsecurity AND c.relforcerowsecurity" 2>/dev/null || echo ERR)
 PRIVACY_TABLES=$(psqlc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'alpha_privacy_%'" 2>/dev/null || echo ERR)
 PRIVACY_FORCE_RLS=$(psqlc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relname LIKE 'alpha_privacy_%' AND c.relrowsecurity AND c.relforcerowsecurity" 2>/dev/null || echo ERR)
 
@@ -381,6 +386,12 @@ fi
 [[ "$ROWS_APPROVAL" == "ERR" ]] && add_fail "alpha_approval_queue_missing"
 [[ "$ROWS_NODES" == "ERR" || "$ROWS_NODES" -lt 1 ]] && add_fail "alpha_node_registry_${ROWS_NODES}"
 [[ "$HAS_CONVMEM" != "1" ]] && add_fail "alpha_conversation_memory_table_missing"
+[[ "$HAS_SEMANTIC_MEMORY" != "1" ]] && add_fail "alpha_semantic_memory_table_missing"
+[[ "$HAS_MEMORY_PROPOSALS" != "1" ]] && add_fail "alpha_memory_consolidation_proposals_table_missing"
+[[ "$HAS_MEMORY_LEDGER" != "1" ]] && add_fail "alpha_memory_consolidation_execution_ledger_table_missing"
+if ! [[ "$MEMORY_FORCE_RLS" =~ ^[0-9]+$ ]] || [[ "$MEMORY_FORCE_RLS" -lt "$EXPECTED_MEMORY_FORCE_RLS_TABLES" ]]; then
+    add_fail "memory_force_rls_${MEMORY_FORCE_RLS}_expected_${EXPECTED_MEMORY_FORCE_RLS_TABLES}"
+fi
 if ! [[ "$PRIVACY_TABLES" =~ ^[0-9]+$ ]] || [[ "$PRIVACY_TABLES" -lt "$EXPECTED_PRIVACY_TABLES" ]]; then
     add_fail "privacy_tables_${PRIVACY_TABLES}_expected_${EXPECTED_PRIVACY_TABLES}"
 fi
@@ -417,6 +428,10 @@ if [[ -n "$JQ" ]]; then
         --arg rows_approval "$ROWS_APPROVAL" \
         --arg rows_nodes "$ROWS_NODES" \
         --arg has_convmem "$HAS_CONVMEM" \
+        --arg has_semantic_memory "$HAS_SEMANTIC_MEMORY" \
+        --arg has_memory_proposals "$HAS_MEMORY_PROPOSALS" \
+        --arg has_memory_ledger "$HAS_MEMORY_LEDGER" \
+        --arg memory_force_rls "$MEMORY_FORCE_RLS" \
         --arg privacy_tables "$PRIVACY_TABLES" \
         --arg privacy_force_rls "$PRIVACY_FORCE_RLS" \
         '{
@@ -431,6 +446,10 @@ if [[ -n "$JQ" ]]; then
                 alpha_approval_queue:$rows_approval,
                 alpha_node_registry:$rows_nodes,
                 alpha_conversation_memory_table_present:$has_convmem,
+                alpha_semantic_memory_table_present:$has_semantic_memory,
+                alpha_memory_consolidation_proposals_table_present:$has_memory_proposals,
+                alpha_memory_consolidation_execution_ledger_table_present:$has_memory_ledger,
+                alpha_memory_force_rls_tables:$memory_force_rls,
                 alpha_privacy_tables:$privacy_tables,
                 alpha_privacy_force_rls_tables:$privacy_force_rls
             },
@@ -441,7 +460,7 @@ fi
 
 # ---------- 7. notify -----------------------------------------------------------
 if [[ "$DRILL_STATUS" == "pass" ]]; then
-    msg="Drill ${RUN_TS} · source ${LATEST##*/} · tables=${TABLE_COUNT}/${REF_TABLES} · privacy=${PRIVACY_TABLES}/${EXPECTED_PRIVACY_TABLES} force_rls=${PRIVACY_FORCE_RLS}/${EXPECTED_PRIVACY_FORCE_RLS_TABLES} · rows: buddy=${ROWS_BUDDY} reqlog=${ROWS_REQLOG} approval=${ROWS_APPROVAL} nodes=${ROWS_NODES}"
+    msg="Drill ${RUN_TS} · source ${LATEST##*/} · tables=${TABLE_COUNT}/${REF_TABLES} · memory_force_rls=${MEMORY_FORCE_RLS}/${EXPECTED_MEMORY_FORCE_RLS_TABLES} · privacy=${PRIVACY_TABLES}/${EXPECTED_PRIVACY_TABLES} force_rls=${PRIVACY_FORCE_RLS}/${EXPECTED_PRIVACY_FORCE_RLS_TABLES} · rows: buddy=${ROWS_BUDDY} reqlog=${ROWS_REQLOG} approval=${ROWS_APPROVAL} nodes=${ROWS_NODES}"
     mm_notify info "Restore drill PASSED" "$msg"
     buddy_event system "Restore drill passed" "tables=${TABLE_COUNT} run=${RUN_TS}" 1
     log_json "$(make_event run_complete status=pass)"
