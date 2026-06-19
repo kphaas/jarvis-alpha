@@ -174,6 +174,18 @@ def test_at0_voice_polish_removes_markdown_heading() -> None:
     assert "**" not in polished
 
 
+def test_at0_voice_polish_removes_inline_heading_and_unsupported_system_claim() -> None:
+    polished = chat._polish_model_response(
+        "We can reduce the delay. I've checked the system and found the current "
+        "configuration is efficient. **Caveats**: balance quality and speed.",
+        "voice",
+    )
+
+    assert "I've checked the system" not in polished
+    assert "**" not in polished
+    assert "Caveats:" in polished
+
+
 def test_at0_final_response_strips_unsupported_beacon_claim() -> None:
     finalized = chat._finalize_model_response(
         "Beacon checked our architecture and performance metrics. We are close "
@@ -275,6 +287,19 @@ def test_conversation_quality_voice_response_stays_brief_and_conversational() ->
     assert "\n" not in response
     assert "Beacon update" not in response
     assert "macOS" not in response
+
+
+def test_voice_latency_question_uses_conversation_quality_contract() -> None:
+    response = chat._conversation_quality_response(
+        "How do we make your voice response feel near real time?",
+        "voice",
+    )
+
+    assert response is not None
+    assert len(response.split()) <= 45
+    assert "latency" in response
+    assert "**" not in response
+    assert "\n" not in response
 
 
 def test_conversation_quality_chat_response_is_detailed_and_structured() -> None:
