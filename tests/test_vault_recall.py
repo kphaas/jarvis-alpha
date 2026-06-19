@@ -134,6 +134,7 @@ def test_vault_recall_routes_are_classified_as_reads():
         "external_call",
         "cost_incurring",
     ]
+    assert classify_route("POST", "/v1/vault/digests/private") == ["write"]
 
 
 def test_ask_vault_recall_requires_admin_or_vault_read_scope():

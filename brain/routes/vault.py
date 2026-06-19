@@ -2,16 +2,18 @@ import os
 import shutil
 import uuid
 from contextlib import suppress
+from uuid import UUID
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from brain.db.rls import platform_admin_connection
 from brain.ingest.docx import ingest_docx
-from brain.middleware.scopes import check_scopes
 from brain.ingest.excel import ingest_excel
 from brain.ingest.pdf import ingest_pdf
 from brain.ingest.text import ingest_plain_text
+from brain.middleware.scopes import check_scopes
 from brain.routing.router import route
 from brain.services.vault_recall import (
     embed_vault_query,
@@ -22,6 +24,8 @@ from brain.services.vault_security import (
     vault_rls_connection,
     vault_workspace_id,
 )
+from brain.skills.handlers import build_skill_runner
+from brain.skills.policy_gate import SkillInvocation
 from brain.storage.archive import archive_document
 
 import hashlib  # noqa: F401
@@ -51,6 +55,19 @@ class VaultAskRequest(VaultSearchRequest):
     mode: str = Field(
         default="local",
         description="auto, local, claude, gemini, perplexity, council",
+    )
+
+
+class VaultPrivateDigestRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=180)
+    body: str = Field(min_length=1, max_length=50_000)
+    tags: list[str] = Field(default_factory=list, max_length=12)
+    document_id: UUID
+    source_name: str | None = Field(default=None, max_length=240)
+    idempotency_key: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_.:-]{1,128}$",
     )
 
 
@@ -330,6 +347,55 @@ async def vault_ingest_excel(
     async with vault_rls_connection(request) as db:
         await _mark_ingestion_result(db, pipeline_id, result)
     return JSONResponse(result)
+
+
+@router.post("/digests/private")
+async def vault_private_digest(body: VaultPrivateDigestRequest, request: Request):
+    check_scopes(request, "vault.write", "admin")
+    _vault_workspace_id(request)
+    payload = body.model_dump(mode="json")
+    payload["document_id"] = str(body.document_id)
+
+    async with vault_rls_connection(request) as db:
+        row = await db.fetchrow(
+            "SELECT id FROM vault_documents WHERE id = $1",
+            body.document_id,
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Vault document not found")
+
+    runner = build_skill_runner()
+    async with platform_admin_connection(
+        source="http",
+        audit_actor="vault_private_digest",
+    ) as db:
+        result = await runner.run(
+            db,
+            SkillInvocation(
+                agent_id="dream_mode",
+                skill_name="notes.write_private_digest",
+                idempotency_key=body.idempotency_key,
+            ),
+            payload=payload,
+        )
+
+    if result.requires_approval:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "status": "approval_required",
+                "approval_queue_id": result.approval_queue_id,
+                "approval_status": result.approval_status,
+            },
+        )
+    if result.denied:
+        raise HTTPException(status_code=403, detail=result.decision.reason)
+
+    return {
+        "status": "ok",
+        "skill": "notes.write_private_digest",
+        "digest": result.output or {},
+    }
 
 
 @router.post("/search")
