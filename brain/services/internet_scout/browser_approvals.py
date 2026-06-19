@@ -9,6 +9,7 @@ from uuid import UUID
 import asyncpg
 
 from brain.services.internet_scout.models import (
+    InternetScoutBrowserApprovalPreview,
     InternetScoutRequest,
     InternetTool,
     PolicyDecision,
@@ -144,4 +145,24 @@ def browser_task_approval_description(
         "Beacon browser-use approval "
         f"({decision.tier}, {query_state}, urls={len(request.urls)}, "
         f"sensitivity={request.sensitivity})"
+    )
+
+
+def browser_task_approval_preview(
+    request: InternetScoutRequest,
+    decision: PolicyDecision,
+) -> InternetScoutBrowserApprovalPreview:
+    """Build a redacted browser-action preview without raw query or URL text."""
+
+    parameters_hash = browser_task_parameters_hash(request, decision)
+    return InternetScoutBrowserApprovalPreview(
+        selected_tool=decision.tool,
+        risk_tier=decision.tier,
+        sensitivity=request.sensitivity,
+        has_query=bool(request.query),
+        url_count=len(request.urls),
+        max_pages=request.max_pages,
+        max_depth=request.max_depth,
+        needs_interaction=request.needs_interaction,
+        approval_hash_prefix=parameters_hash[:12],
     )

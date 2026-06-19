@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock, Fingerprint, Sparkles } from 'lucide-react'
+import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock, Fingerprint, Sparkles, Globe2, MousePointerClick } from 'lucide-react'
 import { apiJson } from '../lib/apiFetch'
 import { useAppStore } from '../store'
 
@@ -22,6 +22,27 @@ interface SparkApprovalContext {
   outbox_recorded?: boolean
 }
 
+interface BeaconApprovalContext {
+  kind: string
+  request_id?: string | null
+  selected_tool: string
+  risk_tier: string
+  sensitivity: string
+  requires_human_approval: boolean
+  has_query: boolean
+  url_count: number
+  max_pages: number
+  max_depth: number
+  needs_interaction: boolean
+  same_host_required: boolean
+  screenshots_required: boolean
+  downloads_allowed: boolean
+  forms_allowed: boolean
+  raw_task_text_included: boolean
+  raw_web_content_is_untrusted: boolean
+  approval_hash_prefix: string
+}
+
 interface QueueItem {
   id: string
   action_class: string[]
@@ -35,6 +56,7 @@ interface QueueItem {
   overnight: boolean
   privacy: PrivacyApprovalContext | null
   spark: SparkApprovalContext | null
+  beacon: BeaconApprovalContext | null
 }
 
 interface PendingResponse {
@@ -63,6 +85,8 @@ const ACTION_LABELS: Record<string, string> = {
   child_facing: 'Affects content for Ryleigh or Sloane',
   privacy_draft_handoff: 'Queues a reviewed privacy packet for approval',
   spark_draft_handoff: 'Queues a reviewed Spark draft for approval',
+  beacon_browser_use: 'Queues a browser action for exact human approval before execution',
+  external_call: 'Allows a controlled external service call after approval',
   security_write: 'Changes protected security or privacy state',
   unclassified: 'No classification — blocked by default',
 }
@@ -84,6 +108,8 @@ function actionBadge(ac: string) {
     child_facing: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30',
     privacy_draft_handoff: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30',
     spark_draft_handoff: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30',
+    beacon_browser_use: 'text-cyan-400 bg-cyan-500/15 border-cyan-500/30',
+    external_call: 'text-sky-400 bg-sky-500/15 border-sky-500/30',
     security_write: 'text-amber-400 bg-amber-500/15 border-amber-500/30',
     unclassified: 'text-zinc-400 bg-zinc-500/15 border-zinc-500/30',
   }
@@ -362,6 +388,29 @@ export default function Approvals() {
                   <strong>spark draft:</strong> {item.spark.kind.replace('_', ' ')}
                   {item.spark.target_label ? ` · ${item.spark.target_label}` : ''}
                   {item.spark.outbox_recorded ? ` · outbox ${item.spark.outbox_status ?? 'recorded'}` : ' · no outbox'}
+                </span>
+              </div>
+            )}
+            {item.beacon && (
+              <div className="flex items-start gap-2 opacity-90">
+                <MousePointerClick className="w-3 h-3 mt-0.5 shrink-0 text-cyan-400" />
+                <span>
+                  <strong>beacon browser:</strong> {item.beacon.selected_tool.replace('_', ' ')}
+                  {' · '}query {item.beacon.has_query ? 'yes' : 'no'}
+                  {' · '}urls {item.beacon.url_count}
+                  {' · '}screenshots {item.beacon.screenshots_required ? 'required' : 'off'}
+                  {' · '}same-host {item.beacon.same_host_required ? 'yes' : 'no'}
+                </span>
+              </div>
+            )}
+            {item.beacon && (
+              <div className="flex items-start gap-2 opacity-80">
+                <Globe2 className="w-3 h-3 mt-0.5 shrink-0 text-cyan-400" />
+                <span>
+                  <strong>approval contract:</strong> raw task text {item.beacon.raw_task_text_included ? 'included' : 'hidden'}
+                  {' · '}web content {item.beacon.raw_web_content_is_untrusted ? 'untrusted evidence' : 'trusted'}
+                  {' · '}hash {item.beacon.approval_hash_prefix}
+                  {item.beacon.request_id ? ` · request ${item.beacon.request_id.slice(0, 8)}` : ''}
                 </span>
               </div>
             )}

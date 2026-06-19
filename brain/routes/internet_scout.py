@@ -12,6 +12,7 @@ from brain.middleware.scopes import check_scopes
 from brain.services.internet_scout.browser_approvals import (
     BrowserApprovalError,
     browser_task_parameters_hash,
+    browser_task_approval_preview,
     consume_browser_task_approval,
     enqueue_browser_task_approval,
     require_approved_browser_task,
@@ -385,6 +386,7 @@ async def internet_scout_browser_approval_request(
         raise HTTPException(status_code=400, detail="browser_use_request_required")
     if not plan.decision.requires_approval:
         raise HTTPException(status_code=400, detail="browser_use_approval_not_required")
+    preview = browser_task_approval_preview(browser_body, plan.decision)
 
     async with rls_connection(request) as conn:
         repo = InternetScoutRepository(conn)
@@ -410,6 +412,8 @@ async def internet_scout_browser_approval_request(
                 "approval_queue_id": str(queue_id),
                 "approval_status": "pending",
                 "requires_approval": True,
+                "approval_hash_prefix": preview.approval_hash_prefix,
+                "browser_action_preview": preview.model_dump(mode="json"),
             },
         )
 
@@ -427,6 +431,7 @@ async def internet_scout_browser_approval_request(
         request_id=request_id,
         approval_queue_id=queue_id,
         plan=plan,
+        preview=preview,
     )
 
 

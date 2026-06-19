@@ -8,6 +8,7 @@ from brain.services.internet_scout import browser_approvals
 from brain.services.internet_scout.browser_approvals import (
     BrowserApprovalError,
     browser_task_approval_description,
+    browser_task_approval_preview,
     browser_task_parameters_hash,
     enqueue_browser_task_approval,
     consume_browser_task_approval,
@@ -39,6 +40,33 @@ def test_browser_task_hash_is_stable_and_description_omits_raw_task_text():
     assert "public.example.test" not in description
     assert "Beacon browser-use approval" in description
     assert "urls=1" in description
+
+
+def test_browser_task_preview_is_redacted_and_reviewable():
+    request = InternetScoutRequest(
+        query="reserve a table for Ken at 7pm",
+        urls=["https://public.example.test/reserve"],
+        tool_hint=InternetTool.BROWSER_USE,
+        needs_interaction=True,
+        max_pages=2,
+    )
+    decision = evaluate_policy(request)
+
+    preview = browser_task_approval_preview(request, decision)
+    payload = preview.model_dump(mode="json")
+
+    assert payload["kind"] == "beacon_browser_use"
+    assert payload["requires_human_approval"] is True
+    assert payload["has_query"] is True
+    assert payload["url_count"] == 1
+    assert payload["max_pages"] == 2
+    assert payload["same_host_required"] is True
+    assert payload["screenshots_required"] is True
+    assert payload["raw_task_text_included"] is False
+    assert payload["raw_web_content_is_untrusted"] is True
+    assert len(payload["approval_hash_prefix"]) == 12
+    assert "7pm" not in str(payload)
+    assert "public.example.test" not in str(payload)
 
 
 @pytest.mark.asyncio

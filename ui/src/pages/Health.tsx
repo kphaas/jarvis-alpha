@@ -227,6 +227,14 @@ function metadataStringList(
   return value.filter((item): item is string => typeof item === "string");
 }
 
+function metadataBoolean(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+): boolean | null {
+  const value = metadata?.[key];
+  return typeof value === "boolean" ? value : null;
+}
+
 function metadataRecord(
   metadata: Record<string, unknown> | undefined,
   key: string
@@ -236,10 +244,40 @@ function metadataRecord(
   return value as Record<string, unknown>;
 }
 
+function metadataRecordList(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+): Record<string, unknown>[] {
+  const value = metadata?.[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (item): item is Record<string, unknown> =>
+      Boolean(item) && typeof item === "object" && !Array.isArray(item)
+  );
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatRequestBudget(count: number | null, limit: number | null): string {
+  if (limit == null) return `${count ?? 0}/∞`;
+  return `${count ?? 0}/${limit}`;
+}
+
+function providerState(provider: Record<string, unknown>): {
+  label: string;
+  color: string;
+} {
+  const configured = metadataBoolean(provider, "configured") ?? false;
+  const budgetExhausted = metadataBoolean(provider, "budget_exhausted") ?? false;
+  const circuitOpen = metadataBoolean(provider, "circuit_open") ?? false;
+  if (!configured) return { label: "not configured", color: "#6b7280" };
+  if (circuitOpen) return { label: "circuit open", color: "#ef4444" };
+  if (budgetExhausted) return { label: "spend guard capped", color: "#f59e0b" };
+  return { label: "usable", color: "#22c55e" };
 }
 
 function isBeaconBrowserApproval(item: PendingApprovalItem): boolean {
@@ -531,8 +569,10 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
             const browserCheck = beaconHealth.checks.browser_runtime;
             const evidenceCheck = beaconHealth.checks.recent_evidence;
             const providerOrder = metadataStringList(gatewayCheck?.metadata, "provider_order");
+            const providers = metadataRecordList(gatewayCheck?.metadata, "providers");
             const configuredProviders = metadataNumber(gatewayCheck?.metadata, "configured_provider_count");
             const usableProviders = metadataNumber(gatewayCheck?.metadata, "usable_provider_count");
+            const providerWarningStatus = metadataString(gatewayCheck?.metadata, "provider_warning_status");
             const runtime = metadataString(browserCheck?.metadata, "runtime") ?? "disabled";
             const playwrightVersion = metadataString(browserCheck?.metadata, "installed_playwright_version");
             const recentTotal = metadataNumber(evidenceCheck?.metadata, "total") ?? 0;
@@ -555,6 +595,7 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
                     </div>
                     <div style={{ fontSize: 11, color: gatewayCheck?.ok ? "#22c55e" : "#f59e0b", marginTop: 4 }}>
                       {usableProviders ?? 0}/{configuredProviders ?? 0} usable
+                      {providerWarningStatus ? ` · ${providerWarningStatus.replaceAll("_", " ")}` : ""}
                     </div>
                   </div>
                   <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
@@ -583,6 +624,71 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
                     </div>
                   </div>
                 </div>
+                {providers.length > 0 && (
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Provider Telemetry</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10 }}>
+                      {providers.map((provider) => {
+                        const name = metadataString(provider, "provider") ?? "unknown";
+                        const state = providerState(provider);
+                        const dataSourceId = metadataString(provider, "data_source_id");
+                        const dailyCount = metadataNumber(provider, "daily_request_count");
+                        const dailyLimit = metadataNumber(provider, "daily_request_limit");
+                        const monthlyCount = metadataNumber(provider, "monthly_request_count");
+                        const monthlyLimit = metadataNumber(provider, "monthly_request_limit");
+                        const failureCount = metadataNumber(provider, "failure_count") ?? 0;
+                        const cooldown = metadataNumber(provider, "cooldown_remaining_seconds");
+                        const isPrimary = providerOrder[0] === name;
+                        return (
+                          <div
+                            key={name}
+                            style={{
+                              padding: "10px 12px",
+                              borderRadius: 8,
+                              border: `1px solid ${border}`,
+                              background: isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)",
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "ui-monospace, monospace" }}>
+                                {name}
+                              </div>
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  color: state.color,
+                                  border: `1px solid ${state.color}`,
+                                  borderRadius: 4,
+                                  padding: "2px 6px",
+                                  textTransform: "uppercase",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {isPrimary ? "primary" : "backup"}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 11, color: state.color, marginTop: 6, fontWeight: 700 }}>
+                              {state.label}
+                            </div>
+                            <div style={{ fontSize: 11, color: muted, marginTop: 8, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                              <span>Daily <span style={{ color: text }}>{formatRequestBudget(dailyCount, dailyLimit)}</span></span>
+                              <span>Monthly <span style={{ color: text }}>{formatRequestBudget(monthlyCount, monthlyLimit)}</span></span>
+                              <span>Failures <span style={{ color: failureCount > 0 ? "#f59e0b" : text }}>{failureCount}</span></span>
+                              {cooldown != null && cooldown > 0 && (
+                                <span style={{ color: "#f59e0b" }}>Cooldown {cooldown}s</span>
+                              )}
+                            </div>
+                            {dataSourceId && (
+                              <div style={{ fontSize: 10, color: muted, marginTop: 6, fontFamily: "ui-monospace, monospace" }}>
+                                {dataSourceId}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
                   <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}`, background: isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)" }}>
                     <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Last Request</div>
