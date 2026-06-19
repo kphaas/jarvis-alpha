@@ -163,11 +163,14 @@ UNSUPPORTED_BEACON_ASSERTION_RE = re.compile(
 CONVERSATION_QUALITY_REQUEST_RE = re.compile(
     r"\b(?:conversation|conversational|chat|voice|tone|robotic|human|natural)\b"
     r"(?s:.){0,120}"
-    r"\b(?:improve|better|quality|less\s+robotic|more\s+human|more\s+natural)\b"
+    r"\b(?:improve|better|quality|less\s+robotic|more\s+human|more\s+natural|"
+    r"near[-\s]+real[-\s]+time|real[-\s]+time|latency|faster)\b"
     r"|"
-    r"\b(?:improve|better|quality|less\s+robotic|more\s+human|more\s+natural)\b"
+    r"\b(?:improve|better|quality|less\s+robotic|more\s+human|more\s+natural|"
+    r"near[-\s]+real[-\s]+time|real[-\s]+time|latency|faster|speed\s+up)\b"
     r"(?s:.){0,120}"
-    r"\b(?:conversation|conversational|chat|voice|tone|robotic|human|natural)\b",
+    r"\b(?:conversation|conversational|chat|voice|voice\s+response|"
+    r"spoken\s+response|tts|tone|robotic|human|natural)\b",
     re.IGNORECASE,
 )
 UNSUPPORTED_CONVERSATION_OPS_RE = re.compile(
@@ -1075,6 +1078,7 @@ def _polish_model_response(text: str, response_surface: AskResponseSurface) -> s
         return polished
 
     polished = LEADING_MARKDOWN_HEADING_RE.sub("", polished).strip()
+    polished = re.sub(r"\*\*([^*\n]{1,80})\*\*\s*:?\s*", r"\1: ", polished)
     polished = re.sub(r"(?m)^\s*(?:[-*]|\d+[.)])\s+", "", polished)
     replacements = [
         (
@@ -1101,6 +1105,7 @@ def _polish_model_response(text: str, response_surface: AskResponseSurface) -> s
         r"(?is)(^|(?<=[.!?])\s+)Keep in mind that\b.*?(?:[.!?](?:\s+|$)|$)",
         r"(?is)(^|(?<=[.!?])\s+)Now,\s+about the weather\b.*?(?:[.!?](?:\s+|$)|$)",
         r"(?is)(^|(?<=[.!?])\s+)First,\s+let'?s check on your voice test\b.*?(?:[.!?](?:\s+|$)|$)",
+        r"(?is)(^|(?<=[.!?])\s+)I(?:'ve| have)\s+checked the system\b.*?(?:[.!?](?:\s+|$)|$)",
     ]
     for pattern in sentence_removals:
         polished = re.sub(pattern, " ", polished)
