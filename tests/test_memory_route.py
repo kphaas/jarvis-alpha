@@ -151,6 +151,27 @@ class FakeMemoryService:
 
     async def admin_inventory(self, conn: object, *, limit: int = 100) -> dict:
         return {
+            "health": {
+                "principal_count": 1,
+                "total_semantic": 1,
+                "total_working": 3,
+                "total_episodic": 2,
+                "semantic_review_count": 1,
+                "dream_reviewed_writes_open": 2,
+                "dream_approval_mismatch_count": 0,
+                "stale_dream_reviewed_writes": 0,
+                "dream_approved_waiting_execution": 1,
+                "unread_memory_buddy_events": 2,
+                "high_priority_buddy_events": 1,
+                "last_semantic_write_at": datetime(2026, 6, 18, tzinfo=UTC),
+                "last_semantic_review_at": datetime(2026, 6, 18, tzinfo=UTC),
+                "last_working_memory_at": datetime(2026, 6, 18, tzinfo=UTC),
+                "last_episodic_memory_at": None,
+                "last_dream_extraction_at": datetime(2026, 6, 18, tzinfo=UTC),
+                "last_dream_proposal_update_at": datetime(2026, 6, 18, tzinfo=UTC),
+                "last_memory_alert_at": datetime(2026, 6, 18, tzinfo=UTC),
+                "last_memory_activity_at": datetime(2026, 6, 18, tzinfo=UTC),
+            },
             "users": [
                 {
                     "principal_id": "17eaebb1-d614-5558-bf31-df498d7a61b6",
@@ -345,6 +366,10 @@ async def test_memory_admin_users_lists_principals(
     assert response.status == "ok"
     assert response.users[0].profile_id == "ken"
     assert response.users[0].display_name == "Ken"
+    assert response.health.principal_count == 1
+    assert response.health.total_working == 3
+    assert response.health.dream_reviewed_writes_open == 2
+    assert response.health.last_semantic_write_at == "2026-06-18T00:00:00+00:00"
     assert response.users[0].semantic_count == 1
     assert response.users[0].working_count == 3
     assert response.users[0].dream_approval_mismatch_count == 0

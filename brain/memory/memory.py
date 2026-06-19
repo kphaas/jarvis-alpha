@@ -832,7 +832,132 @@ class MemoryService:
             """,
             limit,
         )
-        return _merge_admin_inventory(identity_rows, principal_rows, limit=limit)
+        health = await self.admin_health(conn)
+        inventory = _merge_admin_inventory(identity_rows, principal_rows, limit=limit)
+        inventory["health"] = health
+        return inventory
+
+    async def admin_health(self, conn: asyncpg.Connection) -> dict[str, Any]:
+        """Return aggregate memory health metrics for operator dashboards."""
+
+        row = await conn.fetchrow(
+            """
+            WITH principals AS (
+                SELECT p.id::text AS principal_id
+                FROM public.alpha_profiles p
+                WHERE COALESCE(p.active, true) = true
+                UNION
+                SELECT u.id::text AS principal_id
+                FROM public.alpha_users u
+                UNION
+                SELECT user_id::text AS principal_id
+                FROM public.alpha_semantic_memory
+                UNION
+                SELECT user_id::text AS principal_id
+                FROM public.alpha_conversation_memory
+                UNION
+                SELECT user_id::text AS principal_id
+                FROM public.alpha_memory_consolidation_proposals
+            ),
+            semantic AS (
+                SELECT
+                    COUNT(*)::int AS total_semantic,
+                    COUNT(*) FILTER (
+                        WHERE review_status = 'pending_review'
+                    )::int AS semantic_review_count,
+                    MAX(created_at) AS last_semantic_write_at,
+                    MAX(reviewed_at) FILTER (
+                        WHERE reviewed_at IS NOT NULL
+                    ) AS last_semantic_review_at
+                FROM public.alpha_semantic_memory
+            ),
+            conversation AS (
+                SELECT
+                    COUNT(*) FILTER (WHERE tier = 'working')::int AS total_working,
+                    COUNT(*) FILTER (WHERE tier = 'episodic')::int AS total_episodic,
+                    MAX(created_at) FILTER (
+                        WHERE tier = 'working'
+                    ) AS last_working_memory_at,
+                    MAX(created_at) FILTER (
+                        WHERE tier = 'episodic'
+                    ) AS last_episodic_memory_at
+                FROM public.alpha_conversation_memory
+            ),
+            proposals AS (
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE p.executable
+                          AND p.status IN ('pending_review', 'queued', 'approved')
+                    )::int AS dream_reviewed_writes_open,
+                    COUNT(*) FILTER (
+                        WHERE p.executable
+                          AND p.status IN ('queued', 'approved')
+                          AND (
+                            p.approval_queue_id IS NULL
+                            OR q.id IS NULL
+                            OR q.status NOT IN ('pending', 'approved')
+                            OR q.expires_at IS NULL
+                            OR q.expires_at <= now()
+                          )
+                    )::int AS dream_approval_mismatch_count,
+                    COUNT(*) FILTER (
+                        WHERE p.executable
+                          AND p.status IN ('pending_review', 'queued', 'approved')
+                          AND p.updated_at < now() - INTERVAL '48 hours'
+                    )::int AS stale_dream_reviewed_writes,
+                    COUNT(*) FILTER (
+                        WHERE p.executable
+                          AND p.status = 'queued'
+                          AND q.status = 'approved'
+                    )::int AS dream_approved_waiting_execution,
+                    MAX(created_at) AS last_dream_extraction_at,
+                    MAX(updated_at) AS last_dream_proposal_update_at
+                FROM public.alpha_memory_consolidation_proposals p
+                LEFT JOIN public.alpha_approval_queue q
+                  ON q.id = p.approval_queue_id
+            ),
+            buddy AS (
+                SELECT
+                    COUNT(*) FILTER (WHERE read = false)::int AS unread_memory_buddy_events,
+                    COUNT(*) FILTER (WHERE priority >= 3)::int
+                        AS high_priority_buddy_events,
+                    MAX(created_at) AS last_memory_alert_at
+                FROM public.alpha_buddy_events
+                WHERE source = 'semantic_memory_review'
+                   OR source = 'memory_observability_monitor'
+                   OR payload ? 'memory_id'
+                   OR title ILIKE '%memory%'
+            )
+            SELECT
+                (SELECT COUNT(*)::int FROM principals) AS principal_count,
+                semantic.total_semantic,
+                semantic.semantic_review_count,
+                semantic.last_semantic_write_at,
+                semantic.last_semantic_review_at,
+                conversation.total_working,
+                conversation.total_episodic,
+                conversation.last_working_memory_at,
+                conversation.last_episodic_memory_at,
+                proposals.dream_reviewed_writes_open,
+                proposals.dream_approval_mismatch_count,
+                proposals.stale_dream_reviewed_writes,
+                proposals.dream_approved_waiting_execution,
+                proposals.last_dream_extraction_at,
+                proposals.last_dream_proposal_update_at,
+                buddy.unread_memory_buddy_events,
+                buddy.high_priority_buddy_events,
+                buddy.last_memory_alert_at,
+                GREATEST(
+                    semantic.last_semantic_write_at,
+                    conversation.last_working_memory_at,
+                    conversation.last_episodic_memory_at,
+                    proposals.last_dream_proposal_update_at,
+                    buddy.last_memory_alert_at
+                ) AS last_memory_activity_at
+            FROM semantic, conversation, proposals, buddy
+            """,
+        )
+        return dict(row or {})
 
     async def admin_user_memory(
         self,

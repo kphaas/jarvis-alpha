@@ -150,8 +150,31 @@ class MemoryAdminUserInventoryItem(BaseModel):
     last_activity_at: str | None = None
 
 
+class MemoryAdminHealth(BaseModel):
+    principal_count: int = 0
+    total_semantic: int = 0
+    total_working: int = 0
+    total_episodic: int = 0
+    semantic_review_count: int = 0
+    dream_reviewed_writes_open: int = 0
+    dream_approval_mismatch_count: int = 0
+    stale_dream_reviewed_writes: int = 0
+    dream_approved_waiting_execution: int = 0
+    unread_memory_buddy_events: int = 0
+    high_priority_buddy_events: int = 0
+    last_semantic_write_at: str | None = None
+    last_semantic_review_at: str | None = None
+    last_working_memory_at: str | None = None
+    last_episodic_memory_at: str | None = None
+    last_dream_extraction_at: str | None = None
+    last_dream_proposal_update_at: str | None = None
+    last_memory_alert_at: str | None = None
+    last_memory_activity_at: str | None = None
+
+
 class MemoryAdminUsersResponse(BaseModel):
     status: Literal["ok"] = "ok"
+    health: MemoryAdminHealth = Field(default_factory=MemoryAdminHealth)
     users: list[MemoryAdminUserInventoryItem]
 
 
@@ -313,6 +336,7 @@ async def list_memory_admin_users(
     ) as conn:
         inventory = await MemoryService().admin_inventory(conn=conn, limit=limit)
     return MemoryAdminUsersResponse(
+        health=_admin_health(_dict_value(inventory.get("health"))),
         users=[
             _admin_user_inventory_item(row)
             for row in _list_of_dicts(inventory.get("users"))
@@ -613,6 +637,34 @@ def _admin_user_inventory_item(row: dict) -> MemoryAdminUserInventoryItem:
             row.get("dream_approval_mismatch_count") or 0
         ),
         last_activity_at=_iso(row.get("last_activity_at")),
+    )
+
+
+def _admin_health(row: dict[str, object]) -> MemoryAdminHealth:
+    return MemoryAdminHealth(
+        principal_count=int(row.get("principal_count") or 0),
+        total_semantic=int(row.get("total_semantic") or 0),
+        total_working=int(row.get("total_working") or 0),
+        total_episodic=int(row.get("total_episodic") or 0),
+        semantic_review_count=int(row.get("semantic_review_count") or 0),
+        dream_reviewed_writes_open=int(row.get("dream_reviewed_writes_open") or 0),
+        dream_approval_mismatch_count=int(
+            row.get("dream_approval_mismatch_count") or 0
+        ),
+        stale_dream_reviewed_writes=int(row.get("stale_dream_reviewed_writes") or 0),
+        dream_approved_waiting_execution=int(
+            row.get("dream_approved_waiting_execution") or 0
+        ),
+        unread_memory_buddy_events=int(row.get("unread_memory_buddy_events") or 0),
+        high_priority_buddy_events=int(row.get("high_priority_buddy_events") or 0),
+        last_semantic_write_at=_iso(row.get("last_semantic_write_at")),
+        last_semantic_review_at=_iso(row.get("last_semantic_review_at")),
+        last_working_memory_at=_iso(row.get("last_working_memory_at")),
+        last_episodic_memory_at=_iso(row.get("last_episodic_memory_at")),
+        last_dream_extraction_at=_iso(row.get("last_dream_extraction_at")),
+        last_dream_proposal_update_at=_iso(row.get("last_dream_proposal_update_at")),
+        last_memory_alert_at=_iso(row.get("last_memory_alert_at")),
+        last_memory_activity_at=_iso(row.get("last_memory_activity_at")),
     )
 
 
