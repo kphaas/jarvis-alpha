@@ -9,7 +9,7 @@ from html.parser import HTMLParser
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote, urldefrag, urljoin
+from urllib.parse import quote, urldefrag, urljoin, urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -215,8 +215,9 @@ class _SearchProviderCircuit:
     open_until: float = 0.0
 
 
-_SEARCH_PROVIDERS = ("brave", "perplexity")
+_SEARCH_PROVIDERS = ("searxng", "brave", "perplexity")
 _SEARCH_PROVIDER_DATA_SOURCE_IDS = {
+    "searxng": "searxng-metasearch",
     "brave": "brave-search",
     "perplexity": "perplexity-search",
 }
@@ -579,7 +580,7 @@ async def internet_search(
 ):
     """Run a provider-backed public web search through Gateway-owned egress."""
     _authorize_gateway_call(authorization)
-    if req.provider not in {"auto", "brave", "perplexity"}:
+    if req.provider not in {"auto", *_SEARCH_PROVIDERS}:
         raise HTTPException(status_code=400, detail="unsupported search provider")
 
     count = min(max(req.count, 1), 10)
@@ -670,7 +671,7 @@ async def internet_health(authorization: str = Header(...)):
         if _search_provider_health_is_usable(provider)
     ]
     redundancy = _search_provider_redundancy(len(usable))
-    provider_order = list(_configured_search_provider_order())
+    provider_order = _configured_search_provider_names(providers)
     primary_provider = provider_order[0] if provider_order else None
     primary_health = _provider_health_by_name(providers, primary_provider)
     primary_usable = (
@@ -744,6 +745,18 @@ async def _execute_search_provider(
             count=count,
             description_keys=("description",),
         )
+    if credential.provider == "searxng":
+        raw_results = await _search_searxng(
+            client=client,
+            query=query,
+            count=count,
+            base_url=credential.api_key,
+        )
+        return _normalize_search_results(
+            raw_results,
+            count=count,
+            description_keys=("content", "description", "snippet"),
+        )
     raw_results = await _search_perplexity(
         client=client,
         query=query,
@@ -760,17 +773,17 @@ async def _execute_search_provider(
 def _select_search_provider_candidates(
     requested_provider: str,
 ) -> list[_SearchProviderCredential]:
-    if requested_provider in {"brave", "perplexity"}:
+    if requested_provider in _SEARCH_PROVIDERS:
         key = _search_provider_key(requested_provider)
         if not key:
             raise HTTPException(
                 status_code=503,
-                detail=f"{requested_provider.title()} Search API key not configured",
+                detail=_search_provider_not_configured_detail(requested_provider),
             )
         if _is_search_provider_circuit_open(requested_provider):
             raise HTTPException(
                 status_code=503,
-                detail=f"{requested_provider.title()} Search circuit is open",
+                detail=f"{_search_provider_display_name(requested_provider)} Search circuit is open",
             )
         return [_SearchProviderCredential(provider=requested_provider, api_key=key)]
 
@@ -783,7 +796,7 @@ def _select_search_provider_candidates(
 
 
 def _configured_search_provider_order() -> tuple[str, ...]:
-    raw = os.getenv("BEACON_SEARCH_PROVIDER_ORDER", "brave,perplexity")
+    raw = os.getenv("BEACON_SEARCH_PROVIDER_ORDER", "searxng,brave,perplexity")
     ordered: list[str] = []
     for item in raw.split(","):
         provider = item.strip().lower()
@@ -793,6 +806,8 @@ def _configured_search_provider_order() -> tuple[str, ...]:
 
 
 def _search_provider_key(provider: str) -> str | None:
+    if provider == "searxng":
+        return _searxng_base_url()
     if provider == "brave":
         return _secret_or_none("BRAVE_SEARCH_API_KEY") or _secret_or_none(
             "BRAVE_API_KEY"
@@ -800,6 +815,34 @@ def _search_provider_key(provider: str) -> str | None:
     if provider == "perplexity":
         return _secret_or_none("PERPLEXITY_API_KEY")
     return None
+
+
+def _searxng_base_url() -> str | None:
+    raw = os.getenv("SEARXNG_BASE_URL", "").strip() or _secret_or_none(
+        "SEARXNG_BASE_URL"
+    )
+    if not raw:
+        return None
+    parsed = urlparse(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return raw.rstrip("/")
+
+
+def _search_provider_display_name(provider: str) -> str:
+    if provider == "searxng":
+        return "SearXNG"
+    if provider == "brave":
+        return "Brave"
+    if provider == "perplexity":
+        return "Perplexity"
+    return provider.title()
+
+
+def _search_provider_not_configured_detail(provider: str) -> str:
+    if provider == "searxng":
+        return "SearXNG base URL not configured"
+    return f"{_search_provider_display_name(provider)} Search API key not configured"
 
 
 def _search_provider_health(provider: str) -> dict[str, object]:
@@ -823,6 +866,17 @@ def _search_provider_health(provider: str) -> dict[str, object]:
         "monthly_request_count": budget["monthly_count"],
         "monthly_request_limit": budget["monthly_limit"],
     }
+
+
+def _configured_search_provider_names(
+    providers: list[dict[str, object]],
+) -> list[str]:
+    names: list[str] = []
+    for provider in _configured_search_provider_order():
+        health = _provider_health_by_name(providers, provider)
+        if health is not None and bool(health["configured"]):
+            names.append(provider)
+    return names
 
 
 def _search_provider_health_is_usable(provider: dict[str, object]) -> bool:
@@ -1058,6 +1112,44 @@ async def _search_brave(
         ) from exc
     web = payload.get("web") if isinstance(payload, dict) else None
     return web.get("results") if isinstance(web, dict) else None
+
+
+async def _search_searxng(
+    *,
+    client: httpx.AsyncClient,
+    query: str,
+    count: int,
+    base_url: str,
+) -> object:
+    endpoint = urljoin(base_url.rstrip("/") + "/", "search")
+    headers = {"User-Agent": "jarvis-alpha-beacon/1.0"}
+    api_key = _secret_or_none("SEARXNG_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    response = await client.get(
+        endpoint,
+        params={
+            "q": query,
+            "format": "json",
+            "language": "en",
+            "safesearch": "1",
+            "categories": "general",
+        },
+        headers=headers,
+    )
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"SearXNG Search API error: HTTP {response.status_code}",
+        )
+    try:
+        payload: object = response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="SearXNG Search API returned invalid JSON",
+        ) from exc
+    return payload.get("results") if isinstance(payload, dict) else None
 
 
 async def _search_perplexity(

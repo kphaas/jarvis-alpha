@@ -62,7 +62,7 @@ ResearchSourceType = Literal[
     "status_page",
     "general_web",
 ]
-SearchProvider = Literal["auto", "brave", "perplexity"]
+SearchProvider = Literal["auto", "searxng", "brave", "perplexity"]
 SearchProviderStrategy = Literal["auto", "fanout"]
 
 

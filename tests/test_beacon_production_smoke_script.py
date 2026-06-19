@@ -67,3 +67,31 @@ def test_remote_smoke_without_token_source_fails_explicitly(monkeypatch):
             base_url=smoke_beacon_production.DEFAULT_BASE_URL,
             token_ssh_target=None,
         )
+
+
+def test_gateway_health_summary_surfaces_provider_route():
+    summary = smoke_beacon_production._gateway_health_summary(
+        {
+            "gateway": {
+                "status": "ok",
+                "metadata": {
+                    "primary_provider": "searxng",
+                    "provider_order": ["searxng", "brave"],
+                    "usable_provider_count": 2,
+                    "required_provider_count": 2,
+                    "provider_redundancy_status": "redundant",
+                    "provider_warning_status": None,
+                },
+            }
+        }
+    )
+
+    assert summary == {
+        "status": "ok",
+        "primary_provider": "searxng",
+        "provider_order": ["searxng", "brave"],
+        "usable_provider_count": 2,
+        "required_provider_count": 2,
+        "provider_redundancy_status": "redundant",
+        "provider_warning_status": None,
+    }

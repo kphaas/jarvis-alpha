@@ -170,7 +170,11 @@ async def test_chat_internet_context_uses_beacon_search_envelope():
     assert context.research_plan.intent == "current_fact"
     assert context.research_plan.max_searches == 4
     assert context.research_plan.provider_strategy == "fanout"
-    assert context.research_plan.search_providers == ["brave", "perplexity"]
+    assert context.research_plan.search_providers == [
+        "searxng",
+        "brave",
+        "perplexity",
+    ]
     assert context.research_plan.max_extracts == 4
     assert context.research_plan.freshness_required is True
     assert context.raw_web_content_is_untrusted is True
@@ -205,6 +209,7 @@ async def test_chat_internet_context_uses_beacon_search_envelope():
     assert quality_events[0]["metadata"]["research_search_budget"] == 4
     assert quality_events[0]["metadata"]["research_provider_strategy"] == "fanout"
     assert quality_events[0]["metadata"]["research_search_providers"] == [
+        "searxng",
         "brave",
         "perplexity",
     ]
