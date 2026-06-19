@@ -199,6 +199,94 @@ async def test_helm_voice_falls_back_to_alpha_session_token_for_backend(
     assert calls["headers"]["Authorization"] == "Bearer alpha-session-token"
 
 
+@pytest.mark.asyncio
+async def test_helm_voice_preserves_backend_empty_transcript_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        status_code = 422
+
+        def json(self) -> dict[str, str]:
+            return {"detail": "voice_backend_empty_transcript"}
+
+    class FakeClient:
+        def __init__(self, *, timeout: float, verify: bool) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(
+            self,
+            url: str,
+            *,
+            headers: dict[str, str],
+            files: dict[str, tuple[str, bytes, str]],
+        ) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setenv("JARVIS_HELM_VOICE_TRANSCRIBE_URL", "http://voice/transcribe")
+    monkeypatch.setenv("JARVIS_HELM_VOICE_BACKEND_TOKEN", "voice-backend-token")
+    monkeypatch.setattr(helm_voice.httpx, "AsyncClient", FakeClient)
+
+    with pytest.raises(HTTPException) as exc:
+        await helm_voice.helm_voice_transcribe(
+            _request(scopes=["helm.read"]),
+            FakeUpload(b"silent-audio"),
+            _user_id="ken",
+        )
+
+    assert exc.value.status_code == 502
+    assert exc.value.detail == "voice_backend_empty_transcript"
+
+
+@pytest.mark.asyncio
+async def test_helm_voice_keeps_unknown_backend_failure_generic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        status_code = 500
+
+        def json(self) -> dict[str, str]:
+            return {"detail": "worker_stack_trace"}
+
+    class FakeClient:
+        def __init__(self, *, timeout: float, verify: bool) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(
+            self,
+            url: str,
+            *,
+            headers: dict[str, str],
+            files: dict[str, tuple[str, bytes, str]],
+        ) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setenv("JARVIS_HELM_VOICE_TRANSCRIBE_URL", "http://voice/transcribe")
+    monkeypatch.setenv("JARVIS_HELM_VOICE_BACKEND_TOKEN", "voice-backend-token")
+    monkeypatch.setattr(helm_voice.httpx, "AsyncClient", FakeClient)
+
+    with pytest.raises(HTTPException) as exc:
+        await helm_voice.helm_voice_transcribe(
+            _request(scopes=["helm.read"]),
+            FakeUpload(b"fake-audio"),
+            _user_id="ken",
+        )
+
+    assert exc.value.status_code == 502
+    assert exc.value.detail == "voice_backend_failed"
+
+
 def test_helm_voice_speak_route_is_t2_security_write_classified() -> None:
     assert classify_route("POST", "/v1/helm/voice/speak") == [
         "write",
