@@ -162,6 +162,16 @@ UNSUPPORTED_BEACON_ASSERTION_RE = re.compile(
     r")"
     r"(?:[.!?](?:\s+|$)|$)"
 )
+UNREQUESTED_BEACON_NARRATION_RE = re.compile(
+    r"(?is)(^|(?<=[.!?])\s+)"
+    r"(?:"
+    r"Beacon\s+(?:checked|verified|confirmed|found|supported|used|looked\s+up|cross-checked)\b.*?"
+    r"|This\s+is\s+supported\s+by\s+Beacon\b.*?"
+    r"|I(?:'ve| have)\s+(?:checked|verified|confirmed|found)\b.*?\bBeacon\b.*?"
+    r"|(?:Through|Using)\s+Beacon\b.*?"
+    r")"
+    r"(?:[.!?](?:\s+|$)|$)"
+)
 CONVERSATION_QUALITY_REQUEST_RE = re.compile(
     r"\b(?:conversation|conversational|chat|voice|tone|robotic|human|natural)\b"
     r"(?s:.){0,120}"
@@ -506,10 +516,12 @@ def _web_verification_required_response(
     response_surface: AskResponseSurface,
 ) -> str:
     if response_surface == "voice":
-        return "I need Beacon to check that before I answer. Turn on Web search for this one and I’ll give you the verified time."
+        return "I need to check the web before I answer that. Turn on Web search for this one and I’ll give you the verified time."
     if suggestion.reason == "sports_schedule_likely":
-        return "I need Beacon to check that before I answer. Use Web search for this one and I’ll give you the verified time."
-    return "I need Beacon to verify that before I answer. Use Web search and I’ll keep it tight."
+        return "I need to check the web before I answer that. Use Web search for this one and I’ll give you the verified time."
+    return (
+        "I need to verify that before I answer. Use Web search and I’ll keep it tight."
+    )
 
 
 def _at0_self_quick_response(
@@ -534,19 +546,19 @@ def _at0_self_quick_response(
     if personal_context_requested and capability_requested:
         return (
             "I can chat, listen and speak, show up as the avatar, use approved "
-            "memory for stable context about you, and ask Beacon to verify "
+            "memory for stable context about you, and use web search to verify "
             "current public facts before I claim them."
         )
     if personal_context_requested:
         return (
             "I can use approved memory for stable context about you, your "
             "projects, preferences, and household basics. I keep that minimal, "
-            "and I still need Beacon for current public facts."
+            "and I still need web verification for current public facts."
         )
     if re.search(r"\b(?:search|browse|web|internet|beacon)\b", normalized):
         return (
-            "Turn on Web search when you want me to use Beacon. For current "
-            "facts like sports times, I’ll wait for Beacon instead of guessing."
+            "Turn on Web search when you want current facts checked. For sports "
+            "times, I’ll verify first instead of guessing."
         )
     if re.search(r"\b(?:voice|talk|speak|hear|listen)\b", normalized):
         return (
@@ -563,7 +575,7 @@ def _at0_self_quick_response(
         )
     return (
         "I can chat, listen and speak, show up as the avatar, use approved memory "
-        "for stable context, check current facts with Beacon, and work with "
+        "for stable context, check current facts with web search, and work with "
         "approved Alpha summaries."
     )
 
@@ -1096,8 +1108,9 @@ JARVIS_SYSTEM_PROMPT = (
     "unless Ken explicitly asks for a link, source, citation, URL, or website. "
     "When Ken explicitly asks for a source link, website link, source URL, "
     "or cited source, include the full URL from Beacon evidence. "
-    "If Beacon evidence supports the answer, say Beacon checked it or Beacon "
-    "verified it naturally."
+    "Use Beacon evidence silently in the answer. Do not say Beacon checked, "
+    "verified, found, or supported the answer unless Ken explicitly asks how "
+    "you verified it, asks for sources, or asks for links."
 )
 
 
@@ -1192,21 +1205,32 @@ def _user_requested_source_links(user_msg: str) -> bool:
 
 def _strip_unrequested_source_references(text: str, user_msg: str) -> str:
     if _user_requested_source_links(user_msg):
-        return text.strip()
+        cleaned = UNREQUESTED_BEACON_NARRATION_RE.sub(" ", text)
+        cleaned = re.sub(
+            r"(?i)\b(?:Alpha\s+Beacon\s+internet\s+context|Beacon\s+internet\s+context)\b",
+            "Beacon",
+            cleaned,
+        )
+        cleaned = re.sub(r"(?i)\bAlpha\s+Beacon\b", "Beacon", cleaned)
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+        cleaned = re.sub(r"[ \t]+([,.!?;:])", r"\1", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip()
 
     cleaned = MARKDOWN_LINK_RE.sub(r"\1", text)
+    cleaned = UNREQUESTED_BEACON_NARRATION_RE.sub(" ", cleaned)
     cleaned = re.sub(
         r"(?is)\bAccording to (?:the )?Beacon(?: internet context)?,?\s+"
         r"I(?:'ve| have) found\s+\w+\s+sources?\s+confirming "
         r"(?:this information|it):\s*",
-        "Beacon checked it. ",
+        "",
         cleaned,
     )
     cleaned = re.sub(
         r"(?is)\bI(?:'ve| have) verified this information through "
         r"(?:the )?(?:Alpha\s+)?Beacon(?: internet context)?\b.*?"
         r"(?:[.!?](?:\s+|$)|$)",
-        "Beacon verified it. ",
+        "",
         cleaned,
     )
     cleaned = INLINE_SOURCE_URL_RE.sub("", cleaned)
@@ -1231,12 +1255,10 @@ def _strip_unrequested_source_references(text: str, user_msg: str) -> str:
     )
     cleaned = re.sub(
         r"(?i)\b(?:official\s+)?sources?\s+confirm(?:ing|ed)?\b",
-        "Beacon verified",
+        "verified",
         cleaned,
     )
-    cleaned = re.sub(
-        r"(?i)\bbased on official sources\b", "verified by Beacon", cleaned
-    )
+    cleaned = re.sub(r"(?i)\bbased on official sources\b", "verified", cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r"[ \t]+([,.!?;:])", r"\1", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
