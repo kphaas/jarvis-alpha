@@ -13,6 +13,7 @@ const Placeholder = lazy(() => import('./pages/Placeholder'))
 const Settings = lazy(() => import('./pages/Settings'))
 const CostCenter = lazy(() => import('./pages/CostCenter'))
 const Health = lazy(() => import('./pages/Health'))
+const Beacon = lazy(() => import('./pages/Beacon'))
 const Errors = lazy(() => import('./pages/Errors'))
 const Mesh = lazy(() => import('./pages/Mesh'))
 const Approvals = lazy(() => import('./pages/Approvals'))
@@ -48,6 +49,7 @@ export default function App() {
                   <Route path="/briefings/:batchRunId" element={<BriefingDetail />} />
                   <Route path="/mesh" element={<Mesh theme={theme} />} />
                   <Route path="/health" element={<Health theme={theme} />} />
+                  <Route path="/beacon" element={<Beacon />} />
                   <Route path="/errors" element={<Errors theme={theme} />} />
                   <Route path="/agents" element={<Agents />} />
                   <Route path="/skills" element={<Skills />} />
