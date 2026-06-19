@@ -79,6 +79,9 @@ class EvaluatedCitation:
     accepted: bool
     prompt_injection_rejected: bool = False
     unsupported_claim: bool = False
+    claim_supported: bool = True
+    claim_support_reasons: tuple[str, ...] = ()
+    rejection_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -134,6 +137,16 @@ def evaluate_citation_quality(
                 accepted=is_accepted_citation,
                 prompt_injection_rejected=injection_rejected,
                 unsupported_claim=not claim_support.supported,
+                claim_supported=claim_support.supported,
+                claim_support_reasons=claim_support.reasons,
+                rejection_reasons=_rejection_reasons(
+                    citation=citation,
+                    policy=policy,
+                    accepted=is_accepted_citation,
+                    claim_supported=claim_support.supported,
+                    claim_support_reasons=claim_support.reasons,
+                    prompt_injection_rejected=injection_rejected,
+                ),
             )
         )
 
@@ -274,6 +287,55 @@ def _is_accepted(
     if citation.source_quality in {"rejected", "low_confidence"}:
         return False, False
     return True, False
+
+
+def _rejection_reasons(
+    *,
+    citation: InternetScoutLocalLLMCitation,
+    policy: _Policy,
+    accepted: bool,
+    claim_supported: bool,
+    claim_support_reasons: tuple[str, ...],
+    prompt_injection_rejected: bool,
+) -> tuple[str, ...]:
+    if accepted:
+        return ()
+
+    reasons: list[str] = []
+    if prompt_injection_rejected:
+        reasons.append("prompt_injection_detected")
+        reasons.extend(
+            reason
+            for reason in citation.quality_reasons
+            if reason.startswith("prompt_injection:")
+        )
+    if not claim_supported:
+        reasons.append("unsupported_claim")
+        reasons.extend(f"claim_support:{reason}" for reason in claim_support_reasons)
+    if (
+        policy.official_source_required
+        and policy.required_source_hosts
+        and citation.source_quality != "official"
+    ):
+        reasons.append("official_host_mismatch")
+    elif policy.official_source_required and citation.source_quality != "official":
+        reasons.append("official_host_unknown")
+    if citation.source_quality == "low_confidence":
+        reasons.append("low_confidence_source")
+    if citation.source_quality == "rejected":
+        reasons.append("source_rejected")
+    reasons.extend(
+        reason
+        for reason in citation.quality_reasons
+        if reason
+        in {
+            "empty_citation_text",
+            "host_not_official_for_query",
+            "low_confidence_host",
+            "official_source_required",
+        }
+    )
+    return tuple(dict.fromkeys(reasons))[:12]
 
 
 def _summary(
