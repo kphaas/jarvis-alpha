@@ -100,6 +100,7 @@ reply text, Graph tokens, or secrets.
 Herald cannot manage social media accounts yet. Current repo state has:
 
 - Product spec: `docs/specs/jarvis-herald-spec.md`
+- Gap memory: `docs/runbooks/herald_social_gap_memory.md`
 - Marketing/social drafting docs and brand assets
 - No deployed social account connector, scheduler, approval queue, or publisher
   route for X, LinkedIn, Instagram, Threads, TikTok, Bluesky, or Mastodon
