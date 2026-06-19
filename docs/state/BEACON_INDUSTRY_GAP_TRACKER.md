@@ -56,8 +56,8 @@ References:
 
 | Gap | Current Failure | Status | Close Criteria |
 |---|---|---|---|
-| Perplexity-class UX | Users do not yet get a polished answer-engine surface with focus modes, session history, source cards, confidence, and limitations in one place. | Partial | Beacon UI has search mode controls, source cards, history, confidence, warning chips, and deep research report rendering. |
-| UX visibility into evidence | Source ranking exists, but the UI does not yet make "why this source" obvious enough. | Partial | UI shows source quality, official/primary/general badges, rejected-source reasons, freshness, and citation support status. |
+| Perplexity-class UX | Users do not yet get a fully polished answer-engine cockpit with session history, saved runs, and operator workflows in one place. | Partial | Beacon UI has search mode controls, source cards, history, confidence, warning chips, answer-quality score, evidence transparency, and deep research report rendering. |
+| UX visibility into evidence | Source ranking, rejected-source reasons, freshness, official-host match, claim support, and compact answer-quality scoring are now visible in the Beacon UI. | Complete | UI shows source quality, official/primary/general badges, rejected-source reasons, freshness, citation support status, and answer-quality rollup after deployed smoke. |
 | Private/free metasearch | Gateway now routes through self-hosted SearXNG before Brave and Perplexity. | Complete | Gateway has SearXNG provider adapter, health, spend-free routing, tests, and smoke coverage. |
 | Deep research productization | Contracts, planner, reports, and canaries exist, but the user flow is not yet a rich research cockpit. | Partial | UI shows plan, subquestions, progress, coverage warnings, report, source table, and export path. |
 | Research benchmark breadth | Deterministic quality canaries exist, but not a broader industry-style benchmark suite with latency, cost, citation precision, and refusal quality. | Partial | Eval harness covers current facts, official docs, local/weather, shopping, adversarial pages, and insufficient-evidence refusal. |
@@ -75,8 +75,8 @@ References:
 | 0 | Keep this tracker current | In progress | Every Beacon web-agent PR updates this file when it changes a tracked gap. |
 | 1 | Merge/deploy #483 browser-action executor hardening | Complete | Approved runner has strict same-host allowlist, caps, no forms/downloads/credentials, per-action audit, and post-deploy smoke. |
 | 2 | Add SearXNG/free metasearch provider | Complete | Gateway search provider order becomes SearXNG -> Brave -> Perplexity, with health and smoke; specialized free APIs remain separate first-choice routes. |
-| 3 | Beacon answer-engine UX v1 | In progress | UI has focus modes, source cards, history, confidence/limitations, and visible cost/provider state. |
-| 4 | Evidence transparency UX | Not started | Users can inspect source quality, rejected-source reasons, freshness, official-host match, and claim support. |
+| 3 | Beacon answer-engine UX v1 | Partial | UI has focus modes, source cards, history, confidence/limitations, visible cost/provider state, answer-quality score, and evidence transparency. |
+| 4 | Evidence transparency UX | Complete | Users can inspect source quality, rejected-source reasons, freshness, official-host match, claim support, and answer-quality rollup in the deployed Beacon UI. |
 | 5 | Eval harness v1 | In progress | CI or scheduled smoke runs a fixed benchmark set and records accuracy, citation quality, refusal quality, latency, and cost. |
 | 6 | Deep research cockpit | Partial | UI renders research plan, subquestions, progress, warnings, final report, and exportable citations. |
 | 7 | Cache/rerank/index layer | Not started | Beacon reuses recent fetch/extract evidence safely, records cache hits, and supports local reranking. |
@@ -95,7 +95,9 @@ Required UX surfaces:
 - Search mode selector: `All`, `Official`, `News/current`, `Shopping`,
   `Academic`, `Local/weather`, `Deep research`.
 - Answer header: selected mode, provider route, confidence, cost/spend status,
-  and whether evidence is `supported`, `weak`, or `insufficient`.
+  whether evidence is `supported`, `weak`, or `insufficient`, and compact
+  answer-quality score across diversity, official coverage, freshness, and
+  rejected-risk count.
 - Source cards: source quality badge, official-host match, citation support,
   freshness, rejected-source reason when applicable.
 - Research progress: visible subquestions, search/extract steps, coverage
@@ -108,12 +110,12 @@ Required UX surfaces:
 
 ## Current Next Step
 
-Finish and merge the Beacon answer-engine UX v1 plus offline answer-engine eval
-harness. This is the first user-visible layer on top of the deployed SearXNG
-and browser-action safety foundations.
+Beacon answer-engine UX v1, evidence transparency, provider telemetry, SearXNG,
+and approved browser-action execution are deployed. The remaining work is now
+operator depth rather than basic answer visibility.
 
-After that is deployed, the next best production workstream is:
+The next best production workstream is:
 
-1. Evidence transparency UX.
+1. Ops/SLO dashboard.
 2. Browser approval UX v2.
-3. Ops/SLO dashboard.
+3. Durable web cache/rerank/index layer.
