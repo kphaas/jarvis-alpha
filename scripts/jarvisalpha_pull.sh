@@ -79,6 +79,15 @@ if [ ! -d "$REPO_DIR" ]; then
 else
   cd "$REPO_DIR"
   PREV_HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo "")
+  CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+  if [ "${JARVIS_ALPHA_ALLOW_BRANCH_DEPLOY:-0}" != "1" ] && [ "$CURRENT_BRANCH" != "main" ]; then
+    emit fail branch_guard node="$NODE_SHORT" branch="${CURRENT_BRANCH:-detached}" error="remote node must be on main before deploy"
+    echo ""
+    echo "❌ REMOTE BRANCH GUARD FAILED — aborting."
+    echo "   This node is on '${CURRENT_BRANCH:-detached}', but deploys must pull from main."
+    echo "   Fix: cd $REPO_DIR && git checkout main && git pull --ff-only origin main"
+    exit 1
+  fi
   if [ -n "${GITHUB_TOKEN:-}" ]; then
     git config credential.helper ""
     GIT_TERMINAL_PROMPT=0 git remote set-url origin https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git
@@ -100,6 +109,17 @@ fi
 
 NEW_HEAD=$(git -C "$REPO_DIR" rev-parse --short HEAD)
 NEW_HEAD_FULL=$(git -C "$REPO_DIR" rev-parse HEAD)
+ORIGIN_MAIN_FULL=$(git -C "$REPO_DIR" rev-parse refs/remotes/origin/main 2>/dev/null || echo "")
+if [ "${JARVIS_ALPHA_ALLOW_BRANCH_DEPLOY:-0}" != "1" ] \
+  && [ -n "$ORIGIN_MAIN_FULL" ] \
+  && [ "$NEW_HEAD_FULL" != "$ORIGIN_MAIN_FULL" ]; then
+  emit fail head_guard node="$NODE_SHORT" to_hash="$NEW_HEAD" error="remote head is not origin/main after pull"
+  echo ""
+  echo "❌ REMOTE HEAD GUARD FAILED — aborting."
+  echo "   HEAD is $NEW_HEAD, but origin/main is ${ORIGIN_MAIN_FULL:0:7}."
+  echo "   This prevents deploying rebased feature branches by accident."
+  exit 1
+fi
 
 if [ -f "${REPO_DIR}/scripts/lib/node_addresses.sh" ]; then
   source "${REPO_DIR}/scripts/lib/node_addresses.sh"
@@ -183,6 +203,10 @@ needs_restart_watchdog() {
 
 needs_restart_observability() {
   service_has_changes_matching "alpha-observability" '(^config/observability/brain/|^launchagents/com\.jarvis\.alpha\.(fluentbit|loki)\.plist$)'
+}
+
+needs_reload_memory_observability() {
+  service_has_changes_matching "alpha-memory-observability" '(^scripts/check_memory_observability\.py$|^launchagents/com\.jarvis\.alpha\.memory-observability\.template\.plist$|^scripts/install_launchagents\.py$)'
 }
 
 sync_brain_observability_configs() {
@@ -423,6 +447,28 @@ elif [ "$NODE_SHORT" = "brain" ]; then
   emit skip restart node="$NODE_SHORT" service="alpha-fluentbit" reason="no_observability_changes"
   emit skip restart node="$NODE_SHORT" service="alpha-loki" reason="no_observability_changes"
   mark_service_checked "alpha-observability"
+fi
+
+MEMORY_OBSERVABILITY_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.memory-observability.plist"
+if [ "$NODE_SHORT" = "brain" ] && needs_reload_memory_observability; then
+  echo ""
+  echo "Refreshing Memory observability LaunchAgent..."
+  MEMORY_OBS_START=$(time_ms)
+  INSTALL_LOG=$(mktemp)
+  if ! python3 "${REPO_DIR}/scripts/install_launchagents.py" --node brain >"$INSTALL_LOG" 2>&1; then
+    MEMORY_OBS_DUR=$(($(time_ms) - MEMORY_OBS_START))
+    INSTALL_ERR=$(tail -5 "$INSTALL_LOG" | tr '\n' ' ' | cut -c1-300)
+    rm -f "$INSTALL_LOG"
+    emit fail restart node="$NODE_SHORT" service="alpha-memory-observability" dur_ms="$MEMORY_OBS_DUR" error="$INSTALL_ERR"
+    echo "❌ Memory observability LaunchAgent install failed"
+    exit 1
+  fi
+  rm -f "$INSTALL_LOG"
+  restart_launchagent "alpha-memory-observability" "com.jarvis.alpha.memory-observability" "$MEMORY_OBSERVABILITY_PLIST"
+  mark_service_checked "alpha-memory-observability"
+elif [ "$NODE_SHORT" = "brain" ]; then
+  emit skip restart node="$NODE_SHORT" service="alpha-memory-observability" reason="no_launchagent_changes"
+  mark_service_checked "alpha-memory-observability"
 fi
 
 TEMPORAL_WORKER_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.temporal.worker.plist"

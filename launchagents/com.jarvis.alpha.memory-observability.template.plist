@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>Label</key>
+<string>com.jarvis.alpha.memory-observability</string>
+<key>ProgramArguments</key>
+<array>
+<string>{{HOME}}/jarvis-alpha/.venv/bin/python</string>
+<string>{{HOME}}/jarvis-alpha/scripts/check_memory_observability.py</string>
+</array>
+<key>StartInterval</key>
+<integer>900</integer>
+<key>WorkingDirectory</key>
+<string>{{HOME}}/jarvis-alpha</string>
+<key>StandardOutPath</key>
+<string>{{HOME}}/jarvis/logs/memory_observability.agent.out.log</string>
+<key>StandardErrorPath</key>
+<string>{{HOME}}/jarvis/logs/memory_observability.agent.err.log</string>
+<key>RunAtLoad</key>
+<false/>
+<key>EnvironmentVariables</key>
+<dict>
+<key>PATH</key>
+<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+<key>JARVIS_NODE</key>
+<string>brain</string>
+<key>SECRETS_FILE</key>
+<string>{{HOME}}/jarvis/.secrets</string>
+</dict>
+</dict>
+</plist>
