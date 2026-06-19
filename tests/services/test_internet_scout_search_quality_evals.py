@@ -29,7 +29,11 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
     assert official.details["official_source_count"] == 1
     assert official.details["research_plan_id"]
     assert official.details["research_provider_strategy"] == "fanout"
-    assert official.details["research_search_providers"] == ["brave", "perplexity"]
+    assert official.details["research_search_providers"] == [
+        "searxng",
+        "brave",
+        "perplexity",
+    ]
     assert official.details["research_max_extracts"] == 4
     assert official.details["research_expected_source_types"] == [
         "official_docs",

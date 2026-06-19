@@ -126,7 +126,7 @@ class FailingFanoutGatewayClient(FakeGatewayClient):
         count: int = 5,
         provider: str = "auto",
     ) -> GatewaySearchResponse:
-        if provider in {"brave", "perplexity"}:
+        if provider != "auto":
             self.search_calls.append(
                 {"query": query, "count": count, "provider": provider}
             )
@@ -408,13 +408,14 @@ async def test_executor_uses_research_plan_for_deep_search():
 
     assert decision.tool == InternetTool.SEARCH
     assert plan.research.provider_strategy == "fanout"
-    assert plan.research.search_providers == ["brave", "perplexity"]
+    assert plan.research.search_providers == ["searxng", "brave", "perplexity"]
     assert plan.research.max_extracts == 4
     assert len(gateway.search_calls) == (
         len(plan.research.searches) * len(plan.research.search_providers)
     )
     assert all(call["count"] == 3 for call in gateway.search_calls)
     assert {call["provider"] for call in gateway.search_calls} == {
+        "searxng",
         "brave",
         "perplexity",
     }
