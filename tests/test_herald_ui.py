@@ -5,6 +5,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HERALD_PAGE = REPO_ROOT / "ui" / "src" / "pages" / "Herald.tsx"
+HEALTH_PAGE = REPO_ROOT / "ui" / "src" / "pages" / "Health.tsx"
 APP_PAGE = REPO_ROOT / "ui" / "src" / "App.tsx"
 LAYOUT = REPO_ROOT / "ui" / "src" / "components" / "Layout.tsx"
 
@@ -30,7 +31,24 @@ def test_herald_ui_splits_view_by_configured_mailbox() -> None:
     assert "/v1/at0-mail/drafts?status=all&limit=12${mailboxQuery}" in source
     assert "/v1/at0-mail/scan?max_results=25${mailboxQuery}" in source
     assert "/v1/at0-mail/drafts/${draftId}/send" in source
+    assert "apiJson<HealthResponse>('/v1/at0-mail/health')" in source
+    assert "latest_graph_health" in source
+    assert "Graph send" in source
+    assert "Mail.Send" in source
+    assert "current_send_failures" in source
+    assert "stuck_sending_count" in source
     assert "Send reply" in source
     assert "AT-0 Spark drafts" in source
     assert "fetch(" not in source
     assert "XMLHttpRequest" not in source
+
+
+def test_health_ui_surfaces_herald_graph_send_monitor() -> None:
+    source = HEALTH_PAGE.read_text(encoding="utf-8")
+
+    assert 'apiJson<At0MailHealthPayload>("/v1/at0-mail/health")' in source
+    assert "Herald Graph Send Health" in source
+    assert "latest_graph_health" in source
+    assert "Mail.Send" in source
+    assert "current_send_failures" in source
+    assert "stuck_sending_count" in source
