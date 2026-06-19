@@ -310,12 +310,13 @@ class SparkDraftProposal:
             "target_memory_preview": target_memory_preview or [],
         }
         if include_context_preview:
+            principal_label = _principal_label(self.principal_id)
             if self.context.messages:
                 last_message = self.context.messages[0]
                 payload["conversation_summary"].update(
                     {
                         "last_message_speaker": (
-                            "Ken" if last_message.is_from_me else "Other"
+                            principal_label if last_message.is_from_me else "Other"
                         ),
                         "last_message_preview": _clip_context_message(
                             last_message.body_text,
@@ -327,7 +328,7 @@ class SparkDraftProposal:
             payload["context_preview"] = [
                 {
                     "index": index,
-                    "speaker": "Ken" if message.is_from_me else "Other",
+                    "speaker": principal_label if message.is_from_me else "Other",
                     "is_from_me": message.is_from_me,
                     "message_ref_hash": message.message_ref_hash,
                     "body_text": _clip_context_message(message.body_text, limit=900),
@@ -666,13 +667,14 @@ def _source_readiness(
                 )
             )
         elif record.source == "gmail":
+            principal_label = _principal_label(record.principal_id)
             statuses.append(
                 SparkDraftSourceReadiness(
                     source="gmail",
                     channel="Email",
                     status="voice_profile_only",
                     detail=(
-                        "Approved sent mail can shape Ken's email voice; "
+                        f"Approved sent mail can shape {principal_label}'s email voice; "
                         "live email reply context is not wired into draft generation yet."
                     ),
                 )
@@ -1011,6 +1013,7 @@ async def _call_spark_llm(
             personality_memory_rows,
             target_memory_rows,
             recent_feedback_lessons,
+            principal_id=context.principal_id,
         ),
         user_message=_spark_draft_user_message(
             reply_goal=reply_goal,
@@ -1065,24 +1068,43 @@ def personality_memory_prompt_items(
     return items
 
 
-def _personality_memory_prompt(rows: list[dict[str, object]]) -> str:
+def _personality_memory_prompt(
+    rows: list[dict[str, object]],
+    *,
+    principal_label: str,
+) -> str:
     lines: list[str] = []
     for item in personality_memory_prompt_items(rows):
         kind = item.kind.replace("_", " ")
-        lines.append(f"- {kind.title()}: {item.content}")
+        content = _clean_personality_memory_prompt_content(
+            item.content,
+            kind=item.kind,
+            principal_label=principal_label,
+        )
+        if content:
+            lines.append(f"- {kind.title()}: {content}")
     return "\n".join(lines)
+
+
+def _clean_personality_memory_prompt_content(
+    value: str,
+    *,
+    kind: str,
+    principal_label: str,
+) -> str:
+    if kind == "relationship":
+        match = RELATIONSHIP_MEMORY.fullmatch(value.strip())
+        if match:
+            label = match.group("label").strip()
+            relationship = match.group("relationship").strip()
+            return f"{label} is {principal_label}'s {relationship}."
+    return value
 
 
 def _clean_personality_memory_content(value: str, *, kind: str) -> str:
     content = " ".join(value.strip().split())
     if not content or PERSONALITY_MEMORY_BLOCKED.search(content):
         return ""
-    if kind == "relationship":
-        match = RELATIONSHIP_MEMORY.fullmatch(content)
-        if match:
-            label = match.group("label").strip()
-            relationship = match.group("relationship").strip()
-            return f"{label} is Ken's {relationship}."
     return content[:240]
 
 
@@ -1092,30 +1114,33 @@ def _spark_draft_system_prompt(
     personality_memory_rows: list[dict[str, object]],
     target_memory_rows: list[dict[str, object]],
     recent_feedback_lessons: tuple[str, ...],
+    *,
+    principal_id: str,
 ) -> str:
+    principal_label = _principal_label(principal_id)
     lines = [
-        "You draft iMessage replies for Ken.",
+        f"You draft iMessage replies for {principal_label}.",
         "Return only the draft text. Do not wrap it in JSON or markdown.",
         "Do not claim the message was sent.",
-        "Do not quote the other person's private text unless Ken explicitly asks.",
+        f"Do not quote the other person's private text unless {principal_label} explicitly asks.",
         "Keep it short or medium length.",
-        "Sound like Ken's best edited self.",
+        f"Sound like {principal_label}'s best edited self.",
         "Anchor the reply to the latest inbound thread context, not a generic travel or logistics script.",
         "Do not invent or swap concrete facts like transport mode, timing, place, or plans unless the runtime thread context states them.",
         "If the other person asked a direct question or made a request, answer that before branching into anything else.",
-        "Stay inside the active thread topic unless Ken explicitly wants to pivot.",
+        f"Stay inside the active thread topic unless {principal_label} explicitly wants to pivot.",
         "Before finalizing, silently check that the draft still matches the latest inbound subject and concrete ask.",
         "If you mention timing or transport, those details must already exist in the reviewed thread or selected-target memory.",
         f"Target voice: {', '.join(guidance.voice_markers)}.",
         f"Avoid: {', '.join(guidance.avoid_markers)}.",
         f"Recurring phrases, used sparingly: {', '.join(guidance.recurring_phrases)}.",
-        "If uncertain, be clear that Ken needs to confirm.",
+        f"If uncertain, be clear that {principal_label} needs to confirm.",
     ]
     if guidance.text_message_calibration:
         lines.extend(
             [
                 "",
-                "Ken text-message calibration:",
+                f"{principal_label} text-message calibration:",
                 *[
                     f"- {line}"
                     for line in _bounded_prompt_lines(
@@ -1125,7 +1150,10 @@ def _spark_draft_system_prompt(
                 ],
             ]
         )
-    memory_context = _personality_memory_prompt(personality_memory_rows)
+    memory_context = _personality_memory_prompt(
+        personality_memory_rows,
+        principal_label=principal_label,
+    )
     if memory_context:
         lines.extend(
             [
@@ -1180,7 +1208,10 @@ def _spark_draft_system_prompt(
             "Auto operating context for this draft (internal; do not quote or expose):",
             *[f"- {line}" for line in auto_context.prompt_lines],
             "Use Auto context only for priorities, boundaries, and safety posture.",
-            "If Auto context conflicts with Ken's principal voice file, Ken's voice file wins.",
+            (
+                "If Auto context conflicts with "
+                f"{principal_label}'s principal voice file, {principal_label}'s voice file wins."
+            ),
         ]
     )
     return "\n".join(lines)
@@ -1208,6 +1239,7 @@ def _spark_draft_user_message(
 ) -> str:
     latest_inbound = _latest_inbound_message(context)
     latest_question_or_request = _latest_question_or_request(context)
+    principal_label = _principal_label(context.principal_id)
     lines = [
         f"Principal: {context.principal_id}",
         f"Reply goal: {_clean_reply_goal(reply_goal) or 'Draft the next useful reply.'}",
@@ -1232,7 +1264,7 @@ def _spark_draft_user_message(
     if style_adjustments:
         lines.extend(
             [
-                "Style adjustments Ken selected:",
+                f"Style adjustments {principal_label} selected:",
                 *[f"- {adjustment}" for adjustment in style_adjustments],
             ]
         )
@@ -1243,13 +1275,13 @@ def _spark_draft_user_message(
         ]
     )
     for index, message in enumerate(context.messages, start=1):
-        speaker = "Ken" if message.is_from_me else "Other"
+        speaker = principal_label if message.is_from_me else "Other"
         body = _clip_context_message(message.body_text)
         lines.append(f"{index}. {speaker}: {body}")
     lines.extend(
         [
             "",
-            "Write one draft reply Ken can review.",
+            f"Write one draft reply {principal_label} can review.",
             "No send action. No metadata. Draft text only.",
         ]
     )

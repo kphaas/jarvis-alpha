@@ -279,9 +279,23 @@ def load_spark_voice_guidance(
     root = _vault_root(vault_root)
     text = _read_required(root / "spark" / "principals" / principal_id / "voice.md")
     return SparkVoiceGuidance(
-        voice_markers=tuple(_list_after_label(text, "Ken-approved voice markers:")),
+        voice_markers=tuple(
+            _list_after_first_label(
+                text,
+                (
+                    "Approved voice markers:",
+                    "Ken-approved voice markers:",
+                ),
+            )
+        ),
         recurring_phrases=tuple(
-            _list_after_label(text, "Ken-approved recurring phrases:")
+            _list_after_first_label(
+                text,
+                (
+                    "Approved recurring phrases:",
+                    "Ken-approved recurring phrases:",
+                ),
+            )
         ),
         avoid_markers=tuple(_list_after_label(text, "Avoid sounding:")),
         channel_style=_table_after_heading(text, "## Channel Style"),
@@ -541,6 +555,14 @@ def _list_after_label(text: str, label: str) -> list[str]:
         if line.startswith("- "):
             values.append(line.removeprefix("- ").strip())
     return values
+
+
+def _list_after_first_label(text: str, labels: tuple[str, ...]) -> list[str]:
+    for label in labels:
+        values = _list_after_label(text, label)
+        if values:
+            return values
+    return []
 
 
 def _table_after_heading(text: str, heading: str) -> dict[str, str]:
