@@ -359,6 +359,7 @@ def _evidence_transparency_contract(
     official_rejected = official_transparency["rejected_sources"]
     unsupported_rejected = unsupported_transparency["rejected_sources"]
     current_accepted = current_transparency["accepted_sources"]
+    official_score = official_transparency.get("answer_quality_score", {})
     failures: list[str] = []
 
     if not official_accepted or official_accepted[0]["official_host_match"] is not True:
@@ -383,6 +384,10 @@ def _evidence_transparency_contract(
         failures.append("freshness_required")
     if not current_accepted or not current_accepted[0].get("fetched_at"):
         failures.append("fetched_at")
+    if official_score.get("score", 0) < 80:
+        failures.append("answer_quality_score")
+    if official_score.get("rejected_risk_count", 0) < 1:
+        failures.append("answer_quality_rejected_risk_count")
 
     return AnswerEngineEvalResult(
         name="evidence_transparency_surfaces_operator_decisions",
@@ -403,6 +408,7 @@ def _evidence_transparency_contract(
             "current_fetched_at_present": bool(
                 current_accepted and current_accepted[0].get("fetched_at")
             ),
+            "answer_quality_score": official_score,
         },
         failures=tuple(failures),
     )

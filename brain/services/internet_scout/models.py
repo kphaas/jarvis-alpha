@@ -433,6 +433,22 @@ class InternetScoutEvidenceTransparencyItem(BaseModel):
     fetched_at: datetime | None = None
 
 
+class InternetScoutAnswerQualityScore(BaseModel):
+    """Compact evidence-quality rollup for Beacon answer UI."""
+
+    score: int = Field(default=0, ge=0, le=100)
+    label: Literal["strong", "solid", "limited", "low"] = "low"
+    source_diversity_score: int = Field(default=0, ge=0, le=100)
+    official_coverage_score: int = Field(default=0, ge=0, le=100)
+    freshness_score: int = Field(default=0, ge=0, le=100)
+    rejected_risk_score: int = Field(default=0, ge=0, le=100)
+    accepted_source_count: int = Field(default=0, ge=0, le=25)
+    source_host_count: int = Field(default=0, ge=0, le=25)
+    rejected_risk_count: int = Field(default=0, ge=0, le=25)
+    summary: str = Field(default="", max_length=240)
+    warnings: list[str] = Field(default_factory=list, max_length=8)
+
+
 class InternetScoutEvidenceTransparency(BaseModel):
     """Accepted and rejected evidence details for Beacon operator UX."""
 
@@ -447,6 +463,9 @@ class InternetScoutEvidenceTransparency(BaseModel):
     official_source_required: bool = False
     required_source_hosts: list[str] = Field(default_factory=list, max_length=20)
     freshness_required: bool = False
+    answer_quality_score: InternetScoutAnswerQualityScore = Field(
+        default_factory=InternetScoutAnswerQualityScore
+    )
 
 
 class InternetScoutSynthesisContract(BaseModel):
