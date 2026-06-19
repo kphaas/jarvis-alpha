@@ -3,11 +3,16 @@ import {
   CheckCircle2,
   Clock3,
   ExternalLink,
+  Gauge,
   Layers3,
   ShieldCheck,
   XCircle,
 } from 'lucide-react'
-import type { BeaconEvidenceTransparency, BeaconEvidenceTransparencyItem } from '../../types/beacon'
+import type {
+  BeaconAnswerQualityScore,
+  BeaconEvidenceTransparency,
+  BeaconEvidenceTransparencyItem,
+} from '../../types/beacon'
 
 interface Props {
   transparency?: BeaconEvidenceTransparency
@@ -30,6 +35,8 @@ export function BeaconEvidenceTransparencyPanel({ transparency, isDark }: Props)
   const panel = isDark ? 'bg-white/5' : 'bg-white/50'
   const mutedPanel = isDark ? 'bg-black/20' : 'bg-white/40'
   const total = transparency.accepted_sources.length + transparency.rejected_sources.length
+  const answerQualityScore =
+    transparency.answer_quality_score ?? buildAnswerQualityScore(transparency)
   const trustChips = buildTrustChips(transparency)
 
   return (
@@ -41,9 +48,12 @@ export function BeaconEvidenceTransparencyPanel({ transparency, isDark }: Props)
             {transparency.accepted_sources.length} accepted · {transparency.rejected_sources.length} rejected · {total} reviewed
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <PolicyPill label="Official host" active={transparency.official_source_required} />
-          <PolicyPill label="Freshness" active={transparency.freshness_required} />
+        <div className="flex flex-col items-start gap-2 sm:items-end">
+          <AnswerQualityBadge score={answerQualityScore} border={border} />
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            <PolicyPill label="Official host" active={transparency.official_source_required} />
+            <PolicyPill label="Freshness" active={transparency.freshness_required} />
+          </div>
         </div>
       </div>
 
@@ -85,6 +95,66 @@ export function BeaconEvidenceTransparencyPanel({ transparency, isDark }: Props)
       </div>
     </section>
   )
+}
+
+function AnswerQualityBadge({ score, border }: { score: BeaconAnswerQualityScore; border: string }) {
+  const toneClass = answerQualityTone(score.label)
+  const dimensions = [
+    ['Diversity', score.source_diversity_score],
+    ['Official', score.official_coverage_score],
+    ['Freshness', score.freshness_score],
+    ['Rejected risk', score.rejected_risk_score],
+  ] as const
+
+  return (
+    <div
+      className={`w-full min-w-[260px] max-w-[360px] rounded-lg border p-3 sm:w-auto ${border}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className={`flex items-center gap-2 ${toneClass}`}>
+            <Gauge className="h-4 w-4 shrink-0" />
+            <p className="text-xs font-semibold">Answer quality</p>
+          </div>
+          <p className="mt-1 text-[11px] leading-4 opacity-60">{score.summary}</p>
+        </div>
+        <div className="shrink-0 text-right">
+          <p className={`text-lg font-semibold leading-none ${toneClass}`}>{score.score}</p>
+          <p className="mt-1 text-[10px] font-mono uppercase opacity-50">{score.label}</p>
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-1.5">
+        {dimensions.map(([label, value]) => (
+          <ScoreDimension key={label} label={label} value={value} />
+        ))}
+      </div>
+      {score.rejected_risk_count > 0 && (
+        <p className="mt-2 text-[11px] leading-4 text-amber-500">
+          {score.rejected_risk_count} rejected-risk source{score.rejected_risk_count === 1 ? '' : 's'} reviewed.
+        </p>
+      )}
+    </div>
+  )
+}
+
+function ScoreDimension({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded border border-white/10 px-2 py-1">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-[10px] opacity-55">{label}</span>
+        <span className="text-[10px] font-semibold">{value}</span>
+      </div>
+    </div>
+  )
+}
+
+function answerQualityTone(label: BeaconAnswerQualityScore['label']) {
+  return {
+    strong: 'text-emerald-500',
+    solid: 'text-emerald-500',
+    limited: 'text-amber-500',
+    low: 'text-rose-500',
+  }[label]
 }
 
 function EvidenceBucket({
@@ -392,6 +462,87 @@ function buildTrustChips(transparency: BeaconEvidenceTransparency): TrustChip[] 
       icon: rejected.length ? 'layers' : 'check',
     },
   ]
+}
+
+function buildAnswerQualityScore(
+  transparency: BeaconEvidenceTransparency,
+): BeaconAnswerQualityScore {
+  const accepted = transparency.accepted_sources
+  const rejected = transparency.rejected_sources
+  const sourceHosts = new Set(accepted.map((item) => item.host).filter(Boolean))
+  const sourceDiversityScore =
+    sourceHosts.size && accepted.length
+      ? Math.min(100, sourceHosts.size * 45 + accepted.length * 10)
+      : 0
+  const officialMatches = accepted.filter((item) => item.official_host_match).length
+  const officialCoverageScore = !transparency.official_source_required
+    ? 100
+    : officialMatches
+      ? 100
+      : 0
+  const freshnessScore = freshnessRollupScore(transparency, accepted)
+  const rejectedRiskCount = rejected.filter(hasRejectedRisk).length
+  const rejectedRiskScore = rejectedRiskCount
+    ? Math.max(0, 100 - rejectedRiskCount * 20)
+    : 100
+  let score = Math.round(
+    sourceDiversityScore * 0.3
+      + officialCoverageScore * 0.3
+      + freshnessScore * 0.2
+      + rejectedRiskScore * 0.2,
+  )
+  if (!accepted.length) score = Math.min(score, 15)
+  const label = answerQualityLabel(score)
+
+  return {
+    score,
+    label,
+    source_diversity_score: sourceDiversityScore,
+    official_coverage_score: officialCoverageScore,
+    freshness_score: freshnessScore,
+    rejected_risk_score: rejectedRiskScore,
+    accepted_source_count: accepted.length,
+    source_host_count: sourceHosts.size,
+    rejected_risk_count: rejectedRiskCount,
+    summary: fallbackScoreSummary(label),
+    warnings: [],
+  }
+}
+
+function freshnessRollupScore(
+  transparency: BeaconEvidenceTransparency,
+  accepted: BeaconEvidenceTransparencyItem[],
+) {
+  if (!transparency.freshness_required) return 100
+  if (!accepted.length) return 0
+  return Math.round(
+    (accepted.filter((item) => Boolean(item.fetched_at)).length / accepted.length) * 100,
+  )
+}
+
+function hasRejectedRisk(item: BeaconEvidenceTransparencyItem) {
+  return (
+    item.rejection_reasons.length > 0 ||
+    !item.claim_supported ||
+    item.source_quality === 'low_confidence' ||
+    item.source_quality === 'rejected'
+  )
+}
+
+function answerQualityLabel(score: number): BeaconAnswerQualityScore['label'] {
+  if (score >= 85) return 'strong'
+  if (score >= 70) return 'solid'
+  if (score >= 40) return 'limited'
+  return 'low'
+}
+
+function fallbackScoreSummary(label: BeaconAnswerQualityScore['label']) {
+  return {
+    strong: 'Strong evidence coverage across Beacon quality checks.',
+    solid: 'Solid evidence coverage with one dimension to review.',
+    limited: 'Limited evidence coverage. Treat the answer as partially verified.',
+    low: 'Low evidence coverage. Do not treat this answer as verified.',
+  }[label]
 }
 
 function officialChipLabel(transparency: BeaconEvidenceTransparency, matchCount: number) {

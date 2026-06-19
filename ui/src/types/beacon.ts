@@ -123,12 +123,27 @@ export interface BeaconEvidenceTransparencyItem {
   fetched_at?: string | null
 }
 
+export interface BeaconAnswerQualityScore {
+  score: number
+  label: 'strong' | 'solid' | 'limited' | 'low'
+  source_diversity_score: number
+  official_coverage_score: number
+  freshness_score: number
+  rejected_risk_score: number
+  accepted_source_count: number
+  source_host_count: number
+  rejected_risk_count: number
+  summary: string
+  warnings: string[]
+}
+
 export interface BeaconEvidenceTransparency {
   accepted_sources: BeaconEvidenceTransparencyItem[]
   rejected_sources: BeaconEvidenceTransparencyItem[]
   official_source_required: boolean
   required_source_hosts: string[]
   freshness_required: boolean
+  answer_quality_score?: BeaconAnswerQualityScore
 }
 
 export interface BeaconSynthesis {

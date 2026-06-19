@@ -88,6 +88,17 @@ def test_local_llm_response_wraps_evidence_as_untrusted_citations():
         == source.fetched_at
     )
     assert response.evidence_transparency.rejected_sources == []
+    assert response.evidence_transparency.answer_quality_score.score == 74
+    assert response.evidence_transparency.answer_quality_score.label == "solid"
+    assert (
+        response.evidence_transparency.answer_quality_score.source_diversity_score == 80
+    )
+    assert (
+        response.evidence_transparency.answer_quality_score.official_coverage_score
+        == 100
+    )
+    assert response.evidence_transparency.answer_quality_score.freshness_score == 100
+    assert response.evidence_transparency.answer_quality_score.rejected_risk_count == 0
     assert "Research Plan" in response.research_report.report_markdown
     assert "Claim Verification" in response.research_report.report_markdown
     assert "Contradictions" in response.research_report.report_markdown
@@ -152,6 +163,12 @@ def test_local_llm_filters_non_official_sources_for_official_docs_query():
     assert response.quality.official_source_required is True
     assert response.quality.official_source_count == 0
     assert response.quality.rejected_citation_count == 3
+    assert response.evidence_transparency.answer_quality_score.score == 15
+    assert response.evidence_transparency.answer_quality_score.label == "low"
+    assert (
+        response.evidence_transparency.answer_quality_score.official_coverage_score == 0
+    )
+    assert response.evidence_transparency.answer_quality_score.rejected_risk_count == 3
     assert response.quality.required_source_hosts == [
         "openai.com",
         "platform.openai.com",
@@ -219,6 +236,9 @@ def test_local_llm_prefers_official_source_for_official_docs_query():
     assert response.quality.official_source_count == 1
     assert response.quality.rejected_citation_count == 1
     assert response.quality.verified_claim_count == 1
+    assert response.evidence_transparency.answer_quality_score.score == 90
+    assert response.evidence_transparency.answer_quality_score.label == "strong"
+    assert response.evidence_transparency.answer_quality_score.rejected_risk_score == 80
 
 
 def test_local_llm_downgrades_supported_evidence_when_research_coverage_is_missing():

@@ -18,6 +18,13 @@ def test_beacon_evidence_panel_surfaces_trust_chips_and_source_groups() -> None:
     source = TRANSPARENCY_PANEL.read_text(encoding="utf-8")
 
     assert "Why this answer is trustworthy" in source
+    assert "AnswerQualityBadge" in source
+    assert "Answer quality" in source
+    assert "source_diversity_score" in source
+    assert "official_coverage_score" in source
+    assert "freshness_score" in source
+    assert "rejected_risk_score" in source
+    assert "rejected-risk source" in source
     assert "TrustSummaryChip" in source
     assert "buildTrustChips" in source
     assert "Evidence accepted" in source
