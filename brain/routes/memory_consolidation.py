@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 from typing import Literal
-from uuid import NAMESPACE_DNS, UUID, uuid5
+from uuid import NAMESPACE_DNS, UUID, uuid4, uuid5
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from brain.db.rls import rls_connection
+from brain.db.rls import platform_admin_connection, rls_connection
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
 from brain.services.memory_consolidation import collect_memory_consolidation_report
@@ -175,6 +175,92 @@ async def execute_memory_consolidation_proposal(
         status=str(payload.get("status") or "unknown"),
         proposal_id=str(proposal_id),
         result=payload,
+    )
+
+
+@router.post(
+    "/proposals/{proposal_id}/archive",
+    response_model=MemoryConsolidationExecutionResponse,
+)
+async def archive_memory_consolidation_proposal(
+    proposal_id: UUID,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> MemoryConsolidationExecutionResponse:
+    """Dismiss an open reviewed-write proposal without executing it."""
+
+    check_scopes(request, "memory.write", "admin")
+    actor_sub = (
+        str(getattr(request.state, "user_sub", None) or "")
+        or str(getattr(request.state, "user_id", None) or "")
+        or "unknown"
+    )
+    async with platform_admin_connection(source="http", audit_actor=actor_sub) as conn:
+        proposal = await conn.fetchrow(
+            """
+            SELECT
+                p.id,
+                p.executable,
+                p.status,
+                p.approval_queue_id,
+                q.status AS approval_status
+            FROM public.alpha_memory_consolidation_proposals p
+            LEFT JOIN public.alpha_approval_queue q
+              ON q.id = p.approval_queue_id
+            WHERE p.id = $1::uuid
+            FOR UPDATE OF p
+            """,
+            str(proposal_id),
+        )
+        if not proposal:
+            raise HTTPException(status_code=404, detail="proposal_not_found")
+        if not bool(proposal["executable"]) or proposal["status"] not in {
+            "pending_review",
+            "queued",
+            "approved",
+        }:
+            raise HTTPException(status_code=409, detail="proposal_not_open")
+
+        approval_status = proposal["approval_status"]
+        approval_queue_id = proposal["approval_queue_id"]
+        if approval_queue_id and approval_status == "pending":
+            await conn.fetch(
+                "SELECT * FROM public.decide_approval($1::uuid, $2, $3, $4)",
+                str(approval_queue_id),
+                "denied",
+                actor_sub,
+                uuid4().hex,
+            )
+            approval_status = "denied"
+
+        await conn.execute(
+            """
+            UPDATE public.alpha_memory_consolidation_proposals
+               SET status = 'rejected',
+                   updated_at = now()
+             WHERE id = $1::uuid
+            """,
+            str(proposal_id),
+        )
+
+    logger.info(
+        "MEMORY_CONSOLIDATION_PROPOSAL_ARCHIVED",
+        extra={
+            "event": "MEMORY_CONSOLIDATION_PROPOSAL_ARCHIVED",
+            "proposal_id": str(proposal_id),
+            "actor_sub": actor_sub,
+            "approval_status": approval_status,
+        },
+    )
+    return MemoryConsolidationExecutionResponse(
+        status="archived",
+        proposal_id=str(proposal_id),
+        result={
+            "status": "archived",
+            "proposal_status": "rejected",
+            "approval_queue_id": str(approval_queue_id) if approval_queue_id else None,
+            "approval_status": approval_status,
+        },
     )
 
 

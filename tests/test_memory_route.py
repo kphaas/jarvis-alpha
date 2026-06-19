@@ -28,6 +28,8 @@ class FakeMemoryService:
     reviewed: list[tuple[UUID, UUID, str, str, str | None]] = []
     forgotten: list[tuple[UUID, str]] = []
     working_forgets: list[UUID] = []
+    marked_buddy_events: list[tuple[UUID, list[UUID], bool, str]] = []
+    suppressed_buddy_events: list[tuple[UUID, int, bool, str]] = []
 
     async def summarize(
         self,
@@ -191,6 +193,30 @@ class FakeMemoryService:
             ][:limit],
         }
 
+    async def admin_dream_proposals(
+        self,
+        conn: object,
+        *,
+        state: str = "open",
+        limit: int = 50,
+    ) -> list[dict]:
+        return [
+            {
+                "principal_id": "17eaebb1-d614-5558-bf31-df498d7a61b6",
+                "display_name": "Ken",
+                "role": "admin",
+                "proposal_id": "55555555-5555-4555-8555-555555555555",
+                "proposed_action": "promote_episodic_to_semantic",
+                "executable": True,
+                "status": "queued",
+                "approval_queue_id": "66666666-6666-4666-8666-666666666666",
+                "approval_status": "approved",
+                "approval_expires_at": datetime(2026, 6, 18, tzinfo=UTC),
+                "created_at": datetime(2026, 6, 18, tzinfo=UTC),
+                "updated_at": datetime(2026, 6, 18, tzinfo=UTC),
+            }
+        ][:limit]
+
     async def admin_user_memory(
         self,
         conn: object,
@@ -259,6 +285,46 @@ class FakeMemoryService:
             "review_status": "active",
         }
 
+    async def mark_memory_buddy_events_read(
+        self,
+        *,
+        conn: object,
+        user_id: UUID,
+        event_ids: list[UUID] | None = None,
+        high_priority_only: bool = False,
+        marked_by: str = "unknown",
+    ) -> dict:
+        self.marked_buddy_events.append(
+            (user_id, event_ids or [], high_priority_only, marked_by)
+        )
+        return {
+            "status": "marked_read",
+            "marked_count": 2,
+            "marked_ids": [
+                "44444444-4444-4444-8444-444444444444",
+                "77777777-7777-4777-8777-777777777777",
+            ],
+        }
+
+    async def suppress_duplicate_memory_buddy_events(
+        self,
+        *,
+        conn: object,
+        user_id: UUID,
+        window_hours: int = 168,
+        high_priority_only: bool = False,
+        suppressed_by: str = "unknown",
+    ) -> dict:
+        self.suppressed_buddy_events.append(
+            (user_id, window_hours, high_priority_only, suppressed_by)
+        )
+        return {
+            "status": "duplicates_suppressed",
+            "suppressed_count": 1,
+            "suppressed_ids": ["77777777-7777-4777-8777-777777777777"],
+            "window_hours": window_hours,
+        }
+
     async def forget_by_topic(self, conn: object, user_id: UUID, topic: str) -> int:
         self.forgotten.append((user_id, topic))
         return 2
@@ -320,6 +386,7 @@ async def test_memory_telemetry_omits_raw_fact_text(
     assert response.metrics.dream_reviewed_writes_open == 2
     assert response.metrics.dream_approved_waiting_execution == 1
     assert response.metrics.stale_dream_reviewed_writes == 1
+    assert response.state.rag == "red"
     assert response.source_surfaces_7d[0].label == "at0_chat"
     assert response.recent_semantic_saves[0].source_action == "slash_memory_command"
     assert response.recent_semantic_saves[0].buddy_event_id
@@ -367,12 +434,38 @@ async def test_memory_admin_users_lists_principals(
     assert response.users[0].profile_id == "ken"
     assert response.users[0].display_name == "Ken"
     assert response.health.principal_count == 1
+    assert response.health.state.rag == "yellow"
+    assert "open Dream writes 2>0" in response.health.state.reasons
     assert response.health.total_working == 3
     assert response.health.dream_reviewed_writes_open == 2
     assert response.health.last_semantic_write_at == "2026-06-18T00:00:00+00:00"
     assert response.users[0].semantic_count == 1
     assert response.users[0].working_count == 3
     assert response.users[0].dream_approval_mismatch_count == 0
+
+
+@pytest.mark.asyncio
+async def test_memory_admin_dream_proposals_lists_open_queue(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        memory_route,
+        "platform_admin_connection",
+        fake_platform_admin_connection,
+    )
+    monkeypatch.setattr(memory_route, "MemoryService", FakeMemoryService)
+
+    response = await memory_route.list_memory_admin_dream_proposals(
+        request=_request(scopes=["memory.read"]),
+        state="open",
+        limit=50,
+    )
+
+    assert response.status == "ok"
+    assert response.proposals[0].display_name == "Ken"
+    assert response.proposals[0].status == "queued"
+    assert response.proposals[0].approval_status == "approved"
+    assert response.proposals[0].approval_expires_at == "2026-06-18T00:00:00+00:00"
 
 
 @pytest.mark.asyncio
@@ -507,6 +600,50 @@ async def test_review_semantic_memory_requires_scope_and_records_actor(
             "ken",
             "No longer relevant.",
         )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_memory_buddy_controls_require_scope_and_scope_to_memory(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = FakeMemoryService()
+    monkeypatch.setattr(memory_route, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(memory_route, "MemoryService", lambda: service)
+    event_id = UUID("44444444-4444-4444-8444-444444444444")
+
+    with pytest.raises(HTTPException) as exc:
+        await memory_route.mark_memory_buddy_events_read(
+            body=memory_route.MemoryBuddyEventsReadRequest(event_ids=[event_id]),
+            request=_request(),
+        )
+
+    assert exc.value.status_code == 403
+
+    marked = await memory_route.mark_memory_buddy_events_read(
+        body=memory_route.MemoryBuddyEventsReadRequest(
+            event_ids=[event_id],
+            high_priority_only=True,
+        ),
+        request=_request(scopes=["memory.write"]),
+    )
+    suppressed = await memory_route.suppress_duplicate_memory_buddy_events(
+        body=memory_route.MemoryBuddyEventsSuppressRequest(
+            window_hours=24,
+            high_priority_only=True,
+        ),
+        request=_request(scopes=["memory.write"]),
+    )
+
+    assert marked.status == "marked_read"
+    assert marked.marked_count == 2
+    assert suppressed.status == "duplicates_suppressed"
+    assert suppressed.window_hours == 24
+    assert service.marked_buddy_events == [
+        (uuid5(NAMESPACE_DNS, "ken"), [event_id], True, "ken")
+    ]
+    assert service.suppressed_buddy_events == [
+        (uuid5(NAMESPACE_DNS, "ken"), 24, True, "ken")
     ]
 
 

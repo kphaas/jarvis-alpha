@@ -20,6 +20,8 @@ def test_memory_observability_metrics_pass_when_under_slo() -> None:
         "stale_dream_reviewed_writes": 0,
         "dream_approval_mismatch_count": 0,
         "dream_executed_without_ledger": 0,
+        "dream_reviewed_writes_open": 0,
+        "unread_memory_buddy_events": 1,
         "high_priority_buddy_events": 1,
         "dream_approved_waiting_execution": 5,
     }
@@ -59,6 +61,23 @@ def test_memory_observability_metrics_warn_on_queue_pressure() -> None:
     assert violations[0]["severity"] == "warn"
 
 
+def test_memory_observability_metrics_warn_on_open_writes_and_noise() -> None:
+    thresholds = monitor.Thresholds(
+        max_dream_reviewed_writes_open=0,
+        max_unread_memory_buddy_events=2,
+    )
+    status, violations = monitor.evaluate_metrics(
+        {"dream_reviewed_writes_open": 19, "unread_memory_buddy_events": 3},
+        thresholds,
+    )
+
+    assert status == "warn"
+    assert {item["key"] for item in violations} == {
+        "dream_reviewed_writes_open",
+        "unread_memory_buddy_events",
+    }
+
+
 def test_memory_observability_report_suppresses_duplicate_alert() -> None:
     raw = {
         "semantic_metrics": {"pending_review": 99},
@@ -81,6 +100,9 @@ def test_memory_observability_report_suppresses_duplicate_alert() -> None:
     )
 
     assert duplicate["status"] == "fail"
+    assert duplicate["rag"] == "red"
+    assert duplicate["overall"] == "blocked"
+    assert duplicate["thresholds"]["values"]["max_pending_review"] == 10
     assert duplicate["duplicate_suppressed"] is True
     assert duplicate["should_alert"] is False
 
