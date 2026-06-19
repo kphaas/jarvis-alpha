@@ -773,6 +773,58 @@ class MemoryService:
             "marked_ids": marked_ids,
         }
 
+    async def admin_mark_memory_buddy_events_read(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        event_ids: list[UUID] | None = None,
+        high_priority_only: bool = False,
+        marked_by: str = "unknown",
+    ) -> dict[str, Any]:
+        """Mark memory-related Buddy events read across all principals."""
+
+        event_id_values = [str(event_id) for event_id in event_ids or []] or None
+        rows = await conn.fetch(
+            """
+            WITH target AS (
+                SELECT id
+                FROM public.alpha_buddy_events
+                WHERE read = false
+                  AND ($1::uuid[] IS NULL OR id = ANY($1::uuid[]))
+                  AND ($2::boolean = false OR priority >= 3)
+                  AND (
+                    source = 'semantic_memory_review'
+                    OR source = 'memory_observability_monitor'
+                    OR payload ? 'memory_id'
+                    OR title ILIKE '%memory%'
+                  )
+            )
+            UPDATE public.alpha_buddy_events e
+               SET read = true,
+                   payload = jsonb_set(
+                       COALESCE(e.payload, '{}'::jsonb),
+                       '{memory_admin_read}',
+                       jsonb_build_object(
+                           'marked_by', $3,
+                           'marked_at', now()::text
+                       ),
+                       true
+                   )
+              FROM target
+             WHERE e.id = target.id
+            RETURNING e.id::text
+            """,
+            event_id_values,
+            high_priority_only,
+            marked_by,
+        )
+        marked_ids = [str(row["id"]) for row in rows]
+        return {
+            "status": "marked_read",
+            "marked_count": len(marked_ids),
+            "marked_ids": marked_ids,
+        }
+
     async def suppress_duplicate_memory_buddy_events(
         self,
         conn: asyncpg.Connection,
@@ -828,6 +880,71 @@ class MemoryService:
             RETURNING e.id::text
             """,
             str(user_id),
+            window_hours,
+            high_priority_only,
+            suppressed_by,
+        )
+        suppressed_ids = [str(row["id"]) for row in rows]
+        return {
+            "status": "duplicates_suppressed",
+            "suppressed_count": len(suppressed_ids),
+            "suppressed_ids": suppressed_ids,
+            "window_hours": window_hours,
+        }
+
+    async def admin_suppress_duplicate_memory_buddy_events(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        window_hours: int = 168,
+        high_priority_only: bool = False,
+        suppressed_by: str = "unknown",
+    ) -> dict[str, Any]:
+        """Mark duplicate unread memory Buddy events read across all principals."""
+
+        rows = await conn.fetch(
+            """
+            WITH ranked AS (
+                SELECT
+                    id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY
+                            user_id,
+                            COALESCE(source, ''),
+                            COALESCE(payload->>'memory_id', ''),
+                            COALESCE(payload->>'proposal_id', ''),
+                            event_type,
+                            title
+                        ORDER BY created_at DESC, id DESC
+                    ) AS row_rank
+                FROM public.alpha_buddy_events
+                WHERE read = false
+                  AND created_at >= now() - make_interval(hours => $1::int)
+                  AND ($2::boolean = false OR priority >= 3)
+                  AND (
+                    source = 'semantic_memory_review'
+                    OR source = 'memory_observability_monitor'
+                    OR payload ? 'memory_id'
+                    OR title ILIKE '%memory%'
+                  )
+            )
+            UPDATE public.alpha_buddy_events e
+               SET read = true,
+                   payload = jsonb_set(
+                       COALESCE(e.payload, '{}'::jsonb),
+                       '{memory_admin_suppression}',
+                       jsonb_build_object(
+                           'reason', 'duplicate',
+                           'suppressed_by', $3,
+                           'suppressed_at', now()::text
+                       ),
+                       true
+                   )
+              FROM ranked
+             WHERE e.id = ranked.id
+               AND ranked.row_rank > 1
+            RETURNING e.id::text
+            """,
             window_hours,
             high_priority_only,
             suppressed_by,

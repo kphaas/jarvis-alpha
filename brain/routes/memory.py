@@ -581,6 +581,35 @@ async def mark_memory_buddy_events_read(
 
 
 @router.post(
+    "/v1/memory/admin/buddy-events/read",
+    response_model=MemoryBuddyEventActionResponse,
+)
+async def admin_mark_memory_buddy_events_read(
+    body: MemoryBuddyEventsReadRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> MemoryBuddyEventActionResponse:
+    check_scopes(request, "memory.write", "admin")
+    actor = _review_actor(request)
+    async with platform_admin_connection(source="http", audit_actor=actor) as conn:
+        result = await MemoryService().admin_mark_memory_buddy_events_read(
+            conn=conn,
+            event_ids=body.event_ids,
+            high_priority_only=body.high_priority_only,
+            marked_by=actor,
+        )
+    logger.info(
+        "MEMORY_ADMIN_BUDDY_EVENTS_MARKED_READ",
+        extra={
+            "event": "MEMORY_ADMIN_BUDDY_EVENTS_MARKED_READ",
+            "marked_count": int(result.get("marked_count") or 0),
+            "high_priority_only": body.high_priority_only,
+        },
+    )
+    return MemoryBuddyEventActionResponse(**result)
+
+
+@router.post(
     "/v1/memory/buddy-events/suppress-duplicates",
     response_model=MemoryBuddyEventActionResponse,
 )
@@ -604,6 +633,36 @@ async def suppress_duplicate_memory_buddy_events(
         extra={
             "event": "MEMORY_BUDDY_DUPLICATES_SUPPRESSED",
             "user_id": str(uid),
+            "suppressed_count": int(result.get("suppressed_count") or 0),
+            "window_hours": body.window_hours,
+            "high_priority_only": body.high_priority_only,
+        },
+    )
+    return MemoryBuddyEventActionResponse(**result)
+
+
+@router.post(
+    "/v1/memory/admin/buddy-events/suppress-duplicates",
+    response_model=MemoryBuddyEventActionResponse,
+)
+async def admin_suppress_duplicate_memory_buddy_events(
+    body: MemoryBuddyEventsSuppressRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> MemoryBuddyEventActionResponse:
+    check_scopes(request, "memory.write", "admin")
+    actor = _review_actor(request)
+    async with platform_admin_connection(source="http", audit_actor=actor) as conn:
+        result = await MemoryService().admin_suppress_duplicate_memory_buddy_events(
+            conn=conn,
+            window_hours=body.window_hours,
+            high_priority_only=body.high_priority_only,
+            suppressed_by=actor,
+        )
+    logger.info(
+        "MEMORY_ADMIN_BUDDY_DUPLICATES_SUPPRESSED",
+        extra={
+            "event": "MEMORY_ADMIN_BUDDY_DUPLICATES_SUPPRESSED",
             "suppressed_count": int(result.get("suppressed_count") or 0),
             "window_hours": body.window_hours,
             "high_priority_only": body.high_priority_only,
