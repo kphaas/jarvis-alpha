@@ -307,8 +307,9 @@ def _response_style_prompt(
     ]
     if surface == "voice":
         lines.append(
-            "- Surface: Voice. Use one or two short spoken paragraphs. No markdown "
-            "headings unless Ken explicitly asks for a structured list."
+            "- Surface: Voice. Default to one or two conversational sentences. "
+            "Answer like a quick back-and-forth, not a report. Skip markdown, "
+            "headings, source names, and long setup unless Ken explicitly asks."
         )
     elif surface == "avatar":
         lines.append(
@@ -322,6 +323,28 @@ def _response_style_prompt(
     if style:
         lines.append(f"- Personality: {style}")
     return "\n".join(lines)
+
+
+def _should_short_circuit_web_suggestion(
+    suggestion: WebSuggestion | None,
+) -> bool:
+    if not suggestion:
+        return False
+    return suggestion.reason in {
+        "sports_schedule_likely",
+        "current_information_likely",
+    }
+
+
+def _web_verification_required_response(
+    suggestion: WebSuggestion,
+    response_surface: AskResponseSurface,
+) -> str:
+    if response_surface == "voice":
+        return "I need Beacon to check that before I answer. Turn on Web search for this one and I’ll give you the verified time."
+    if suggestion.reason == "sports_schedule_likely":
+        return "I need Beacon to check that before I answer. Use Web search for this one and I’ll give you the verified time."
+    return "I need Beacon to verify that before I answer. Use Web search and I’ll keep it tight."
 
 
 def _should_short_circuit_internet_response(
@@ -1293,6 +1316,36 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 thread_id=thread_id,
             )
             yield f"data: {json.dumps(payload)}\n\n"
+
+        if (
+            web_suggestion
+            and not internet_context
+            and _should_short_circuit_web_suggestion(web_suggestion)
+        ):
+            deterministic_text = _web_verification_required_response(
+                web_suggestion,
+                body.response_surface,
+            )
+            async for chunk in _stream_deterministic_response(
+                text=deterministic_text,
+                model_label=BEACON_INSUFFICIENT_MODEL,
+                thread_id=thread_id,
+            ):
+                yield chunk
+
+            latency = int((time.monotonic() - start) * 1000)
+            await _save_message(
+                request,
+                thread_id,
+                user_id,
+                "assistant",
+                deterministic_text,
+                model_used=BEACON_INSUFFICIENT_MODEL,
+                memory_injected=False,
+                latency_ms=latency,
+                internet_metadata=_web_suggestion_message_metadata(web_suggestion),
+            )
+            return
 
         if _should_short_circuit_internet_response(internet_context):
             assert internet_context is not None
