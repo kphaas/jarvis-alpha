@@ -12,6 +12,7 @@ from brain.services.internet_scout.official_hosts import (
     official_hosts_for_target,
 )
 from brain.services.internet_scout.models import (
+    InternetScoutFocusMode,
     InternetScoutResearchPlan,
     InternetScoutResearchQuery,
     InternetScoutResearchStopCriteria,
@@ -80,12 +81,15 @@ def plan_research(
     """Build a bounded search strategy before Gateway-owned egress."""
     search_text = _collapse_whitespace(request.query or "")
     query = _normalize(search_text)
+    focus_mode = request.focus_mode
     max_searches = _max_searches(request=request, selected_tool=selected_tool)
-    intent = _intent_for_query(query)
-    authority_required = _authority_required(query=query, intent=intent)
-    freshness_required = any(marker in query for marker in _FRESHNESS_MARKERS)
-    primary_source_required = authority_required or any(
-        marker in query for marker in _PRIMARY_SOURCE_MARKERS
+    intent = _intent_for_query(query, focus_mode=focus_mode)
+    authority_required = _authority_required(
+        query=query, intent=intent, focus_mode=focus_mode
+    )
+    freshness_required = _freshness_required(query=query, focus_mode=focus_mode)
+    primary_source_required = _primary_source_required(
+        query=query, authority_required=authority_required, focus_mode=focus_mode
     )
     provider_strategy = _provider_strategy(
         request=request,
@@ -112,6 +116,7 @@ def plan_research(
         max_searches=max_searches,
         authority_required=authority_required,
         freshness_required=freshness_required,
+        focus_mode=focus_mode,
     )
     expected_source_types = _expected_source_types(
         query=query,
@@ -119,6 +124,7 @@ def plan_research(
         authority_required=authority_required,
         freshness_required=freshness_required,
         primary_source_required=primary_source_required,
+        focus_mode=focus_mode,
     )
     stop_criteria = _stop_criteria(
         intent=intent,
@@ -138,10 +144,12 @@ def plan_research(
         searches=searches,
         expected_source_types=expected_source_types,
         stop_criteria=stop_criteria,
+        focus_mode=focus_mode,
     )
     notes = [
         f"research_plan:{plan_id}",
         f"research_intent:{intent}",
+        f"focus_mode:{focus_mode}",
         f"search_budget:{len(searches)}",
     ]
     if authority_required:
@@ -179,8 +187,12 @@ def _max_searches(
 ) -> int:
     if selected_tool != InternetTool.SEARCH or not request.query:
         return 1
-    if request.requester.endswith(".deep_research"):
+    if request.focus_mode == "deep_research" or request.requester.endswith(
+        ".deep_research"
+    ):
         return min(max(request.max_pages, 3), 6)
+    if request.focus_mode in {"official", "academic"}:
+        return min(max(request.max_pages, 2), 3)
     return 1
 
 
@@ -192,7 +204,11 @@ def _provider_strategy(
 ) -> SearchProviderStrategy:
     if selected_tool != InternetTool.SEARCH or not request.query:
         return "auto"
-    if request.requester.endswith(".deep_research") or max_searches > 1:
+    if (
+        request.focus_mode == "deep_research"
+        or request.requester.endswith(".deep_research")
+        or max_searches > 1
+    ):
         return "fanout"
     return "auto"
 
@@ -207,8 +223,12 @@ def _max_extracts(
 ) -> int:
     if selected_tool != InternetTool.SEARCH or not request.query:
         return 0
-    if request.requester.endswith(".deep_research"):
+    if request.focus_mode == "deep_research" or request.requester.endswith(
+        ".deep_research"
+    ):
         return min(max(request.max_pages, 2), 4)
+    if request.focus_mode in {"official", "academic", "news_current", "shopping"}:
+        return 1
     if authority_required or freshness_required:
         return 1
     if max_searches > 1:
@@ -224,6 +244,7 @@ def _queries_for_intent(
     max_searches: int,
     authority_required: bool,
     freshness_required: bool,
+    focus_mode: InternetScoutFocusMode,
 ) -> list[InternetScoutResearchQuery]:
     if not query:
         return []
@@ -263,6 +284,31 @@ def _queries_for_intent(
                     required=True,
                 )
             )
+
+    if focus_mode == "shopping":
+        planned.append(
+            InternetScoutResearchQuery(
+                query=_bounded_query(f"{query} pricing official current"),
+                purpose="primary_source",
+                required=True,
+            )
+        )
+    elif focus_mode == "academic":
+        planned.append(
+            InternetScoutResearchQuery(
+                query=_bounded_query(f"{query} research primary source study"),
+                purpose="primary_source",
+                required=True,
+            )
+        )
+    elif focus_mode == "news_current":
+        planned.append(
+            InternetScoutResearchQuery(
+                query=_bounded_query(f"{query} latest primary source"),
+                purpose="recency",
+                required=True,
+            )
+        )
 
     if freshness_required:
         planned.append(
@@ -312,6 +358,7 @@ def _expected_source_types(
     authority_required: bool,
     freshness_required: bool,
     primary_source_required: bool,
+    focus_mode: InternetScoutFocusMode,
 ) -> list[ResearchSourceType]:
     source_types: list[ResearchSourceType] = []
     if authority_required or intent == "official_docs":
@@ -328,6 +375,12 @@ def _expected_source_types(
         source_types.append("security_advisory")
     if "status" in query:
         source_types.append("status_page")
+    if focus_mode == "shopping":
+        source_types.append("pricing")
+    if focus_mode == "academic":
+        source_types.extend(["primary_source", "trusted_secondary"])
+    if focus_mode == "news_current":
+        source_types.append("trusted_secondary")
     if not source_types:
         source_types.append("general_web")
     if "trusted_secondary" not in source_types and intent == "comparison":
@@ -403,10 +456,12 @@ def _plan_id(
     searches: list[InternetScoutResearchQuery],
     expected_source_types: list[ResearchSourceType],
     stop_criteria: InternetScoutResearchStopCriteria,
+    focus_mode: InternetScoutFocusMode,
 ) -> str:
     payload = {
         "query": query,
         "intent": intent,
+        "focus_mode": focus_mode,
         "searches": [
             {
                 "query": item.query,
@@ -467,7 +522,13 @@ def _comparison_target_queries(query: str) -> list[InternetScoutResearchQuery]:
     return searches
 
 
-def _intent_for_query(query: str) -> ResearchIntent:
+def _intent_for_query(
+    query: str, *, focus_mode: InternetScoutFocusMode
+) -> ResearchIntent:
+    if focus_mode == "official":
+        return "official_docs"
+    if focus_mode in {"news_current", "local_weather"}:
+        return "current_fact"
     if any(marker in query for marker in _COMPARISON_MARKERS):
         return "comparison"
     if any(marker in query for marker in _OFFICIAL_MARKERS):
@@ -479,10 +540,35 @@ def _intent_for_query(query: str) -> ResearchIntent:
     return "general"
 
 
-def _authority_required(*, query: str, intent: ResearchIntent) -> bool:
+def _authority_required(
+    *,
+    query: str,
+    intent: ResearchIntent,
+    focus_mode: InternetScoutFocusMode,
+) -> bool:
     return (
-        intent in {"official_docs", "current_fact"}
+        focus_mode in {"official", "academic"}
+        or intent in {"official_docs", "current_fact"}
         or any(marker in query for marker in _OFFICIAL_MARKERS)
+        or any(marker in query for marker in _PRIMARY_SOURCE_MARKERS)
+    )
+
+
+def _freshness_required(*, query: str, focus_mode: InternetScoutFocusMode) -> bool:
+    return focus_mode in {"news_current", "local_weather", "shopping"} or any(
+        marker in query for marker in _FRESHNESS_MARKERS
+    )
+
+
+def _primary_source_required(
+    *,
+    query: str,
+    authority_required: bool,
+    focus_mode: InternetScoutFocusMode,
+) -> bool:
+    return (
+        authority_required
+        or focus_mode in {"academic", "shopping"}
         or any(marker in query for marker in _PRIMARY_SOURCE_MARKERS)
     )
 

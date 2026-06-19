@@ -3,7 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Zap, Home, Newspaper, Network,
-  Activity, Bug, Bot, Terminal,
+  Activity, Bug, Bot, Terminal, Globe,
   ShieldAlert, ShieldCheck, DollarSign,
   FileText, Settings, Moon, Sun,
   User, ChevronRight, Lock, Unlock, RefreshCw,
@@ -23,6 +23,7 @@ const NAV = [
   ]},
   { group: 'OPERATE', items: [
     { to: '/health',    label: 'Health',       icon: Activity      },
+    { to: '/beacon',    label: 'Beacon',       icon: Globe         },
     { to: '/errors',    label: 'Errors & Logs',icon: Bug           },
     { to: '/mesh',      label: 'Mesh',         icon: Network       },
     { to: '/agents',    label: 'Agents',       icon: Bot           },

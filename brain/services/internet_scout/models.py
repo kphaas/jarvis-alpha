@@ -43,6 +43,15 @@ ResearchIntent = Literal[
     "troubleshooting",
     "general",
 ]
+InternetScoutFocusMode = Literal[
+    "all",
+    "official",
+    "news_current",
+    "shopping",
+    "academic",
+    "local_weather",
+    "deep_research",
+]
 ResearchQueryPurpose = Literal[
     "baseline",
     "official_source",
@@ -84,6 +93,7 @@ class InternetScoutRequest(BaseModel):
     query: str | None = Field(default=None, max_length=2000)
     urls: list[str] = Field(default_factory=list, max_length=20)
     tool_hint: InternetTool | None = None
+    focus_mode: InternetScoutFocusMode = "all"
     max_pages: int = Field(default=1, ge=1, le=50)
     max_depth: int = Field(default=0, ge=0, le=5)
     needs_interaction: bool = False

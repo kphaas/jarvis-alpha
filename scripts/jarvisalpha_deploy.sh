@@ -321,6 +321,34 @@ else:
     fi
   fi
 
+  if [[ "${JARVIS_SKIP_BEACON_ANSWER_EVAL:-0}" == "1" || "${JARVIS_ALPHA_SKIP_BEACON_ANSWER_EVAL:-0}" == "1" ]]; then
+    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "beacon answer eval" "SKIPPED (JARVIS_SKIP_BEACON_ANSWER_EVAL=1)" ""
+  else
+    local answer_eval_start=$SECONDS
+    local answer_eval_out
+    local answer_eval_ec
+
+    answer_eval_out=$(
+      cd "$REPO_DIR" && uv run --python 3.12 python scripts/eval_beacon_answer_engine.py 2>&1
+    )
+    answer_eval_ec=$?
+    if [ $answer_eval_ec -ne 0 ]; then
+      step_fail "beacon answer eval" "failed"
+      echo "$answer_eval_out" >&2
+      smoke_failed=1
+    else
+      local answer_eval_summary
+      answer_eval_summary=$(printf '%s\n' "$answer_eval_out" | tail -1 | python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+print(f"{payload.get('passed', 0)} checks passed")
+' 2>/dev/null || true)
+      step_ok "beacon answer eval" "${answer_eval_summary:-passed}" "$(fmt_s $((SECONDS - answer_eval_start)))"
+    fi
+  fi
+
   return $smoke_failed
 }
 
