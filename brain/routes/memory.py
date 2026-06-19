@@ -6,7 +6,7 @@ from uuid import NAMESPACE_DNS, UUID, uuid5
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from brain.db.rls import rls_connection
+from brain.db.rls import platform_admin_connection, rls_connection
 from brain.memory.memory import MemoryService, SEMANTIC_CAP
 from brain.memory.semantic_commands import (
     MemoryCategory,
@@ -129,6 +129,45 @@ class MemoryTelemetryResponse(BaseModel):
     categories_7d: list[MemoryTelemetryCount]
     recent_semantic_saves: list[MemoryTelemetrySemanticEvent]
     recent_buddy_events: list[MemoryTelemetryBuddyEvent]
+    recent_dream_proposals: list[MemoryTelemetryDreamProposal] = Field(
+        default_factory=list
+    )
+
+
+class MemoryAdminUserInventoryItem(BaseModel):
+    principal_id: str
+    profile_id: str | None = None
+    display_name: str
+    role: str
+    child_age: int | None = None
+    aliases: list[str] = Field(default_factory=list)
+    semantic_count: int = 0
+    semantic_review_count: int = 0
+    working_count: int = 0
+    episodic_count: int = 0
+    dream_reviewed_writes_open: int = 0
+    dream_approval_mismatch_count: int = 0
+    last_activity_at: str | None = None
+
+
+class MemoryAdminUsersResponse(BaseModel):
+    status: Literal["ok"] = "ok"
+    users: list[MemoryAdminUserInventoryItem]
+
+
+class MemoryAdminUserDetailResponse(BaseModel):
+    status: Literal["ok"] = "ok"
+    principal_id: str
+    profile_id: str | None = None
+    display_name: str
+    role: str
+    aliases: list[str] = Field(default_factory=list)
+    semantic_count: int
+    semantic_review_count: int = 0
+    episodic_count: int
+    working_count: int
+    semantic: list[SemanticMemoryItem]
+    working: list[WorkingMemoryItem]
     recent_dream_proposals: list[MemoryTelemetryDreamProposal] = Field(
         default_factory=list
     )
@@ -261,6 +300,75 @@ async def get_memory_telemetry(
     )
 
 
+@router.get("/v1/memory/admin/users", response_model=MemoryAdminUsersResponse)
+async def list_memory_admin_users(
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=200),
+    _user_id: str = Depends(require_auth),
+) -> MemoryAdminUsersResponse:
+    check_scopes(request, "memory.read", "admin")
+    async with platform_admin_connection(
+        source="http",
+        audit_actor=_review_actor(request),
+    ) as conn:
+        inventory = await MemoryService().admin_inventory(conn=conn, limit=limit)
+    return MemoryAdminUsersResponse(
+        users=[
+            _admin_user_inventory_item(row)
+            for row in _list_of_dicts(inventory.get("users"))
+        ],
+    )
+
+
+@router.get(
+    "/v1/memory/admin/users/{principal_id}",
+    response_model=MemoryAdminUserDetailResponse,
+)
+async def get_memory_admin_user_detail(
+    principal_id: str,
+    request: Request,
+    semantic_limit: int = Query(default=100, ge=1, le=200),
+    working_limit: int = Query(default=50, ge=1, le=100),
+    proposal_limit: int = Query(default=25, ge=1, le=50),
+    _user_id: str = Depends(require_auth),
+) -> MemoryAdminUserDetailResponse:
+    check_scopes(request, "memory.read", "admin")
+    principal_uuid = _principal_uuid(principal_id)
+    aliases = _principal_aliases(principal_id, principal_uuid)
+    async with platform_admin_connection(
+        source="http",
+        audit_actor=_review_actor(request),
+    ) as conn:
+        service = MemoryService()
+        inventory = await service.admin_inventory(conn=conn, limit=200)
+        snapshot = await service.admin_user_memory(
+            conn=conn,
+            principal_id=principal_uuid,
+            principal_aliases=aliases,
+            semantic_limit=semantic_limit,
+            working_limit=working_limit,
+            proposal_limit=proposal_limit,
+        )
+    inventory_item = _find_inventory_item(inventory, principal_uuid, aliases)
+    return MemoryAdminUserDetailResponse(
+        principal_id=str(principal_uuid),
+        profile_id=_optional_str(inventory_item.get("profile_id")),
+        display_name=str(inventory_item.get("display_name") or principal_id),
+        role=str(inventory_item.get("role") or "unknown"),
+        aliases=_list_of_strings(inventory_item.get("aliases")) or aliases,
+        semantic_count=int(snapshot["semantic_count"]),
+        semantic_review_count=int(snapshot["semantic_review_count"]),
+        episodic_count=int(snapshot["episodic_count"]),
+        working_count=int(snapshot["working_count"]),
+        semantic=[_semantic_item(row) for row in snapshot["semantic"]],
+        working=[_working_item(row) for row in snapshot["working"]],
+        recent_dream_proposals=[
+            _telemetry_dream_proposal(row)
+            for row in _list_of_dicts(snapshot.get("recent_dream_proposals"))
+        ],
+    )
+
+
 @router.post("/v1/memory/semantic", response_model=SaveSemanticMemoryResponse)
 async def save_semantic_memory(
     body: SaveSemanticMemoryRequest,
@@ -377,6 +485,17 @@ def _request_user_uuid(request: Request) -> UUID:
         return uuid5(NAMESPACE_DNS, str(user_id))
 
 
+def _principal_uuid(principal_id: str) -> UUID:
+    try:
+        return UUID(str(principal_id))
+    except ValueError:
+        return uuid5(NAMESPACE_DNS, str(principal_id))
+
+
+def _principal_aliases(principal_id: str, principal_uuid: UUID) -> list[str]:
+    return sorted({str(principal_id), str(principal_uuid)})
+
+
 def _save_provenance(
     request: Request,
     body: SaveSemanticMemoryRequest,
@@ -477,6 +596,47 @@ def _telemetry_dream_proposal(row: dict) -> MemoryTelemetryDreamProposal:
     )
 
 
+def _admin_user_inventory_item(row: dict) -> MemoryAdminUserInventoryItem:
+    return MemoryAdminUserInventoryItem(
+        principal_id=str(row.get("principal_id") or ""),
+        profile_id=_optional_str(row.get("profile_id")),
+        display_name=str(row.get("display_name") or "Unknown principal"),
+        role=str(row.get("role") or "unknown"),
+        child_age=_optional_int(row.get("child_age")),
+        aliases=_list_of_strings(row.get("aliases")),
+        semantic_count=int(row.get("semantic_count") or 0),
+        semantic_review_count=int(row.get("semantic_review_count") or 0),
+        working_count=int(row.get("working_count") or 0),
+        episodic_count=int(row.get("episodic_count") or 0),
+        dream_reviewed_writes_open=int(row.get("dream_reviewed_writes_open") or 0),
+        dream_approval_mismatch_count=int(
+            row.get("dream_approval_mismatch_count") or 0
+        ),
+        last_activity_at=_iso(row.get("last_activity_at")),
+    )
+
+
+def _find_inventory_item(
+    inventory: dict[str, object],
+    principal_uuid: UUID,
+    aliases: list[str],
+) -> dict:
+    principal_key = str(principal_uuid)
+    alias_set = set(aliases)
+    for row in _list_of_dicts(inventory.get("users")):
+        row_aliases = set(_list_of_strings(row.get("aliases")))
+        if str(row.get("principal_id") or "") == principal_key or bool(
+            alias_set & row_aliases
+        ):
+            return row
+    return {
+        "principal_id": principal_key,
+        "display_name": aliases[0],
+        "role": "unknown",
+        "aliases": aliases,
+    }
+
+
 def _iso(value: object) -> str | None:
     isoformat = getattr(value, "isoformat", None)
     if callable(isoformat):
@@ -488,6 +648,15 @@ def _optional_str(value: object) -> str | None:
     return str(value) if value else None
 
 
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _dict_value(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
@@ -496,6 +665,12 @@ def _list_of_dicts(value: object) -> list[dict]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _list_of_strings(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item]
 
 
 def _review_status(
