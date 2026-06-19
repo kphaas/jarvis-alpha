@@ -7,6 +7,8 @@ from typing import Literal
 
 from brain.services.internet_scout.models import (
     InternetScoutCitationQualitySummary,
+    InternetScoutEvidenceTransparency,
+    InternetScoutEvidenceTransparencyItem,
     InternetScoutLocalLLMCitation,
     InternetScoutLocalLLMResponse,
     InternetScoutMemoryBoundary,
@@ -15,10 +17,12 @@ from brain.services.internet_scout.models import (
     InternetScoutSourceRanking,
     InternetScoutSynthesisContract,
     InternetScoutStoredResponse,
+    SourceReference,
     SourceQualityLevel,
 )
 from brain.services.internet_scout.source_quality import (
     CitationQualityEvaluation,
+    EvaluatedCitation,
     evaluate_citation_quality,
 )
 
@@ -69,6 +73,11 @@ def build_local_llm_response(
         synthesis=synthesis,
         memory_boundary=memory_boundary,
         research_report=research_report,
+        evidence_transparency=_evidence_transparency(
+            stored=stored,
+            citations=citations,
+            evaluation=evaluation,
+        ),
         answer_context=_answer_context(citations, query=stored.evidence.request.query),
     )
 
@@ -531,6 +540,77 @@ def _source_rankings(
             )
         )
     return rankings
+
+
+def _evidence_transparency(
+    *,
+    stored: InternetScoutStoredResponse,
+    citations: list[InternetScoutLocalLLMCitation],
+    evaluation: CitationQualityEvaluation,
+) -> InternetScoutEvidenceTransparency:
+    source_by_url = {source.url: source for source in stored.evidence.sources}
+    ranked_by_key = {
+        (citation.source_url, citation.content_hash): citation for citation in citations
+    }
+    items: list[InternetScoutEvidenceTransparencyItem] = []
+
+    for evaluated in evaluation.evaluated[:25]:
+        ranked = ranked_by_key.get(
+            (evaluated.citation.source_url, evaluated.citation.content_hash)
+        )
+        citation = ranked or evaluated.citation.model_copy(
+            update={"source_score": _source_score(evaluated.citation)}
+        )
+        source = source_by_url.get(citation.source_url)
+        items.append(
+            _evidence_transparency_item(
+                citation=citation,
+                source=source,
+                evaluated=evaluated,
+                quality=evaluation.summary,
+                freshness_required=stored.plan.research.freshness_required,
+            )
+        )
+
+    accepted = [item for item in items if item.accepted]
+    rejected = [item for item in items if not item.accepted]
+    return InternetScoutEvidenceTransparency(
+        accepted_sources=accepted[:25],
+        rejected_sources=rejected[:25],
+        official_source_required=evaluation.summary.official_source_required,
+        required_source_hosts=evaluation.summary.required_source_hosts,
+        freshness_required=stored.plan.research.freshness_required,
+    )
+
+
+def _evidence_transparency_item(
+    *,
+    citation: InternetScoutLocalLLMCitation,
+    source: SourceReference | None,
+    evaluated: EvaluatedCitation,
+    quality: InternetScoutCitationQualitySummary,
+    freshness_required: bool,
+) -> InternetScoutEvidenceTransparencyItem:
+    return InternetScoutEvidenceTransparencyItem(
+        source_url=citation.source_url,
+        host=citation.host,
+        content_hash=citation.content_hash,
+        citation_text=citation.citation_text,
+        claim=citation.claim,
+        accepted=evaluated.accepted,
+        rejection_reasons=list(evaluated.rejection_reasons),
+        confidence=citation.confidence,
+        source_quality=citation.source_quality,
+        source_rank=citation.source_rank,
+        source_score=citation.source_score,
+        quality_reasons=citation.quality_reasons,
+        claim_supported=evaluated.claim_supported,
+        claim_support_reasons=list(evaluated.claim_support_reasons),
+        official_source_required=quality.official_source_required,
+        official_host_match=citation.source_quality == "official",
+        freshness_required=freshness_required,
+        fetched_at=source.fetched_at if source else None,
+    )
 
 
 def _source_score(citation: InternetScoutLocalLLMCitation) -> int:

@@ -139,6 +139,15 @@ def _run_case(case: SearchQualityEvalCase) -> SearchQualityEvalResult:
             "research_report_coverage_warnings": (
                 response.research_report.coverage_warnings
             ),
+            "evidence_transparency": response.evidence_transparency.model_dump(
+                mode="json"
+            ),
+            "evidence_transparency_accepted_hosts": [
+                item.host for item in response.evidence_transparency.accepted_sources
+            ],
+            "evidence_transparency_rejected_hosts": [
+                item.host for item in response.evidence_transparency.rejected_sources
+            ],
             "answer_context": response.answer_context,
             "automatic_memory_write_allowed": (
                 response.memory_boundary.automatic_memory_write_allowed

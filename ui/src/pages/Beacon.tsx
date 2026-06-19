@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { PlayCircle, RefreshCw, Search } from 'lucide-react'
 import { BeaconAnswerSummary } from '../components/beacon/BeaconAnswerSummary'
+import { BeaconEvidenceTransparencyPanel } from '../components/beacon/BeaconEvidenceTransparencyPanel'
 import { BeaconHealthRail } from '../components/beacon/BeaconHealthRail'
 import { BeaconModeSelector } from '../components/beacon/BeaconModeSelector'
 import { BeaconResearchPlanStrip } from '../components/beacon/BeaconResearchPlanStrip'
@@ -130,6 +131,7 @@ export default function Beacon() {
         <div className="space-y-5">
           <BeaconAnswerSummary result={result} isDark={isDark} />
           <BeaconResearchPlanStrip plan={result.plan.research} report={result.research_report} isDark={isDark} />
+          <BeaconEvidenceTransparencyPanel transparency={result.evidence_transparency} isDark={isDark} />
           <BeaconSourceCards citations={result.citations} quality={result.quality} isDark={isDark} />
         </div>
       )}
