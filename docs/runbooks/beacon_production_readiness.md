@@ -24,12 +24,18 @@ Longer-term industry gap closure is tracked in
 Gateway:
 
 - `GATEWAY_TOKEN` or service token accepted by Gateway
-- Two search provider keys for production readiness:
+- Optional free/private metasearch provider:
+  - `SEARXNG_BASE_URL`
+  - `SEARXNG_API_KEY` when the self-hosted instance requires bearer auth
+- Paid/fallback search provider keys:
   - `BRAVE_SEARCH_API_KEY` or `BRAVE_API_KEY`
   - `PERPLEXITY_API_KEY`
 - `BEACON_MIN_USABLE_SEARCH_PROVIDERS=2` for redundant provider readiness
-- Optional provider order: `BEACON_SEARCH_PROVIDER_ORDER=brave,perplexity`
+- Optional provider order:
+  `BEACON_SEARCH_PROVIDER_ORDER=searxng,brave,perplexity`
 - Provider spend guards:
+  - `BEACON_SEARXNG_DAILY_SEARCH_LIMIT=200`
+  - `BEACON_SEARXNG_MONTHLY_SEARCH_LIMIT=5000`
   - `BEACON_BRAVE_DAILY_SEARCH_LIMIT=50`
   - `BEACON_BRAVE_MONTHLY_SEARCH_LIMIT=1000`
   - `BEACON_PERPLEXITY_DAILY_SEARCH_LIMIT=3`

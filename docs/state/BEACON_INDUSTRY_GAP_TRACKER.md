@@ -58,7 +58,7 @@ References:
 |---|---|---|---|
 | Perplexity-class UX | Users do not yet get a polished answer-engine surface with focus modes, session history, source cards, confidence, and limitations in one place. | Not started | Beacon UI has search mode controls, source cards, history, confidence, warning chips, and deep research report rendering. |
 | UX visibility into evidence | Source ranking exists, but the UI does not yet make "why this source" obvious enough. | Partial | UI shows source quality, official/primary/general badges, rejected-source reasons, freshness, and citation support status. |
-| Private/free metasearch | No self-hosted SearXNG-style provider tier before Brave. | Not started | Gateway has SearXNG provider adapter, health, spend-free routing, tests, and smoke coverage. |
+| Private/free metasearch | No self-hosted SearXNG-style provider tier before Brave. | Partial | Gateway has SearXNG provider adapter, health, spend-free routing, tests, and smoke coverage. |
 | Deep research productization | Contracts, planner, reports, and canaries exist, but the user flow is not yet a rich research cockpit. | Partial | UI shows plan, subquestions, progress, coverage warnings, report, source table, and export path. |
 | Research benchmark breadth | Deterministic quality canaries exist, but not a broader industry-style benchmark suite with latency, cost, citation precision, and refusal quality. | Partial | Eval harness covers current facts, official docs, local/weather, shopping, adversarial pages, and insufficient-evidence refusal. |
 | Durable web cache/index | Beacon stores evidence, but it does not yet have a Tavily-like reusable crawl/index/cache layer for speed and cost reduction. | Not started | Evidence cache has TTL, dedupe, reuse policy, optional embeddings/rerank index, and cache hit telemetry. |
@@ -74,7 +74,7 @@ References:
 |---:|---|---|---|
 | 0 | Keep this tracker current | In progress | Every Beacon web-agent PR updates this file when it changes a tracked gap. |
 | 1 | Merge/deploy #483 browser-action executor hardening | PR ready | Approved runner has strict same-host allowlist, caps, no forms/downloads/credentials, per-action audit, and post-deploy smoke. |
-| 2 | Add SearXNG/free metasearch provider | Not started | Gateway provider order becomes official/free APIs -> SearXNG -> Brave -> Perplexity, with health and smoke. |
+| 2 | Add SearXNG/free metasearch provider | In progress | Gateway search provider order becomes SearXNG -> Brave -> Perplexity, with health and smoke; specialized free APIs remain separate first-choice routes. |
 | 3 | Beacon answer-engine UX v1 | Not started | UI has focus modes, source cards, history, confidence/limitations, and visible cost/provider state. |
 | 4 | Evidence transparency UX | Not started | Users can inspect source quality, rejected-source reasons, freshness, official-host match, and claim support. |
 | 5 | Eval harness v1 | Not started | CI or scheduled smoke runs a fixed benchmark set and records accuracy, citation quality, refusal quality, latency, and cost. |
@@ -108,12 +108,11 @@ Required UX surfaces:
 
 ## Current Next Step
 
-Finish #483 first. It is the safety foundation for any future browser action UX
-or click-only executor.
+Finish and merge the open browser-action executor PR plus the SearXNG provider
+PR. Those are the safety and cost foundations for the next UX push.
 
-After #483 is deployed, the next best production workstream is:
+After those are deployed, the next best production workstream is:
 
-1. SearXNG/free metasearch provider.
-2. Beacon answer-engine UX v1.
-3. Eval harness v1.
-
+1. Beacon answer-engine UX v1.
+2. Eval harness v1.
+3. Evidence transparency UX.

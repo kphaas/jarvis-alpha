@@ -93,7 +93,9 @@ def plan_research(
         max_searches=max_searches,
     )
     search_providers: list[SearchProvider] = (
-        ["brave", "perplexity"] if provider_strategy == "fanout" else ["auto"]
+        ["searxng", "brave", "perplexity"]
+        if provider_strategy == "fanout"
+        else ["auto"]
     )
     max_extracts = _max_extracts(
         request=request,

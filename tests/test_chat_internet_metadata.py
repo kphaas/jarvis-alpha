@@ -181,7 +181,7 @@ def _insufficient_context() -> InternetChatContext:
         primary_source_required=True,
         max_searches=4,
         provider_strategy="fanout",
-        search_providers=["brave", "perplexity"],
+        search_providers=["searxng", "brave", "perplexity"],
         max_extracts=4,
         stop_criteria=InternetScoutResearchStopCriteria(
             min_accepted_citations=1,
@@ -281,7 +281,7 @@ def _supported_openai_context() -> InternetChatContext:
         primary_source_required=True,
         max_searches=4,
         provider_strategy="fanout",
-        search_providers=["brave", "perplexity"],
+        search_providers=["searxng", "brave", "perplexity"],
         max_extracts=4,
         stop_criteria=InternetScoutResearchStopCriteria(
             min_accepted_citations=1,
@@ -926,6 +926,7 @@ async def test_chat_short_circuits_insufficient_beacon_evidence(
     assert persisted_metadata["internet_research_plan_id"] == "plan-insufficient-1"
     assert persisted_metadata["internet_research_provider_strategy"] == "fanout"
     assert persisted_metadata["internet_research_search_providers"] == [
+        "searxng",
         "brave",
         "perplexity",
     ]

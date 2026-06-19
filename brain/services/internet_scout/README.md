@@ -13,6 +13,8 @@ P10/P11:
 - Gateway search/fetch/extract/crawl endpoints are implemented.
 - Current local weather queries route through Gateway's free Open-Meteo adapter
   before paid search providers.
+- Gateway search can route through a configured SearXNG base URL before Brave
+  and Perplexity, keeping private/free metasearch ahead of paid providers.
 - Brain calls Gateway through `call_gateway_proxy()` only.
 - `/v1/internet-scout/research` stores structured evidence under RLS.
 - `/v1/internet-scout/local-llm/tool` returns a citation envelope for local

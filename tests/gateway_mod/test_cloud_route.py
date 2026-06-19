@@ -10,6 +10,15 @@ from gateway.routes import cloud_routes
 @pytest.fixture(autouse=True)
 def reset_search_provider_circuits(monkeypatch, tmp_path):
     monkeypatch.delenv("BEACON_MIN_USABLE_SEARCH_PROVIDERS", raising=False)
+    monkeypatch.delenv("BEACON_SEARCH_PROVIDER_ORDER", raising=False)
+    monkeypatch.delenv("SEARXNG_BASE_URL", raising=False)
+    monkeypatch.delenv("SEARXNG_API_KEY", raising=False)
+    monkeypatch.delenv("BEACON_SEARXNG_DAILY_SEARCH_LIMIT", raising=False)
+    monkeypatch.delenv("BEACON_SEARXNG_MONTHLY_SEARCH_LIMIT", raising=False)
+    monkeypatch.delenv("BEACON_BRAVE_DAILY_SEARCH_LIMIT", raising=False)
+    monkeypatch.delenv("BEACON_BRAVE_MONTHLY_SEARCH_LIMIT", raising=False)
+    monkeypatch.delenv("BEACON_PERPLEXITY_DAILY_SEARCH_LIMIT", raising=False)
+    monkeypatch.delenv("BEACON_PERPLEXITY_MONTHLY_SEARCH_LIMIT", raising=False)
     monkeypatch.setenv("BEACON_SEARCH_USAGE_DIR", str(tmp_path))
     for circuit in cloud_routes._SEARCH_CIRCUITS.values():
         circuit.failures = []
@@ -496,6 +505,78 @@ async def test_anthropic_admin_rejects_unsupported_path(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_internet_search_uses_searxng_before_paid_providers(monkeypatch):
+    monkeypatch.setenv("SEARXNG_BASE_URL", "https://searx.example.test/")
+
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "BRAVE_SEARCH_API_KEY":
+            return "brave-token"
+        if name == "PERPLEXITY_API_KEY":
+            return "pplx-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "results": [
+                    {
+                        "title": "Safe",
+                        "url": "https://public.example.test/report",
+                        "content": "Sourced summary.",
+                    },
+                    {
+                        "title": "Internal",
+                        "url": "http://127.0.0.1:8000/admin",
+                        "content": "blocked",
+                    },
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            seen["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, *, params, headers):
+            seen["url"] = url
+            seen["params"] = params
+            seen["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.internet_search(
+        cloud_routes.InternetSearchRequest(query="beacon", count=5),
+        authorization="Bearer gateway-token",
+    )
+
+    assert seen["url"] == "https://searx.example.test/search"
+    assert seen["params"] == {
+        "q": "beacon",
+        "format": "json",
+        "language": "en",
+        "safesearch": "1",
+        "categories": "general",
+    }
+    assert seen["headers"]["User-Agent"] == "jarvis-alpha-beacon/1.0"
+    assert result["provider"] == "searxng"
+    assert len(result["results"]) == 1
+    assert result["results"][0]["url"] == "https://public.example.test/report"
+
+
+@pytest.mark.asyncio
 async def test_internet_search_uses_brave_and_filters_unsafe_results(monkeypatch):
     def fake_secret(name: str) -> str:
         if name == "GATEWAY_TOKEN":
@@ -827,6 +908,37 @@ async def test_internet_health_degrades_when_primary_provider_is_budget_exhauste
 
 
 @pytest.mark.asyncio
+async def test_internet_health_reports_searxng_as_primary_free_provider(
+    monkeypatch,
+):
+    monkeypatch.setenv("SEARXNG_BASE_URL", "https://searx.example.test")
+
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "BRAVE_SEARCH_API_KEY":
+            return "brave-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+
+    result = await cloud_routes.internet_health(authorization="Bearer gateway-token")
+
+    assert result["status"] == "ok"
+    assert result["configured_provider_count"] == 2
+    assert result["usable_provider_count"] == 2
+    assert result["provider_order"] == ["searxng", "brave"]
+    assert result["primary_provider"] == "searxng"
+    searxng = next(
+        provider
+        for provider in result["providers"]
+        if provider["provider"] == "searxng"
+    )
+    assert searxng["data_source_id"] == "searxng-metasearch"
+    assert searxng["configured"] is True
+
+
+@pytest.mark.asyncio
 async def test_internet_health_reports_provider_configuration(monkeypatch):
     def fake_secret(name: str) -> str:
         if name == "GATEWAY_TOKEN":
@@ -846,10 +958,13 @@ async def test_internet_health_reports_provider_configuration(monkeypatch):
     assert result["provider_redundancy_ok"] is False
     assert result["provider_redundancy_status"] == "single_provider"
     assert result["missing_provider_count"] == 1
-    assert result["providers"][0]["provider"] == "brave"
-    assert result["providers"][0]["data_source_id"] == "brave-search"
-    assert result["providers"][0]["configured"] is True
-    assert result["providers"][0]["circuit_open"] is False
+    assert result["provider_order"] == ["brave"]
+    brave = next(
+        provider for provider in result["providers"] if provider["provider"] == "brave"
+    )
+    assert brave["data_source_id"] == "brave-search"
+    assert brave["configured"] is True
+    assert brave["circuit_open"] is False
 
 
 @pytest.mark.asyncio
@@ -874,10 +989,37 @@ async def test_internet_health_reports_redundant_provider_configuration(monkeypa
     assert result["provider_redundancy_ok"] is True
     assert result["provider_redundancy_status"] == "redundant"
     assert result["missing_provider_count"] == 0
-    assert [provider["data_source_id"] for provider in result["providers"]] == [
+    assert result["provider_order"] == ["brave", "perplexity"]
+    configured_data_source_ids = [
+        provider["data_source_id"]
+        for provider in result["providers"]
+        if provider["configured"]
+    ]
+    assert configured_data_source_ids == [
         "brave-search",
         "perplexity-search",
     ]
+
+
+@pytest.mark.asyncio
+async def test_internet_search_explicit_searxng_requires_base_url(monkeypatch):
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "BRAVE_SEARCH_API_KEY":
+            return "brave-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+
+    with pytest.raises(HTTPException) as exc:
+        await cloud_routes.internet_search(
+            cloud_routes.InternetSearchRequest(query="beacon", provider="searxng"),
+            authorization="Bearer gateway-token",
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "SearXNG base URL not configured"
 
 
 @pytest.mark.asyncio

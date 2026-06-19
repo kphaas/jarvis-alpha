@@ -96,7 +96,7 @@ def test_orchestrator_plans_deep_official_research_queries():
     assert plan.research.primary_source_required is True
     assert plan.research.max_searches == 4
     assert plan.research.provider_strategy == "fanout"
-    assert plan.research.search_providers == ["brave", "perplexity"]
+    assert plan.research.search_providers == ["searxng", "brave", "perplexity"]
     assert plan.research.max_extracts == 4
     assert len(plan.research.searches) >= 3
     assert plan.research.searches[0].purpose == "baseline"

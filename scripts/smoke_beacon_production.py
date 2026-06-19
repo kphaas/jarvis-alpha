@@ -66,6 +66,7 @@ def main() -> int:
         if isinstance(checks_payload, dict)
         else [],
     }
+    results["gateway"] = _gateway_health_summary(checks_payload)
     browser_runtime = _health_check_metadata(checks_payload, "browser_runtime")
     if browser_runtime:
         browser_limits = {
@@ -252,6 +253,26 @@ def _int(value: object) -> int:
     if isinstance(value, str) and value.isdecimal():
         return int(value)
     return 0
+
+
+def _gateway_health_summary(checks_payload: object) -> dict[str, object]:
+    if not isinstance(checks_payload, dict):
+        return {}
+    gateway = checks_payload.get("gateway")
+    if not isinstance(gateway, dict):
+        return {}
+    metadata = gateway.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    return {
+        "status": gateway.get("status"),
+        "primary_provider": metadata.get("primary_provider"),
+        "provider_order": metadata.get("provider_order", []),
+        "usable_provider_count": metadata.get("usable_provider_count"),
+        "required_provider_count": metadata.get("required_provider_count"),
+        "provider_redundancy_status": metadata.get("provider_redundancy_status"),
+        "provider_warning_status": metadata.get("provider_warning_status"),
+    }
 
 
 def _emit(payload: dict[str, object]) -> None:
