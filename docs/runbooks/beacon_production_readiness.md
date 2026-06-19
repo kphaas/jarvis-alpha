@@ -1,6 +1,6 @@
 # Beacon Production Readiness Runbook
 
-Date: 2026-06-06
+Date: 2026-06-19
 
 ## Scope
 
@@ -24,7 +24,7 @@ Longer-term industry gap closure is tracked in
 Gateway:
 
 - `GATEWAY_TOKEN` or service token accepted by Gateway
-- Optional free/private metasearch provider:
+- Free/private metasearch provider:
   - `SEARXNG_BASE_URL`
   - `SEARXNG_API_KEY` when the self-hosted instance requires bearer auth
 - Paid/fallback search provider keys:
@@ -42,6 +42,29 @@ Gateway:
   - `BEACON_PERPLEXITY_MONTHLY_SEARCH_LIMIT=25`
   - Optional usage ledger path:
     `BEACON_SEARCH_USAGE_DIR=~/jarvis/state/beacon-search-usage`
+
+Live Gateway SearXNG:
+
+- LaunchAgent label: `com.jarvis.alpha.searxng`
+- Loopback URL: `http://127.0.0.1:8888`
+- Settings file: `/Users/gate/searxng/settings.yml`
+- Source checkout: `/Users/gate/searxng/src`
+- Dedicated venv: `/Users/gate/searxng/.venv`
+- Logs:
+  - `/Users/gate/jarvis-alpha/logs/searxng.log`
+  - `/Users/gate/jarvis-alpha/logs/searxng_error.log`
+- Gateway `.secrets` should include:
+  - `SEARXNG_BASE_URL=http://127.0.0.1:8888`
+  - `BEACON_SEARCH_PROVIDER_ORDER=searxng,brave,perplexity`
+  - SearXNG daily/monthly caps, even though it is free, to catch loops.
+
+Check it on Gateway without printing secrets:
+
+```bash
+launchctl list | grep com.jarvis.alpha.searxng
+curl -fsS 'http://127.0.0.1:8888/search?q=jarvis&format=json' \
+  | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("results", [])))'
+```
 
 Brain browser runtime:
 
@@ -163,6 +186,8 @@ Expected:
   evidence instead of presenting weak sources as proof
 - deterministic quality evals pass:
   `python scripts/eval_beacon_search_quality.py`
+- answer-engine UX contract evals pass without live web/provider calls:
+  `uv run --python 3.12 python scripts/eval_beacon_answer_engine.py`
 - committed contracts are current:
   `python scripts/export_beacon_contract_schema.py --check`
 
