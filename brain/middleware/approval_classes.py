@@ -233,6 +233,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/vault/ingest/docx": ["write"],
     "POST /v1/vault/ingest/text": ["write"],
     "POST /v1/vault/ingest/excel": ["write"],
+    "POST /v1/vault/digests/private": ["write"],
     # --- Chat completions (OpenAI compat) ---
     "POST /v1/chat/completions": ["write", "external_call", "cost_incurring"],
     # --- Buddy events mark read — T2 write ---
