@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 
 from brain.config.node_addresses import GATEWAY_URL
 from brain.config.secrets import get_secret
+from brain.services.web_agent_settings import get_home_weather_coordinates
 
 GATEWAY_WEATHER_TIMEOUT_SEC = 15
 
@@ -78,4 +79,18 @@ def _gateway_weather_current_sync(params: dict[str, Any]) -> dict[str, Any]:
 async def get_current_weather(params: dict[str, Any] | None = None) -> dict[str, Any]:
     """Read current weather without blocking the event loop."""
 
-    return await asyncio.to_thread(_gateway_weather_current_sync, dict(params or {}))
+    resolved_params = await _with_alpha_home_coordinates(dict(params or {}))
+    return await asyncio.to_thread(_gateway_weather_current_sync, resolved_params)
+
+
+async def _with_alpha_home_coordinates(params: dict[str, Any]) -> dict[str, Any]:
+    """Send Alpha-owned DB home coordinates to Gateway when caller omits coords."""
+    if params.get("latitude") is not None or params.get("longitude") is not None:
+        return params
+
+    coordinates = await get_home_weather_coordinates()
+    if coordinates is None:
+        return params
+
+    latitude, longitude = coordinates
+    return {**params, "latitude": latitude, "longitude": longitude}

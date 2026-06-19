@@ -195,6 +195,22 @@ async def test_spark_imessage_draft_targets_list_approved_threads_safely(
                 legal_marked=False,
                 decision_approved=True,
             ),
+            SparkApprovedSourceRecord(
+                principal_id=principal_id,
+                source="imessage",
+                approval_id="ken-imessage-approved-20260605-002",
+                source_reference_hash="mother-hash",
+                source_reference_label="Mother",
+                source_reference_path=None,
+                source_sha256=None,
+                thread_kind="one_to_one",
+                requested_max_messages=200,
+                requested_date_window=None,
+                relationship_marked=True,
+                relationship_approved=True,
+                legal_marked=False,
+                decision_approved=True,
+            ),
         ),
     )
 
@@ -215,6 +231,7 @@ async def test_spark_imessage_draft_targets_list_approved_threads_safely(
                 "thread_kind": "one_to_one",
                 "relationship_marked": True,
                 "relationship_approved": True,
+                "parent_minor_context_approved": False,
                 "legal_marked": False,
             }
         ],
@@ -634,6 +651,117 @@ async def test_spark_imessage_draft_approval_queues_safe_request(
 
 
 @pytest.mark.asyncio
+async def test_spark_imessage_draft_approval_fails_closed_when_outbox_crypto_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    fake_conn = _stub_personality_memory(monkeypatch)
+    enqueue_calls: list[dict[str, object]] = []
+    create_outbox_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+
+    async def fake_create(**kwargs):
+        return _proposal()
+
+    async def fake_enqueue(conn, **kwargs):
+        assert conn is fake_conn
+        enqueue_calls.append(kwargs)
+        return UUID("11111111-1111-4111-8111-111111111111")
+
+    async def fake_create_outbox(conn, **kwargs):
+        create_outbox_calls.append(kwargs)
+        return spark_drafts.SparkOutboxCreateResult(
+            outbox_id="22222222-2222-4222-8222-222222222222",
+            status="pending_approval",
+            draft_text_hash="hmac-sha256:" + "a" * 64,
+            created=True,
+        )
+
+    monkeypatch.setattr(spark_drafts, "create_imessage_draft_proposal", fake_create)
+    monkeypatch.setattr(spark_drafts, "enqueue_spark_draft_approval", fake_enqueue)
+    monkeypatch.setattr(spark_drafts, "create_spark_outbox_item", fake_create_outbox)
+    monkeypatch.setattr(
+        spark_drafts,
+        "load_spark_outbox_crypto",
+        lambda: (_ for _ in ()).throw(
+            spark_drafts.SparkOutboxConfigError("spark_outbox_config_missing")
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await spark_drafts.spark_imessage_draft_approval_request(
+            _request(),
+            spark_drafts.SparkIMessageDraftApprovalRequest(
+                reply_goal="Tell her I am on it",
+                max_context_messages=10,
+            ),
+            "user",
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "spark_imessage_outbox_unavailable"
+    assert enqueue_calls == []
+    assert create_outbox_calls == []
+    warnings = json.dumps(fake_logger.warnings).lower()
+    assert "spark_outbox_record_failed" in warnings
+    assert "config_missing" in warnings
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_draft_approval_fails_closed_when_outbox_not_persisted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    fake_conn = _stub_personality_memory(monkeypatch)
+    enqueue_calls: list[dict[str, object]] = []
+    outbox_calls: list[dict[str, object]] = []
+    crypto_token = object()
+    monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+
+    async def fake_create(**kwargs):
+        return _proposal()
+
+    async def fake_enqueue(conn, **kwargs):
+        assert conn is fake_conn
+        enqueue_calls.append(kwargs)
+        return UUID("11111111-1111-4111-8111-111111111111")
+
+    async def fake_create_outbox(conn, **kwargs):
+        assert conn is fake_conn
+        outbox_calls.append(kwargs)
+        return spark_drafts.SparkOutboxCreateResult(
+            outbox_id=None,
+            status="unknown",
+            draft_text_hash="hmac-sha256:" + "a" * 64,
+            created=False,
+            reason="approval_not_found",
+        )
+
+    monkeypatch.setattr(spark_drafts, "create_imessage_draft_proposal", fake_create)
+    monkeypatch.setattr(spark_drafts, "enqueue_spark_draft_approval", fake_enqueue)
+    monkeypatch.setattr(spark_drafts, "load_spark_outbox_crypto", lambda: crypto_token)
+    monkeypatch.setattr(spark_drafts, "create_spark_outbox_item", fake_create_outbox)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await spark_drafts.spark_imessage_draft_approval_request(
+            _request(),
+            spark_drafts.SparkIMessageDraftApprovalRequest(
+                reply_goal="Tell her I am on it",
+                max_context_messages=10,
+            ),
+            "user",
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "spark_imessage_outbox_unavailable"
+    assert len(enqueue_calls) == 1
+    assert len(outbox_calls) == 1
+    warnings = json.dumps(fake_logger.warnings).lower()
+    assert "spark_outbox_record_failed" in warnings
+    assert "store_failed" in warnings
+
+
+@pytest.mark.asyncio
 async def test_spark_imessage_draft_feedback_records_label_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -748,7 +876,15 @@ async def test_spark_imessage_send_approved_outbox_executes_safe_route(
     fake_conn = object()
     outbox_id = UUID("22222222-2222-4222-8222-222222222222")
     crypto_token = object()
-    send_calls: list[dict[str, object]] = []
+    prepared = SimpleNamespace(item=SimpleNamespace(outbox_id=outbox_id))
+    send_result = SimpleNamespace(
+        status=200,
+        message="Success",
+        message_ref_hash="message-hash",
+    )
+    prepare_calls: list[dict[str, object]] = []
+    execute_calls: list[object] = []
+    success_calls: list[dict[str, object]] = []
     monkeypatch.setattr(spark_drafts, "logger", fake_logger)
     monkeypatch.setattr(
         spark_drafts,
@@ -757,13 +893,24 @@ async def test_spark_imessage_send_approved_outbox_executes_safe_route(
     )
     monkeypatch.setattr(spark_drafts, "load_spark_outbox_crypto", lambda: crypto_token)
 
-    async def fake_send(conn, **kwargs):
+    async def fake_prepare(conn, **kwargs):
         assert conn is fake_conn
-        send_calls.append(kwargs)
+        prepare_calls.append(kwargs)
         assert kwargs["outbox_id"] == outbox_id
         assert kwargs["actor_sub"] == "spark-service"
         assert kwargs["actor_type"] == "service"
         assert kwargs["crypto"] is crypto_token
+        return prepared
+
+    async def fake_execute(arg):
+        execute_calls.append(arg)
+        return send_result
+
+    async def fake_record_success(conn, **kwargs):
+        assert conn is fake_conn
+        success_calls.append(kwargs)
+        assert kwargs["prepared"] is prepared
+        assert kwargs["send_result"] is send_result
         return spark_drafts.SparkOutboxSendResult(
             outbox_id=str(outbox_id),
             outbox_status="sent",
@@ -775,8 +922,18 @@ async def test_spark_imessage_send_approved_outbox_executes_safe_route(
 
     monkeypatch.setattr(
         spark_drafts,
-        "send_approved_spark_imessage_outbox",
-        fake_send,
+        "prepare_approved_spark_imessage_outbox_send",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        spark_drafts,
+        "execute_prepared_spark_imessage_send",
+        fake_execute,
+    )
+    monkeypatch.setattr(
+        spark_drafts,
+        "record_prepared_spark_imessage_send_success",
+        fake_record_success,
     )
 
     response = await spark_drafts.spark_imessage_send_approved_outbox(
@@ -788,7 +945,9 @@ async def test_spark_imessage_send_approved_outbox_executes_safe_route(
     assert response.outbox_status == "sent"
     assert response.approval_status == "executed"
     assert response.message_ref_hash == "message-hash"
-    assert len(send_calls) == 1
+    assert len(prepare_calls) == 1
+    assert execute_calls == [prepared]
+    assert len(success_calls) == 1
     logs = json.dumps(fake_logger.infos).lower()
     assert "spark_imessage_approved_send_executed" in logs
     assert "imessage.send" in logs
@@ -796,6 +955,75 @@ async def test_spark_imessage_send_approved_outbox_executes_safe_route(
     assert "private inbound body" not in logs
     assert "approved-chat-guid" not in logs
     assert "edited draft" not in logs
+    assert "draft_text" not in logs
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_send_failure_records_event_after_send_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    prepare_conn = object()
+    failure_conn = object()
+    conns = [prepare_conn, failure_conn]
+    outbox_id = UUID("22222222-2222-4222-8222-222222222222")
+    prepared = SimpleNamespace(item=SimpleNamespace(outbox_id=outbox_id))
+    record_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+    monkeypatch.setattr(spark_drafts, "load_spark_outbox_crypto", lambda: object())
+    monkeypatch.setattr(
+        spark_drafts,
+        "rls_connection",
+        lambda request: _AsyncContext(conns.pop(0)),
+    )
+
+    async def fake_prepare(conn, **kwargs):
+        assert conn is prepare_conn
+        return prepared
+
+    async def fake_execute(arg):
+        assert arg is prepared
+        raise spark_drafts.BlueBubblesClientError("send failed", status_code=502)
+
+    async def fake_record_failure(conn, **kwargs):
+        assert conn is failure_conn
+        record_calls.append(kwargs)
+        assert kwargs["prepared"] is prepared
+        assert kwargs["exc"].__class__.__name__ == "BlueBubblesClientError"
+
+    monkeypatch.setattr(
+        spark_drafts,
+        "prepare_approved_spark_imessage_outbox_send",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        spark_drafts,
+        "execute_prepared_spark_imessage_send",
+        fake_execute,
+    )
+    monkeypatch.setattr(
+        spark_drafts,
+        "record_prepared_spark_imessage_send_failure",
+        fake_record_failure,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await spark_drafts.spark_imessage_send_approved_outbox(
+            _request(["spark.draft", "imessage.send"]),
+            outbox_id,
+            "user",
+        )
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "spark_imessage_send_failed"
+    assert len(record_calls) == 1
+    assert conns == []
+    logs = json.dumps(fake_logger.warnings).lower()
+    assert "spark_imessage_approved_send_failed" in logs
+    assert "bluebubblesclienterror" in logs
+    assert "private inbound body" not in logs
+    assert "approved-chat-guid" not in logs
+    assert "spark rehearsal message" not in logs
     assert "draft_text" not in logs
 
 

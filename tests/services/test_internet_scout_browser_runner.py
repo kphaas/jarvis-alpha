@@ -12,8 +12,10 @@ from brain.services.internet_scout.browser_runner import (
     BrowserScreenshotStore,
     BrowserTaskRunner,
     browser_hourly_run_limit,
+    browser_max_steps_limit,
     build_browser_sandbox_policy,
     build_browser_task_runner_from_env,
+    classify_disallowed_browser_controls,
 )
 from brain.services.internet_scout.evidence import content_hash
 from brain.services.internet_scout.models import (
@@ -31,6 +33,7 @@ class FakeBrowserAdapter:
         *,
         request: InternetScoutRequest,
         sandbox: BrowserSandboxPolicy,
+        audit_action=None,
     ) -> list[BrowserRunObservation]:
         return [
             BrowserRunObservation(
@@ -75,6 +78,39 @@ def test_browser_sandbox_requires_public_start_url():
     assert str(exc.value) == "browser_start_url_not_public"
 
 
+def test_browser_sandbox_requires_single_approved_host():
+    with pytest.raises(BrowserSandboxPolicyError) as exc:
+        build_browser_sandbox_policy(
+            InternetScoutRequest(
+                urls=[
+                    "https://public.example.test/start",
+                    "https://other.example.test/path",
+                ],
+                needs_interaction=True,
+            ),
+            max_steps=5,
+            require_screenshot=True,
+        )
+
+    assert str(exc.value) == "browser_start_urls_must_share_host"
+
+
+def test_browser_sandbox_blocks_steps_above_operator_cap(monkeypatch):
+    monkeypatch.setenv("BEACON_BROWSER_MAX_STEPS", "3")
+
+    with pytest.raises(BrowserSandboxPolicyError) as exc:
+        build_browser_sandbox_policy(
+            InternetScoutRequest(
+                urls=["https://public.example.test/start"],
+                needs_interaction=True,
+            ),
+            max_steps=4,
+            require_screenshot=True,
+        )
+
+    assert str(exc.value) == "browser_max_steps_exceeded"
+
+
 def test_browser_screenshot_store_writes_content_addressed_png(tmp_path):
     store = BrowserScreenshotStore(tmp_path)
     data = b"\x89PNG\r\n\x1a\nbeacon"
@@ -89,6 +125,26 @@ def test_browser_hourly_run_limit_is_bounded(monkeypatch):
     monkeypatch.setenv("BEACON_BROWSER_MAX_RUNS_PER_HOUR", "999")
 
     assert browser_hourly_run_limit() == 10
+
+
+def test_browser_max_steps_limit_is_bounded(monkeypatch):
+    monkeypatch.setenv("BEACON_BROWSER_MAX_STEPS", "999")
+
+    assert browser_max_steps_limit() == 5
+
+
+def test_browser_control_classifier_blocks_credentials_before_forms():
+    assert (
+        classify_disallowed_browser_controls(
+            [{"tag": "input", "type": "password", "name": "password"}]
+        )
+        == "browser_credential_fields_blocked"
+    )
+    assert (
+        classify_disallowed_browser_controls([{"tag": "input", "type": "text"}])
+        == "browser_forms_blocked"
+    )
+    assert classify_disallowed_browser_controls([]) is None
 
 
 @pytest.mark.asyncio
@@ -137,6 +193,11 @@ async def test_browser_runner_builds_evidence_from_adapter_observations():
         needs_interaction=True,
     )
     plan = InternetScoutOrchestrator().plan(request)
+    audit_events = []
+
+    async def audit_action(event):
+        audit_events.append(event)
+
     result = await BrowserTaskRunner(adapter=FakeBrowserAdapter()).execute(
         request_id=uuid4(),
         approval_queue_id=uuid4(),
@@ -144,12 +205,18 @@ async def test_browser_runner_builds_evidence_from_adapter_observations():
         plan=plan,
         max_steps=5,
         require_screenshot=True,
+        audit_action=audit_action,
     )
 
     assert result.status == "completed"
     assert result.sandbox.allowed_hosts == ["public.example.test"]
     assert result.observations[0].screenshot_ref == "sha256:" + "1" * 64
     assert result.evidence.claims[0].citation_text == "Pricing page body."
+    assert [event.status for event in result.action_audit[:2]] == [
+        "started",
+        "succeeded",
+    ]
+    assert [event.action for event in audit_events[:2]] == ["sandbox", "sandbox"]
 
 
 @pytest.mark.asyncio
@@ -160,6 +227,7 @@ async def test_browser_runner_blocks_cross_host_observation():
             *,
             request: InternetScoutRequest,
             sandbox: BrowserSandboxPolicy,
+            audit_action=None,
         ) -> list[BrowserRunObservation]:
             return [
                 BrowserRunObservation(

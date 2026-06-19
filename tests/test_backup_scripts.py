@@ -178,6 +178,7 @@ def test_retention_boundary_at_30_days():
 def test_install_launchagents_registers_both_new_labels():
     from scripts.install_launchagents import SERVICE_NODE_MAP
 
+    assert SERVICE_NODE_MAP.get("com.jarvis.alpha.beacon-quality") == "brain"
     assert SERVICE_NODE_MAP.get("com.jarvis.alpha.pg_backup") == "brain"
     assert SERVICE_NODE_MAP.get("com.jarvis.alpha.restore_drill") == "sandbox"
 
@@ -223,6 +224,17 @@ def test_drill_has_inject_corrupt_failpath_test_flag():
     assert "INJECT_CORRUPT" in text
 
 
+def test_restore_drill_finds_macos_tool_paths_outside_login_path():
+    text = (REPO_ROOT / "scripts" / "restore_drill_alpha.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "find_tool()" in text
+    assert '"/opt/homebrew/bin/${name}"' in text
+    assert '"/usr/local/bin/${name}"' in text
+    assert "DOCKER=$(find_tool docker || true)" in text
+
+
 def test_pg_backup_calls_preflight():
     """pg_backup must short-circuit on preflight failure."""
     text = (REPO_ROOT / "scripts" / "pg_backup_alpha.sh").read_text(encoding="utf-8")
@@ -256,8 +268,28 @@ def test_restore_drill_reference_table_count_matches_current_baseline():
     text = (REPO_ROOT / "scripts" / "restore_drill_alpha.sh").read_text(
         encoding="utf-8"
     )
-    assert "REF_TABLES=77" in text
+    assert "REF_TABLES=105" in text
     assert "including views" in text
+
+
+def test_restore_drill_verifies_privacy_tables_and_force_rls():
+    text = (REPO_ROOT / "scripts" / "restore_drill_alpha.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "EXPECTED_PRIVACY_TABLES=16" in text
+    assert "EXPECTED_PRIVACY_FORCE_RLS_TABLES=16" in text
+    assert "table_name LIKE 'alpha_privacy_%'" in text
+    assert "c.relrowsecurity AND c.relforcerowsecurity" in text
+    assert (
+        "privacy_tables_${PRIVACY_TABLES}_expected_${EXPECTED_PRIVACY_TABLES}" in text
+    )
+    assert (
+        "privacy_force_rls_${PRIVACY_FORCE_RLS}_expected_"
+        "${EXPECTED_PRIVACY_FORCE_RLS_TABLES}" in text
+    )
+    assert "alpha_privacy_tables:$privacy_tables" in text
+    assert "alpha_privacy_force_rls_tables:$privacy_force_rls" in text
 
 
 def test_pg_backup_uses_atomic_rename():

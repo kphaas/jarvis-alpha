@@ -6,7 +6,10 @@ from collections.abc import Sequence
 from typing import Literal
 
 from brain.services.internet_scout.models import (
+    InternetScoutAnswerQualityScore,
     InternetScoutCitationQualitySummary,
+    InternetScoutEvidenceTransparency,
+    InternetScoutEvidenceTransparencyItem,
     InternetScoutLocalLLMCitation,
     InternetScoutLocalLLMResponse,
     InternetScoutMemoryBoundary,
@@ -15,10 +18,12 @@ from brain.services.internet_scout.models import (
     InternetScoutSourceRanking,
     InternetScoutSynthesisContract,
     InternetScoutStoredResponse,
+    SourceReference,
     SourceQualityLevel,
 )
 from brain.services.internet_scout.source_quality import (
     CitationQualityEvaluation,
+    EvaluatedCitation,
     evaluate_citation_quality,
 )
 
@@ -69,6 +74,11 @@ def build_local_llm_response(
         synthesis=synthesis,
         memory_boundary=memory_boundary,
         research_report=research_report,
+        evidence_transparency=_evidence_transparency(
+            stored=stored,
+            citations=citations,
+            evaluation=evaluation,
+        ),
         answer_context=_answer_context(citations, query=stored.evidence.request.query),
     )
 
@@ -457,6 +467,14 @@ def _stop_criteria_warnings(
         warnings.append("Accepted citations are below the research stop criteria.")
     if stop_criteria.require_official_source and quality.official_source_count == 0:
         warnings.append("Required official source evidence was not accepted.")
+    if (
+        quality.required_official_target_count > 0
+        and quality.covered_official_target_count
+        < quality.required_official_target_count
+    ):
+        warnings.append(
+            "Official comparison coverage is missing for one or more compared targets."
+        )
     if stop_criteria.require_cross_check and len(source_hosts) < 2:
         warnings.append("Cross-check coverage is below the research stop criteria.")
     if len(source_hosts) < stop_criteria.min_source_hosts and (
@@ -523,6 +541,242 @@ def _source_rankings(
             )
         )
     return rankings
+
+
+def _evidence_transparency(
+    *,
+    stored: InternetScoutStoredResponse,
+    citations: list[InternetScoutLocalLLMCitation],
+    evaluation: CitationQualityEvaluation,
+) -> InternetScoutEvidenceTransparency:
+    source_by_url = {source.url: source for source in stored.evidence.sources}
+    ranked_by_key = {
+        (citation.source_url, citation.content_hash): citation for citation in citations
+    }
+    items: list[InternetScoutEvidenceTransparencyItem] = []
+
+    for evaluated in evaluation.evaluated[:25]:
+        ranked = ranked_by_key.get(
+            (evaluated.citation.source_url, evaluated.citation.content_hash)
+        )
+        citation = ranked or evaluated.citation.model_copy(
+            update={"source_score": _source_score(evaluated.citation)}
+        )
+        source = source_by_url.get(citation.source_url)
+        items.append(
+            _evidence_transparency_item(
+                citation=citation,
+                source=source,
+                evaluated=evaluated,
+                quality=evaluation.summary,
+                freshness_required=stored.plan.research.freshness_required,
+            )
+        )
+
+    accepted = [item for item in items if item.accepted]
+    rejected = [item for item in items if not item.accepted]
+    return InternetScoutEvidenceTransparency(
+        accepted_sources=accepted[:25],
+        rejected_sources=rejected[:25],
+        official_source_required=evaluation.summary.official_source_required,
+        required_source_hosts=evaluation.summary.required_source_hosts,
+        freshness_required=stored.plan.research.freshness_required,
+        answer_quality_score=_answer_quality_score(
+            accepted=accepted,
+            rejected=rejected,
+            quality=evaluation.summary,
+            freshness_required=stored.plan.research.freshness_required,
+            stop_criteria=stored.plan.research.stop_criteria,
+        ),
+    )
+
+
+def _evidence_transparency_item(
+    *,
+    citation: InternetScoutLocalLLMCitation,
+    source: SourceReference | None,
+    evaluated: EvaluatedCitation,
+    quality: InternetScoutCitationQualitySummary,
+    freshness_required: bool,
+) -> InternetScoutEvidenceTransparencyItem:
+    return InternetScoutEvidenceTransparencyItem(
+        source_url=citation.source_url,
+        host=citation.host,
+        content_hash=citation.content_hash,
+        citation_text=citation.citation_text,
+        claim=citation.claim,
+        accepted=evaluated.accepted,
+        rejection_reasons=list(evaluated.rejection_reasons),
+        confidence=citation.confidence,
+        source_quality=citation.source_quality,
+        source_rank=citation.source_rank,
+        source_score=citation.source_score,
+        quality_reasons=citation.quality_reasons,
+        claim_supported=evaluated.claim_supported,
+        claim_support_reasons=list(evaluated.claim_support_reasons),
+        official_source_required=quality.official_source_required,
+        official_host_match=citation.source_quality == "official",
+        freshness_required=freshness_required,
+        fetched_at=source.fetched_at if source else None,
+    )
+
+
+def _answer_quality_score(
+    *,
+    accepted: list[InternetScoutEvidenceTransparencyItem],
+    rejected: list[InternetScoutEvidenceTransparencyItem],
+    quality: InternetScoutCitationQualitySummary,
+    freshness_required: bool,
+    stop_criteria: InternetScoutResearchStopCriteria,
+) -> InternetScoutAnswerQualityScore:
+    source_hosts = list(dict.fromkeys(item.host for item in accepted if item.host))
+    source_diversity_score = _source_diversity_score(
+        source_hosts=source_hosts,
+        accepted_count=len(accepted),
+        stop_criteria=stop_criteria,
+    )
+    official_coverage_score = _official_coverage_score(quality)
+    freshness_score = _freshness_score(
+        accepted=accepted,
+        freshness_required=freshness_required,
+    )
+    rejected_risk_count = _rejected_risk_count(rejected)
+    rejected_risk_score = _rejected_risk_score(
+        rejected_risk_count=rejected_risk_count,
+        accepted_count=len(accepted),
+    )
+    score = round(
+        (source_diversity_score * 0.30)
+        + (official_coverage_score * 0.30)
+        + (freshness_score * 0.20)
+        + (rejected_risk_score * 0.20)
+    )
+    if not accepted:
+        score = min(score, 15)
+    elif quality.status == "insufficient":
+        score = min(score, 39)
+    elif quality.status == "weak":
+        score = min(score, 74)
+    label = _answer_quality_label(score=score, quality=quality)
+    warnings = _answer_quality_warnings(
+        source_diversity_score=source_diversity_score,
+        official_coverage_score=official_coverage_score,
+        freshness_score=freshness_score,
+        rejected_risk_count=rejected_risk_count,
+        quality=quality,
+        freshness_required=freshness_required,
+    )
+    return InternetScoutAnswerQualityScore(
+        score=max(0, min(100, score)),
+        label=label,
+        source_diversity_score=source_diversity_score,
+        official_coverage_score=official_coverage_score,
+        freshness_score=freshness_score,
+        rejected_risk_score=rejected_risk_score,
+        accepted_source_count=len(accepted),
+        source_host_count=len(source_hosts),
+        rejected_risk_count=rejected_risk_count,
+        summary=_answer_quality_summary(label),
+        warnings=warnings,
+    )
+
+
+def _official_coverage_score(quality: InternetScoutCitationQualitySummary) -> int:
+    if not quality.official_source_required:
+        return 100
+    if quality.required_official_target_count > 0:
+        return round(
+            min(
+                quality.covered_official_target_count
+                / quality.required_official_target_count,
+                1,
+            )
+            * 100
+        )
+    return 100 if quality.official_source_count else 0
+
+
+def _freshness_score(
+    *,
+    accepted: list[InternetScoutEvidenceTransparencyItem],
+    freshness_required: bool,
+) -> int:
+    if not freshness_required:
+        return 100
+    if not accepted:
+        return 0
+    fresh_count = sum(1 for item in accepted if item.fetched_at is not None)
+    return round((fresh_count / len(accepted)) * 100)
+
+
+def _rejected_risk_count(
+    rejected: list[InternetScoutEvidenceTransparencyItem],
+) -> int:
+    return sum(1 for item in rejected if _has_rejected_risk(item))
+
+
+def _has_rejected_risk(item: InternetScoutEvidenceTransparencyItem) -> bool:
+    if item.rejection_reasons:
+        return True
+    if not item.claim_supported:
+        return True
+    return item.source_quality in {"low_confidence", "rejected"}
+
+
+def _rejected_risk_score(*, rejected_risk_count: int, accepted_count: int) -> int:
+    if rejected_risk_count <= 0:
+        return 100
+    penalty = min(90, rejected_risk_count * 20)
+    no_accepted_penalty = 40 if accepted_count == 0 else 0
+    return max(0, 100 - penalty - no_accepted_penalty)
+
+
+def _answer_quality_label(
+    *,
+    score: int,
+    quality: InternetScoutCitationQualitySummary,
+) -> Literal["strong", "solid", "limited", "low"]:
+    if score >= 85 and quality.status == "supported":
+        return "strong"
+    if score >= 70 and quality.status in {"supported", "weak"}:
+        return "solid"
+    if score >= 40:
+        return "limited"
+    return "low"
+
+
+def _answer_quality_summary(label: str) -> str:
+    summaries = {
+        "strong": "Strong evidence coverage across source diversity, official-source checks, freshness, and rejected-risk review.",
+        "solid": "Solid evidence coverage with at least one dimension needing operator attention.",
+        "limited": "Limited evidence coverage. Treat the answer as useful but not fully verified.",
+        "low": "Low evidence coverage. Beacon should not present this answer as verified.",
+    }
+    return summaries.get(label, summaries["low"])
+
+
+def _answer_quality_warnings(
+    *,
+    source_diversity_score: int,
+    official_coverage_score: int,
+    freshness_score: int,
+    rejected_risk_count: int,
+    quality: InternetScoutCitationQualitySummary,
+    freshness_required: bool,
+) -> list[str]:
+    warnings: list[str] = []
+    if source_diversity_score < 70:
+        warnings.append("Source diversity is below the research target.")
+    if quality.official_source_required and official_coverage_score < 100:
+        warnings.append("Official-source coverage is incomplete.")
+    if freshness_required and freshness_score < 100:
+        warnings.append("Freshness coverage is incomplete.")
+    if rejected_risk_count:
+        warnings.append(
+            f"{rejected_risk_count} rejected-risk source"
+            f"{'' if rejected_risk_count == 1 else 's'} reviewed."
+        )
+    return warnings[:8]
 
 
 def _source_score(citation: InternetScoutLocalLLMCitation) -> int:

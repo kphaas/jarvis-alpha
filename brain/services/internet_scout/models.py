@@ -43,6 +43,15 @@ ResearchIntent = Literal[
     "troubleshooting",
     "general",
 ]
+InternetScoutFocusMode = Literal[
+    "all",
+    "official",
+    "news_current",
+    "shopping",
+    "academic",
+    "local_weather",
+    "deep_research",
+]
 ResearchQueryPurpose = Literal[
     "baseline",
     "official_source",
@@ -62,7 +71,7 @@ ResearchSourceType = Literal[
     "status_page",
     "general_web",
 ]
-SearchProvider = Literal["auto", "brave", "perplexity"]
+SearchProvider = Literal["auto", "searxng", "brave", "perplexity"]
 SearchProviderStrategy = Literal["auto", "fanout"]
 
 
@@ -84,6 +93,7 @@ class InternetScoutRequest(BaseModel):
     query: str | None = Field(default=None, max_length=2000)
     urls: list[str] = Field(default_factory=list, max_length=20)
     tool_hint: InternetTool | None = None
+    focus_mode: InternetScoutFocusMode = "all"
     max_pages: int = Field(default=1, ge=1, le=50)
     max_depth: int = Field(default=0, ge=0, le=5)
     needs_interaction: bool = False
@@ -329,11 +339,35 @@ class InternetScoutStoredResponse(BaseModel):
     evidence: InternetEvidencePacket
 
 
+class InternetScoutBrowserApprovalPreview(BaseModel):
+    """Redacted browser-use approval contract for operator review surfaces."""
+
+    kind: Literal["beacon_browser_use"] = "beacon_browser_use"
+    approval_contract_version: int = 1
+    requires_human_approval: bool = True
+    selected_tool: InternetTool = InternetTool.BROWSER_USE
+    risk_tier: ApprovalTier
+    sensitivity: Sensitivity
+    has_query: bool
+    url_count: int = Field(ge=0, le=20)
+    max_pages: int = Field(ge=1, le=50)
+    max_depth: int = Field(ge=0, le=5)
+    needs_interaction: bool
+    same_host_required: bool = True
+    screenshots_required: bool = True
+    downloads_allowed: bool = False
+    forms_allowed: bool = False
+    raw_task_text_included: bool = False
+    raw_web_content_is_untrusted: bool = True
+    approval_hash_prefix: str = Field(min_length=12, max_length=12)
+
+
 class InternetScoutBrowserApprovalResponse(BaseModel):
     request_id: UUID
     approval_queue_id: UUID
     approval_status: Literal["pending"] = "pending"
     plan: InternetScoutPlan
+    preview: InternetScoutBrowserApprovalPreview
 
 
 class InternetScoutLocalLLMCitation(BaseModel):
@@ -366,12 +400,72 @@ class InternetScoutCitationQualitySummary(BaseModel):
     accepted_citation_count: int = 0
     rejected_citation_count: int = 0
     official_source_count: int = 0
+    required_official_target_count: int = 0
+    covered_official_target_count: int = 0
     verified_claim_count: int = 0
     unsupported_claim_count: int = 0
     prompt_injection_rejection_count: int = 0
     official_source_required: bool = False
     required_source_hosts: list[str] = Field(default_factory=list, max_length=20)
     warnings: list[str] = Field(default_factory=list, max_length=20)
+
+
+class InternetScoutEvidenceTransparencyItem(BaseModel):
+    """Operator-visible evidence decision details for one cited source."""
+
+    source_url: str
+    host: str
+    content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    citation_text: str = Field(min_length=1, max_length=1000)
+    claim: str | None = Field(default=None, max_length=2000)
+    accepted: bool
+    rejection_reasons: list[str] = Field(default_factory=list, max_length=12)
+    confidence: Literal["low", "medium", "high"] = "medium"
+    source_quality: SourceQualityLevel = "general"
+    source_rank: int | None = Field(default=None, ge=1, le=25)
+    source_score: int = Field(default=0, ge=0, le=100)
+    quality_reasons: list[str] = Field(default_factory=list, max_length=10)
+    claim_supported: bool = True
+    claim_support_reasons: list[str] = Field(default_factory=list, max_length=8)
+    official_source_required: bool = False
+    official_host_match: bool = False
+    freshness_required: bool = False
+    fetched_at: datetime | None = None
+
+
+class InternetScoutAnswerQualityScore(BaseModel):
+    """Compact evidence-quality rollup for Beacon answer UI."""
+
+    score: int = Field(default=0, ge=0, le=100)
+    label: Literal["strong", "solid", "limited", "low"] = "low"
+    source_diversity_score: int = Field(default=0, ge=0, le=100)
+    official_coverage_score: int = Field(default=0, ge=0, le=100)
+    freshness_score: int = Field(default=0, ge=0, le=100)
+    rejected_risk_score: int = Field(default=0, ge=0, le=100)
+    accepted_source_count: int = Field(default=0, ge=0, le=25)
+    source_host_count: int = Field(default=0, ge=0, le=25)
+    rejected_risk_count: int = Field(default=0, ge=0, le=25)
+    summary: str = Field(default="", max_length=240)
+    warnings: list[str] = Field(default_factory=list, max_length=8)
+
+
+class InternetScoutEvidenceTransparency(BaseModel):
+    """Accepted and rejected evidence details for Beacon operator UX."""
+
+    accepted_sources: list[InternetScoutEvidenceTransparencyItem] = Field(
+        default_factory=list,
+        max_length=25,
+    )
+    rejected_sources: list[InternetScoutEvidenceTransparencyItem] = Field(
+        default_factory=list,
+        max_length=25,
+    )
+    official_source_required: bool = False
+    required_source_hosts: list[str] = Field(default_factory=list, max_length=20)
+    freshness_required: bool = False
+    answer_quality_score: InternetScoutAnswerQualityScore = Field(
+        default_factory=InternetScoutAnswerQualityScore
+    )
 
 
 class InternetScoutSynthesisContract(BaseModel):
@@ -472,6 +566,9 @@ class InternetScoutLocalLLMResponse(BaseModel):
     research_report: InternetScoutResearchReport = Field(
         default_factory=InternetScoutResearchReport
     )
+    evidence_transparency: InternetScoutEvidenceTransparency = Field(
+        default_factory=InternetScoutEvidenceTransparency
+    )
     answer_context: str = Field(default="", max_length=12000)
     raw_web_content_is_untrusted: bool = True
     instruction_boundary: str = (
@@ -483,7 +580,7 @@ class InternetScoutLocalLLMResponse(BaseModel):
 
 class InternetScoutHealthCheck(BaseModel):
     ok: bool
-    status: Literal["ok", "degraded", "unavailable"]
+    status: Literal["ok", "warning", "degraded", "unavailable"]
     detail: str
     metadata: dict[str, object] = Field(default_factory=dict)
 
@@ -576,6 +673,27 @@ class BrowserSandboxPolicy(BaseModel):
     network_mode: Literal["public_web_only"] = "public_web_only"
 
 
+class BrowserActionAuditEvent(BaseModel):
+    sequence: int = Field(ge=0, le=100)
+    action: Literal[
+        "sandbox",
+        "runtime",
+        "navigate",
+        "inspect_controls",
+        "extract_text",
+        "screenshot",
+        "observe",
+    ]
+    status: Literal["started", "succeeded", "failed", "blocked"]
+    host: str | None = Field(default=None, max_length=255)
+    url_hash: str | None = Field(default=None, pattern=r"^sha256:[a-f0-9]{64}$")
+    elapsed_ms: int | None = Field(default=None, ge=0, le=120_000)
+    blocked_reason: str | None = Field(default=None, max_length=160)
+    content_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    screenshot_ref: str | None = Field(default=None, max_length=500)
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
 class BrowserRunObservation(BaseModel):
     url: str
     host: str
@@ -603,6 +721,9 @@ class InternetScoutBrowserRunResponse(BaseModel):
     evidence: InternetEvidencePacket
     observations: list[BrowserRunObservation] = Field(
         default_factory=list, max_length=10
+    )
+    action_audit: list[BrowserActionAuditEvent] = Field(
+        default_factory=list, max_length=100
     )
     screenshots_review_required: bool = True
     blocked_reasons: list[str] = Field(default_factory=list)

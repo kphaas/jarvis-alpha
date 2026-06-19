@@ -37,6 +37,27 @@ OWNER_ROLE="jarvisbrain"
 # policies are enforced (table owners bypass RLS by default).
 SMOKE_ROLE="jarvis_alpha_smoke"
 
+if [ -f "${HOME}/jarvis/.secrets" ]; then
+    SECRETS_FILE="${HOME}/jarvis/.secrets"
+elif [ -f "${HOME}/.secrets" ]; then
+    SECRETS_FILE="${HOME}/.secrets"
+else
+    SECRETS_FILE=""
+fi
+
+if [ -n "${SECRETS_FILE}" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "${SECRETS_FILE}"
+    set +a
+fi
+
+OWNER_PSQL_ARGS=(-d "${DB_NAME}" -U "${OWNER_ROLE}")
+if [ -n "${POSTGRES_PASSWORD:-}" ]; then
+    export PGPASSWORD="${POSTGRES_PASSWORD}"
+    OWNER_PSQL_ARGS=(-h localhost -d "${DB_NAME}" -U "${OWNER_ROLE}")
+fi
+
 # Resolve repo root from this script's location so the wrapper works
 # regardless of pwd.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -71,7 +92,7 @@ Output:
 Files executed (in order):
   1. ${ROLE_SQL}             (as ${OWNER_ROLE})
   2. ${SETUP_SQL}             (as ${OWNER_ROLE})
-  3. ${SMOKE_SQL}             (as ${SMOKE_ROLE})
+  3. ${SMOKE_SQL}             (authenticated as ${OWNER_ROLE}, SET ROLE ${SMOKE_ROLE})
 EOF
 }
 
@@ -119,7 +140,7 @@ fi
     echo "  database:    ${DB_NAME}"
     echo "  psql:        ${PSQL_PATH}"
     echo "  owner role:  ${OWNER_ROLE}  (steps 1 + 2)"
-    echo "  smoke role:  ${SMOKE_ROLE}  (step 3, NOBYPASSRLS)"
+    echo "  smoke role:  ${SMOKE_ROLE}  (step 3 via SET ROLE, NOBYPASSRLS)"
     echo "  role setup:  ${ROLE_SQL}"
     echo "  data setup:  ${SETUP_SQL}"
     echo "  smoke:       ${SMOKE_SQL}"
@@ -130,8 +151,7 @@ fi
 # ── Step 1: ensure non-owner smoke role exists ────────────
 echo -e "${YELLOW}[1/3] applying test_role_setup.sql as ${OWNER_ROLE}...${NC}" | tee -a "${LOG_FILE}"
 "${PSQL_PATH}" \
-    -d "${DB_NAME}" \
-    -U "${OWNER_ROLE}" \
+    "${OWNER_PSQL_ARGS[@]}" \
     -v ON_ERROR_STOP=1 \
     -f "${ROLE_SQL}" 2>&1 | tee -a "${LOG_FILE}"
 ROLE_RC="${PIPESTATUS[0]}"
@@ -146,8 +166,7 @@ echo -e "${GREEN}[1/3] role setup OK${NC}" | tee -a "${LOG_FILE}"
 # ── Step 2: seed fixtures (as owner — needs INSERT privileges) ─
 echo -e "${YELLOW}[2/3] applying test_data_setup.sql as ${OWNER_ROLE}...${NC}" | tee -a "${LOG_FILE}"
 "${PSQL_PATH}" \
-    -d "${DB_NAME}" \
-    -U "${OWNER_ROLE}" \
+    "${OWNER_PSQL_ARGS[@]}" \
     -v ON_ERROR_STOP=1 \
     -f "${SETUP_SQL}" 2>&1 | tee -a "${LOG_FILE}"
 SETUP_RC="${PIPESTATUS[0]}"
@@ -159,12 +178,12 @@ if [ "${SETUP_RC}" -ne 0 ]; then
 fi
 echo -e "${GREEN}[2/3] data setup OK${NC}" | tee -a "${LOG_FILE}"
 
-# ── Step 3: run smoke harness as the non-owner role ───────
-echo -e "${YELLOW}[3/3] running rls_smoke.sql as ${SMOKE_ROLE} (RLS enforced)...${NC}" | tee -a "${LOG_FILE}"
+# ── Step 3: run smoke harness under the non-owner role ────
+echo -e "${YELLOW}[3/3] running rls_smoke.sql with SET ROLE ${SMOKE_ROLE} (RLS enforced)...${NC}" | tee -a "${LOG_FILE}"
 "${PSQL_PATH}" \
-    -d "${DB_NAME}" \
-    -U "${SMOKE_ROLE}" \
+    "${OWNER_PSQL_ARGS[@]}" \
     -v ON_ERROR_STOP=1 \
+    -c "SET ROLE ${SMOKE_ROLE};" \
     -f "${SMOKE_SQL}" 2>&1 | tee -a "${LOG_FILE}"
 SMOKE_RC="${PIPESTATUS[0]}"
 

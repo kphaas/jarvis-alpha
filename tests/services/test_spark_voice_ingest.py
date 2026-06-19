@@ -10,6 +10,8 @@ import pytest
 from brain.services.spark_voice_ingest import (
     GMAIL_SENT_QUERY,
     build_spark_voice_profile_proposal,
+    load_approved_voice_sources,
+    load_spark_voice_guidance,
 )
 
 
@@ -188,6 +190,7 @@ Prefer:
 |---|---|
 | Relationship-marked | yes |
 | Relationship-specific approval granted | yes |
+| Parent minor context approval granted | yes |
 | Legal or custody content | block if detected |
 
 - [x] Approved
@@ -243,3 +246,65 @@ Prefer:
         encoding="utf-8",
     )
     return tmp_path, export_sha256
+
+
+def test_voice_source_parser_reads_parent_minor_context_approval(
+    tmp_path: Path,
+) -> None:
+    vault_root, _ = _write_vault(tmp_path)
+
+    imessage = next(
+        record
+        for record in load_approved_voice_sources(vault_root, "ken")
+        if record.source == "imessage"
+    )
+
+    assert imessage.parent_minor_context_approved is True
+
+
+def test_voice_guidance_accepts_principal_neutral_approved_labels(
+    tmp_path: Path,
+) -> None:
+    principal_root = tmp_path / "spark" / "principals" / "sweta"
+    principal_root.mkdir(parents=True)
+    (principal_root / "voice.md").write_text(
+        """
+# Sweta Voice
+
+Approved voice markers:
+- Warm
+- Clear
+
+Approved recurring phrases:
+- sounds good
+- let me check
+
+Avoid sounding:
+- Robotic
+
+## Channel Style
+
+| Channel | Rule |
+|---|---|
+| Text | Warm and concise |
+
+## Accessibility Style
+
+Prefer:
+- short lines
+
+## Judgment Style
+
+| Situation | Rule |
+|---|---|
+| Uncertainty | Say what needs to be checked |
+""",
+        encoding="utf-8",
+    )
+
+    guidance = load_spark_voice_guidance(tmp_path, "sweta")
+
+    assert guidance.voice_markers == ("Warm", "Clear")
+    assert guidance.recurring_phrases == ("sounds good", "let me check")
+    assert guidance.avoid_markers == ("Robotic",)
+    assert guidance.channel_style["Text"] == "Warm and concise"

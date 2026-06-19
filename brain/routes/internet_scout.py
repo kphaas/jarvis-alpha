@@ -12,6 +12,7 @@ from brain.middleware.scopes import check_scopes
 from brain.services.internet_scout.browser_approvals import (
     BrowserApprovalError,
     browser_task_parameters_hash,
+    browser_task_approval_preview,
     consume_browser_task_approval,
     enqueue_browser_task_approval,
     require_approved_browser_task,
@@ -36,6 +37,7 @@ from brain.services.internet_scout.local_llm import build_local_llm_response
 from brain.services.internet_scout.health import build_beacon_health
 from brain.services.internet_scout.memory_promotions import MemoryPromotionPolicyError
 from brain.services.internet_scout.models import (
+    BrowserActionAuditEvent,
     InternetScoutAgentResponse,
     InternetScoutBrowserApprovalResponse,
     InternetScoutBrowserRunRequest,
@@ -385,6 +387,7 @@ async def internet_scout_browser_approval_request(
         raise HTTPException(status_code=400, detail="browser_use_request_required")
     if not plan.decision.requires_approval:
         raise HTTPException(status_code=400, detail="browser_use_approval_not_required")
+    preview = browser_task_approval_preview(browser_body, plan.decision)
 
     async with rls_connection(request) as conn:
         repo = InternetScoutRepository(conn)
@@ -410,6 +413,8 @@ async def internet_scout_browser_approval_request(
                 "approval_queue_id": str(queue_id),
                 "approval_status": "pending",
                 "requires_approval": True,
+                "approval_hash_prefix": preview.approval_hash_prefix,
+                "browser_action_preview": preview.model_dump(mode="json"),
             },
         )
 
@@ -427,6 +432,7 @@ async def internet_scout_browser_approval_request(
         request_id=request_id,
         approval_queue_id=queue_id,
         plan=plan,
+        preview=preview,
     )
 
 
@@ -498,6 +504,14 @@ async def internet_scout_browser_run_approved(
             plan=plan,
             max_steps=body.max_steps,
             require_screenshot=body.require_screenshot,
+            audit_action=lambda event: _record_browser_action_audit_event(
+                request=request,
+                request_id=request_id,
+                tool=plan.decision.tool,
+                approval_queue_id=body.approval_queue_id,
+                parameters_hash=parameters_hash,
+                event=event,
+            ),
         )
     except BrowserSandboxPolicyError as exc:
         await _mark_browser_run_failed(
@@ -534,6 +548,7 @@ async def internet_scout_browser_run_approved(
                     ]
                 ),
                 "screenshots_review_required": True,
+                "action_audit_count": len(result.action_audit),
             },
         )
         await repo.mark_request_succeeded(request_id)
@@ -584,6 +599,38 @@ async def _mark_browser_run_failed(
             error_text=error_text,
         )
         await repo.mark_request_failed(request_id, error_text)
+
+
+async def _record_browser_action_audit_event(
+    *,
+    request: Request,
+    request_id: UUID,
+    tool: InternetTool,
+    approval_queue_id: UUID,
+    parameters_hash: str,
+    event: BrowserActionAuditEvent,
+) -> None:
+    metadata = event.model_dump(mode="json", exclude_none=True)
+    metadata.update(
+        {
+            "approval_queue_id": str(approval_queue_id),
+            "approval_hash_prefix": parameters_hash[:12],
+            "raw_task_text_included": False,
+            "raw_web_content_included": False,
+            "downloads_allowed": False,
+            "forms_allowed": False,
+            "credential_entry_allowed": False,
+        }
+    )
+    async with rls_connection(request) as conn:
+        repo = InternetScoutRepository(conn)
+        await repo.record_tool_event(
+            request_id=request_id,
+            tool=tool.value,
+            event_type="browser_action",
+            status=event.status,
+            metadata=metadata,
+        )
 
 
 def _approval_actor_type(request: Request) -> str:

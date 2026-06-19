@@ -124,6 +124,7 @@ async def create_reviewed_memory_consolidation_proposals(
     """
 
     records = build_memory_consolidation_proposal_records(report)
+    await expire_stale_memory_consolidation_proposals(conn)
     persisted: list[PersistedMemoryConsolidationProposal] = []
 
     for record in records:
@@ -235,6 +236,25 @@ async def create_reviewed_memory_consolidation_proposals(
         )
 
     return persisted
+
+
+async def expire_stale_memory_consolidation_proposals(
+    conn: asyncpg.Connection,
+) -> dict[str, Any]:
+    """Clear active Dream proposals whose approval token can no longer execute."""
+
+    result = await conn.fetchval(
+        "SELECT public.expire_stale_memory_consolidation_proposals()",
+    )
+    if isinstance(result, dict):
+        return result
+    if isinstance(result, str):
+        try:
+            decoded = json.loads(result)
+        except json.JSONDecodeError:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
 
 
 async def enqueue_memory_consolidation_approval(

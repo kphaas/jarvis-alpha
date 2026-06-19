@@ -66,7 +66,51 @@ async def test_send_client_posts_exact_text_to_bluebubbles() -> None:
     assert seen == [
         (
             "/api/v1/message/text",
-            {"chatGuid": "approved-chat-guid", "text": "Approved text"},
+            {
+                "chatGuid": "approved-chat-guid",
+                "message": "Approved text",
+                "tempGuid": seen[0][1]["tempGuid"],
+            },
             "b'password=secret'",
+        )
+    ]
+    assert str(seen[0][1]["tempGuid"]).startswith("temp-")
+
+
+@pytest.mark.asyncio
+async def test_send_client_uses_send_specific_endpoint_and_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[str, str]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((str(request.url), str(request.url.query)))
+        return httpx.Response(
+            200,
+            json={
+                "status": 200,
+                "message": "Success",
+                "data": {"guid": "private-message-guid"},
+            },
+        )
+
+    monkeypatch.setenv("BLUEBUBBLES_BASE_URL", "http://127.0.0.1:1234")
+    monkeypatch.setenv("BLUEBUBBLES_PASSWORD", "read-secret")
+    monkeypatch.setenv("SPARK_IMESSAGE_SEND_BASE_URL", "http://127.0.0.1:8765")
+    monkeypatch.setenv("SPARK_IMESSAGE_SEND_PASSWORD", "send-secret")
+    monkeypatch.setenv("SPARK_IMESSAGE_SEND_ENABLED", "true")
+
+    client = SparkIMessageSendClient(transport=httpx.MockTransport(handler))
+
+    result = await client.send_text_to_chat(
+        chat_guid="approved-chat-guid",
+        text="Approved text",
+    )
+
+    assert result.status == 200
+    assert seen == [
+        (
+            "http://127.0.0.1:8765/api/v1/message/text?password=send-secret",
+            "b'password=send-secret'",
         )
     ]

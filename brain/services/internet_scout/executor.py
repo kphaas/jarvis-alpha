@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import HTTPException
+from jarvis_common.logging_config import get_logger
 
 from brain.services.internet_scout.evidence import (
     packet_from_crawl_response,
@@ -11,6 +12,10 @@ from brain.services.internet_scout.evidence import (
     packet_from_search_and_extract_responses,
     packet_from_search_response,
     packet_from_search_responses,
+)
+from brain.services.internet_scout.free_source_router import (
+    FreeSourceRouteResult,
+    FreeSourceRouter,
 )
 from brain.services.internet_scout.gateway_client import (
     InternetScoutGatewayClient,
@@ -36,14 +41,19 @@ from brain.services.internet_scout.safety import DEFAULT_MAX_CONTENT_BYTES
 from brain.services.internet_scout.research_planner import plan_research
 from brain.services.internet_scout.search_pipeline import SearchRun, rank_search_results
 
+logger = get_logger("alpha_brain")
+
 
 class InternetScoutExecutor:
     """Execute approved Beacon read tools through Gateway-owned egress."""
 
     def __init__(
-        self, gateway_client: InternetScoutGatewayClient | None = None
+        self,
+        gateway_client: InternetScoutGatewayClient | None = None,
+        free_source_router: FreeSourceRouter | None = None,
     ) -> None:
         self.gateway_client = gateway_client or InternetScoutGatewayClient()
+        self.free_source_router = free_source_router or FreeSourceRouter()
 
     async def execute(
         self,
@@ -64,6 +74,9 @@ class InternetScoutExecutor:
         if decision.tool == InternetTool.SEARCH:
             if request.query is None:
                 raise HTTPException(status_code=400, detail="query is required")
+            free_source_result = await self._try_free_source_route(request)
+            if free_source_result is not None:
+                return decision, free_source_result.packet
             research = (
                 plan.research
                 if plan is not None
@@ -135,6 +148,21 @@ class InternetScoutExecutor:
             detail=f"Beacon tool {decision.tool.value!r} is not enabled for execution",
         )
 
+    async def _try_free_source_route(
+        self, request: InternetScoutRequest
+    ) -> FreeSourceRouteResult | None:
+        try:
+            return await self.free_source_router.try_route(request)
+        except Exception as exc:
+            logger.warning(
+                "BEACON_FREE_SOURCE_FALLBACK",
+                extra={
+                    "event": "BEACON_FREE_SOURCE_FALLBACK",
+                    "error_type": type(exc).__name__,
+                },
+            )
+            return None
+
     async def _run_searches(
         self,
         *,
@@ -152,7 +180,13 @@ class InternetScoutExecutor:
             )
         ]
         per_query_count = (
-            3 if (len(searches) > 1 or research.provider_strategy == "fanout") else 5
+            5
+            if research.intent == "comparison"
+            else (
+                3
+                if (len(searches) > 1 or research.provider_strategy == "fanout")
+                else 5
+            )
         )
         runs: list[SearchRun] = []
         for search in searches[: research.max_searches]:

@@ -11,6 +11,7 @@ VALID_ISS_ACTOR_PAIRS = {
     "sandbox": "service",
     "buddy": "agent",
     "endpoint": "service",
+    "print": "service",
 }
 
 DEFAULT_SCOPES = {
@@ -43,7 +44,9 @@ DEFAULT_SCOPES = {
         "forge.llm.call",
         "health.read",
     ],
-    "endpoint": ["health.read", "school_email.read"],
+    "endpoint": ["health.read", "school_email.read", "vault.read", "vault.write"],
+    # Least-privilege: print may only call the internal LLM completion route.
+    "print": ["llm:complete"],
 }
 
 TOKEN_LIFETIME_DAYS = 7

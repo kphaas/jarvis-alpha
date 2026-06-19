@@ -29,3 +29,23 @@ def test_brain_pull_syncs_personality_before_runtime_gates() -> None:
     assert source.index("personality_sync") < source.index(
         "Running database migrations"
     )
+
+
+def test_pull_deploy_refuses_remote_feature_branch_by_default() -> None:
+    source = PULL_SCRIPT.read_text(encoding="utf-8")
+
+    assert "CURRENT_BRANCH=$(git branch --show-current" in source
+    assert "JARVIS_ALPHA_ALLOW_BRANCH_DEPLOY:-0" in source
+    assert "REMOTE BRANCH GUARD FAILED" in source
+    assert source.index("CURRENT_BRANCH=$(git branch --show-current") < source.index(
+        "git pull origin main --rebase"
+    )
+
+
+def test_pull_deploy_refuses_head_that_is_not_origin_main() -> None:
+    source = PULL_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'ORIGIN_MAIN_FULL=$(git -C "$REPO_DIR" rev-parse' in source
+    assert "refs/remotes/origin/main" in source
+    assert "REMOTE HEAD GUARD FAILED" in source
+    assert "remote head is not origin/main after pull" in source

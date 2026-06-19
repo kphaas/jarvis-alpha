@@ -24,6 +24,8 @@ def _skill_metadata(
     model_policy: str | None = None,
     egress_mode: str = "none",
     provider: str | None = None,
+    data_source_id: str | None = None,
+    data_source_ids: list[str] | None = None,
     allowed_hosts: list[str] | None = None,
     compensation: str = "not_applicable",
     test_ref: str = "tests/test_agent_skill_registry.py",
@@ -35,6 +37,16 @@ def _skill_metadata(
     Provider credentials, URLs, and secret names stay outside the manifest.
     This is governance metadata: risk, egress, runtime, cost, and audit shape.
     """
+
+    egress: dict[str, Any] = {
+        "mode": egress_mode,
+        "provider": provider,
+        "allowed_hosts": allowed_hosts or [],
+    }
+    if data_source_id is not None:
+        egress["data_source_id"] = data_source_id
+    if data_source_ids:
+        egress["data_source_ids"] = data_source_ids
 
     metadata: dict[str, Any] = {
         "manifest": {
@@ -53,11 +65,7 @@ def _skill_metadata(
                 "max_usd_per_call": max_usd_per_call,
                 "model_policy": model_policy,
             },
-            "egress": {
-                "mode": egress_mode,
-                "provider": provider,
-                "allowed_hosts": allowed_hosts or [],
-            },
+            "egress": egress,
             "audit": {
                 "event_name": "skill.invoke",
                 "redact_fields": ["token", "secret", "body"],
@@ -237,6 +245,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             rate_limit="30/minute/system",
             egress_mode="gateway",
             provider="open_meteo",
+            data_source_id="open-meteo",
             allowed_hosts=["api.open-meteo.com"],
             test_ref="tests/test_weather_skill.py",
             extra={
@@ -539,8 +548,8 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             test_ref="tests/test_obsidian_skills.py",
             extra={
                 "execution_path": "skill_runner",
-                "config_secret": "OBSIDIAN_VAULT_PATH",
-                "default_path_secret": "OBSIDIAN_TASKS_INBOX",
+                "config_secret": "OBSIDIAN_VAULT_PATH",  # pragma: allowlist secret
+                "default_path_secret": "OBSIDIAN_TASKS_INBOX",  # pragma: allowlist secret
             },
         ),
     ),
@@ -562,7 +571,34 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             test_ref="tests/test_obsidian_skills.py",
             extra={
                 "execution_path": "skill_runner",
-                "config_secret": "OBSIDIAN_VAULT_PATH",
+                "config_secret": "OBSIDIAN_VAULT_PATH",  # pragma: allowlist secret
+            },
+        ),
+    ),
+    SkillSpec(
+        name="notes.write_private_digest",
+        domain="notes",
+        action="write_private_digest",
+        description="Write an idempotent private digest note into the Obsidian vault.",
+        approval_tier="T2",
+        scope="notes.write",
+        status="active",
+        mutates_state=True,
+        idempotency_required=True,
+        metadata=_skill_metadata(
+            data_classification="personal",
+            side_effect_class="write",
+            timeout_s=10,
+            retry_policy="idempotent_retry_once",
+            rate_limit="30/minute/operator",
+            egress_mode="local",
+            provider="obsidian",
+            compensation="delete_created_digest_note",
+            test_ref="tests/test_obsidian_skills.py",
+            extra={
+                "execution_path": "skill_runner",
+                "config_secret": "OBSIDIAN_VAULT_PATH",  # pragma: allowlist secret
+                "default_path": "AT-0/Private Document Digests",
             },
         ),
     ),
@@ -1102,6 +1138,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             model_policy="gateway_search_provider_order",
             egress_mode="gateway",
             provider="beacon",
+            data_source_ids=["brave-search", "perplexity-search"],
             test_ref="tests/test_internet_scout_chat_adapter.py",
             runbook_ref="docs/adr/ADR-0019-beacon-internet-scout.md",
             extra={
@@ -1130,6 +1167,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             model_policy="gateway_search_provider_order",
             egress_mode="gateway",
             provider="beacon",
+            data_source_ids=["brave-search", "perplexity-search"],
             test_ref="tests/test_internet_scout_chat_adapter.py",
             runbook_ref="docs/adr/ADR-0019-beacon-internet-scout.md",
             extra={
@@ -1204,11 +1242,17 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
         enabled=True,
         cadence="on_demand",
         launch_label="com.jarvis.alpha.temporal.worker",
-        allowed_skills=["notes.search", "notify.send", "tasks.create"],
+        allowed_skills=[
+            "notes.search",
+            "notes.write_private_digest",
+            "notify.send",
+            "tasks.create",
+        ],
         allowed_scopes=[
             "dream.execute",
             "approval.request",
             "notes.read",
+            "notes.write",
             "notify.send",
             "tasks.write",
         ],
@@ -1303,9 +1347,9 @@ INITIAL_AGENTS: tuple[AgentSpec, ...] = (
         cost_daily_cap_usd=0.0,
         approval_policy={
             "writes": "approval_required",
-            "api_keys": "T3",
+            "api_keys": "T3",  # pragma: allowlist secret
             "service_tokens": "T3",
-            "db_passwords": "T4",
+            "db_passwords": "T4",  # pragma: allowlist secret
             "rollback": "required",
         },
         metadata={

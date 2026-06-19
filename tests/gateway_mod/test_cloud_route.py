@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -7,7 +8,18 @@ from gateway.routes import cloud_routes
 
 
 @pytest.fixture(autouse=True)
-def reset_search_provider_circuits():
+def reset_search_provider_circuits(monkeypatch, tmp_path):
+    monkeypatch.delenv("BEACON_MIN_USABLE_SEARCH_PROVIDERS", raising=False)
+    monkeypatch.delenv("BEACON_SEARCH_PROVIDER_ORDER", raising=False)
+    monkeypatch.delenv("SEARXNG_BASE_URL", raising=False)
+    monkeypatch.delenv("SEARXNG_API_KEY", raising=False)
+    monkeypatch.delenv("BEACON_SEARXNG_DAILY_SEARCH_LIMIT", raising=False)
+    monkeypatch.delenv("BEACON_SEARXNG_MONTHLY_SEARCH_LIMIT", raising=False)
+    monkeypatch.delenv("BEACON_BRAVE_DAILY_SEARCH_LIMIT", raising=False)
+    monkeypatch.delenv("BEACON_BRAVE_MONTHLY_SEARCH_LIMIT", raising=False)
+    monkeypatch.delenv("BEACON_PERPLEXITY_DAILY_SEARCH_LIMIT", raising=False)
+    monkeypatch.delenv("BEACON_PERPLEXITY_MONTHLY_SEARCH_LIMIT", raising=False)
+    monkeypatch.setenv("BEACON_SEARCH_USAGE_DIR", str(tmp_path))
     for circuit in cloud_routes._SEARCH_CIRCUITS.values():
         circuit.failures = []
         circuit.open_until = 0.0
@@ -47,6 +59,218 @@ def test_google_billing_request_does_not_accept_brain_credentials():
     assert fields == {"currency_code"}
     assert "service_account_info" not in fields
     assert "account_id" not in fields
+
+
+@pytest.mark.asyncio
+async def test_privacy_removal_dry_run_returns_noop_gateway_contract(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    request_id = uuid4()
+    target_id = "beenverified"
+
+    result = await cloud_routes.privacy_removal_dry_run(
+        cloud_routes.PrivacyRemovalDryRunRequest(
+            schema_version="privacy_gateway_dry_run.v1",
+            operation="privacy.removal.submit",
+            mode="dry_run",
+            egress_owner="gateway",
+            egress_mode="gateway_dry_run",
+            outbound_enabled=False,
+            would_send=False,
+            request_id=request_id,
+            subject_id=uuid4(),
+            target_id=target_id,
+            target_category="data_broker",
+            target_opt_out_method="web_form",
+            adapter_kind="gateway_web_form_dry_run",
+            authorization_id=uuid4(),
+            action_id=uuid4(),
+            request_payload_hash="sha256:" + "1" * 64,
+            idempotency_key_digest="hmac-sha256:" + "2" * 64,
+            approval_binding={
+                "approval_required": True,
+                "approval_queue_id": str(uuid4()),
+            },
+            allowed_effects=[],
+            blocked_effects=[
+                "public_http",
+                "browser_automation",
+                "email_send",
+                "sms_send",
+                "broker_form_submit",
+            ],
+            prepared_at=datetime.now(UTC),
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert result["status"] == "dry_run_ready"
+    assert result["request_id"] == str(request_id)
+    assert result["target_id"] == target_id
+    assert result["outbound_enabled"] is False
+    assert result["would_send"] is False
+
+
+@pytest.mark.asyncio
+async def test_privacy_removal_dry_run_rejects_allowed_effects(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+
+    with pytest.raises(HTTPException) as exc:
+        await cloud_routes.privacy_removal_dry_run(
+            cloud_routes.PrivacyRemovalDryRunRequest(
+                schema_version="privacy_gateway_dry_run.v1",
+                operation="privacy.removal.submit",
+                mode="dry_run",
+                egress_owner="gateway",
+                egress_mode="gateway_dry_run",
+                outbound_enabled=False,
+                would_send=False,
+                request_id=uuid4(),
+                subject_id=uuid4(),
+                target_id="beenverified",
+                target_category="data_broker",
+                target_opt_out_method="web_form",
+                adapter_kind="gateway_web_form_dry_run",
+                authorization_id=uuid4(),
+                request_payload_hash="sha256:" + "1" * 64,
+                idempotency_key_digest="hmac-sha256:" + "2" * 64,
+                approval_binding={"approval_required": True},
+                allowed_effects=["public_http"],
+                blocked_effects=[
+                    "public_http",
+                    "browser_automation",
+                    "email_send",
+                    "sms_send",
+                    "broker_form_submit",
+                ],
+                prepared_at=datetime.now(UTC),
+            ),
+            authorization="Bearer gateway-token",
+        )
+
+    assert exc.value.status_code == 400
+
+
+def _privacy_live_preflight_request(**overrides):
+    data = {
+        "schema_version": "privacy_gateway_live_preflight.v1",
+        "operation": "privacy.removal.live_preflight",
+        "mode": "live_preflight",
+        "egress_owner": "gateway",
+        "egress_mode": "gateway_live_preflight",
+        "live_enabled_requested": True,
+        "request_id": uuid4(),
+        "subject_id": uuid4(),
+        "target_id": "beenverified",
+        "target_category": "data_broker",
+        "target_opt_out_method": "web_form",
+        "adapter_kind": "beenverified_web_form_live_preflight",
+        "authorization_id": uuid4(),
+        "action_id": uuid4(),
+        "request_payload_hash": "sha256:" + "1" * 64,
+        "dry_run_payload_hash": "sha256:" + "2" * 64,
+        "idempotency_key_digest": "hmac-sha256:" + "3" * 64,
+        "approval_binding": {
+            "approval_required": True,
+            "approval_queue_id": str(uuid4()),
+            "approval_status": "approved",
+            "approval_decided_at": datetime.now(UTC).isoformat(),
+            "approval_parameters_hash": "4" * 64,
+            "approved_action_payload_hash": "sha256:" + "5" * 64,
+        },
+        "allowed_effects": ["target_http_get"],
+        "blocked_effects": [
+            "browser_automation",
+            "email_send",
+            "sms_send",
+            "broker_form_submit",
+            "pii_payload_submit",
+        ],
+        "prepared_at": datetime.now(UTC),
+    }
+    data.update(overrides)
+    return cloud_routes.PrivacyRemovalLivePreflightRequest(**data)
+
+
+@pytest.mark.asyncio
+async def test_privacy_live_preflight_defaults_to_kill_switch_disabled(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    monkeypatch.delenv("PRIVACY_EXECUTOR_LIVE_ENABLED", raising=False)
+
+    class ForbiddenClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("kill switch off must not create an HTTP client")
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", ForbiddenClient)
+    request = _privacy_live_preflight_request()
+
+    result = await cloud_routes.privacy_removal_live_preflight(
+        request,
+        authorization="Bearer gateway-token",
+    )
+
+    assert result["status"] == "live_disabled"
+    assert result["outbound_enabled"] is False
+    assert result["would_send"] is False
+    assert result["target_http_attempted"] is False
+    assert result["target_id"] == "beenverified"
+    assert result["adapter_kind"] == "beenverified_web_form_live_preflight"
+
+
+@pytest.mark.asyncio
+async def test_privacy_live_preflight_enabled_gets_fixed_target(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    monkeypatch.setenv("PRIVACY_EXECUTOR_LIVE_ENABLED", "true")
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "text/html", "content-length": "1234"}
+
+    class FakeClient:
+        def __init__(self, *, timeout: float, follow_redirects: bool):
+            seen["timeout"] = timeout
+            seen["follow_redirects"] = follow_redirects
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, *, headers):
+            seen["url"] = url
+            seen["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+    request = _privacy_live_preflight_request()
+
+    result = await cloud_routes.privacy_removal_live_preflight(
+        request,
+        authorization="Bearer gateway-token",
+    )
+
+    assert seen["url"] == "https://www.beenverified.com/app/optout/search"
+    assert seen["headers"]["User-Agent"] == "jarvis-alpha-privacy-preflight/1.0"
+    assert result["status"] == "live_preflight_passed"
+    assert result["outbound_enabled"] is True
+    assert result["would_send"] is False
+    assert result["target_http_attempted"] is True
+    assert result["target_http_status_code"] == 200
+    assert result["target_content_type"] == "text/html"
+
+
+@pytest.mark.asyncio
+async def test_privacy_live_preflight_rejects_other_targets(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+
+    with pytest.raises(HTTPException) as exc:
+        await cloud_routes.privacy_removal_live_preflight(
+            _privacy_live_preflight_request(target_id="mylife"),
+            authorization="Bearer gateway-token",
+        )
+
+    assert exc.value.status_code == 400
 
 
 @pytest.mark.asyncio
@@ -199,6 +423,72 @@ async def test_msgraph_mailbox_messages_allows_only_herald_mailboxes(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_msgraph_mailbox_reply_allows_only_herald_mailboxes(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 202
+        text = ""
+
+        def json(self):
+            raise ValueError("empty")
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            seen["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, headers, json):
+            seen["url"] = url
+            seen["headers"] = headers
+            seen["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.msgraph_mailbox_reply(
+        cloud_routes.MicrosoftGraphMailboxReplyRequest(
+            access_token="token",
+            mailbox="hello@at-0.com",
+            message_id="AAMk/with+chars=",
+            reply_body="Approved reply",
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert seen["url"] == (
+        "https://graph.microsoft.com/v1.0/users/"
+        "hello%40at-0.com/messages/AAMk%2Fwith%2Bchars%3D/reply"
+    )
+    assert seen["headers"]["Authorization"] == "Bearer token"
+    assert seen["headers"]["Content-Type"] == "application/json"
+    assert seen["json"]["message"]["body"] == {
+        "contentType": "Text",
+        "content": "Approved reply",
+    }
+    assert result == {"status_code": 202, "payload": {"raw": ""}}
+
+    with pytest.raises(HTTPException) as exc:
+        await cloud_routes.msgraph_mailbox_reply(
+            cloud_routes.MicrosoftGraphMailboxReplyRequest(
+                access_token="token",
+                mailbox="admin@at-0.com",
+                message_id="message-1",
+                reply_body="Nope",
+            ),
+            authorization="Bearer gateway-token",
+        )
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_anthropic_admin_rejects_unsupported_path(monkeypatch):
     monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
 
@@ -212,6 +502,78 @@ async def test_anthropic_admin_rejects_unsupported_path(monkeypatch):
         )
 
     assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_internet_search_uses_searxng_before_paid_providers(monkeypatch):
+    monkeypatch.setenv("SEARXNG_BASE_URL", "https://searx.example.test/")
+
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "BRAVE_SEARCH_API_KEY":
+            return "brave-token"
+        if name == "PERPLEXITY_API_KEY":
+            return "pplx-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "results": [
+                    {
+                        "title": "Safe",
+                        "url": "https://public.example.test/report",
+                        "content": "Sourced summary.",
+                    },
+                    {
+                        "title": "Internal",
+                        "url": "http://127.0.0.1:8000/admin",
+                        "content": "blocked",
+                    },
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            seen["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, *, params, headers):
+            seen["url"] = url
+            seen["params"] = params
+            seen["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.internet_search(
+        cloud_routes.InternetSearchRequest(query="beacon", count=5),
+        authorization="Bearer gateway-token",
+    )
+
+    assert seen["url"] == "https://searx.example.test/search"
+    assert seen["params"] == {
+        "q": "beacon",
+        "format": "json",
+        "language": "en",
+        "safesearch": "1",
+        "categories": "general",
+    }
+    assert seen["headers"]["User-Agent"] == "jarvis-alpha-beacon/1.0"
+    assert result["provider"] == "searxng"
+    assert len(result["results"]) == 1
+    assert result["results"][0]["url"] == "https://public.example.test/report"
 
 
 @pytest.mark.asyncio
@@ -416,7 +778,141 @@ async def test_internet_search_falls_back_when_brave_provider_fails(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_internet_health_reports_provider_configuration(monkeypatch):
+async def test_internet_search_blocks_provider_when_budget_is_exhausted(monkeypatch):
+    monkeypatch.setenv("BEACON_PERPLEXITY_DAILY_SEARCH_LIMIT", "1")
+    monkeypatch.setenv("BEACON_PERPLEXITY_MONTHLY_SEARCH_LIMIT", "1")
+
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "PERPLEXITY_API_KEY":
+            return "pplx-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+    seen: dict[str, int] = {"calls": 0}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "results": [
+                    {
+                        "title": "Safe",
+                        "url": "https://public.example.test/report",
+                        "snippet": "Source.",
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, json, headers):
+            seen["calls"] += 1
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    first = await cloud_routes.internet_search(
+        cloud_routes.InternetSearchRequest(query="beacon", provider="perplexity"),
+        authorization="Bearer gateway-token",
+    )
+
+    assert first["provider"] == "perplexity"
+    assert seen["calls"] == 1
+
+    with pytest.raises(HTTPException) as exc:
+        await cloud_routes.internet_search(
+            cloud_routes.InternetSearchRequest(query="beacon", provider="perplexity"),
+            authorization="Bearer gateway-token",
+        )
+
+    assert exc.value.status_code == 429
+    assert exc.value.detail == "Perplexity Search budget exhausted"
+    assert seen["calls"] == 1
+
+
+@pytest.mark.asyncio
+async def test_internet_health_marks_budget_exhausted_provider_unusable(monkeypatch):
+    monkeypatch.setenv("BEACON_PERPLEXITY_DAILY_SEARCH_LIMIT", "0")
+
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "BRAVE_SEARCH_API_KEY":
+            return "brave-token"
+        if name == "PERPLEXITY_API_KEY":
+            return "pplx-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+
+    result = await cloud_routes.internet_health(authorization="Bearer gateway-token")
+
+    assert result["status"] == "warning"
+    assert result["configured_provider_count"] == 2
+    assert result["usable_provider_count"] == 1
+    assert result["provider_redundancy_ok"] is False
+    assert result["provider_redundancy_status"] == "backup_budget_capped"
+    assert result["provider_warning_status"] == "backup_budget_capped"
+    assert result["primary_provider"] == "brave"
+    assert result["primary_provider_usable"] is True
+    assert result["budget_capped_provider_count"] == 1
+    assert result["budget_capped_backup_provider_count"] == 1
+    perplexity = next(
+        provider
+        for provider in result["providers"]
+        if provider["provider"] == "perplexity"
+    )
+    assert perplexity["budget_exhausted"] is True
+    assert perplexity["daily_request_limit"] == 0
+
+
+@pytest.mark.asyncio
+async def test_internet_health_degrades_when_primary_provider_is_budget_exhausted(
+    monkeypatch,
+):
+    monkeypatch.setenv("BEACON_BRAVE_DAILY_SEARCH_LIMIT", "0")
+
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "BRAVE_SEARCH_API_KEY":
+            return "brave-token"
+        if name == "PERPLEXITY_API_KEY":
+            return "pplx-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+
+    result = await cloud_routes.internet_health(authorization="Bearer gateway-token")
+
+    assert result["status"] == "degraded"
+    assert result["usable_provider_count"] == 1
+    assert result["provider_redundancy_ok"] is False
+    assert result["provider_redundancy_status"] == "single_provider"
+    assert result["provider_warning_status"] is None
+    assert result["primary_provider"] == "brave"
+    assert result["primary_provider_usable"] is False
+    assert result["budget_capped_provider_count"] == 1
+    assert result["budget_capped_backup_provider_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_internet_health_reports_searxng_as_primary_free_provider(
+    monkeypatch,
+):
+    monkeypatch.setenv("SEARXNG_BASE_URL", "https://searx.example.test")
+
     def fake_secret(name: str) -> str:
         if name == "GATEWAY_TOKEN":
             return "gateway-token"
@@ -429,11 +925,101 @@ async def test_internet_health_reports_provider_configuration(monkeypatch):
     result = await cloud_routes.internet_health(authorization="Bearer gateway-token")
 
     assert result["status"] == "ok"
+    assert result["configured_provider_count"] == 2
+    assert result["usable_provider_count"] == 2
+    assert result["provider_order"] == ["searxng", "brave"]
+    assert result["primary_provider"] == "searxng"
+    searxng = next(
+        provider
+        for provider in result["providers"]
+        if provider["provider"] == "searxng"
+    )
+    assert searxng["data_source_id"] == "searxng-metasearch"
+    assert searxng["configured"] is True
+
+
+@pytest.mark.asyncio
+async def test_internet_health_reports_provider_configuration(monkeypatch):
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "BRAVE_SEARCH_API_KEY":
+            return "brave-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+
+    result = await cloud_routes.internet_health(authorization="Bearer gateway-token")
+
+    assert result["status"] == "degraded"
     assert result["configured_provider_count"] == 1
     assert result["usable_provider_count"] == 1
-    assert result["providers"][0]["provider"] == "brave"
-    assert result["providers"][0]["configured"] is True
-    assert result["providers"][0]["circuit_open"] is False
+    assert result["required_provider_count"] == 2
+    assert result["provider_redundancy_ok"] is False
+    assert result["provider_redundancy_status"] == "single_provider"
+    assert result["missing_provider_count"] == 1
+    assert result["provider_order"] == ["brave"]
+    brave = next(
+        provider for provider in result["providers"] if provider["provider"] == "brave"
+    )
+    assert brave["data_source_id"] == "brave-search"
+    assert brave["configured"] is True
+    assert brave["circuit_open"] is False
+
+
+@pytest.mark.asyncio
+async def test_internet_health_reports_redundant_provider_configuration(monkeypatch):
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "BRAVE_SEARCH_API_KEY":
+            return "brave-token"
+        if name == "PERPLEXITY_API_KEY":
+            return "pplx-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+
+    result = await cloud_routes.internet_health(authorization="Bearer gateway-token")
+
+    assert result["status"] == "ok"
+    assert result["configured_provider_count"] == 2
+    assert result["usable_provider_count"] == 2
+    assert result["required_provider_count"] == 2
+    assert result["provider_redundancy_ok"] is True
+    assert result["provider_redundancy_status"] == "redundant"
+    assert result["missing_provider_count"] == 0
+    assert result["provider_order"] == ["brave", "perplexity"]
+    configured_data_source_ids = [
+        provider["data_source_id"]
+        for provider in result["providers"]
+        if provider["configured"]
+    ]
+    assert configured_data_source_ids == [
+        "brave-search",
+        "perplexity-search",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_internet_search_explicit_searxng_requires_base_url(monkeypatch):
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "BRAVE_SEARCH_API_KEY":
+            return "brave-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+
+    with pytest.raises(HTTPException) as exc:
+        await cloud_routes.internet_search(
+            cloud_routes.InternetSearchRequest(query="beacon", provider="searxng"),
+            authorization="Bearer gateway-token",
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "SearXNG base URL not configured"
 
 
 @pytest.mark.asyncio

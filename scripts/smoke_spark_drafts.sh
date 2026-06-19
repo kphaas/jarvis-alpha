@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Smoke Spark iMessage draft review endpoints without printing secrets or payloads.
+# This smoke never executes the approved-send endpoint or sends an iMessage.
 
 set -euo pipefail
 
@@ -10,6 +11,8 @@ BASE_URL="${ALPHA_BASE_URL:-https://jarvis-brain.tail40ed36.ts.net:8186}"
 TIMEOUT_SEC="${SPARK_SMOKE_TIMEOUT_SEC:-20}"
 TOKEN="${SPARK_SMOKE_TOKEN:-${ALPHA_SERVICE_TOKEN:-}}"
 ALLOW_UNCONFIGURED="${SPARK_DRAFT_SMOKE_ALLOW_UNCONFIGURED:-false}"
+# Optional queue-only exercise. This creates an approval/outbox row for review,
+# but still does not call the approved-send route or include live-send scope.
 QUEUE_APPROVAL="${SPARK_DRAFT_SMOKE_QUEUE_APPROVAL:-false}"
 if [ -x "${REPO_ROOT}/.venv/bin/python" ]; then
   DEFAULT_PYTHON="${REPO_ROOT}/.venv/bin/python"
@@ -189,7 +192,19 @@ if label == "targets":
     targets = payload.get("targets")
     if not isinstance(targets, list):
         raise SystemExit("FAIL targets: targets missing")
-    print(f"PASS targets: count={len(targets)}")
+    parent_minor_context_approved = 0
+    for target in targets:
+        value = target.get("parent_minor_context_approved")
+        if not isinstance(value, bool):
+            raise SystemExit(
+                "FAIL targets: parent_minor_context_approved missing or not bool"
+            )
+        parent_minor_context_approved += int(value)
+    print(
+        "PASS targets: "
+        f"count={len(targets)} "
+        f"parent_minor_context_approved={parent_minor_context_approved}"
+    )
 elif label == "target_preview":
     context_preview = payload.get("context_preview")
     if not isinstance(context_preview, list):
@@ -283,6 +298,7 @@ Path(sys.argv[1]).write_text(
 )
 PY
   post_json "approval" "/v1/spark/drafts/imessage/approval-request" "${APPROVAL_JSON}"
+  echo "PASS approval: queued only; no live iMessage send attempted"
 fi
 
 echo "PASS spark-drafts smoke: draft review surface is reachable"

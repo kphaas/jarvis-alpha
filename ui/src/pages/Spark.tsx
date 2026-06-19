@@ -54,17 +54,24 @@ const SPARK_PRINCIPALS = [
   { id: "sweta", label: "Sweta" },
   { id: "ryleigh", label: "Ryleigh" },
   { id: "sloane", label: "Sloane" },
-  { id: "meagan", label: "Meagan" },
-  { id: "mother", label: "Mother" },
 ];
+
+type SparkPrincipalId = "ken" | "sweta" | "ryleigh" | "sloane";
+
+const SPARK_PRINCIPAL_LABELS: Record<SparkPrincipalId, string> = {
+  ken: "Ken",
+  sweta: "Sweta",
+  ryleigh: "Ryleigh",
+  sloane: "Sloane",
+};
 
 const FEEDBACK_BUTTONS: Array<{
   label: string;
   value: SparkDraftFeedbackLabel;
   tone: "ok" | "warn";
 }> = [
-  { label: "Sounds like me", value: "sounds_like_me", tone: "ok" },
-  { label: "Out of context", value: "out_of_context", tone: "warn" },
+  { label: "Keep this direction", value: "sounds_like_me", tone: "ok" },
+  { label: "Wrong context", value: "out_of_context", tone: "warn" },
   { label: "Too robotic", value: "too_robotic", tone: "warn" },
   { label: "Too formal", value: "too_formal", tone: "warn" },
   { label: "Too wordy", value: "too_wordy", tone: "warn" },
@@ -75,10 +82,10 @@ const TONE_OPTIONS = [
   { label: "Happier", value: "Make the reply a little happier." },
   { label: "Sweeter", value: "Make the reply sweeter and more affectionate." },
   { label: "Relaxed", value: "Make the reply sound relaxed and natural." },
+  { label: "Serious", value: "Make the reply more serious and grounded." },
+  { label: "Confident", value: "Make the reply more confident and decisive." },
   { label: "Smart", value: "Make the reply sharper and more thoughtful." },
   { label: "Blunt", value: "Make the reply direct and blunt, but still respectful." },
-  { label: "Concise", value: "Make the reply concise and tighter." },
-  { label: "Confused", value: "Make the reply sound honestly confused and ask for clarity." },
 ];
 
 function feedbackDisplayLabels(values: SparkDraftFeedbackLabel[]) {
@@ -89,6 +96,14 @@ function feedbackDisplayLabels(values: SparkDraftFeedbackLabel[]) {
 }
 
 const DEFAULT_FAVORITE_TARGETS: SparkProtectedRelationship[] = [
+  {
+    id: "ken",
+    label: "Ken",
+    relationship: "family",
+    sensitivity: "family",
+    default_mode: "draft_only",
+    approval_required: true,
+  },
   {
     id: "sweta",
     label: "Sweta",
@@ -110,22 +125,6 @@ const DEFAULT_FAVORITE_TARGETS: SparkProtectedRelationship[] = [
     label: "Sloane",
     relationship: "child",
     sensitivity: "minor",
-    default_mode: "draft_only",
-    approval_required: true,
-  },
-  {
-    id: "meagan",
-    label: "Meagan",
-    relationship: "co-parent",
-    sensitivity: "custody",
-    default_mode: "draft_only",
-    approval_required: true,
-  },
-  {
-    id: "mother",
-    label: "Mother",
-    relationship: "parent",
-    sensitivity: "family",
     default_mode: "draft_only",
     approval_required: true,
   },
@@ -187,51 +186,90 @@ function displayLabel(value: string) {
   return value.replace(/_/g, " ");
 }
 
+function isChildPrincipal(principalId: SparkPrincipalId) {
+  return principalId === "ryleigh" || principalId === "sloane";
+}
+
+function parseSparkPrincipalId(value: string | null): SparkPrincipalId | null {
+  if (!value) return null;
+  const match = SPARK_PRINCIPALS.find(
+    (principal) => principal.id === normalizedKey(value),
+  );
+  return (match?.id as SparkPrincipalId | undefined) ?? null;
+}
+
+function targetIdFromLabel(value: string | null): SparkPrincipalId | null {
+  if (!value) return null;
+  const normalized = normalizedKey(value);
+  const match = SPARK_PRINCIPALS.find(
+    (principal) =>
+      normalizedKey(principal.id) === normalized ||
+      normalizedKey(principal.label) === normalized,
+  );
+  return (match?.id as SparkPrincipalId | undefined) ?? null;
+}
+
+function pairRelationship(
+  principalId: SparkPrincipalId,
+  targetId: SparkPrincipalId,
+) {
+  const principalIsChild = isChildPrincipal(principalId);
+  const targetIsChild = isChildPrincipal(targetId);
+  if (!principalIsChild && !targetIsChild) return "partner";
+  if (principalIsChild && targetIsChild) return "sibling";
+  return targetIsChild ? "child" : "parent";
+}
+
+function fallbackSensitivity(
+  principalId: SparkPrincipalId,
+  targetId: SparkPrincipalId,
+) {
+  if (isChildPrincipal(targetId)) return "minor";
+  if (pairRelationship(principalId, targetId) === "partner") return "relationship";
+  return "family";
+}
+
 function buildDraftTargetOptions(
+  principalId: SparkPrincipalId,
   relationships: SparkProtectedRelationship[],
   targets: SparkIMessageDraftTarget[],
 ): DraftTargetOption[] {
+  const relationshipById = new Map(
+    relationships.map((relationship) => [
+      normalizedKey(relationship.id),
+      relationship,
+    ]),
+  );
   const targetByLabel = new Map(
     targets.map((target) => [normalizedKey(target.label), target]),
   );
-  const usedApprovalIds = new Set<string>();
-  const options: DraftTargetOption[] = relationships.map((relationship) => {
+  const candidateIds = SPARK_PRINCIPALS.map(
+    (principal) => principal.id as SparkPrincipalId,
+  ).filter((targetId) => targetId !== principalId);
+
+  return candidateIds.map((targetId) => {
+    const configuredRelationship =
+      relationshipById.get(normalizedKey(targetId)) ??
+      DEFAULT_FAVORITE_TARGETS.find((relationship) => relationship.id === targetId) ??
+      null;
+    const label =
+      configuredRelationship?.label ?? SPARK_PRINCIPAL_LABELS[targetId];
     const target =
-      targetByLabel.get(normalizedKey(relationship.label)) ??
-      targets.find((item) => normalizedKey(item.label) === normalizedKey(relationship.id));
-    if (target) {
-      usedApprovalIds.add(target.approval_id);
-    }
+      targetByLabel.get(normalizedKey(label)) ??
+      targets.find((item) => normalizedKey(item.label) === normalizedKey(targetId));
     return {
-      id: relationship.id,
-      label: relationship.label,
-      relationship: relationship.relationship,
-      sensitivity: relationship.sensitivity,
+      id: targetId,
+      label,
+      relationship: pairRelationship(principalId, targetId),
+      sensitivity:
+        configuredRelationship?.sensitivity ??
+        fallbackSensitivity(principalId, targetId),
       approvalId: target?.approval_id ?? null,
       channel: target?.channel ?? "iMessage",
       favorite: true,
       ready: Boolean(target?.approval_id),
     };
   });
-
-  for (const target of targets) {
-    if (usedApprovalIds.has(target.approval_id)) continue;
-    options.push({
-      id: `approval-${target.approval_id}`,
-      label: target.label,
-      relationship: target.relationship_marked ? "relationship" : "contact",
-      sensitivity: target.legal_marked
-        ? "custody/legal"
-        : target.relationship_marked
-          ? "relationship"
-          : "standard",
-      approvalId: target.approval_id,
-      channel: target.channel,
-      favorite: false,
-      ready: true,
-    });
-  }
-  return options;
 }
 
 function ErrorLine({ text, className }: { text: string; className: string }) {
@@ -545,6 +583,7 @@ function DraftTargetPicker({
   selectedTargetId,
   loading,
   onSelect,
+  onManageRelationships,
   border,
   panel,
   muted,
@@ -555,6 +594,7 @@ function DraftTargetPicker({
   selectedTargetId: string | null;
   loading: boolean;
   onSelect: (targetId: string) => void;
+  onManageRelationships: () => void;
   border: string;
   panel: string;
   muted: string;
@@ -570,11 +610,23 @@ function DraftTargetPicker({
             Draft target
           </h2>
         </div>
-        <StatusChip
-          label={loading ? "loading approved threads" : "favorites"}
-          className={loading ? warnClass : okClass}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusChip
+            label={loading ? "loading approved threads" : "core family"}
+            className={loading ? warnClass : okClass}
+          />
+          <button
+            type="button"
+            onClick={onManageRelationships}
+            className={`inline-flex min-h-9 items-center gap-2 rounded-lg border px-3 text-xs font-bold transition hover:border-emerald-400 ${border}`}
+          >
+            Relationships
+          </button>
+        </div>
       </div>
+      <p className={`mt-3 text-xs ${muted}`}>
+        Spark hides the active voice profile here and only shows the other core-family targets.
+      </p>
 
       <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
         {targets.map((target) => {
@@ -584,12 +636,11 @@ function DraftTargetPicker({
               key={target.id}
               type="button"
               onClick={() => onSelect(target.id)}
-              disabled={!target.ready}
               className={`min-h-24 rounded-lg border p-3 text-left transition ${border} ${
                 selected
                   ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-200"
                   : ""
-              } ${target.ready ? "hover:border-emerald-400" : "opacity-55"}`}
+              } hover:border-emerald-400 ${target.ready ? "" : "opacity-70"}`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
@@ -610,7 +661,7 @@ function DraftTargetPicker({
                     target.ready ? okClass : warnClass
                   }`}
                 >
-                  {target.ready ? "ready" : "needs source"}
+                  {target.ready ? "ready" : "needs approved thread"}
                 </span>
                 <span
                   className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${warnClass}`}
@@ -626,6 +677,75 @@ function DraftTargetPicker({
       {!targets.length && (
         <div className={`mt-3 rounded-lg border p-3 text-sm ${border} ${muted}`}>
           No favorite targets loaded yet.
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ApprovedThreadOnboardingPanel({
+  principalLabel,
+  targets,
+  border,
+  panel,
+  muted,
+  okClass,
+  warnClass,
+}: {
+  principalLabel: string;
+  targets: DraftTargetOption[];
+  border: string;
+  panel: string;
+  muted: string;
+  okClass: string;
+  warnClass: string;
+}) {
+  const readyTargets = targets.filter((target) => target.ready);
+  const missingTargets = targets.filter((target) => !target.ready);
+
+  return (
+    <section className={`rounded-xl border ${border} ${panel} p-4`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Shield className="h-4 w-4 text-emerald-400" />
+          <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>
+            Approved-thread onboarding
+          </h2>
+        </div>
+        <StatusChip
+          label={`${readyTargets.length}/${targets.length || 1} ready`}
+          className={missingTargets.length ? warnClass : okClass}
+        />
+      </div>
+      <p className={`mt-3 text-sm leading-relaxed ${muted}`}>
+        Favorites and relationship labels shape the roster. Spark can only draft
+        against approved iMessage threads for the active voice profile.
+      </p>
+
+      {missingTargets.length ? (
+        <div className="mt-4 grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
+          {missingTargets.map((target) => (
+            <article key={`${target.id}-onboarding`} className={`rounded-lg border p-3 ${border}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="text-sm font-bold">{target.label}</div>
+                  <div className={`mt-1 text-xs ${muted}`}>
+                    {principalLabel} to {target.label} · {displayLabel(target.relationship)}
+                  </div>
+                </div>
+                <StatusChip label="needs thread" className={warnClass} />
+              </div>
+              <p className={`mt-3 text-xs leading-relaxed ${muted}`}>
+                Approve one iMessage source record for this pair, then refresh Spark
+                to unlock thread preview, drafting, and approved send.
+              </p>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className={`mt-4 rounded-lg border px-3 py-3 text-sm ${okClass}`}>
+          All core-family targets for {principalLabel} already have approved iMessage
+          threads.
         </div>
       )}
     </section>
@@ -932,7 +1052,7 @@ function DraftMemoryDebugPanel({
           <h2
             className={`text-xs font-mono uppercase tracking-widest ${muted}`}
           >
-            Draft memory debug
+            Draft memory
           </h2>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -1260,29 +1380,39 @@ function DetailDialog({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 overflow-y-auto bg-black/55 px-4 py-6 backdrop-blur-sm md:px-6 md:py-10"
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/65 px-4 py-6 backdrop-blur-md md:px-6 md:py-10"
     >
-      <div className="flex min-h-full items-start justify-center">
+      <div className="flex min-h-full items-start justify-center md:items-center">
         <motion.section
           initial={{ opacity: 0, y: 18, scale: 0.985 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 12, scale: 0.99 }}
           transition={{ duration: 0.18, ease: "easeOut" }}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-          className={`grid w-full max-w-6xl grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-2xl border ${border} ${panel} shadow-2xl`}
-      >
-          <div className={`border-b ${border} px-4 py-4 md:px-5 md:py-5`}>
-            <div className="flex items-start justify-between gap-4">
+          role="dialog"
+          aria-modal="true"
+          aria-label={title}
+          className={`grid w-full max-w-6xl grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[26px] border ${border} ${panel} shadow-[0_28px_90px_-28px_rgba(0,0,0,0.85)]`}
+        >
+          <div className={`border-b ${border}`}>
+            <div
+              className={`flex items-center justify-between gap-4 border-b px-4 py-3 ${border} md:px-5`}
+            >
+              <div className="flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-full bg-rose-400/80" />
+                <span className="h-2.5 w-2.5 rounded-full bg-amber-300/80" />
+                <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/80" />
+              </div>
+              <span className={`text-[10px] font-mono uppercase tracking-[0.24em] ${muted}`}>
+                Spark detail window
+              </span>
+              <div className="w-14 shrink-0" />
+            </div>
+            <div className="flex items-start justify-between gap-4 px-4 py-4 md:px-5 md:py-5">
               <div className="space-y-2">
-                <span className={`text-[10px] font-mono uppercase tracking-[0.24em] ${muted}`}>
-                  Review detail
-                </span>
                 <div>
                   <h2 className="text-xl font-bold">{title}</h2>
                   <p className={`mt-1 text-sm ${muted}`}>
-                    Review safely, inspect context, and keep send actions outside this panel.
+                    Review context and memory here. Keep send actions outside this window.
                   </p>
                 </div>
               </div>
@@ -1323,7 +1453,7 @@ function ToneSelect({
       <span
         className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}
       >
-        Tone
+        Tone direction
       </span>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <select
@@ -1349,7 +1479,7 @@ function ToneSelect({
         )}
       </div>
       <p className={`mt-2 text-xs ${muted}`}>
-        Optional tone nudge for the next draft.
+        Optional adjustment for the next draft.
       </p>
     </label>
   );
@@ -1376,7 +1506,12 @@ export default function Spark() {
   const { theme } = useAppStore();
   const [searchParams] = useSearchParams();
   const activeApproval = searchParams.get("approval");
-  const [principalId, setPrincipalId] = useState("ken");
+  const requestedPrincipalId =
+    parseSparkPrincipalId(searchParams.get("principal")) ?? "ken";
+  const requestedTargetId = targetIdFromLabel(searchParams.get("target"));
+  const [principalId, setPrincipalId] = useState<SparkPrincipalId>(
+    requestedPrincipalId,
+  );
   const [draftTargetId, setDraftTargetId] = useState<string | null>(null);
   const [detailPanel, setDetailPanel] = useState<DetailPanel | null>(null);
   const guardrailsState = useSparkGuardrails();
@@ -1401,13 +1536,29 @@ export default function Spark() {
   const draftTargets = useMemo(
     () =>
       buildDraftTargetOptions(
+        principalId,
         favoriteRelationships,
         targetState.data?.targets ?? [],
       ),
-    [favoriteRelationships, targetState.data?.targets],
+    [principalId, favoriteRelationships, targetState.data?.targets],
   );
+  const activeApprovalOutbox = useMemo(
+    () =>
+      activeApproval
+        ? (outboxState.data?.items.find(
+            (item) => item.approval_queue_id === activeApproval,
+          ) ?? null)
+        : null,
+    [activeApproval, outboxState.data?.items],
+  );
+  const activeApprovalTargetId = useMemo(
+    () => targetIdFromLabel(activeApprovalOutbox?.target_label ?? null),
+    [activeApprovalOutbox?.target_label],
+  );
+  const anchoredTargetId =
+    activeApprovalTargetId ?? requestedTargetId ?? draftTargetId;
   const selectedDraftTarget =
-    draftTargets.find((target) => target.id === draftTargetId) ??
+    draftTargets.find((target) => target.id === anchoredTargetId) ??
     draftTargets.find((target) => target.ready) ??
     draftTargets[0] ??
     null;
@@ -1431,8 +1582,23 @@ export default function Spark() {
   const recordedFeedbackLabel = feedbackDisplayLabels(
     state.lastSubmittedFeedbackLabels,
   );
-  const hasApproval = Boolean(state.approval?.queue_id);
-  const hasOutbox = Boolean(state.approval?.outbox_id);
+  const approvalQueueId =
+    state.approval?.queue_id ??
+    activeApprovalOutbox?.approval_queue_id ??
+    activeApproval;
+  const resolvedOutboxId =
+    state.approval?.outbox_id ?? activeApprovalOutbox?.outbox_id ?? null;
+  const resolvedOutboxStatus =
+    state.approval?.outbox_status ?? activeApprovalOutbox?.status ?? null;
+  const resolvedOutboxTextHash =
+    state.approval?.outbox_text_hash ??
+    activeApprovalOutbox?.draft_text_hash ??
+    null;
+  const resolvedOutboxRecorded =
+    state.approval?.outbox_recorded ?? Boolean(activeApprovalOutbox);
+  const canSendResolvedOutbox = state.hasSendableOutbox(resolvedOutboxId);
+  const hasApproval = Boolean(approvalQueueId);
+  const hasOutbox = Boolean(resolvedOutboxId);
   const hasSendResult = Boolean(state.approvedSend);
   const selectedTone = state.styleAdjustments[0] ?? "";
   const workflowSteps: CockpitStep[] = [
@@ -1442,7 +1608,7 @@ export default function Spark() {
       detail: selectedDraftTarget?.ready
         ? `${selectedDraftTarget.label} is selected`
         : selectedDraftTarget
-          ? `${selectedDraftTarget.label} needs an approved source`
+          ? `${selectedDraftTarget.label} needs an approved thread`
           : "Choose who this reply is for",
       status: selectedDraftTarget?.ready ? "complete" : "active",
     },
@@ -1496,7 +1662,11 @@ export default function Spark() {
       id: "approval",
       label: "Approval",
       detail: hasApproval
-        ? `Queued ${state.approval?.approval_status ?? "pending"}`
+        ? state.approval
+          ? `Queued ${state.approval.approval_status ?? "pending"}`
+          : activeApprovalOutbox
+            ? "Approval handoff loaded from outbox"
+            : "Approval queue linked"
         : hasDraftText
           ? "Submit approval to create outbox"
           : "Draft text required",
@@ -1508,7 +1678,9 @@ export default function Spark() {
       detail: hasSendResult
         ? `Send result: ${state.approvedSend?.outbox_status ?? "done"}`
         : hasOutbox
-          ? "Send only after approval passes"
+          ? activeApprovalOutbox
+            ? "Send can resume from the persisted outbox"
+            : "Send only after approval passes"
           : hasApproval
             ? "Outbox not recorded"
             : "Approval required first",
@@ -1522,7 +1694,7 @@ export default function Spark() {
     },
   ];
 
-  function selectPrincipal(nextPrincipalId: string) {
+  function selectPrincipal(nextPrincipalId: SparkPrincipalId) {
     state.resetDraftSurface();
     setDraftTargetId(null);
     setPrincipalId(nextPrincipalId);
@@ -1570,7 +1742,9 @@ export default function Spark() {
                 <button
                   key={principal.id}
                   type="button"
-                  onClick={() => selectPrincipal(principal.id)}
+                  onClick={() =>
+                    selectPrincipal(principal.id as SparkPrincipalId)
+                  }
                   className={`min-h-9 rounded-lg border px-3 text-sm font-bold transition ${border} ${
                     principal.id === principalId
                       ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
@@ -1598,6 +1772,17 @@ export default function Spark() {
         selectedTargetId={selectedDraftTarget?.id ?? null}
         loading={targetState.isLoading}
         onSelect={selectDraftTarget}
+        onManageRelationships={() => setDetailPanel("guardrails")}
+        border={border}
+        panel={panel}
+        muted={muted}
+        okClass={okClass}
+        warnClass={warnClass}
+      />
+
+      <ApprovedThreadOnboardingPanel
+        principalLabel={selectedPrincipal.label}
+        targets={draftTargets}
         border={border}
         panel={panel}
         muted={muted}
@@ -1626,6 +1811,9 @@ export default function Spark() {
       {activeApproval && (
         <div className={`rounded-lg border px-3 py-2 text-sm ${okClass}`}>
           Approval queue {activeApproval}
+          {activeApprovalOutbox
+            ? ` · ${selectedPrincipal.label} -> ${activeApprovalOutbox.target_label} · outbox ${labelize(activeApprovalOutbox.status)}`
+            : " · waiting for outbox metadata"}
         </div>
       )}
 
@@ -1695,6 +1883,9 @@ export default function Spark() {
                   className={`h-11 w-20 rounded-lg border px-3 text-sm ${input}`}
                 />
               </div>
+              <p className={`mt-2 text-xs ${muted}`}>
+                Default to 8. Use 12 for messy logistics, 15 only when the thread spans multiple beats.
+              </p>
             </label>
             <ToneSelect
               border={border}
@@ -1707,8 +1898,8 @@ export default function Spark() {
             />
             {!targetReady && selectedDraftTarget && (
               <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
-                {selectedDraftTarget.label} is in favorites, but no approved
-                iMessage source is connected yet.
+                {selectedDraftTarget.label} is in the core-family roster, but no
+                approved iMessage thread is connected yet.
               </div>
             )}
             <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
@@ -1965,49 +2156,46 @@ export default function Spark() {
                 <span className={`text-sm ${muted}`}>No draft loaded</span>
               </div>
             )}
-            {state.approval && (
+            {approvalQueueId && (
               <div className={`space-y-2 rounded-lg border p-3 ${border}`}>
                 <div className="flex items-center gap-2 text-sm">
                   <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                   <span className="font-semibold">
-                    {state.approval.approval_status}
+                    {state.approval?.approval_status ??
+                      (activeApprovalOutbox ? "handoff_loaded" : "pending")}
                   </span>
                 </div>
                 <MetricRow
                   label="Queue ID"
-                  value={state.approval.queue_id}
+                  value={approvalQueueId}
                   muted={muted}
                 />
                 <MetricRow
                   label="Outbox"
-                  value={
-                    state.approval.outbox_recorded
-                      ? (state.approval.outbox_status ?? "recorded")
-                      : "not recorded"
-                  }
+                  value={resolvedOutboxRecorded ? resolvedOutboxStatus ?? "recorded" : "not recorded"}
                   muted={muted}
                 />
-                {state.approval.outbox_id && (
+                {resolvedOutboxId && (
                   <MetricRow
                     label="Outbox ID"
-                    value={state.approval.outbox_id}
+                    value={resolvedOutboxId}
                     muted={muted}
                   />
                 )}
-                {state.approval.outbox_text_hash && (
+                {resolvedOutboxTextHash && (
                   <MetricRow
                     label="Draft hash"
-                    value={shortHash(state.approval.outbox_text_hash)}
+                    value={shortHash(resolvedOutboxTextHash)}
                     muted={muted}
                   />
                 )}
-                {state.approval.outbox_id && (
+                {resolvedOutboxId && (
                   <button
                     type="button"
-                    onClick={state.sendApprovedOutbox}
-                    disabled={!state.canSendApprovedOutbox}
+                    onClick={() => state.sendApprovedOutbox(resolvedOutboxId)}
+                    disabled={!canSendResolvedOutbox}
                     className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${border} ${
-                      state.canSendApprovedOutbox
+                      canSendResolvedOutbox
                         ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
                         : "opacity-45"
                     }`}
@@ -2020,6 +2208,11 @@ export default function Spark() {
                     Send approved
                   </button>
                 )}
+                {activeApproval && !activeApprovalOutbox && !outboxState.isLoading && (
+                  <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
+                    Approval handoff exists, but no persisted outbox metadata was found yet.
+                  </div>
+                )}
                 {state.approvedSend && (
                   <MetricRow
                     label="Send"
@@ -2029,14 +2222,14 @@ export default function Spark() {
                 )}
                 {state.approvedSendError && (
                   <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
-                    Send blocked until the outbox item is approved
+                    Send blocked until the outbox item is approved and persisted
                   </div>
                 )}
               </div>
             )}
-            {state.approval && (
+            {approvalQueueId && (
               <div className={`rounded-lg border px-3 py-2 text-sm ${okClass}`}>
-                Approval queued {state.approval.queue_id}
+                Approval queued {approvalQueueId}
               </div>
             )}
           </div>
@@ -2144,9 +2337,9 @@ export default function Spark() {
             okClass={okClass}
           />
           <DetailOverviewCard
-            title="Guardrails"
-            detail="Review protected topics, favorite relationships, and no-send posture."
-            metric={`${favoriteRelationships.length} relationships`}
+            title="Relationships"
+            detail="Review the core-family target roster, protected topics, and no-send posture."
+            metric={`${favoriteRelationships.length} core family`}
             icon={<Shield className="h-4 w-4 text-emerald-400" />}
             onOpen={() => setDetailPanel("guardrails")}
             border={border}
@@ -2235,7 +2428,7 @@ export default function Spark() {
 
         {detailPanel === "guardrails" && (
           <DetailDialog
-            title="Memory and guardrails"
+            title="Relationships and guardrails"
             onClose={() => setDetailPanel(null)}
             border={border}
             panel={panel}

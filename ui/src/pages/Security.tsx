@@ -13,12 +13,11 @@ import type {
   SecretsAuditResponse, HoneypotData, McpRegistry, LogsQueryResponse,
   PorchlightResponse, PorchlightReport, AgentManualRunResponse, KeyturnerStatus,
   WardenStatus, SecurityAgentEvent, SecurityAgentEventsResponse,
-  WardenAgent,
 } from "../types/security";
 import {
   OverviewTab, IdentityTab, NetworkTab, SweepTab,
   KeysTab, WardenTab, LedgerTab, SentryTab, TradeGuardTab, PorchlightTab, HoneypotTab, McpTab, EventsTab,
-  computePostureScore, scoreColor, C_SCORE,
+  SecurityAgentsConsole, computePostureScore, scoreColor, C_SCORE,
 } from "../components/security";
 
 const TABS = ["Overview", "Identity", "Network", "Sweep", "Warden", "Sentry", "Trade Guard", "Ledger", "Keyturner", "Porchlight", "Tripwire", "MCP", "Events"] as const;
@@ -109,12 +108,6 @@ function tabForOwner(owner: string): TabId {
 function formatLabel(value: string | null | undefined): string {
   if (!value) return "unknown";
   return value.replaceAll("_", " ");
-}
-
-function agentHealthClass(agent: WardenAgent, isDark: boolean): string {
-  if (!agent.enabled) return isDark ? "border-white/10 bg-white/5 text-white/45" : "border-[#141414]/10 bg-[#141414]/5 text-[#141414]/50";
-  if (agent.needs_attention) return severityClass("medium", isDark);
-  return severityClass("info", isDark);
 }
 
 export default function Security() {
@@ -434,7 +427,6 @@ export default function Security() {
   };
   const commandSeverity = commandActions[0]?.severity ?? "info";
   const commandStatus = commandActions.length > 0 ? "Attention needed" : "No immediate action";
-  const liveAgentCount = wardenStatus?.counts.enabled ?? 0;
 
   const theme_props = { isDark, border, subtle, fg, muted };
 
@@ -533,7 +525,19 @@ export default function Security() {
         )}
       </section>
 
-      <section className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <SecurityAgentsConsole
+        {...theme_props}
+        wardenStatus={wardenStatus}
+        porchlightReport={porchlightReport}
+        agentEvents={agentEvents}
+        loadWarden={loadWarden}
+        loadPorchlight={loadPorchlight}
+        errWarden={errWarden}
+        errPorchlight={errPorchlight}
+        onSelectTab={(tab) => setActiveTab(tab as TabId)}
+      />
+
+      <section>
         <div className={`rounded-2xl border ${border} ${subtle} p-4`}>
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -590,47 +594,6 @@ export default function Security() {
               <p className="mt-1 text-xs opacity-80">Use the tabs below for posture evidence and historical events.</p>
             </button>
           )}
-        </div>
-
-        <div className={`rounded-2xl border ${border} ${subtle} p-4`}>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>Warden crew</p>
-              <p className={`mt-1 text-sm ${muted}`}>{liveAgentCount} enabled agents</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setActiveTab("Warden")}
-              className={`rounded-lg border ${border} px-3 py-2 text-xs font-mono ${muted} hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-orange-400/40`}
-            >
-              Open Warden
-            </button>
-          </div>
-          <div className="mt-4 space-y-2">
-            {(wardenStatus?.agents ?? []).slice(0, 7).map((agent) => (
-              <button
-                key={agent.agent_id}
-                type="button"
-                onClick={() => setActiveTab(tabForOwner(agent.agent_id))}
-                className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-orange-400/40 ${agentHealthClass(agent, isDark)}`}
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-bold">{agent.display_name}</p>
-                  <p className="mt-0.5 truncate text-[10px] font-mono opacity-70">
-                    {agent.last_event_title ?? agent.status}
-                  </p>
-                </div>
-                <span className="shrink-0 text-[10px] font-mono uppercase">
-                  {agent.needs_attention ? "attention" : agent.enabled ? "active" : "off"}
-                </span>
-              </button>
-            ))}
-            {!wardenStatus?.agents?.length && (
-              <div className={`rounded-xl border ${border} px-3 py-4 text-xs font-mono ${muted}`}>
-                Warden agent inventory unavailable.
-              </div>
-            )}
-          </div>
         </div>
       </section>
 

@@ -6,6 +6,18 @@ def test_at0_mail_routes_are_classified() -> None:
         "read",
         "security_read",
     ]
+    assert classify_route("GET", "/v1/at0-mail/health") == [
+        "read",
+        "security_read",
+    ]
+    assert classify_route("GET", "/v1/at0-mail/mailboxes") == [
+        "read",
+        "security_read",
+    ]
+    assert classify_route("GET", "/v1/at0-mail/spark-profile") == [
+        "read",
+        "security_read",
+    ]
     assert classify_route("GET", "/v1/at0-mail/messages") == [
         "read",
         "security_read",
@@ -21,4 +33,10 @@ def test_at0_mail_routes_are_classified() -> None:
     assert classify_route("POST", "/v1/at0-mail/drafts/abc/status") == [
         "write",
         "security_write",
+    ]
+    assert classify_route("POST", "/v1/at0-mail/drafts/abc/send") == [
+        "write",
+        "security_write",
+        "external_call",
+        "email_send",
     ]

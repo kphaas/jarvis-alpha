@@ -120,19 +120,60 @@ async def _gateway_check(
     usable_count = _int_payload(payload.get("usable_provider_count"))
     configured_count = _int_payload(payload.get("configured_provider_count"))
     status = str(payload.get("status", "degraded"))
-    ok = status == "ok" and usable_count > 0
+    required_count = _int_payload(payload.get("required_provider_count"))
+    if required_count <= 0:
+        required_count = _min_usable_provider_count()
+    redundancy_ok = bool(payload.get("provider_redundancy_ok"))
+    if "provider_redundancy_ok" not in payload:
+        redundancy_ok = usable_count >= required_count
+    has_usable_provider = usable_count > 0
+    provider_warning_status = str(payload.get("provider_warning_status") or "")
+    backup_budget_guard_warning = (
+        status == "warning"
+        and provider_warning_status == "backup_budget_capped"
+        and has_usable_provider
+    )
+    ok = (
+        status == "ok" and has_usable_provider and redundancy_ok
+    ) or backup_budget_guard_warning
+    redundancy_status = str(
+        payload.get(
+            "provider_redundancy_status",
+            _provider_redundancy_status(
+                usable_provider_count=usable_count,
+                required_provider_count=required_count,
+            ),
+        )
+    )
     return InternetScoutHealthCheck(
         ok=ok,
-        status="ok" if ok else "degraded",
-        detail="Gateway has a usable search provider."
-        if ok
-        else "Gateway has no usable search provider.",
+        status="warning" if backup_budget_guard_warning else "ok" if ok else "degraded",
+        detail=_gateway_detail(
+            usable_provider_count=usable_count,
+            required_provider_count=required_count,
+            provider_warning_status=provider_warning_status,
+        ),
         metadata={
             "gateway_status": status,
             "configured_provider_count": configured_count,
             "usable_provider_count": usable_count,
+            "required_provider_count": required_count,
+            "provider_redundancy_ok": redundancy_ok,
+            "provider_redundancy_status": redundancy_status,
+            "provider_warning_status": provider_warning_status or None,
+            "missing_provider_count": max(0, required_count - usable_count),
             "provider_order": payload.get("provider_order", []),
             "providers": payload.get("providers", []),
+            "primary_provider": payload.get("primary_provider"),
+            "primary_provider_usable": payload.get("primary_provider_usable"),
+            "budget_capped_provider_count": payload.get(
+                "budget_capped_provider_count",
+                0,
+            ),
+            "budget_capped_backup_provider_count": payload.get(
+                "budget_capped_backup_provider_count",
+                0,
+            ),
         },
     )
 
@@ -149,6 +190,49 @@ def _browser_runtime_check() -> InternetScoutHealthCheck:
         else f"Browser runtime is not ready: {runtime}.",
         metadata=payload,
     )
+
+
+def _min_usable_provider_count() -> int:
+    try:
+        value = int(os.getenv("BEACON_MIN_USABLE_SEARCH_PROVIDERS", "2"))
+    except ValueError:
+        return 2
+    return min(max(value, 1), 10)
+
+
+def _provider_redundancy_status(
+    *,
+    usable_provider_count: int,
+    required_provider_count: int,
+) -> str:
+    if usable_provider_count == 0:
+        return "unavailable"
+    if usable_provider_count >= required_provider_count:
+        return "redundant"
+    return "single_provider"
+
+
+def _gateway_detail(
+    *,
+    usable_provider_count: int,
+    required_provider_count: int,
+    provider_warning_status: str = "",
+) -> str:
+    if usable_provider_count == 0:
+        return "Gateway has no usable search provider."
+    if provider_warning_status == "backup_budget_capped":
+        return (
+            "Gateway has "
+            f"{usable_provider_count} usable search provider(s); backup provider is "
+            "capped by spend guard."
+        )
+    if usable_provider_count < required_provider_count:
+        return (
+            "Gateway has "
+            f"{usable_provider_count} usable search provider(s); production "
+            f"redundancy requires {required_provider_count}."
+        )
+    return "Gateway has redundant usable search providers."
 
 
 async def _recent_evidence_check(

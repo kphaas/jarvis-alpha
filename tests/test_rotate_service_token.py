@@ -176,3 +176,12 @@ def test_forge_sentinel_rotation_uses_dedicated_security_token():
         == "ALPHA_SENTINEL_SERVICE_TOKEN"
     )
     assert rotator.SERVICE_ROTATION_LEDGER_NODES["forge_sentinel"] == "sandbox"
+
+
+def test_endpoint_rotation_includes_vault_scopes_for_talentops_uploads_and_recall():
+    cfg = rotator.NODE_CONFIG["endpoint"]
+
+    assert cfg["iss"] == "endpoint"
+    assert cfg["secret_key"] == "ALPHA_SERVICE_TOKEN"
+    assert "vault.read" in rotator.DEFAULT_SCOPES["endpoint"]
+    assert "vault.write" in rotator.DEFAULT_SCOPES["endpoint"]

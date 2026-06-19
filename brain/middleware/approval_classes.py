@@ -53,6 +53,18 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/auth/set-admin-pin": ["write", "security_write"],
     "GET /v1/auth/session": ["auth"],
     "POST /v1/auth/session-cookie": ["auth"],
+    # Settings — PI/config reads are security reads; writes are admin-scoped.
+    "GET /v1/settings/web-agent": ["read", "security_read"],
+    "PUT /v1/settings/web-agent/home-location": ["write", "security_write"],
+    "GET /v1/settings/identity": ["read", "security_read"],
+    "POST /v1/settings/users": ["write", "security_write"],
+    "PUT /v1/settings/users/{profile_id}/personal-data": [
+        "write",
+        "security_write",
+    ],
+    "PUT /v1/settings/relationships": ["write", "security_write"],
+    "DELETE /v1/settings/relationships/{relationship_id}": ["destructive"],
+    "PUT /v1/settings/personal-data/home-address": ["write", "security_write"],
     # Admin
     "POST /v1/admin": ["admin"],
     # Destructive
@@ -115,11 +127,12 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Memory reads — T1 ---
     "GET /v1/memory": ["read"],
     "GET /v1/memory/search": ["read"],
-    # --- ADR-0026 reviewed memory consolidation writes — T5, never security_write ---
-    "POST /v1/memory/consolidation/proposals": ["memory_consolidation_reviewed_write"],
-    "POST /v1/memory/consolidation/proposals/{proposal_id}/execute": [
-        "memory_consolidation_reviewed_write"
-    ],
+    # --- ADR-0026 reviewed memory consolidation bridge ---
+    # Proposal creation and execution own their proposal-specific T5 approval
+    # queue/validation in-route. The outer middleware must pass them through so
+    # the route can create or consume the exact reviewed-write approval item.
+    "POST /v1/memory/consolidation/proposals": ["write"],
+    "POST /v1/memory/consolidation/proposals/{proposal_id}/execute": ["write"],
     "POST /v1/memory/consolidation/proposals/{proposal_id}/revert": [
         "memory_consolidation_reviewed_write"
     ],
@@ -134,6 +147,9 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/dev": ["admin"],
     # --- Review — T2 pass-through (Forge service review calls, local Ollama, $0) ---
     "POST /v1/review": ["write", "external_call"],  # TASK-001 Deliverable A
+    # --- Internal LLM tool-call — T2 pass-through (service-only, local Ollama,
+    # $0, no memory/embedding side effects). Not cost_incurring (local = free). ---
+    "POST /v1/internal/complete": ["external_call"],
     # --- Diagnose — T2 security_read ---
     "GET /v1/diagnose": ["read", "security_read"],
     # --- Health agents — T1 read ---
@@ -141,12 +157,14 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/health/temporal-storage": ["read", "security_read"],
     # --- Helm read-only workspace summary ---
     "GET /v1/helm/summary": ["read", "security_read"],
+    "GET /v1/helm/self": ["read", "security_read"],
     "GET /v1/helm/family/summary": ["read", "security_read"],
     "GET /v1/helm/financial/summary": ["read", "security_read"],
     "GET /v1/helm/medical/summary": ["read", "security_read"],
     "GET /v1/helm/actions/status": ["read", "security_read"],
     "POST /v1/helm/actions/propose": ["write", "security_write"],
     "POST /v1/helm/voice/transcribe": ["write", "security_write"],
+    "POST /v1/helm/voice/speak": ["write", "security_write"],
     # --- Beacon internet evidence broker ---
     "GET /v1/internet-scout/health": ["read", "security_read"],
     "GET /v1/internet-scout/retention/report": ["read", "security_read"],
@@ -208,6 +226,8 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Vault — T2 write ---
     "POST /v1/vault/upload": ["write"],
     "POST /v1/vault/ingest/pdf": ["write"],
+    "POST /v1/vault/ingest/docx": ["write"],
+    "POST /v1/vault/ingest/text": ["write"],
     "POST /v1/vault/ingest/excel": ["write"],
     # --- Chat completions (OpenAI compat) ---
     "POST /v1/chat/completions": ["write", "external_call", "cost_incurring"],
@@ -229,12 +249,21 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/school-email/gmail/health/check": ["write", "external_call"],
     "POST /v1/school-email/candidates/{candidate_id}/status": ["write"],
     "POST /v1/school-email/actions/{candidate_id}/status": ["write"],
-    # --- AT-0 Herald mail — Microsoft Graph read-only ingestion + local drafts ---
+    # --- AT-0 Herald mail — Graph ingestion, local drafts, approved replies ---
     "GET /v1/at0-mail/dashboard": ["read", "security_read"],
+    "GET /v1/at0-mail/health": ["read", "security_read"],
+    "GET /v1/at0-mail/mailboxes": ["read", "security_read"],
+    "GET /v1/at0-mail/spark-profile": ["read", "security_read"],
     "GET /v1/at0-mail/messages": ["read", "security_read"],
     "GET /v1/at0-mail/drafts": ["read", "security_read"],
     "POST /v1/at0-mail/scan": ["write", "external_call"],
     "POST /v1/at0-mail/drafts/{draft_id}/status": ["write", "security_write"],
+    "POST /v1/at0-mail/drafts/{draft_id}/send": [
+        "write",
+        "security_write",
+        "external_call",
+        "email_send",
+    ],
     # --- Spark iMessage — metadata-only BlueBubbles read surface ---
     "GET /v1/spark/imessage/health": ["read", "security_read"],
     "GET /v1/spark/imessage/counts": ["read", "security_read"],
@@ -326,8 +355,8 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/security/mcp/registry": ["read"],
     # --- Vault — reads T1, writes T2 ---
     "GET /v1/vault/pipeline": ["read"],
-    "POST /v1/vault/ask": ["write", "external_call", "cost_incurring"],
-    "POST /v1/vault/search": ["write"],
+    "POST /v1/vault/ask": ["read", "external_call", "cost_incurring"],
+    "POST /v1/vault/search": ["read"],
     "POST /v1/vault/pipeline/{pipeline_id}/confirm": ["write"],
     # --- Logs — POST diagnose is T2 ---
     "POST /v1/logs/diagnose": ["write", "security_read"],
@@ -395,6 +424,32 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/privacy/subjects/{subject_id}/removal-control/seed": [
         "write",
         "security_write",
+    ],
+    "POST /v1/privacy/subjects/{subject_id}/authorizations": [
+        "write",
+        "security_write",
+    ],
+    "GET /v1/privacy/subjects/{subject_id}/authorizations": [
+        "read",
+        "security_read",
+    ],
+    "POST /v1/privacy/actions/{action_id}/removal-request": [
+        "write",
+        "security_write",
+    ],
+    "GET /v1/privacy/removal-requests": ["read", "security_read"],
+    "POST /v1/privacy/removal-requests/{request_id}/transition": [
+        "write",
+        "security_write",
+    ],
+    "POST /v1/privacy/removal-requests/{request_id}/dry-run": [
+        "write",
+        "security_write",
+    ],
+    "POST /v1/privacy/removal-requests/{request_id}/live-preflight": [
+        "write",
+        "security_write",
+        "external_call",
     ],
     "GET /v1/privacy/targets": ["read", "security_read"],
     "POST /v1/privacy/targets/refresh": ["write", "security_write"],

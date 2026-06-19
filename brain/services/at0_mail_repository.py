@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Mapping
 
 import asyncpg
 
@@ -196,9 +198,9 @@ async def dashboard_summary(conn: asyncpg.Connection) -> dict:
     )
     draft_rows = await conn.fetch(
         """
-        SELECT status, count(*)::int AS count
+        SELECT mailbox, status, count(*)::int AS count
         FROM public.alpha_at0_mail_draft_proposals
-        GROUP BY status
+        GROUP BY mailbox, status
         """
     )
     latest = await latest_scan_run(conn)
@@ -207,3 +209,79 @@ async def dashboard_summary(conn: asyncpg.Connection) -> dict:
         "draft_counts": [dict(row) for row in draft_rows],
         "latest_scan": dict(latest) if latest else None,
     }
+
+
+def at0_mail_freshness_status(
+    latest_scan: Mapping | None,
+    *,
+    now: datetime | None = None,
+    stale_after_minutes: int = 180,
+) -> dict:
+    checked_at = now or datetime.now(UTC)
+    stale_after = max(1, stale_after_minutes)
+    if latest_scan is None:
+        return {
+            "status": "missing",
+            "checked_at": checked_at,
+            "stale_after_minutes": stale_after,
+            "age_minutes": None,
+            "requires_attention": True,
+            "latest_scan": None,
+        }
+
+    reference_at = latest_scan.get("finished_at") or latest_scan.get("started_at")
+    age_minutes = _age_minutes(reference_at, checked_at)
+    latest_status = str(latest_scan.get("status") or "unknown")
+
+    if latest_status == "failed":
+        status = "failed"
+    elif age_minutes is not None and age_minutes > stale_after:
+        status = "stale"
+    elif latest_status == "running":
+        status = "running"
+    else:
+        status = "ok"
+
+    return {
+        "status": status,
+        "checked_at": checked_at,
+        "stale_after_minutes": stale_after,
+        "age_minutes": age_minutes,
+        "requires_attention": status in {"failed", "missing", "stale"},
+        "latest_scan": dict(latest_scan),
+    }
+
+
+async def health_summary(
+    conn: asyncpg.Connection,
+    *,
+    stale_after_minutes: int = 180,
+    now: datetime | None = None,
+) -> dict:
+    latest = await latest_scan_run(conn)
+    counts = await conn.fetchrow(
+        """
+        SELECT count(*)::int AS message_count,
+               (
+                 SELECT count(*)::int
+                 FROM public.alpha_at0_mail_draft_proposals
+               ) AS draft_count
+        FROM public.alpha_at0_mail_messages
+        """
+    )
+    summary = at0_mail_freshness_status(
+        dict(latest) if latest else None,
+        now=now,
+        stale_after_minutes=stale_after_minutes,
+    )
+    summary["message_count"] = int(counts["message_count"] or 0)
+    summary["draft_count"] = int(counts["draft_count"] or 0)
+    return summary
+
+
+def _age_minutes(value: datetime | None, now: datetime) -> int | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return max(0, int((now - value.astimezone(UTC)).total_seconds() // 60))

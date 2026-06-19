@@ -197,3 +197,194 @@ async def test_helm_voice_falls_back_to_alpha_session_token_for_backend(
 
     assert response["text"] == "Use the Alpha session"
     assert calls["headers"]["Authorization"] == "Bearer alpha-session-token"
+
+
+@pytest.mark.asyncio
+async def test_helm_voice_preserves_backend_empty_transcript_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        status_code = 422
+
+        def json(self) -> dict[str, str]:
+            return {"detail": "voice_backend_empty_transcript"}
+
+    class FakeClient:
+        def __init__(self, *, timeout: float, verify: bool) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(
+            self,
+            url: str,
+            *,
+            headers: dict[str, str],
+            files: dict[str, tuple[str, bytes, str]],
+        ) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setenv("JARVIS_HELM_VOICE_TRANSCRIBE_URL", "http://voice/transcribe")
+    monkeypatch.setenv("JARVIS_HELM_VOICE_BACKEND_TOKEN", "voice-backend-token")
+    monkeypatch.setattr(helm_voice.httpx, "AsyncClient", FakeClient)
+
+    with pytest.raises(HTTPException) as exc:
+        await helm_voice.helm_voice_transcribe(
+            _request(scopes=["helm.read"]),
+            FakeUpload(b"silent-audio"),
+            _user_id="ken",
+        )
+
+    assert exc.value.status_code == 502
+    assert exc.value.detail == "voice_backend_empty_transcript"
+
+
+@pytest.mark.asyncio
+async def test_helm_voice_keeps_unknown_backend_failure_generic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        status_code = 500
+
+        def json(self) -> dict[str, str]:
+            return {"detail": "worker_stack_trace"}
+
+    class FakeClient:
+        def __init__(self, *, timeout: float, verify: bool) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(
+            self,
+            url: str,
+            *,
+            headers: dict[str, str],
+            files: dict[str, tuple[str, bytes, str]],
+        ) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setenv("JARVIS_HELM_VOICE_TRANSCRIBE_URL", "http://voice/transcribe")
+    monkeypatch.setenv("JARVIS_HELM_VOICE_BACKEND_TOKEN", "voice-backend-token")
+    monkeypatch.setattr(helm_voice.httpx, "AsyncClient", FakeClient)
+
+    with pytest.raises(HTTPException) as exc:
+        await helm_voice.helm_voice_transcribe(
+            _request(scopes=["helm.read"]),
+            FakeUpload(b"fake-audio"),
+            _user_id="ken",
+        )
+
+    assert exc.value.status_code == 502
+    assert exc.value.detail == "voice_backend_failed"
+
+
+def test_helm_voice_speak_route_is_t2_security_write_classified() -> None:
+    assert classify_route("POST", "/v1/helm/voice/speak") == [
+        "write",
+        "security_write",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_helm_voice_speak_requires_helm_read_scope() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await helm_voice.helm_voice_speak(
+            _request(),
+            helm_voice.HelmVoiceSpeakRequest(text="Hello AT-0"),
+            _user_id="ken",
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail["required_scopes"] == ["helm.read", "admin"]
+
+
+@pytest.mark.asyncio
+async def test_helm_voice_speak_fails_closed_when_backend_is_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("JARVIS_HELM_VOICE_SPEAK_URL", raising=False)
+
+    with pytest.raises(HTTPException) as exc:
+        await helm_voice.helm_voice_speak(
+            _request(scopes=["helm.read"]),
+            helm_voice.HelmVoiceSpeakRequest(text="Hello AT-0"),
+            _user_id="ken",
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "voice_synthesis_unconfigured"
+
+
+@pytest.mark.asyncio
+async def test_helm_voice_speak_forwards_text_to_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, Any] = {}
+
+    class FakeResponse:
+        status_code = 200
+        content = b"RIFFfake-wav"
+        headers = {"x-jarvis-voice": "alloy"}
+
+    class FakeClient:
+        def __init__(self, *, timeout: float, verify: bool) -> None:
+            calls["timeout"] = timeout
+            calls["verify"] = verify
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(
+            self,
+            url: str,
+            *,
+            headers: dict[str, str],
+            json: dict[str, Any],
+        ) -> FakeResponse:
+            calls["url"] = url
+            calls["headers"] = headers
+            calls["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setenv(
+        "JARVIS_HELM_VOICE_SPEAK_URL",
+        "http://127.0.0.1:4211/speak",
+    )
+    monkeypatch.setenv("JARVIS_HELM_VOICE_VERIFY_TLS", "false")
+    monkeypatch.setenv("JARVIS_HELM_VOICE_SPEAK_BACKEND_TOKEN", "speak-token")
+    monkeypatch.delenv("JARVIS_HELM_VOICE_SPEAK_BACKEND_TOKEN_SECRET", raising=False)
+    monkeypatch.setattr(helm_voice.httpx, "AsyncClient", FakeClient)
+
+    response = await helm_voice.helm_voice_speak(
+        _request(scopes=["helm.read"]),
+        helm_voice.HelmVoiceSpeakRequest(text="Hello AT-0", voice="alloy", speed=1.1),
+        _user_id="ken",
+    )
+
+    assert response.media_type == "audio/wav"
+    assert response.body == b"RIFFfake-wav"
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.headers["X-Jarvis-Voice"] == "alloy"
+    assert calls["url"] == "http://127.0.0.1:4211/speak"
+    assert calls["verify"] is False
+    assert calls["headers"] == {
+        "Accept": "audio/wav",
+        "Authorization": "Bearer speak-token",
+    }
+    assert calls["json"] == {
+        "text": "Hello AT-0",
+        "speed": 1.1,
+        "voice": "alloy",
+    }

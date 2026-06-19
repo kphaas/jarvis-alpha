@@ -36,11 +36,16 @@ from brain.services.spark_outbox import (
     load_spark_outbox_crypto,
 )
 from brain.services.spark_outbox_send import (
+    PreparedSparkOutboxSend,
     SparkOutboxSendError,
     SparkOutboxSendResult,
-    send_approved_spark_imessage_outbox,
+    execute_prepared_spark_imessage_send,
+    prepare_approved_spark_imessage_outbox_send,
+    record_prepared_spark_imessage_send_failure,
+    record_prepared_spark_imessage_send_success,
 )
 from brain.services.spark_personality_memory import fetch_personality_memory
+from brain.services.spark_persona_guardrails import is_core_family_target_label
 from brain.services.spark_target_memory import (
     fetch_target_memory,
     target_memory_prompt_items,
@@ -90,6 +95,7 @@ class SparkIMessageDraftTargetOut(BaseModel):
     thread_kind: str
     relationship_marked: bool
     relationship_approved: bool
+    parent_minor_context_approved: bool
     legal_marked: bool
 
 
@@ -380,6 +386,11 @@ def _route_error(exc: Exception) -> HTTPException:
             status_code=502,
             detail="spark_imessage_context_load_failed",
         )
+    if isinstance(exc, (SparkOutboxConfigError, SparkOutboxStoreError)):
+        return HTTPException(
+            status_code=503,
+            detail="spark_imessage_outbox_unavailable",
+        )
     return HTTPException(status_code=500, detail="spark_imessage_draft_error")
 
 
@@ -479,6 +490,7 @@ def _draft_target(record: SparkApprovedSourceRecord) -> SparkIMessageDraftTarget
         thread_kind=record.thread_kind,
         relationship_marked=record.relationship_marked,
         relationship_approved=record.relationship_approved,
+        parent_minor_context_approved=record.parent_minor_context_approved,
         legal_marked=record.legal_marked,
     )
 
@@ -770,7 +782,9 @@ async def spark_imessage_draft_targets(
     targets = [
         _draft_target(record)
         for record in records
-        if record.source == "imessage" and record.decision_approved
+        if record.source == "imessage"
+        and record.decision_approved
+        and is_core_family_target_label(record.source_reference_label)
     ]
     logger.info(
         "spark_imessage_draft_targets_listed",
@@ -909,6 +923,16 @@ async def spark_imessage_draft_approval_request(
         )
         actor_sub = str(getattr(request.state, "user_id", "unknown"))
         actor_type = str(getattr(request.state, "actor_type", "unknown"))
+        try:
+            crypto = load_spark_outbox_crypto()
+        except SparkOutboxConfigError as outbox_exc:
+            _log_outbox_failure(
+                request,
+                proposal,
+                exc=outbox_exc,
+                reason="config_missing",
+            )
+            raise
         outbox: SparkOutboxCreateResult | None = None
         async with rls_connection(request) as conn:
             queue_id = await enqueue_spark_draft_approval(
@@ -925,8 +949,12 @@ async def spark_imessage_draft_approval_request(
                     approval_queue_id=queue_id,
                     actor_sub=actor_sub,
                     actor_type=actor_type,
-                    crypto=load_spark_outbox_crypto(),
+                    crypto=crypto,
                 )
+                if not outbox.created or not outbox.outbox_id:
+                    raise SparkOutboxStoreError(
+                        outbox.reason or "spark_outbox_record_failed"
+                    )
             except SparkOutboxConfigError as outbox_exc:
                 _log_outbox_failure(
                     request,
@@ -934,6 +962,7 @@ async def spark_imessage_draft_approval_request(
                     exc=outbox_exc,
                     reason="config_missing",
                 )
+                raise
             except Exception as outbox_exc:
                 _log_outbox_failure(
                     request,
@@ -941,6 +970,7 @@ async def spark_imessage_draft_approval_request(
                     exc=outbox_exc,
                     reason="store_failed",
                 )
+                raise
         try:
             feedback = record_spark_draft_edit_feedback(
                 original_proposal=original_proposal,
@@ -1083,12 +1113,42 @@ async def spark_imessage_send_approved_outbox(
     actor_type = str(getattr(request.state, "actor_type", "unknown"))
     try:
         async with rls_connection(request) as conn:
-            result = await send_approved_spark_imessage_outbox(
+            prepared = await prepare_approved_spark_imessage_outbox_send(
                 conn,
                 outbox_id=outbox_id,
                 actor_sub=actor_sub,
                 actor_type=actor_type,
                 crypto=load_spark_outbox_crypto(),
+            )
+    except Exception as exc:
+        route_error = _send_route_error(exc)
+        _log_send_failure(
+            request,
+            outbox_id=outbox_id,
+            exc=exc,
+            status_code=route_error.status_code,
+        )
+        raise route_error from exc
+
+    try:
+        send_result = await execute_prepared_spark_imessage_send(prepared)
+    except Exception as exc:
+        await _record_send_failure_event(request, prepared=prepared, exc=exc)
+        route_error = _send_route_error(exc)
+        _log_send_failure(
+            request,
+            outbox_id=outbox_id,
+            exc=exc,
+            status_code=route_error.status_code,
+        )
+        raise route_error from exc
+
+    try:
+        async with rls_connection(request) as conn:
+            result = await record_prepared_spark_imessage_send_success(
+                conn,
+                prepared=prepared,
+                send_result=send_result,
             )
     except Exception as exc:
         route_error = _send_route_error(exc)
@@ -1109,3 +1169,35 @@ async def spark_imessage_send_approved_outbox(
         message_ref_hash=result.message_ref_hash,
         send_attempt_count=result.send_attempt_count,
     )
+
+
+async def _record_send_failure_event(
+    request: Request,
+    *,
+    prepared: PreparedSparkOutboxSend,
+    exc: Exception,
+) -> None:
+    try:
+        async with rls_connection(request) as conn:
+            await record_prepared_spark_imessage_send_failure(
+                conn,
+                prepared=prepared,
+                exc=exc,
+            )
+    except Exception as record_exc:
+        logger.error(
+            "spark_imessage_send_failed_event_record_failed",
+            extra={
+                "event": "spark_imessage_send_failed_event_record_failed",
+                "component": "spark_drafts",
+                "action": "imessage_approved_send",
+                "body_access": False,
+                "outbox_id": str(prepared.item.outbox_id),
+                "error_class": record_exc.__class__.__name__,
+                **_safe_actor_fields(
+                    request,
+                    scopes_used=[SPARK_DRAFT_SCOPE, SPARK_SEND_SCOPE],
+                    risk_tier="T4",
+                ),
+            },
+        )

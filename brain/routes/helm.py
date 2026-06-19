@@ -18,9 +18,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from brain.config.secrets import get_secret
-from brain.db.rls import platform_admin_connection
+from brain.db.rls import platform_admin_connection, rls_connection
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
+from brain.services.at0_self_model import At0SelfModel, build_at0_self_model
 from brain.services.internet_scout.health import build_beacon_health
 from jarvis_common.logging_config import get_logger
 
@@ -130,6 +131,10 @@ class HelmBeaconProviderSummary(BaseModel):
     provider_order: list[str] = Field(default_factory=list)
     configured_provider_count: int = 0
     usable_provider_count: int = 0
+    required_provider_count: int = 0
+    provider_redundancy_ok: bool = False
+    provider_redundancy_status: str = "unavailable"
+    missing_provider_count: int = 0
 
 
 class HelmBeaconBrowserSummary(BaseModel):
@@ -628,6 +633,10 @@ def _unavailable_beacon_summary() -> HelmBeaconSummary:
             provider_order=[],
             configured_provider_count=0,
             usable_provider_count=0,
+            required_provider_count=0,
+            provider_redundancy_ok=False,
+            provider_redundancy_status="unavailable",
+            missing_provider_count=0,
         ),
         browser=HelmBeaconBrowserSummary(
             status="unavailable",
@@ -684,6 +693,24 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
             usable_provider_count=_metadata_int(
                 gateway_metadata,
                 "usable_provider_count",
+            ),
+            required_provider_count=_metadata_int(
+                gateway_metadata,
+                "required_provider_count",
+            ),
+            provider_redundancy_ok=_metadata_bool(
+                gateway_metadata,
+                "provider_redundancy_ok",
+            ),
+            provider_redundancy_status=_metadata_str(
+                gateway_metadata,
+                "provider_redundancy_status",
+                "unavailable",
+            )
+            or "unavailable",
+            missing_provider_count=_metadata_int(
+                gateway_metadata,
+                "missing_provider_count",
             ),
         ),
         browser=HelmBeaconBrowserSummary(
@@ -1138,6 +1165,17 @@ async def helm_summary(
         ),
         beacon=beacon_summary,
     )
+
+
+@router.get("/self", response_model=At0SelfModel)
+async def helm_self(
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> At0SelfModel:
+    """Return AT-0's runtime-grounded identity and capability model."""
+    check_scopes(request, "helm.read", "admin")
+    async with rls_connection(request) as conn:
+        return await build_at0_self_model(conn)
 
 
 @router.get("/family/summary")

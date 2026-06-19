@@ -5,6 +5,11 @@ from pydantic import ValidationError
 
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
 from brain.registry.catalog import INITIAL_AGENTS, INITIAL_SKILLS
+from brain.registry.data_sources import (
+    DEFAULT_DATA_SOURCE_REGISTRY_ROOT,
+    assert_skill_data_source_coverage,
+    load_data_source_registry,
+)
 from brain.registry.models import AgentSpec, SkillManifestV1, SkillSpec
 from brain.routes.registry import _agent_from_row, _skill_from_row
 
@@ -31,6 +36,7 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert "internet_scout.search" in names
     assert "internet_scout.deep_research" in names
     assert "internet_scout.browser_task" in names
+    assert "notes.write_private_digest" in names
     skills = {skill.name: skill for skill in INITIAL_SKILLS}
     assert skills["notify.send"].status == "active"
     assert skills["notify.send"].metadata["primary"] == "mattermost"
@@ -51,12 +57,26 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
         skills["weather.current"].metadata["manifest"]["egress"]["provider"]
         == "open_meteo"
     )
+    assert (
+        skills["weather.current"].metadata["manifest"]["egress"]["data_source_id"]
+        == "open-meteo"
+    )
     assert skills["internet_scout.search"].status == "active"
     assert skills["internet_scout.search"].body_access is True
     assert skills["internet_scout.search"].approval_tier == "T2"
     assert skills["internet_scout.deep_research"].approval_tier == "T3"
     assert skills["internet_scout.browser_task"].approval_tier == "T4"
     assert skills["internet_scout.browser_task"].mutates_state is True
+    assert sorted(
+        skills["internet_scout.search"].metadata["manifest"]["egress"][
+            "data_source_ids"
+        ]
+    ) == ["brave-search", "perplexity-search"]
+    assert sorted(
+        skills["internet_scout.deep_research"].metadata["manifest"]["egress"][
+            "data_source_ids"
+        ]
+    ) == ["brave-search", "perplexity-search"]
     assert skills["internet_scout.search"].metadata["execution_path"] == (
         "fastapi_route"
     )
@@ -92,6 +112,17 @@ def test_initial_skill_catalog_has_complete_manifest_v1_contracts():
             assert manifest.side_effect_class != "read"
         else:
             assert manifest.side_effect_class == "read"
+
+
+def test_active_external_data_skills_reference_vendored_data_sources():
+    assert DEFAULT_DATA_SOURCE_REGISTRY_ROOT.exists()
+
+    data_sources = load_data_source_registry(DEFAULT_DATA_SOURCE_REGISTRY_ROOT)
+    assert data_sources["open-meteo"].domain == "weather"
+    assert data_sources["brave-search"].domain == "web-search"
+    assert data_sources["perplexity-search"].domain == "web-search"
+
+    assert_skill_data_source_coverage(INITIAL_SKILLS, data_sources)
 
 
 def test_skill_requires_manifest_v1():
@@ -146,6 +177,8 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
     )
     assert "helm_ask" in agents["internet_scout"].metadata["operator_surfaces"]
     assert "notify.send" in agents["dream_mode"].allowed_skills
+    assert "notes.write_private_digest" in agents["dream_mode"].allowed_skills
+    assert "notes.write" in agents["dream_mode"].allowed_scopes
     assert "notify.send" in agents["approval_triage"].allowed_skills
     assert agents["porchlight"].launch_label == "com.jarvis.alpha.porchlight"
     assert agents["porchlight"].metadata["mattermost_channel_key"] == "security_alerts"
@@ -236,7 +269,7 @@ def test_initial_agent_catalog_starts_agents_disabled_by_default_except_live_age
         "unifi.wan_failover_health": "sweep",
         "keyturner.oauth_health": "keyturner",
         "keyturner.rotation_dry_run": "keyturner",
-        "keyturner.secrets_forecast": "keyturner",
+        "keyturner.secrets_forecast": "keyturner",  # pragma: allowlist secret
         "tripwire.source_reputation": "tripwire",
         "tripwire.probe_clustering": "tripwire",
         "warden.weekly_brief": "warden",

@@ -1,14 +1,29 @@
 import time
 import httpx
 from uuid import NAMESPACE_DNS, UUID, uuid5
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from jarvis_common.logging_config import get_logger
 from brain.core.config import ALPHA_NODE, OLLAMA_URL
 from brain.core.models import EMBED_MODEL
 from brain.db.rls import rls_connection
 from brain.memory.memory import MemoryService
+from brain.memory.semantic_commands import (
+    MemoryFactValidationError,
+    memory_save_response_text,
+    parse_memory_command,
+)
 from brain.routing.router import route
+from brain.services.vault_recall import (
+    embed_vault_query,
+    search_vault_chunks,
+    vault_context_block,
+)
+from brain.services.vault_security import (
+    can_read_vault,
+    ensure_vault_workspace,
+    vault_rls_connection,
+)
 
 
 router = APIRouter(prefix="/v1", tags=["ask"])
@@ -24,6 +39,14 @@ def _user_uuid(user_id: str) -> UUID:
 
 def _principal_id(request: Request) -> str:
     return str(getattr(request.state, "user_id", None) or "anon")
+
+
+def _can_read_vault(request: Request) -> bool:
+    return can_read_vault(request)
+
+
+def _ensure_vault_workspace(request: Request) -> None:
+    ensure_vault_workspace(request)
 
 
 class AskRequest(BaseModel):
@@ -94,6 +117,43 @@ async def _log_ask(
 async def ask(body: AskRequest, request: Request) -> AskResponse:
     memory = MemoryService()
 
+    try:
+        memory_command = parse_memory_command(body.prompt)
+    except MemoryFactValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail) from exc
+
+    if memory_command is not None:
+        from brain.middleware.scopes import check_scopes
+
+        check_scopes(request, "memory.write", "admin")
+        uid = _user_uuid(getattr(request.state, "user_id", None) or "anon")
+        async with rls_connection(request) as conn:
+            result = await memory.save_semantic(
+                conn=conn,
+                user_id=uid,
+                fact=memory_command.fact,
+                category=memory_command.category,
+                provenance={
+                    "source_surface": "ask_pages",
+                    "source_route": "/v1/ask",
+                    "source_session_id": body.session_id,
+                    "source_action": "slash_memory_command",
+                    "actor_type": str(
+                        getattr(request.state, "actor_type", "user") or "user"
+                    ),
+                    "actor_role": str(getattr(request.state, "role", "user") or "user"),
+                },
+            )
+        return AskResponse(
+            mode="system",
+            result=memory_save_response_text(
+                saved=bool(result.get("saved")),
+                category=memory_command.category,
+                reason=result.get("reason"),
+                review_required=result.get("review_required"),
+            ),
+        )
+
     # Handle /forget command
     if body.prompt.strip().lower().startswith("/forget"):
         from brain.middleware.scopes import check_scopes
@@ -118,6 +178,10 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
     start_time = time.monotonic()
     try:
         embedding = await _embed(body.prompt)
+        vault_embedding = None
+        if _can_read_vault(request):
+            _ensure_vault_workspace(request)
+            vault_embedding = await embed_vault_query(body.prompt)
         raw_user_id = _principal_id(request)
         uid = _user_uuid(raw_user_id)
 
@@ -131,9 +195,28 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
                 principal_id=raw_user_id,
             )
 
+        vault_context = ""
+        if _can_read_vault(request):
+            try:
+                async with vault_rls_connection(request) as conn:
+                    vault_matches = await search_vault_chunks(
+                        conn,
+                        query=body.prompt,
+                        embedding=vault_embedding,
+                        limit=5,
+                    )
+                vault_context = vault_context_block(vault_matches)
+            except Exception as exc:
+                logger.warning("vault recall unavailable for ask: %s", exc)
+
         enriched_prompt = body.prompt
+        context_blocks = []
         if context:
-            enriched_prompt = f"Context from memory:\n{context}\n\nUser: {body.prompt}"
+            context_blocks.append(f"Context from memory:\n{context}")
+        if vault_context:
+            context_blocks.append(vault_context)
+        if context_blocks:
+            enriched_prompt = "\n\n".join(context_blocks) + f"\n\nUser: {body.prompt}"
 
         result_dict = await route(enriched_prompt, body.mode)
 

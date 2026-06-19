@@ -29,7 +29,11 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
     assert official.details["official_source_count"] == 1
     assert official.details["research_plan_id"]
     assert official.details["research_provider_strategy"] == "fanout"
-    assert official.details["research_search_providers"] == ["brave", "perplexity"]
+    assert official.details["research_search_providers"] == [
+        "searxng",
+        "brave",
+        "perplexity",
+    ]
     assert official.details["research_max_extracts"] == 4
     assert official.details["research_expected_source_types"] == [
         "official_docs",
@@ -46,6 +50,18 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
     assert official.details["research_report_verified_claims"] == [
         "The OpenAI API reference is on platform.openai.com."
     ]
+    assert official.details["evidence_transparency_accepted_hosts"] == [
+        "platform.openai.com"
+    ]
+    assert official.details["evidence_transparency_rejected_hosts"] == [
+        "community.openai.com"
+    ]
+    official_transparency = official.details["evidence_transparency"]
+    assert official_transparency["accepted_sources"][0]["official_host_match"] is True
+    assert (
+        "official_host_mismatch"
+        in official_transparency["rejected_sources"][0]["rejection_reasons"]
+    )
     assert official.details["automatic_memory_write_allowed"] is False
     assert official.details["memory_promotion_review_required"] is True
 
@@ -71,6 +87,11 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
     assert unsupported.details["research_report_unsupported_claims"] == [
         "OpenAI charges $123 per request."
     ]
+    unsupported_transparency = unsupported.details["evidence_transparency"]
+    assert unsupported_transparency["rejected_sources"][0]["claim_supported"] is False
+    assert unsupported_transparency["rejected_sources"][0]["claim_support_reasons"] == [
+        "currency_marker_missing"
+    ]
 
     injection = results["prompt_injection_marker_rejects_citation"]
     assert injection.details["status"] == "insufficient"
@@ -80,6 +101,9 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
     assert current.details["status"] == "supported"
     assert "release_notes" in current.details["research_expected_source_types"]
     assert current.details["research_report_answerability"] == "answerable"
+    current_transparency = current.details["evidence_transparency"]
+    assert current_transparency["freshness_required"] is True
+    assert current_transparency["accepted_sources"][0]["fetched_at"]
 
     comparison = results["comparison_plan_requires_cross_check_and_two_sources"]
     assert comparison.details["status"] == "supported"
@@ -87,6 +111,7 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
     assert comparison.details["research_stop_criteria"]["require_cross_check"] is True
     assert comparison.details["accepted_hosts"] == ["brave.com", "perplexity.ai"]
 
+    # Official vendor comparisons should retain the vendor docs host in coverage.
     official_vendor_comparison = results[
         "official_vendor_comparison_prefers_provider_docs"
     ]
@@ -98,6 +123,8 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
         "docs.perplexity.ai",
     ]
     assert official_vendor_comparison.details["research_intent"] == "comparison"
+    assert official_vendor_comparison.details["required_official_target_count"] == 2
+    assert official_vendor_comparison.details["covered_official_target_count"] == 2
     assert (
         official_vendor_comparison.details["research_stop_criteria"][
             "require_cross_check"
@@ -112,6 +139,40 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
         "primary_source",
         "trusted_secondary",
     ]
+    assert official_vendor_comparison.details["research_query_purposes"] == [
+        "baseline",
+        "comparison",
+        "comparison",
+        "cross_check",
+    ]
+
+    official_openai_anthropic = results[
+        "official_openai_anthropic_comparison_requires_both_vendor_docs"
+    ]
+    assert official_openai_anthropic.details["status"] == "supported"
+    assert sorted(official_openai_anthropic.details["accepted_hosts"]) == [
+        "docs.anthropic.com",
+        "platform.openai.com",
+    ]
+    assert official_openai_anthropic.details["required_official_target_count"] == 2
+    assert official_openai_anthropic.details["covered_official_target_count"] == 2
+
+    official_openai_anthropic_gap = results[
+        "official_openai_anthropic_comparison_downgrades_when_vendor_missing"
+    ]
+    assert official_openai_anthropic_gap.details["status"] == "weak"
+    assert official_openai_anthropic_gap.details["accepted_hosts"] == [
+        "platform.openai.com"
+    ]
+    assert official_openai_anthropic_gap.details["required_official_target_count"] == 2
+    assert official_openai_anthropic_gap.details["covered_official_target_count"] == 1
+    assert official_openai_anthropic_gap.details["synthesis_required_behavior"] == (
+        "answer_with_limitations"
+    )
+    assert (
+        "Official comparison coverage is missing for one or more compared targets."
+        in official_openai_anthropic_gap.details["research_report_coverage_warnings"]
+    )
 
     non_ai_comparison = results[
         "non_ai_serverless_comparison_requires_independent_sources"
@@ -127,6 +188,26 @@ def test_search_quality_evals_cover_core_quality_gates() -> None:
         "developers.cloudflare.com",
         "docs.aws.amazon.com",
     ]
+
+    official_cloudflare_aws = results[
+        "official_cloudflare_aws_comparison_requires_both_vendor_docs"
+    ]
+    assert official_cloudflare_aws.details["status"] == "supported"
+    assert official_cloudflare_aws.details["required_official_target_count"] == 2
+    assert official_cloudflare_aws.details["covered_official_target_count"] == 2
+
+    official_cloudflare_aws_gap = results[
+        "official_cloudflare_aws_comparison_downgrades_when_vendor_missing"
+    ]
+    assert official_cloudflare_aws_gap.details["status"] == "weak"
+    assert official_cloudflare_aws_gap.details["accepted_hosts"] == [
+        "developers.cloudflare.com"
+    ]
+    assert official_cloudflare_aws_gap.details["required_official_target_count"] == 2
+    assert official_cloudflare_aws_gap.details["covered_official_target_count"] == 1
+    assert official_cloudflare_aws_gap.details["synthesis_required_behavior"] == (
+        "answer_with_limitations"
+    )
 
     negated = results["negated_claim_mismatch_fails_closed"]
     assert negated.details["status"] == "insufficient"

@@ -1,0 +1,80 @@
+# Utility APIs.
+#
+# FX rates, IP geolocation, miscellaneous open data.
+
+- id: exchangerate-api
+  name: ExchangeRate-API
+  domain: utility
+  url: https://www.exchangerate-api.com/
+  api_base_url: https://v6.exchangerate-api.com/v6/
+  auth:
+    type: api-key
+    notes: |
+      Free tier: 1500 req/month, monthly-updated rates.
+      Pro tier ($10/mo): hourly updates, 100k req/month, conversion endpoint.
+  pricing: freemium
+  free_tier: 1500 req/month, monthly rates
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - fx-rates
+    - currency-conversion
+    - historical-fx
+  notes: |
+    Free tier rates update only monthly — useless for any real-time use.
+    Pro tier hourly is sufficient for personal finance use cases.
+    For trading-grade FX use Polygon or a real broker feed.
+  last_verified: 2026-05-01
+  review_cadence_days: 180
+
+- id: ipinfo-io
+  name: ipinfo.io
+  domain: utility
+  url: https://ipinfo.io/
+  api_base_url: https://ipinfo.io/
+  auth:
+    type: api-key
+    notes: |
+      Free: 50k req/month, basic geolocation.
+      Paid tiers add ASN, company data, privacy detection (VPN/proxy/Tor).
+  pricing: freemium
+  free_tier: 50k req/month
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - ip-to-location
+    - asn-lookup
+    - vpn-proxy-detection
+  notes: |
+    Generous free tier. Accuracy is competitive with paid alternatives for
+    country/region; city-level is approximate.
+    Useful for security signals (e.g., flagging logins from new countries).
+  last_verified: 2026-05-01
+  review_cadence_days: 180
+
+- id: world-bank-open-data
+  name: World Bank Open Data
+  domain: utility
+  url: https://data.worldbank.org/
+  api_base_url: https://api.worldbank.org/v2/
+  auth:
+    type: none
+    notes: No auth. Fair-use; no published hard limits.
+  pricing: free
+  free_tier: unlimited (fair use)
+  license: cc-by                    # Creative Commons Attribution
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - country-level-macro
+    - development-indicators
+    - historical-time-series
+    - cross-country-comparisons
+  notes: |
+    Authoritative source for country-level economic and development data.
+    Update lag is series-dependent (often 6-18 months for annual series).
+    Complementary to FRED — World Bank for international, FRED for US-centric.
+  last_verified: 2026-05-01
+  review_cadence_days: 365

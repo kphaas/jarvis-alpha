@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import type { ReactNode } from "react";
-import { Cpu, Globe, Monitor, FlaskConical } from 'lucide-react';
+import { Cpu, Globe, Monitor, FlaskConical, MailCheck } from 'lucide-react';
 import { apiFetch, apiJson } from "../lib/apiFetch";
 
 const REFRESH_MS = 60_000;
@@ -61,7 +61,7 @@ interface TemporalStoragePayload {
 
 interface BeaconHealthCheck {
   ok: boolean;
-  status: "ok" | "degraded" | "unavailable";
+  status: "ok" | "warning" | "degraded" | "unavailable";
   detail: string;
   metadata: Record<string, unknown>;
 }
@@ -81,6 +81,30 @@ interface BeaconHealthPayload {
   checks: Record<string, BeaconHealthCheck>;
   retention: BeaconRetentionReport;
   checked_at: string;
+}
+
+interface At0MailGraphHealth {
+  status: "ok" | "failed";
+  trigger: string;
+  checked_at: string;
+  mailboxes_checked: number;
+  messages_seen: number;
+  graph_roles: string[];
+  missing_graph_roles: string[];
+  current_send_failures: number;
+  stuck_sending_count: number;
+  last_sent_at: string | null;
+  error_type: string | null;
+  requires_attention: boolean;
+}
+
+interface At0MailHealthPayload {
+  status: string;
+  requires_attention: boolean;
+  age_minutes: number | null;
+  message_count: number;
+  draft_count: number;
+  latest_graph_health: At0MailGraphHealth | null;
 }
 
 interface PendingApprovalItem {
@@ -166,7 +190,15 @@ function temporalStatusColor(status: string): string {
 
 function beaconStatusColor(status: string): string {
   if (status === "ok") return "#22c55e";
+  if (status === "warning") return "#f59e0b";
   if (status === "degraded") return "#f59e0b";
+  return "#ef4444";
+}
+
+function at0MailStatusColor(status: string, requiresAttention?: boolean): string {
+  if (requiresAttention) return "#ef4444";
+  if (status === "ok") return "#22c55e";
+  if (status === "running") return "#f59e0b";
   return "#ef4444";
 }
 
@@ -195,6 +227,14 @@ function metadataStringList(
   return value.filter((item): item is string => typeof item === "string");
 }
 
+function metadataBoolean(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+): boolean | null {
+  const value = metadata?.[key];
+  return typeof value === "boolean" ? value : null;
+}
+
 function metadataRecord(
   metadata: Record<string, unknown> | undefined,
   key: string
@@ -204,10 +244,40 @@ function metadataRecord(
   return value as Record<string, unknown>;
 }
 
+function metadataRecordList(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+): Record<string, unknown>[] {
+  const value = metadata?.[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (item): item is Record<string, unknown> =>
+      Boolean(item) && typeof item === "object" && !Array.isArray(item)
+  );
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatRequestBudget(count: number | null, limit: number | null): string {
+  if (limit == null) return `${count ?? 0}/∞`;
+  return `${count ?? 0}/${limit}`;
+}
+
+function providerState(provider: Record<string, unknown>): {
+  label: string;
+  color: string;
+} {
+  const configured = metadataBoolean(provider, "configured") ?? false;
+  const budgetExhausted = metadataBoolean(provider, "budget_exhausted") ?? false;
+  const circuitOpen = metadataBoolean(provider, "circuit_open") ?? false;
+  if (!configured) return { label: "not configured", color: "#6b7280" };
+  if (circuitOpen) return { label: "circuit open", color: "#ef4444" };
+  if (budgetExhausted) return { label: "spend guard capped", color: "#f59e0b" };
+  return { label: "usable", color: "#22c55e" };
 }
 
 function isBeaconBrowserApproval(item: PendingApprovalItem): boolean {
@@ -240,6 +310,9 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
   const [beaconApprovals, setBeaconApprovals] = useState<PendingApprovalItem[]>([]);
   const [beaconLoading, setBeaconLoading] = useState(true);
   const [beaconErr, setBeaconErr] = useState(false);
+  const [at0MailHealth, setAt0MailHealth] = useState<At0MailHealthPayload | null>(null);
+  const [at0MailLoading, setAt0MailLoading] = useState(true);
+  const [at0MailErr, setAt0MailErr] = useState(false);
 
   const fetchSummary = useCallback(async () => {
     try {
@@ -324,19 +397,35 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
     }
   }, []);
 
+  const fetchAt0Mail = useCallback(async () => {
+    setAt0MailLoading(true);
+    setAt0MailErr(false);
+    try {
+      const health = await apiJson<At0MailHealthPayload>("/v1/at0-mail/health");
+      setAt0MailHealth(health);
+    } catch {
+      setAt0MailHealth(null);
+      setAt0MailErr(true);
+    } finally {
+      setAt0MailLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchSummary();
     fetchAgents();
     fetchTemporalStorage();
     fetchBeacon();
+    fetchAt0Mail();
     const t = setInterval(() => {
       fetchSummary();
       fetchAgents();
       fetchTemporalStorage();
       fetchBeacon();
+      fetchAt0Mail();
     }, REFRESH_MS);
     return () => clearInterval(t);
-  }, [fetchSummary, fetchAgents, fetchTemporalStorage, fetchBeacon]);
+  }, [fetchSummary, fetchAgents, fetchTemporalStorage, fetchBeacon, fetchAt0Mail]);
 
   const sectionStyle = {
     background: card,
@@ -387,6 +476,7 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
               fetchAgents();
               fetchTemporalStorage();
               fetchBeacon();
+              fetchAt0Mail();
             }}
             style={{ fontSize: 12, padding: "6px 12px", borderRadius: 6, border: `1px solid ${border}`, background: "transparent", color: text, cursor: "pointer" }}
           >
@@ -479,8 +569,10 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
             const browserCheck = beaconHealth.checks.browser_runtime;
             const evidenceCheck = beaconHealth.checks.recent_evidence;
             const providerOrder = metadataStringList(gatewayCheck?.metadata, "provider_order");
+            const providers = metadataRecordList(gatewayCheck?.metadata, "providers");
             const configuredProviders = metadataNumber(gatewayCheck?.metadata, "configured_provider_count");
             const usableProviders = metadataNumber(gatewayCheck?.metadata, "usable_provider_count");
+            const providerWarningStatus = metadataString(gatewayCheck?.metadata, "provider_warning_status");
             const runtime = metadataString(browserCheck?.metadata, "runtime") ?? "disabled";
             const playwrightVersion = metadataString(browserCheck?.metadata, "installed_playwright_version");
             const recentTotal = metadataNumber(evidenceCheck?.metadata, "total") ?? 0;
@@ -503,6 +595,7 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
                     </div>
                     <div style={{ fontSize: 11, color: gatewayCheck?.ok ? "#22c55e" : "#f59e0b", marginTop: 4 }}>
                       {usableProviders ?? 0}/{configuredProviders ?? 0} usable
+                      {providerWarningStatus ? ` · ${providerWarningStatus.replaceAll("_", " ")}` : ""}
                     </div>
                   </div>
                   <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
@@ -531,6 +624,71 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
                     </div>
                   </div>
                 </div>
+                {providers.length > 0 && (
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Provider Telemetry</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10 }}>
+                      {providers.map((provider) => {
+                        const name = metadataString(provider, "provider") ?? "unknown";
+                        const state = providerState(provider);
+                        const dataSourceId = metadataString(provider, "data_source_id");
+                        const dailyCount = metadataNumber(provider, "daily_request_count");
+                        const dailyLimit = metadataNumber(provider, "daily_request_limit");
+                        const monthlyCount = metadataNumber(provider, "monthly_request_count");
+                        const monthlyLimit = metadataNumber(provider, "monthly_request_limit");
+                        const failureCount = metadataNumber(provider, "failure_count") ?? 0;
+                        const cooldown = metadataNumber(provider, "cooldown_remaining_seconds");
+                        const isPrimary = providerOrder[0] === name;
+                        return (
+                          <div
+                            key={name}
+                            style={{
+                              padding: "10px 12px",
+                              borderRadius: 8,
+                              border: `1px solid ${border}`,
+                              background: isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)",
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "ui-monospace, monospace" }}>
+                                {name}
+                              </div>
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  color: state.color,
+                                  border: `1px solid ${state.color}`,
+                                  borderRadius: 4,
+                                  padding: "2px 6px",
+                                  textTransform: "uppercase",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {isPrimary ? "primary" : "backup"}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 11, color: state.color, marginTop: 6, fontWeight: 700 }}>
+                              {state.label}
+                            </div>
+                            <div style={{ fontSize: 11, color: muted, marginTop: 8, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                              <span>Daily <span style={{ color: text }}>{formatRequestBudget(dailyCount, dailyLimit)}</span></span>
+                              <span>Monthly <span style={{ color: text }}>{formatRequestBudget(monthlyCount, monthlyLimit)}</span></span>
+                              <span>Failures <span style={{ color: failureCount > 0 ? "#f59e0b" : text }}>{failureCount}</span></span>
+                              {cooldown != null && cooldown > 0 && (
+                                <span style={{ color: "#f59e0b" }}>Cooldown {cooldown}s</span>
+                              )}
+                            </div>
+                            {dataSourceId && (
+                              <div style={{ fontSize: 10, color: muted, marginTop: 6, fontFamily: "ui-monospace, monospace" }}>
+                                {dataSourceId}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
                   <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}`, background: isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)" }}>
                     <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Last Request</div>
@@ -567,6 +725,80 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
                 </div>
                 <div style={{ fontSize: 11, color: muted, marginTop: 10 }}>
                   Checked {new Date(beaconHealth.checked_at).toLocaleTimeString()} · raw web content remains untrusted evidence only
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      </div>
+
+      {/* Herald Graph Send Health */}
+      <div style={sectionStyle}>
+        <div style={sectionHeader}>
+          <span style={labelStyle}>Herald Graph Send Health</span>
+          {at0MailHealth && (
+            <span style={{
+              fontSize: 11,
+              color: at0MailStatusColor(at0MailHealth.status, at0MailHealth.requires_attention),
+              fontWeight: 700,
+              textTransform: "uppercase",
+            }}>
+              {at0MailHealth.status}
+            </span>
+          )}
+        </div>
+        <div style={{ padding: "14px 16px" }}>
+          {at0MailLoading && (
+            <span style={{ fontSize: 12, color: muted }}>Loading…</span>
+          )}
+          {!at0MailLoading && at0MailErr && (
+            <span style={{ fontSize: 12, color: "#f59e0b" }}>Herald mail health unavailable</span>
+          )}
+          {!at0MailLoading && !at0MailErr && at0MailHealth && (() => {
+            const graph = at0MailHealth.latest_graph_health;
+            const graphOk = graph != null && !graph.requires_attention && graph.status === "ok";
+            const hasMailSend = graph?.graph_roles.includes("Mail.Send") ?? false;
+            return (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 14 }}>
+                  <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Graph Monitor</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 700, color: graphOk ? "#22c55e" : "#ef4444" }}>
+                      <MailCheck className="w-4 h-4" />
+                      {graph?.status ?? "missing"}
+                    </div>
+                    <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
+                      {graph ? `${graph.trigger} · ${new Date(graph.checked_at).toLocaleTimeString()}` : "No monitor row"}
+                    </div>
+                  </div>
+                  <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Mail.Send</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: hasMailSend ? "#22c55e" : "#ef4444" }}>
+                      {hasMailSend ? "present" : "missing"}
+                    </div>
+                    <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
+                      Missing: {graph?.missing_graph_roles.length ? graph.missing_graph_roles.join(", ") : "none"}
+                    </div>
+                  </div>
+                  <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Send State</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: graph && (graph.current_send_failures > 0 || graph.stuck_sending_count > 0) ? "#ef4444" : text }}>
+                      {graph?.current_send_failures ?? 0} failed · {graph?.stuck_sending_count ?? 0} stuck
+                    </div>
+                    <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
+                      Last sent {graph?.last_sent_at ? new Date(graph.last_sent_at).toLocaleString() : "never"}
+                    </div>
+                  </div>
+                  <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                    <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Mailboxes</div>
+                    <div style={{ fontSize: 18, fontWeight: 700 }}>{graph?.mailboxes_checked ?? 0}</div>
+                    <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
+                      {at0MailHealth.message_count} messages · {at0MailHealth.draft_count} drafts
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: muted }}>
+                  Top-level health age {at0MailHealth.age_minutes ?? "—"} min · requires attention: {at0MailHealth.requires_attention ? "yes" : "no"}
                 </div>
               </>
             );

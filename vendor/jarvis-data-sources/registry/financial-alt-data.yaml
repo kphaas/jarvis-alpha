@@ -1,0 +1,59 @@
+# Financial alternative data sources.
+#
+# Non-traditional signals: Congress disclosures, insider data,
+# government contracts, sentiment, etc. Use with skepticism — alt-data
+# attracts a lot of weak vendors.
+
+- id: quiverquant
+  name: QuiverQuant
+  domain: financial-alt-data
+  url: https://www.quiverquant.com/
+  api_base_url: https://api.quiverquant.com/beta/
+  auth:
+    type: bearer
+    notes: |
+      Bearer token from account dashboard.
+      Tiers from $10/mo (basic API) to $50/mo (premium with full historical).
+      Hard rate limits not published; observed ~300 req/min ceiling.
+  pricing: freemium
+  free_tier: Limited preview tier (current Congress trades only, delayed)
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - congressional-trades
+    - government-contracts
+    - lobbying-data
+    - patent-data
+    - wsb-mentions
+  notes: |
+    Already noted in jarvis-financial v2 for Congress Agent.
+    Congressional trades are filed under STOCK Act with up to 45-day lag —
+    the data is real but stale, not market-moving on disclosure day.
+    Hit rate of "follow Congress trades" strategies is hotly debated; backtest
+    rigorously before allocating capital.
+  last_verified: 2026-05-01
+  review_cadence_days: 30
+
+- id: capitol-trades
+  name: Capitol Trades
+  domain: financial-alt-data
+  url: https://www.capitoltrades.com/
+  api_base_url: null
+  auth:
+    type: none
+    notes: No public API. Web scraping or RSS only.
+  pricing: free
+  free_tier: Web/RSS access only
+  license: vendor-tos              # scraping subject to ToS
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - congressional-trades
+    - alt-data-cross-check
+  notes: |
+    Useful as a CROSS-CHECK against QuiverQuant rather than a primary source.
+    No API means scraping, which is fragile and ToS-grey.
+    If QuiverQuant becomes the primary, deprioritize this entry.
+  last_verified: 2026-05-01
+  review_cadence_days: 90

@@ -1,8 +1,4 @@
-from brain.services.at0_mail_classifier import (
-    build_reply_draft,
-    classify_at0_mail,
-    should_create_draft,
-)
+from brain.services.at0_mail_classifier import classify_at0_mail, should_create_draft
 
 
 def test_classify_support_mailbox_as_support() -> None:
@@ -41,15 +37,3 @@ def test_classify_newsletter_as_noise_without_draft() -> None:
     assert result.classification == "noise"
     assert result.priority == "low"
     assert not should_create_draft(result.classification)
-
-
-def test_reply_draft_is_local_review_copy() -> None:
-    draft = build_reply_draft(
-        classification="lead",
-        sender_name="Casey",
-        subject="Founding access",
-    )
-
-    assert "Hi Casey" in draft
-    assert "private AI infrastructure" in draft
-    assert "Context: Founding access" in draft

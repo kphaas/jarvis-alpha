@@ -106,6 +106,8 @@ def _run_case(case: SearchQualityEvalCase) -> SearchQualityEvalResult:
             "accepted_citation_count": summary.accepted_citation_count,
             "rejected_citation_count": summary.rejected_citation_count,
             "official_source_count": summary.official_source_count,
+            "required_official_target_count": summary.required_official_target_count,
+            "covered_official_target_count": summary.covered_official_target_count,
             "unsupported_claim_count": summary.unsupported_claim_count,
             "prompt_injection_rejection_count": (
                 summary.prompt_injection_rejection_count
@@ -137,6 +139,15 @@ def _run_case(case: SearchQualityEvalCase) -> SearchQualityEvalResult:
             "research_report_coverage_warnings": (
                 response.research_report.coverage_warnings
             ),
+            "evidence_transparency": response.evidence_transparency.model_dump(
+                mode="json"
+            ),
+            "evidence_transparency_accepted_hosts": [
+                item.host for item in response.evidence_transparency.accepted_sources
+            ],
+            "evidence_transparency_rejected_hosts": [
+                item.host for item in response.evidence_transparency.rejected_sources
+            ],
             "answer_context": response.answer_context,
             "automatic_memory_write_allowed": (
                 response.memory_boundary.automatic_memory_write_allowed
@@ -477,10 +488,92 @@ def _eval_cases() -> tuple[SearchQualityEvalCase, ...]:
             expected_accepted_hosts=("brave.com", "docs.perplexity.ai"),
             expected_plan_purposes=(
                 "baseline",
-                "official_source",
                 "comparison",
                 "cross_check",
             ),
+            expected_source_types=(
+                "official_docs",
+                "primary_source",
+                "trusted_secondary",
+            ),
+            min_subquestions=3,
+        ),
+        SearchQualityEvalCase(
+            name="official_openai_anthropic_comparison_requires_both_vendor_docs",
+            request=InternetScoutRequest(
+                query=(
+                    "Compare the OpenAI Responses API and Anthropic Messages API "
+                    "for building a chat gateway. Use official vendor docs only "
+                    "and cite them."
+                ),
+                tool_hint=InternetTool.SEARCH,
+                max_pages=4,
+                requester="alpha_chat.deep_research",
+            ),
+            sources=(openai_responses, anthropic_docs),
+            claims=(
+                EvidenceClaim(
+                    claim="The OpenAI Responses API documentation is on platform.openai.com.",
+                    source_url=openai_responses.url,
+                    citation_text=(
+                        "The OpenAI Responses API documentation is on "
+                        "platform.openai.com."
+                    ),
+                    confidence="high",
+                ),
+                EvidenceClaim(
+                    claim="The Anthropic Messages API documentation is on docs.anthropic.com.",
+                    source_url=anthropic_docs.url,
+                    citation_text=(
+                        "The Anthropic Messages API documentation is on "
+                        "docs.anthropic.com."
+                    ),
+                    confidence="high",
+                ),
+            ),
+            expected_status="supported",
+            eval_group="daily_use",
+            min_accepted_citations=2,
+            min_official_sources=2,
+            expected_accepted_hosts=("platform.openai.com", "docs.anthropic.com"),
+            expected_plan_purposes=("baseline", "comparison", "cross_check"),
+            expected_source_types=(
+                "official_docs",
+                "primary_source",
+                "trusted_secondary",
+            ),
+            min_subquestions=3,
+        ),
+        SearchQualityEvalCase(
+            name="official_openai_anthropic_comparison_downgrades_when_vendor_missing",
+            request=InternetScoutRequest(
+                query=(
+                    "Compare the OpenAI Responses API and Anthropic Messages API "
+                    "for building a chat gateway. Use official vendor docs only "
+                    "and cite them."
+                ),
+                tool_hint=InternetTool.SEARCH,
+                max_pages=4,
+                requester="alpha_chat.deep_research",
+            ),
+            sources=(openai_responses,),
+            claims=(
+                EvidenceClaim(
+                    claim="The OpenAI Responses API documentation is on platform.openai.com.",
+                    source_url=openai_responses.url,
+                    citation_text=(
+                        "The OpenAI Responses API documentation is on "
+                        "platform.openai.com."
+                    ),
+                    confidence="high",
+                ),
+            ),
+            expected_status="weak",
+            eval_group="daily_use",
+            min_accepted_citations=1,
+            min_official_sources=1,
+            expected_accepted_hosts=("platform.openai.com",),
+            expected_plan_purposes=("baseline", "comparison", "cross_check"),
             expected_source_types=(
                 "official_docs",
                 "primary_source",
@@ -523,6 +616,81 @@ def _eval_cases() -> tuple[SearchQualityEvalCase, ...]:
             ),
             expected_plan_purposes=("baseline", "comparison", "cross_check"),
             expected_source_types=("general_web", "trusted_secondary"),
+            min_subquestions=3,
+        ),
+        SearchQualityEvalCase(
+            name="official_cloudflare_aws_comparison_requires_both_vendor_docs",
+            request=InternetScoutRequest(
+                query=(
+                    "Compare Cloudflare Workers and AWS Lambda for serverless "
+                    "functions. Prefer official vendor docs and cite them."
+                ),
+                tool_hint=InternetTool.SEARCH,
+                max_pages=4,
+                requester="alpha_chat.deep_research",
+            ),
+            sources=(cloudflare_docs, aws_lambda_docs),
+            claims=(
+                EvidenceClaim(
+                    claim="Cloudflare Workers runs serverless functions.",
+                    source_url=cloudflare_docs.url,
+                    citation_text="Cloudflare Workers runs serverless functions.",
+                    confidence="high",
+                ),
+                EvidenceClaim(
+                    claim="AWS Lambda runs serverless functions.",
+                    source_url=aws_lambda_docs.url,
+                    citation_text="AWS Lambda runs serverless functions.",
+                    confidence="high",
+                ),
+            ),
+            expected_status="supported",
+            eval_group="daily_use",
+            min_accepted_citations=2,
+            min_official_sources=2,
+            expected_accepted_hosts=(
+                "developers.cloudflare.com",
+                "docs.aws.amazon.com",
+            ),
+            expected_plan_purposes=("baseline", "comparison", "cross_check"),
+            expected_source_types=(
+                "official_docs",
+                "primary_source",
+                "trusted_secondary",
+            ),
+            min_subquestions=3,
+        ),
+        SearchQualityEvalCase(
+            name="official_cloudflare_aws_comparison_downgrades_when_vendor_missing",
+            request=InternetScoutRequest(
+                query=(
+                    "Compare Cloudflare Workers and AWS Lambda for serverless "
+                    "functions. Prefer official vendor docs and cite them."
+                ),
+                tool_hint=InternetTool.SEARCH,
+                max_pages=4,
+                requester="alpha_chat.deep_research",
+            ),
+            sources=(cloudflare_docs,),
+            claims=(
+                EvidenceClaim(
+                    claim="Cloudflare Workers runs serverless functions.",
+                    source_url=cloudflare_docs.url,
+                    citation_text="Cloudflare Workers runs serverless functions.",
+                    confidence="high",
+                ),
+            ),
+            expected_status="weak",
+            eval_group="daily_use",
+            min_accepted_citations=1,
+            min_official_sources=1,
+            expected_accepted_hosts=("developers.cloudflare.com",),
+            expected_plan_purposes=("baseline", "comparison", "cross_check"),
+            expected_source_types=(
+                "official_docs",
+                "primary_source",
+                "trusted_secondary",
+            ),
             min_subquestions=3,
         ),
         SearchQualityEvalCase(

@@ -17,6 +17,7 @@ from brain.services.spark_imessage_drafts import (
 from brain.services.spark_voice_feedback import (
     extract_calibration_lessons,
     extract_candidate_key_phrases,
+    load_recent_feedback_lessons,
     record_spark_draft_edit_feedback,
     record_spark_draft_quality_feedback,
 )
@@ -181,6 +182,70 @@ def test_calibration_lessons_capture_reviewable_edit_patterns() -> None:
         "Avoid formal email-style phrasing in text replies.",
         "Prefer natural contractions when they fit the conversation.",
         "Lead with a quick acknowledgement before the next action.",
+    )
+
+
+def test_recent_feedback_lessons_merge_quality_and_edit_signals(tmp_path: Path) -> None:
+    original = _proposal(
+        "Thank you for reaching out. Please let me know if you need anything else."
+    )
+    edited = apply_draft_text_override(original, "Got it, I'm on it.")
+    record_spark_draft_edit_feedback(
+        original_proposal=original,
+        edited_proposal=edited,
+        vault_root=tmp_path,
+        created_at=datetime(2026, 6, 15, 9, 0, tzinfo=UTC),
+    )
+    record_spark_draft_quality_feedback(
+        principal_id="ken",
+        feedback_label="out_of_context",
+        draft_version="spark-imessage-draft/v0",
+        approval_ref_hash="approval-hash",
+        source_reference_hash="source-hash",
+        chat_guid_hash="chat-hash",
+        vault_root=tmp_path,
+        created_at=datetime(2026, 6, 15, 9, 5, tzinfo=UTC),
+    )
+
+    lessons = load_recent_feedback_lessons(
+        principal_id="ken",
+        vault_root=tmp_path,
+    )
+
+    assert (
+        lessons[0]
+        == "Answer the latest inbound text before adding a new topic or explanation."
+    )
+    assert (
+        "Reuse the concrete ask or noun from the latest inbound text before pivoting."
+        in lessons
+    )
+    assert "Prefer shorter text drafts when Spark over-explains." in lessons
+
+
+def test_recent_feedback_lessons_add_tighter_word_count_guidance(
+    tmp_path: Path,
+) -> None:
+    record_spark_draft_quality_feedback(
+        principal_id="ken",
+        feedback_label="too_wordy",
+        draft_version="spark-imessage-draft/v0",
+        approval_ref_hash="approval-hash",
+        source_reference_hash="source-hash",
+        chat_guid_hash="chat-hash",
+        vault_root=tmp_path,
+        created_at=datetime(2026, 6, 15, 9, 10, tzinfo=UTC),
+    )
+
+    lessons = load_recent_feedback_lessons(
+        principal_id="ken",
+        vault_root=tmp_path,
+    )
+
+    assert "Use fewer words and stop after the useful answer." in lessons
+    assert (
+        "Default to one or two short text-message sentences unless the thread truly needs more."
+        in lessons
     )
 
 

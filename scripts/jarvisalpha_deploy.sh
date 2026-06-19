@@ -203,6 +203,155 @@ remote_pull() {
   fi
 }
 
+run_post_deploy_smokes() {
+  phase_header "POST-DEPLOY SMOKE"
+
+  local smoke_failed=0
+  local settings_base_url="${JARVIS_ALPHA_BRAIN_HEALTH_URL%/health}"
+  local settings_endpoint_url="${JARVIS_ALPHA_ENDPOINT_HEALTH_URL%/}/settings"
+
+  if [[ "${JARVIS_SKIP_SETTINGS_SMOKE:-0}" == "1" || "${JARVIS_ALPHA_SKIP_SETTINGS_SMOKE:-0}" == "1" ]]; then
+    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "settings smoke" "SKIPPED (JARVIS_SKIP_SETTINGS_SMOKE=1)" ""
+  else
+    local smoke_start=$SECONDS
+    local smoke_out
+    local smoke_ec
+
+    smoke_out=$(
+      SETTINGS_SMOKE_BASE_URL="$settings_base_url" \
+      SETTINGS_SMOKE_ENDPOINT_URL="$settings_endpoint_url" \
+      SETTINGS_SMOKE_TOKEN_SSH_TARGET="$BRAIN" \
+        python3 "$REPO_DIR/scripts/smoke_settings.py" 2>&1
+    )
+    smoke_ec=$?
+    if [ $smoke_ec -ne 0 ]; then
+      step_fail "settings smoke" "failed"
+      echo "$smoke_out" >&2
+      smoke_failed=1
+    else
+      local smoke_summary
+      smoke_summary=$(printf '%s\n' "$smoke_out" | tail -1 | python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+checks = payload.get("checks", {})
+passed = [
+    name
+    for name, check in checks.items()
+    if isinstance(check, dict) and check.get("ok") is True
+]
+print(f"{len(passed)} checks passed")
+' 2>/dev/null || true)
+      step_ok "settings smoke" "${smoke_summary:-passed}" "$(fmt_s $((SECONDS - smoke_start)))"
+    fi
+  fi
+
+  if [[ "${JARVIS_SKIP_MEMORY_CORE_SMOKE:-0}" == "1" || "${JARVIS_ALPHA_SKIP_MEMORY_CORE_SMOKE:-0}" == "1" ]]; then
+    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "memory core smoke" "SKIPPED (JARVIS_SKIP_MEMORY_CORE_SMOKE=1)" ""
+  else
+    local memory_start=$SECONDS
+    local memory_out
+    local memory_ec
+
+    memory_out=$(
+      MEMORY_CORE_SMOKE_BASE_URL="$settings_base_url" \
+      MEMORY_CORE_SMOKE_TOKEN_SSH_TARGET="$BRAIN" \
+      MEMORY_CORE_SMOKE_DB_SSH_TARGET="$BRAIN" \
+        python3 "$REPO_DIR/scripts/smoke_memory_core.py" 2>&1
+    )
+    memory_ec=$?
+    if [ $memory_ec -ne 0 ]; then
+      step_fail "memory core smoke" "failed"
+      echo "$memory_out" >&2
+      smoke_failed=1
+    else
+      local memory_summary
+      memory_summary=$(printf '%s\n' "$memory_out" | tail -1 | python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+checks = payload.get("checks", {})
+passed = [
+    name
+    for name, check in checks.items()
+    if isinstance(check, dict) and check.get("status") == "passed"
+]
+print(f"{len(passed)} checks passed")
+' 2>/dev/null || true)
+      step_ok "memory core smoke" "${memory_summary:-passed}" "$(fmt_s $((SECONDS - memory_start)))"
+    fi
+  fi
+
+  if [[ "${JARVIS_SKIP_BEACON_SMOKE:-0}" == "1" || "${JARVIS_ALPHA_SKIP_BEACON_SMOKE:-0}" == "1" ]]; then
+    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "beacon smoke" "SKIPPED (JARVIS_SKIP_BEACON_SMOKE=1)" ""
+  else
+    local beacon_start=$SECONDS
+    local beacon_out
+    local beacon_ec
+
+    beacon_out=$(
+      ALPHA_BASE_URL="$settings_base_url" \
+      BEACON_SMOKE_TOKEN_SSH_TARGET="$BRAIN" \
+      BEACON_SMOKE_SKIP_AGENT=1 \
+        python3 "$REPO_DIR/scripts/smoke_beacon_production.py" --skip-agent 2>&1
+    )
+    beacon_ec=$?
+    if [ $beacon_ec -ne 0 ]; then
+      step_fail "beacon smoke" "failed"
+      echo "$beacon_out" >&2
+      smoke_failed=1
+    else
+      local beacon_summary
+      beacon_summary=$(printf '%s\n' "$beacon_out" | tail -1 | python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+health = payload.get("results", {}).get("health", {})
+status = health.get("status", "unknown")
+warnings = health.get("warning_checks") or []
+if warnings:
+    print(f"health {status}; warnings={','.join(warnings)}")
+else:
+    print(f"health {status}; no warnings")
+' 2>/dev/null || true)
+      step_ok "beacon smoke" "${beacon_summary:-passed}" "$(fmt_s $((SECONDS - beacon_start)))"
+    fi
+  fi
+
+  if [[ "${JARVIS_SKIP_BEACON_ANSWER_EVAL:-0}" == "1" || "${JARVIS_ALPHA_SKIP_BEACON_ANSWER_EVAL:-0}" == "1" ]]; then
+    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "beacon answer eval" "SKIPPED (JARVIS_SKIP_BEACON_ANSWER_EVAL=1)" ""
+  else
+    local answer_eval_start=$SECONDS
+    local answer_eval_out
+    local answer_eval_ec
+
+    answer_eval_out=$(
+      cd "$REPO_DIR" && uv run --python 3.12 python scripts/eval_beacon_answer_engine.py 2>&1
+    )
+    answer_eval_ec=$?
+    if [ $answer_eval_ec -ne 0 ]; then
+      step_fail "beacon answer eval" "failed"
+      echo "$answer_eval_out" >&2
+      smoke_failed=1
+    else
+      local answer_eval_summary
+      answer_eval_summary=$(printf '%s\n' "$answer_eval_out" | tail -1 | python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+print(f"{payload.get('passed', 0)} checks passed")
+' 2>/dev/null || true)
+      step_ok "beacon answer eval" "${answer_eval_summary:-passed}" "$(fmt_s $((SECONDS - answer_eval_start)))"
+    fi
+  fi
+
+  return $smoke_failed
+}
+
 cd "$REPO_DIR"
 
 # ══════════════════════════════════════════════════════════
@@ -346,6 +495,10 @@ if [ $DEPLOY_FAILED -eq 0 ]; then
   remote_pull "Brain" "$BRAIN" || exit 1
   remote_pull "Gateway" "$GATEWAY" || exit 1
   remote_pull "Endpoint" "$ENDPOINT" || exit 1
+fi
+
+if [ $DEPLOY_FAILED -eq 0 ]; then
+  run_post_deploy_smokes || DEPLOY_FAILED=1
 fi
 
 # ══════════════════════════════════════════════════════════

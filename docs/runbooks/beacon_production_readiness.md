@@ -1,6 +1,6 @@
 # Beacon Production Readiness Runbook
 
-Date: 2026-06-06
+Date: 2026-06-19
 
 ## Scope
 
@@ -16,21 +16,69 @@ This runbook covers the MVP production closeout for P13-P17:
 - P16: production agent wrapper
 - P17: smoke and rollback
 
+Longer-term industry gap closure is tracked in
+`docs/state/BEACON_INDUSTRY_GAP_TRACKER.md`.
+
 ## Required Environment
 
 Gateway:
 
 - `GATEWAY_TOKEN` or service token accepted by Gateway
-- At least one search provider key:
+- Free/private metasearch provider:
+  - `SEARXNG_BASE_URL`
+  - `SEARXNG_API_KEY` when the self-hosted instance requires bearer auth
+- Paid/fallback search provider keys:
   - `BRAVE_SEARCH_API_KEY` or `BRAVE_API_KEY`
   - `PERPLEXITY_API_KEY`
-- Optional provider order: `BEACON_SEARCH_PROVIDER_ORDER=brave,perplexity`
+- `BEACON_MIN_USABLE_SEARCH_PROVIDERS=2` for redundant provider readiness
+- Optional provider order:
+  `BEACON_SEARCH_PROVIDER_ORDER=searxng,brave,perplexity`
+- Provider spend guards:
+  - `BEACON_SEARXNG_DAILY_SEARCH_LIMIT=200`
+  - `BEACON_SEARXNG_MONTHLY_SEARCH_LIMIT=5000`
+  - `BEACON_BRAVE_DAILY_SEARCH_LIMIT=50`
+  - `BEACON_BRAVE_MONTHLY_SEARCH_LIMIT=1000`
+  - `BEACON_PERPLEXITY_DAILY_SEARCH_LIMIT=3`
+  - `BEACON_PERPLEXITY_MONTHLY_SEARCH_LIMIT=25`
+  - Optional usage ledger path:
+    `BEACON_SEARCH_USAGE_DIR=~/jarvis/state/beacon-search-usage`
+
+Live Gateway SearXNG:
+
+- LaunchAgent label: `com.jarvis.alpha.searxng`
+- Loopback URL: `http://127.0.0.1:8888`
+- Settings file: `/Users/gate/searxng/settings.yml`
+- Source checkout: `/Users/gate/searxng/src`
+- Dedicated venv: `/Users/gate/searxng/.venv`
+- Logs:
+  - `/Users/gate/jarvis-alpha/logs/searxng.log`
+  - `/Users/gate/jarvis-alpha/logs/searxng_error.log`
+- Gateway `.secrets` should include:
+  - `SEARXNG_BASE_URL=http://127.0.0.1:8888`
+  - `BEACON_SEARCH_PROVIDER_ORDER=searxng,brave,perplexity`
+  - SearXNG daily/monthly caps, even though it is free, to catch loops.
+
+Check it on Gateway without printing secrets:
+
+```bash
+launchctl list | grep com.jarvis.alpha.searxng
+curl -fsS 'http://127.0.0.1:8888/search?q=jarvis&format=json' \
+  | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("results", [])))'
+```
 
 Brain browser runtime:
 
 - `BEACON_BROWSER_RUNTIME=playwright`
 - `BEACON_BROWSER_SCREENSHOT_DIR=<writable directory>`
+- `BEACON_BROWSER_TIMEOUT_MS=20000` with a hard cap of 60000
+- `BEACON_BROWSER_MAX_STEPS=5` maximum; use a lower value for tighter runs
+- `BEACON_BROWSER_MAX_RUNS_PER_HOUR=3` by default
 - Playwright package version must match the runtime contract in code.
+
+The approved executor remains public-web-only. It blocks cross-host requests,
+downloads, forms, credential fields, and raw web content in audit metadata. Each
+executor action writes an append-only `alpha_internet_tool_events` row with
+`event_type='browser_action'`.
 
 Retention inventory:
 
@@ -70,7 +118,9 @@ Expected:
 
 - `/v1/internet-scout/health` returns `status: ok` before production enablement.
 - `checks.database.ok` is true.
-- `checks.gateway.metadata.usable_provider_count` is greater than zero.
+- `checks.gateway.metadata.provider_redundancy_ok` is true.
+- `checks.gateway.metadata.usable_provider_count` is greater than or equal to
+  `checks.gateway.metadata.required_provider_count`.
 - `checks.browser_runtime.ok` is true when browser execution is expected.
 - `retention.mode` is `report_only`.
 - `checks.recent_evidence` is diagnostic. A recent failed request should be
@@ -136,10 +186,37 @@ Expected:
   evidence instead of presenting weak sources as proof
 - deterministic quality evals pass:
   `python scripts/eval_beacon_search_quality.py`
+- answer-engine UX contract evals pass without live web/provider calls:
+  `uv run --python 3.12 python scripts/eval_beacon_answer_engine.py`
 - committed contracts are current:
   `python scripts/export_beacon_contract_schema.py --check`
 
 The smoke script does not print tokens or raw retrieved content.
+
+## AT-0 MVP Front-Door Smoke
+
+Run this after deploy to prove the user-facing Alpha chat endpoint reaches
+Beacon and that browser-use work stays behind the operator approval queue:
+
+```bash
+python scripts/smoke_at0_mvp_user_paths.py
+```
+
+For production targets, the smoke script uses a target-side token by default:
+
+```bash
+python scripts/smoke_at0_mvp_user_paths.py \
+  --token-ssh-target jarvisbrain@jarvis-brain.tail40ed36.ts.net
+```
+
+Expected:
+
+- weather chat uses `web_search` and cites Open-Meteo evidence
+- deep research chat uses `deep_research` with cited Beacon evidence
+- raw web content remains marked untrusted
+- automatic memory writes are blocked and memory promotion review is required
+- browser-use requests create a pending `beacon_browser_use` T4 approval visible
+  from `/v1/approvals/pending`
 
 ## Helm Ask Quality Canary Suite
 
@@ -206,6 +283,9 @@ Gateway provider selection is fail closed:
 
 - Explicit provider requests require that provider key and an open circuit.
 - `auto` uses configured provider order and skips open circuits.
+- Each provider can be hard-capped with daily/monthly request limits. Gateway
+  reserves a request before calling the paid provider, so exhausted providers
+  are skipped in `auto` mode or return HTTP 429 when requested explicitly.
 - Provider failures are recorded in memory and open a cooldown circuit after the
   configured failure threshold.
 - If no configured provider is usable, search returns 503.
@@ -216,6 +296,11 @@ Useful knobs:
 - `BEACON_SEARCH_CIRCUIT_WINDOW_SECONDS`
 - `BEACON_SEARCH_CIRCUIT_FAILURE_THRESHOLD`
 - `BEACON_SEARCH_CIRCUIT_COOLDOWN_SECONDS`
+- `BEACON_BRAVE_DAILY_SEARCH_LIMIT`
+- `BEACON_BRAVE_MONTHLY_SEARCH_LIMIT`
+- `BEACON_PERPLEXITY_DAILY_SEARCH_LIMIT`
+- `BEACON_PERPLEXITY_MONTHLY_SEARCH_LIMIT`
+- `BEACON_SEARCH_USAGE_DIR`
 
 ## Agent Wrapper
 

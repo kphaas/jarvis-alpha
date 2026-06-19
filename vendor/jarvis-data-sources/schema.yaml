@@ -1,0 +1,75 @@
+# Schema for jarvis-data-sources registry entries.
+#
+# Each registry/*.yaml file contains a list of entries matching this shape.
+# All fields below are REQUIRED unless explicitly marked optional.
+#
+# This file is the source of truth. CI validation against this schema is planned.
+
+schema_version: 1
+
+domains:
+  - medical-reference        # Public reference data — never used for PHI traffic
+  - medical-phi-gated        # BAA-required clinical integrations
+  - financial-market         # Quotes, fundamentals, macro economic data
+  - financial-aggregator     # Bank + brokerage account aggregation
+  - financial-alt-data       # Congress trades, sentiment, alternative datasets
+  - news                     # News + media feeds
+  - geo                      # Geocoding, mapping, places
+  - weather                  # Weather + forecasts
+  - web-search               # Web search, answer, and retrieval APIs
+  - utility                  # FX, IP geolocation, open data
+
+auth_types:
+  - none                     # No authentication required
+  - api-key                  # Static API key in header or query param
+  - oauth2                   # Full OAuth2 flow
+  - bearer                   # Bearer token (often issued via separate flow)
+
+pricing_tiers:
+  - free                     # Always free, no credit card required
+  - freemium                 # Free tier + paid tiers
+  - paid                     # Paid only
+
+# ---------------------------------------------------------------------------
+# Annotated example entry. Copy this block when adding a new source.
+# ---------------------------------------------------------------------------
+
+example_entry:
+  id: example-source                          # kebab-case, globally unique, NEVER changed after first commit
+  name: Example Data Source                   # Human-readable name
+  domain: utility                             # Must match domains list above
+  url: https://example.com/                   # Homepage or docs landing
+  api_base_url: https://api.example.com/v1    # Use null if no stable base URL
+  auth:
+    type: api-key                             # From auth_types list
+    notes: |                                  # Rate limits, key acquisition path, gotchas
+      Free tier: 100 req/day. Paid keys via dashboard signup.
+      Header: X-API-Key. Keys cannot be rotated programmatically.
+  pricing: freemium                           # From pricing_tiers list
+  free_tier: 100 req/day, no SLA              # null if pricing == "paid"
+  license: vendor-tos                         # Data license — public-domain, cc0, cc-by, vendor-tos, etc.
+  baa_available: false                        # bool OR "not-applicable" for non-medical sources
+  phi_safe: false                             # ALWAYS false unless BAA executed AND notes explain contract
+  primary_use_cases:                          # Tag-style, lowercase, hyphenated
+    - example-lookups
+    - reference-data
+  notes: |                                    # Operational reality, not vendor pitch
+    Returns 502 frequently under load. Cache aggressively.
+    Deprecated v0 endpoints — only use v1+.
+  last_verified: 2026-05-01                   # ISO date, set when entry is added or re-verified
+  review_cadence_days: 90                     # 30 / 90 / 180 / 365 — see README for guidance
+
+# ---------------------------------------------------------------------------
+# Validation rules
+# ---------------------------------------------------------------------------
+
+rules:
+  - id_unique_across_registry: true
+  - phi_safe_requires_baa: |
+      phi_safe == true MUST have baa_available == true
+      AND notes MUST contain the contract path or "BAA executed YYYY-MM-DD"
+  - last_verified_required_on_add: true
+  - last_verified_required_on_change: true
+  - domain_must_match_filename: |
+      An entry's domain field MUST match its containing file's domain.
+      Example: registry/news.yaml entries must all have domain: news.

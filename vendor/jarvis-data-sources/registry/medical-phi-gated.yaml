@@ -1,0 +1,146 @@
+# PHI-gated medical integrations.
+#
+# CRITICAL RULE: Every entry in this file has phi_safe: false BY DEFAULT.
+# Setting phi_safe: true REQUIRES:
+#   1. baa_available: true
+#   2. A signed BAA on file with VYVE Wellness
+#   3. A note in the `notes` field stating "BAA executed YYYY-MM-DD" or
+#      pointing to the contract location in your records
+#
+# Until those three conditions are met, treat every entry here as
+# PHI-UNSAFE and do not route patient identifiers through it.
+#
+# This file is intentionally separate from medical-reference.yaml so the
+# safety boundary is unambiguous at the filesystem level.
+
+- id: redox
+  name: Redox
+  domain: medical-phi-gated
+  url: https://www.redoxengine.com/
+  api_base_url: https://api.redoxengine.com/
+  auth:
+    type: oauth2
+    notes: |
+      Client credentials grant. Tokens short-lived (5 min typical).
+      Sandbox tier provides synthetic test data only.
+  pricing: paid
+  free_tier: null
+  license: vendor-tos
+  baa_available: true
+  phi_safe: false                  # Set to true only after BAA executed
+  primary_use_cases:
+    - ehr-integration
+    - clinical-document-exchange
+    - results-routing
+    - scheduling-sync
+  notes: |
+    Industry-standard EHR integration layer. Connects to most major EHRs
+    via a single API. Pricing is volume-based and not public; expect
+    enterprise sales motion. Sandbox is free.
+    BAA is part of the standard MSA — confirm it is in scope for VYVE before
+    flipping phi_safe.
+  last_verified: 2026-05-01
+  review_cadence_days: 90
+
+- id: health-gorilla
+  name: Health Gorilla
+  domain: medical-phi-gated
+  url: https://www.healthgorilla.com/
+  api_base_url: https://api.healthgorilla.com/
+  auth:
+    type: oauth2
+    notes: OAuth2 client credentials. Sandbox available with synthetic data.
+  pricing: paid
+  free_tier: null
+  license: vendor-tos
+  baa_available: true
+  phi_safe: false
+  primary_use_cases:
+    - lab-orders
+    - lab-results-retrieval
+    - patient-record-aggregation
+    - care-quality-network
+  notes: |
+    Strong fit for a functional medicine clinic — lab ordering and results
+    are the primary value. National lab network coverage (Quest, LabCorp, etc.).
+    BAA standard; verify before flipping phi_safe.
+  last_verified: 2026-05-01
+  review_cadence_days: 90
+
+- id: particle-health
+  name: Particle Health
+  domain: medical-phi-gated
+  url: https://www.particlehealth.com/
+  api_base_url: https://api.particlehealth.com/
+  auth:
+    type: oauth2
+    notes: OAuth2. Production access requires HIPAA review by Particle.
+  pricing: paid
+  free_tier: null
+  license: vendor-tos
+  baa_available: true
+  phi_safe: false
+  primary_use_cases:
+    - patient-record-aggregation
+    - cross-network-record-retrieval
+    - longitudinal-record-fetch
+  notes: |
+    Aggregates across Carequality, CommonWell, and direct EHR connections.
+    Use case: pulling a new patient's records on intake.
+    Verify BAA + HIPAA review status before flipping phi_safe.
+  last_verified: 2026-05-01
+  review_cadence_days: 90
+
+- id: epic-fhir
+  name: Epic on FHIR
+  domain: medical-phi-gated
+  url: https://fhir.epic.com/
+  api_base_url: varies-per-tenant
+  auth:
+    type: oauth2
+    notes: |
+      SMART on FHIR launch flow. Each Epic-using health system has its own FHIR
+      base URL and auth tenant. App registration required per Epic AppMarket.
+  pricing: paid
+  free_tier: Epic sandbox (synthetic data) is free for development
+  license: vendor-tos
+  baa_available: true
+  phi_safe: false
+  primary_use_cases:
+    - direct-ehr-data-pull
+    - bulk-fhir-export
+    - patient-record-import
+  notes: |
+    Direct integration only relevant if VYVE patients come from Epic-using
+    health systems. Most VYVE patients self-pay and self-refer, so this is
+    LOWER priority than Health Gorilla / Particle / Redox.
+    AppMarket review process is multi-month; do not start unless committed.
+  last_verified: 2026-05-01
+  review_cadence_days: 180
+
+- id: athenahealth-api
+  name: athenahealth API (athenaOne)
+  domain: medical-phi-gated
+  url: https://docs.athenahealth.com/
+  api_base_url: https://api.platform.athenahealth.com/
+  auth:
+    type: oauth2
+    notes: |
+      OAuth2 client credentials. Production access requires partnership review.
+      Practice-tied tokens — multi-tenant deployment is non-trivial.
+  pricing: paid
+  free_tier: Preview tier with synthetic data
+  license: vendor-tos
+  baa_available: true
+  phi_safe: false
+  primary_use_cases:
+    - athenaone-ehr-integration
+    - appointments
+    - claims
+    - clinical-documents
+  notes: |
+    Only relevant if VYVE migrates onto athenaOne or partners with an athena practice.
+    Lower priority than Health Gorilla / Redox for current VYVE workflow.
+    Partnership review process is multi-month.
+  last_verified: 2026-05-01
+  review_cadence_days: 180

@@ -79,6 +79,26 @@ def test_local_llm_response_wraps_evidence_as_untrusted_citations():
         "confidence:medium",
         "cited_search_result",
     ]
+    assert response.evidence_transparency.freshness_required is False
+    assert response.evidence_transparency.accepted_sources[0].source_url == source.url
+    assert response.evidence_transparency.accepted_sources[0].accepted is True
+    assert response.evidence_transparency.accepted_sources[0].claim_supported is True
+    assert (
+        response.evidence_transparency.accepted_sources[0].fetched_at
+        == source.fetched_at
+    )
+    assert response.evidence_transparency.rejected_sources == []
+    assert response.evidence_transparency.answer_quality_score.score == 74
+    assert response.evidence_transparency.answer_quality_score.label == "solid"
+    assert (
+        response.evidence_transparency.answer_quality_score.source_diversity_score == 80
+    )
+    assert (
+        response.evidence_transparency.answer_quality_score.official_coverage_score
+        == 100
+    )
+    assert response.evidence_transparency.answer_quality_score.freshness_score == 100
+    assert response.evidence_transparency.answer_quality_score.rejected_risk_count == 0
     assert "Research Plan" in response.research_report.report_markdown
     assert "Claim Verification" in response.research_report.report_markdown
     assert "Contradictions" in response.research_report.report_markdown
@@ -143,6 +163,12 @@ def test_local_llm_filters_non_official_sources_for_official_docs_query():
     assert response.quality.official_source_required is True
     assert response.quality.official_source_count == 0
     assert response.quality.rejected_citation_count == 3
+    assert response.evidence_transparency.answer_quality_score.score == 15
+    assert response.evidence_transparency.answer_quality_score.label == "low"
+    assert (
+        response.evidence_transparency.answer_quality_score.official_coverage_score == 0
+    )
+    assert response.evidence_transparency.answer_quality_score.rejected_risk_count == 3
     assert response.quality.required_source_hosts == [
         "openai.com",
         "platform.openai.com",
@@ -210,6 +236,9 @@ def test_local_llm_prefers_official_source_for_official_docs_query():
     assert response.quality.official_source_count == 1
     assert response.quality.rejected_citation_count == 1
     assert response.quality.verified_claim_count == 1
+    assert response.evidence_transparency.answer_quality_score.score == 90
+    assert response.evidence_transparency.answer_quality_score.label == "strong"
+    assert response.evidence_transparency.answer_quality_score.rejected_risk_score == 80
 
 
 def test_local_llm_downgrades_supported_evidence_when_research_coverage_is_missing():
@@ -253,13 +282,19 @@ def test_local_llm_downgrades_supported_evidence_when_research_coverage_is_missi
 
     assert stored.plan.research.stop_criteria.require_cross_check is True
     assert stored.plan.research.stop_criteria.min_source_hosts == 2
-    assert response.quality.status == "supported"
+    assert response.quality.status == "weak"
+    assert response.quality.required_official_target_count == 2
+    assert response.quality.covered_official_target_count == 1
     assert response.synthesis.status == "weak"
     assert response.synthesis.answerable is True
     assert response.synthesis.required_behavior == "answer_with_limitations"
     assert response.research_report.source_quality_status == "weak"
     assert response.research_report.answerability == "limited"
     assert response.research_report.source_hosts == ["openai.com"]
+    assert (
+        "Official comparison coverage is missing for one or more compared targets."
+        in (response.research_report.coverage_warnings)
+    )
     assert "Cross-check coverage is below the research stop criteria." in (
         response.research_report.coverage_warnings
     )
@@ -353,6 +388,13 @@ def test_local_llm_rejects_community_subdomain_for_official_docs_query():
     assert response.quality.status == "insufficient"
     assert response.quality.official_source_count == 0
     assert response.quality.rejected_citation_count == 1
+    rejected = response.evidence_transparency.rejected_sources[0]
+    assert rejected.host == "community.openai.com"
+    assert rejected.official_source_required is True
+    assert rejected.official_host_match is False
+    assert "official_host_mismatch" in rejected.rejection_reasons
+    assert "low_confidence_source" in rejected.rejection_reasons
+    assert "low_confidence_host" in rejected.quality_reasons
 
 
 def test_local_llm_rejects_claim_not_supported_by_citation_text():
@@ -385,6 +427,11 @@ def test_local_llm_rejects_claim_not_supported_by_citation_text():
     assert response.quality.official_source_count == 1
     assert response.quality.unsupported_claim_count == 1
     assert response.quality.verified_claim_count == 0
+    rejected = response.evidence_transparency.rejected_sources[0]
+    assert rejected.official_host_match is True
+    assert rejected.claim_supported is False
+    assert "unsupported_claim" in rejected.rejection_reasons
+    assert rejected.claim_support_reasons == ["currency_marker_missing"]
     assert response.research_report.unsupported_claims == [
         "The official OpenAI API reference says the monthly price is $20."
     ]
@@ -525,4 +572,9 @@ def test_local_llm_rejects_prompt_injection_citations():
     assert response.citations == []
     assert response.quality.status == "insufficient"
     assert response.quality.prompt_injection_rejection_count == 1
+    rejected = response.evidence_transparency.rejected_sources[0]
+    assert "prompt_injection_detected" in rejected.rejection_reasons
+    assert any(
+        reason.startswith("prompt_injection:") for reason in rejected.rejection_reasons
+    )
     assert "prompt-injection markers" in " ".join(response.quality.warnings)

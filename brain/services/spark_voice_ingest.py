@@ -90,6 +90,7 @@ class SparkApprovedSourceRecord:
     relationship_approved: bool
     legal_marked: bool
     decision_approved: bool
+    parent_minor_context_approved: bool = False
 
     @property
     def approval_ref_hash(self) -> str:
@@ -278,9 +279,23 @@ def load_spark_voice_guidance(
     root = _vault_root(vault_root)
     text = _read_required(root / "spark" / "principals" / principal_id / "voice.md")
     return SparkVoiceGuidance(
-        voice_markers=tuple(_list_after_label(text, "Ken-approved voice markers:")),
+        voice_markers=tuple(
+            _list_after_first_label(
+                text,
+                (
+                    "Approved voice markers:",
+                    "Ken-approved voice markers:",
+                ),
+            )
+        ),
         recurring_phrases=tuple(
-            _list_after_label(text, "Ken-approved recurring phrases:")
+            _list_after_first_label(
+                text,
+                (
+                    "Approved recurring phrases:",
+                    "Ken-approved recurring phrases:",
+                ),
+            )
         ),
         avoid_markers=tuple(_list_after_label(text, "Avoid sounding:")),
         channel_style=_table_after_heading(text, "## Channel Style"),
@@ -460,6 +475,10 @@ def _approval_from_fields(
         relationship_approved=_is_yes(
             fields.get("relationship_specific_approval_granted")
         ),
+        parent_minor_context_approved=_is_yes(
+            fields.get("parent_minor_context_approval_granted")
+            or fields.get("minor_related_content_parent_approval")
+        ),
         legal_marked=_is_yes(fields.get("legal_or_custody_content")),
         decision_approved=fields.get("decision_approved") == "true",
     )
@@ -536,6 +555,14 @@ def _list_after_label(text: str, label: str) -> list[str]:
         if line.startswith("- "):
             values.append(line.removeprefix("- ").strip())
     return values
+
+
+def _list_after_first_label(text: str, labels: tuple[str, ...]) -> list[str]:
+    for label in labels:
+        values = _list_after_label(text, label)
+        if values:
+            return values
+    return []
 
 
 def _table_after_heading(text: str, heading: str) -> dict[str, str]:

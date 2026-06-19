@@ -9,6 +9,7 @@ from uuid import UUID
 import asyncpg
 
 from brain.services.internet_scout.models import (
+    InternetScoutBrowserApprovalPreview,
     InternetScoutRequest,
     InternetTool,
     PolicyDecision,
@@ -42,20 +43,21 @@ async def enqueue_browser_task_approval(
     parameters_hash = browser_task_parameters_hash(request, decision)
     description = browser_task_approval_description(request, decision)
     try:
-        queue_id = await conn.fetchval(
-            """
-            SELECT public.enqueue_approval_request(
-                $1::text[], $2, $3, $4, $5, $6, $7
+        async with conn.transaction():
+            queue_id = await conn.fetchval(
+                """
+                SELECT public.enqueue_approval_request(
+                    $1::text[], $2, $3, $4, $5, $6, $7
+                )
+                """,
+                list(BROWSER_TASK_APPROVAL_ACTION_CLASSES),
+                decision.tier,
+                actor_sub,
+                actor_type,
+                description,
+                parameters_hash,
+                nonce,
             )
-            """,
-            list(BROWSER_TASK_APPROVAL_ACTION_CLASSES),
-            decision.tier,
-            actor_sub,
-            actor_type,
-            description,
-            parameters_hash,
-            nonce,
-        )
     except asyncpg.UniqueViolationError:
         existing_id = await conn.fetchval(
             """
@@ -143,4 +145,24 @@ def browser_task_approval_description(
         "Beacon browser-use approval "
         f"({decision.tier}, {query_state}, urls={len(request.urls)}, "
         f"sensitivity={request.sensitivity})"
+    )
+
+
+def browser_task_approval_preview(
+    request: InternetScoutRequest,
+    decision: PolicyDecision,
+) -> InternetScoutBrowserApprovalPreview:
+    """Build a redacted browser-action preview without raw query or URL text."""
+
+    parameters_hash = browser_task_parameters_hash(request, decision)
+    return InternetScoutBrowserApprovalPreview(
+        selected_tool=decision.tool,
+        risk_tier=decision.tier,
+        sensitivity=request.sensitivity,
+        has_query=bool(request.query),
+        url_count=len(request.urls),
+        max_pages=request.max_pages,
+        max_depth=request.max_depth,
+        needs_interaction=request.needs_interaction,
+        approval_hash_prefix=parameters_hash[:12],
     )

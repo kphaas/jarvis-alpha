@@ -11,6 +11,10 @@ P10/P11:
 - ADR and service contracts exist.
 - Policy, URL/content safety, sanitizer, evidence, and planning helpers exist.
 - Gateway search/fetch/extract/crawl endpoints are implemented.
+- Current local weather queries route through Gateway's free Open-Meteo adapter
+  before paid search providers.
+- Gateway search can route through a configured SearXNG base URL before Brave
+  and Perplexity, keeping private/free metasearch ahead of paid providers.
 - Brain calls Gateway through `call_gateway_proxy()` only.
 - `/v1/internet-scout/research` stores structured evidence under RLS.
 - `/v1/internet-scout/local-llm/tool` returns a citation envelope for local
@@ -21,7 +25,9 @@ P10/P11:
 - Browser-use approval requests can be queued and an approved-runner route can
   verify and consume the exact approval row.
 - Browser runs have an hourly operator quota, same-host observation checks,
-  screenshot review markers, and content-addressed screenshot storage.
+  strict same-host network allowlists, screenshot review markers,
+  content-addressed screenshot storage, no-download/no-form/no-credential-entry
+  enforcement, timeout/step caps, and append-only per-action audit events.
 - The browser runner is adapter-based and fails closed unless
   `BEACON_BROWSER_RUNTIME=playwright` is configured with the reviewed runtime
   settings.
@@ -60,5 +66,6 @@ deployment, set:
 - `BEACON_BROWSER_SCREENSHOT_DIR=<local private screenshot path>`
 - `BEACON_BROWSER_PLAYWRIGHT_VERSION=1.49.1`
 - `BEACON_BROWSER_TIMEOUT_MS=20000` unless a smaller reviewed value is needed
+- `BEACON_BROWSER_MAX_STEPS=5` maximum; lower values are allowed
 - `BEACON_BROWSER_MAX_RUNS_PER_HOUR=3` unless the operator approves a higher
   bounded limit

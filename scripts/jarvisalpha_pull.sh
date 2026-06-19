@@ -79,6 +79,15 @@ if [ ! -d "$REPO_DIR" ]; then
 else
   cd "$REPO_DIR"
   PREV_HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo "")
+  CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+  if [ "${JARVIS_ALPHA_ALLOW_BRANCH_DEPLOY:-0}" != "1" ] && [ "$CURRENT_BRANCH" != "main" ]; then
+    emit fail branch_guard node="$NODE_SHORT" branch="${CURRENT_BRANCH:-detached}" error="remote node must be on main before deploy"
+    echo ""
+    echo "❌ REMOTE BRANCH GUARD FAILED — aborting."
+    echo "   This node is on '${CURRENT_BRANCH:-detached}', but deploys must pull from main."
+    echo "   Fix: cd $REPO_DIR && git checkout main && git pull --ff-only origin main"
+    exit 1
+  fi
   if [ -n "${GITHUB_TOKEN:-}" ]; then
     git config credential.helper ""
     GIT_TERMINAL_PROMPT=0 git remote set-url origin https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git
@@ -100,6 +109,17 @@ fi
 
 NEW_HEAD=$(git -C "$REPO_DIR" rev-parse --short HEAD)
 NEW_HEAD_FULL=$(git -C "$REPO_DIR" rev-parse HEAD)
+ORIGIN_MAIN_FULL=$(git -C "$REPO_DIR" rev-parse refs/remotes/origin/main 2>/dev/null || echo "")
+if [ "${JARVIS_ALPHA_ALLOW_BRANCH_DEPLOY:-0}" != "1" ] \
+  && [ -n "$ORIGIN_MAIN_FULL" ] \
+  && [ "$NEW_HEAD_FULL" != "$ORIGIN_MAIN_FULL" ]; then
+  emit fail head_guard node="$NODE_SHORT" to_hash="$NEW_HEAD" error="remote head is not origin/main after pull"
+  echo ""
+  echo "❌ REMOTE HEAD GUARD FAILED — aborting."
+  echo "   HEAD is $NEW_HEAD, but origin/main is ${ORIGIN_MAIN_FULL:0:7}."
+  echo "   This prevents deploying rebased feature branches by accident."
+  exit 1
+fi
 
 if [ -f "${REPO_DIR}/scripts/lib/node_addresses.sh" ]; then
   source "${REPO_DIR}/scripts/lib/node_addresses.sh"
@@ -150,7 +170,11 @@ needs_restart_brain() {
 }
 
 needs_reload_school_email() {
-  service_has_changes_matching "alpha-school-email" '(^launchagents/com\.jarvis\.alpha\.(school-email|gmail-health)\.template\.plist$|^scripts/start_alpha_(school_email|gmail_health)\.sh$|^scripts/install_launchagents\.py$)'
+  service_has_changes_matching "alpha-school-email" '(^launchagents/com\.jarvis\.alpha\.(school-email|gmail-health|at0-mail|at0-mail-health)\.template\.plist$|^scripts/start_alpha_(school_email|gmail_health|at0_mail|at0_mail_health)\.sh$|^scripts/install_launchagents\.py$)'
+}
+
+needs_reload_spark_send_readiness() {
+  service_has_changes_matching "alpha-spark-send-readiness" '(^launchagents/com\.jarvis\.alpha\.spark-send-readiness\.template\.plist$|^scripts/start_alpha_spark_send_readiness\.sh$|^scripts/smoke_spark_send_readiness\.sh$|^scripts/install_launchagents\.py$)'
 }
 
 needs_reload_sweep_cert() {
@@ -179,6 +203,10 @@ needs_restart_watchdog() {
 
 needs_restart_observability() {
   service_has_changes_matching "alpha-observability" '(^config/observability/brain/|^launchagents/com\.jarvis\.alpha\.(fluentbit|loki)\.plist$)'
+}
+
+needs_reload_memory_observability() {
+  service_has_changes_matching "alpha-memory-observability" '(^scripts/check_memory_observability\.py$|^launchagents/com\.jarvis\.alpha\.memory-observability\.template\.plist$|^scripts/install_launchagents\.py$)'
 }
 
 sync_brain_observability_configs() {
@@ -421,6 +449,28 @@ elif [ "$NODE_SHORT" = "brain" ]; then
   mark_service_checked "alpha-observability"
 fi
 
+MEMORY_OBSERVABILITY_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.memory-observability.plist"
+if [ "$NODE_SHORT" = "brain" ] && needs_reload_memory_observability; then
+  echo ""
+  echo "Refreshing Memory observability LaunchAgent..."
+  MEMORY_OBS_START=$(time_ms)
+  INSTALL_LOG=$(mktemp)
+  if ! python3 "${REPO_DIR}/scripts/install_launchagents.py" --node brain >"$INSTALL_LOG" 2>&1; then
+    MEMORY_OBS_DUR=$(($(time_ms) - MEMORY_OBS_START))
+    INSTALL_ERR=$(tail -5 "$INSTALL_LOG" | tr '\n' ' ' | cut -c1-300)
+    rm -f "$INSTALL_LOG"
+    emit fail restart node="$NODE_SHORT" service="alpha-memory-observability" dur_ms="$MEMORY_OBS_DUR" error="$INSTALL_ERR"
+    echo "❌ Memory observability LaunchAgent install failed"
+    exit 1
+  fi
+  rm -f "$INSTALL_LOG"
+  restart_launchagent "alpha-memory-observability" "com.jarvis.alpha.memory-observability" "$MEMORY_OBSERVABILITY_PLIST"
+  mark_service_checked "alpha-memory-observability"
+elif [ "$NODE_SHORT" = "brain" ]; then
+  emit skip restart node="$NODE_SHORT" service="alpha-memory-observability" reason="no_launchagent_changes"
+  mark_service_checked "alpha-memory-observability"
+fi
+
 TEMPORAL_WORKER_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.temporal.worker.plist"
 if [ "$NODE_SHORT" = "brain" ] && needs_restart_temporal_worker; then
   echo ""
@@ -448,6 +498,8 @@ fi
 
 SCHOOL_EMAIL_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.school-email.plist"
 GMAIL_HEALTH_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.gmail-health.plist"
+AT0_MAIL_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.at0-mail.plist"
+AT0_MAIL_HEALTH_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.at0-mail-health.plist"
 if [ "$NODE_SHORT" = "brain" ] && needs_reload_school_email; then
   echo ""
   echo "Refreshing Alpha School Email LaunchAgent..."
@@ -486,10 +538,67 @@ if [ "$NODE_SHORT" = "brain" ] && needs_reload_school_email; then
     echo "❌ Gmail health LaunchAgent plist missing after install"
     exit 1
   fi
+  if [ -f "$AT0_MAIL_PLIST" ]; then
+    launchctl unload "$AT0_MAIL_PLIST" 2>/dev/null || true
+    launchctl load "$AT0_MAIL_PLIST"
+    AT0_MAIL_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.at0-mail" {print $1}' | head -1)
+    [ "$AT0_MAIL_PID" = "-" ] && AT0_MAIL_PID=0
+    echo "✅ AT-0 Herald mail LaunchAgent refreshed"
+    emit ok restart node="$NODE_SHORT" service="alpha-at0-mail" pid="${AT0_MAIL_PID:-0}" dur_ms=$(($(time_ms) - SCHOOL_START))
+  else
+    emit fail restart node="$NODE_SHORT" service="alpha-at0-mail" dur_ms=$(($(time_ms) - SCHOOL_START)) error="plist missing after install"
+    echo "❌ AT-0 Herald mail LaunchAgent plist missing after install"
+    exit 1
+  fi
+  if [ -f "$AT0_MAIL_HEALTH_PLIST" ]; then
+    launchctl unload "$AT0_MAIL_HEALTH_PLIST" 2>/dev/null || true
+    launchctl load "$AT0_MAIL_HEALTH_PLIST"
+    AT0_MAIL_HEALTH_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.at0-mail-health" {print $1}' | head -1)
+    [ "$AT0_MAIL_HEALTH_PID" = "-" ] && AT0_MAIL_HEALTH_PID=0
+    echo "✅ AT-0 Herald mail health LaunchAgent refreshed"
+    emit ok restart node="$NODE_SHORT" service="alpha-at0-mail-health" pid="${AT0_MAIL_HEALTH_PID:-0}" dur_ms=$(($(time_ms) - SCHOOL_START))
+  else
+    emit fail restart node="$NODE_SHORT" service="alpha-at0-mail-health" dur_ms=$(($(time_ms) - SCHOOL_START)) error="plist missing after install"
+    echo "❌ AT-0 Herald mail health LaunchAgent plist missing after install"
+    exit 1
+  fi
   mark_service_checked "alpha-school-email"
 elif [ "$NODE_SHORT" = "brain" ]; then
   emit skip restart node="$NODE_SHORT" service="alpha-school-email" reason="no_launchagent_changes"
   mark_service_checked "alpha-school-email"
+fi
+
+SPARK_SEND_READINESS_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.spark-send-readiness.plist"
+if [ "$NODE_SHORT" = "brain" ] && needs_reload_spark_send_readiness; then
+  echo ""
+  echo "Refreshing Spark send readiness LaunchAgent..."
+  SPARK_CANARY_START=$(time_ms)
+  INSTALL_LOG=$(mktemp)
+  if ! python3 "${REPO_DIR}/scripts/install_launchagents.py" --node brain >"$INSTALL_LOG" 2>&1; then
+    SPARK_CANARY_DUR=$(($(time_ms) - SPARK_CANARY_START))
+    INSTALL_ERR=$(tail -5 "$INSTALL_LOG" | tr '\n' ' ' | cut -c1-300)
+    rm -f "$INSTALL_LOG"
+    emit fail restart node="$NODE_SHORT" service="alpha-spark-send-readiness" dur_ms="$SPARK_CANARY_DUR" error="$INSTALL_ERR"
+    echo "❌ Spark send readiness LaunchAgent install failed"
+    exit 1
+  fi
+  rm -f "$INSTALL_LOG"
+  if [ -f "$SPARK_SEND_READINESS_PLIST" ]; then
+    launchctl unload "$SPARK_SEND_READINESS_PLIST" 2>/dev/null || true
+    launchctl load "$SPARK_SEND_READINESS_PLIST"
+    SPARK_CANARY_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.spark-send-readiness" {print $1}' | head -1)
+    [ "$SPARK_CANARY_PID" = "-" ] && SPARK_CANARY_PID=0
+    echo "✅ Spark send readiness LaunchAgent refreshed"
+    emit ok restart node="$NODE_SHORT" service="alpha-spark-send-readiness" pid="${SPARK_CANARY_PID:-0}" dur_ms=$(($(time_ms) - SPARK_CANARY_START))
+  else
+    emit fail restart node="$NODE_SHORT" service="alpha-spark-send-readiness" dur_ms=$(($(time_ms) - SPARK_CANARY_START)) error="plist missing after install"
+    echo "❌ Spark send readiness LaunchAgent plist missing after install"
+    exit 1
+  fi
+  mark_service_checked "alpha-spark-send-readiness"
+elif [ "$NODE_SHORT" = "brain" ]; then
+  emit skip restart node="$NODE_SHORT" service="alpha-spark-send-readiness" reason="no_launchagent_changes"
+  mark_service_checked "alpha-spark-send-readiness"
 fi
 
 SWEEP_CERT_LABEL="com.jarvis.alpha.sweep-cert-renewal.${NODE_SHORT}"

@@ -58,7 +58,33 @@ def main() -> int:
         "checks": sorted(checks_payload.keys())
         if isinstance(checks_payload, dict)
         else [],
+        "warning_checks": sorted(
+            name
+            for name, check in checks_payload.items()
+            if isinstance(check, dict) and check.get("status") == "warning"
+        )
+        if isinstance(checks_payload, dict)
+        else [],
     }
+    results["gateway"] = _gateway_health_summary(checks_payload)
+    browser_runtime = _health_check_metadata(checks_payload, "browser_runtime")
+    if browser_runtime:
+        browser_limits = {
+            "runtime": browser_runtime.get("runtime"),
+            "timeout_ms": browser_runtime.get("timeout_ms"),
+            "max_steps": browser_runtime.get("max_steps"),
+            "max_runs_per_hour": browser_runtime.get("max_runs_per_hour"),
+        }
+        results["browser_runtime_limits"] = browser_limits
+        if _int(browser_runtime.get("timeout_ms")) > 60_000:
+            _emit({"results": results, "error": "browser timeout cap missing"})
+            return 6
+        if _int(browser_runtime.get("max_steps")) > 5:
+            _emit({"results": results, "error": "browser max-step cap missing"})
+            return 7
+        if _int(browser_runtime.get("max_runs_per_hour")) > 10:
+            _emit({"results": results, "error": "browser hourly quota cap missing"})
+            return 8
     if health.get("status") != "ok":
         _emit({"results": results, "error": "beacon health degraded"})
         return 2
@@ -202,6 +228,51 @@ def _call_json(
     if not isinstance(payload, dict):
         raise RuntimeError(f"{method} {path} returned non-object JSON")
     return payload
+
+
+def _health_check_metadata(
+    checks_payload: object,
+    check_name: str,
+) -> dict[str, object]:
+    if not isinstance(checks_payload, dict):
+        return {}
+    check = checks_payload.get(check_name)
+    if not isinstance(check, dict):
+        return {}
+    metadata = check.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _int(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return 0
+
+
+def _gateway_health_summary(checks_payload: object) -> dict[str, object]:
+    if not isinstance(checks_payload, dict):
+        return {}
+    gateway = checks_payload.get("gateway")
+    if not isinstance(gateway, dict):
+        return {}
+    metadata = gateway.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    return {
+        "status": gateway.get("status"),
+        "primary_provider": metadata.get("primary_provider"),
+        "provider_order": metadata.get("provider_order", []),
+        "usable_provider_count": metadata.get("usable_provider_count"),
+        "required_provider_count": metadata.get("required_provider_count"),
+        "provider_redundancy_status": metadata.get("provider_redundancy_status"),
+        "provider_warning_status": metadata.get("provider_warning_status"),
+    }
 
 
 def _emit(payload: dict[str, object]) -> None:

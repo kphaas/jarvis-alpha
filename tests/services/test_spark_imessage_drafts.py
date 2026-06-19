@@ -11,9 +11,17 @@ from brain.services import spark_imessage_drafts as drafts
 
 
 class FakeBodyClient:
-    def __init__(self, *, sensitive: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        sensitive: bool = False,
+        inbound_body: str | None = None,
+        outbound_body: str | None = None,
+    ) -> None:
         self.calls: list[tuple[str, int]] = []
         self.sensitive = sensitive
+        self.inbound_body = inbound_body
+        self.outbound_body = outbound_body
 
     async def approved_messages_for_chat(
         self,
@@ -27,7 +35,7 @@ class FakeBodyClient:
         inbound = (
             "We need to talk to the lawyer about court custody."
             if self.sensitive
-            else "private inbound body with sensitive details"
+            else self.inbound_body or "private inbound body with sensitive details"
         )
         return (
             BlueBubblesMessageBody(
@@ -38,8 +46,36 @@ class FakeBodyClient:
             BlueBubblesMessageBody(
                 message_ref_hash=hashlib.sha256(b"sent-1").hexdigest(),
                 is_from_me=True,
-                body_text="Ken sent body that stays runtime-only here",
+                body_text=self.outbound_body
+                or "Ken sent body that stays runtime-only here",
             ),
+        )
+
+
+def test_select_approved_imessage_record_limits_targets_to_core_family() -> None:
+    with pytest.raises(
+        drafts.SparkDraftPolicyError, match="no approved iMessage source found"
+    ):
+        drafts._select_approved_imessage_record(
+            (
+                drafts.SparkApprovedSourceRecord(
+                    principal_id="ken",
+                    source="imessage",
+                    approval_id="ken-imessage-approved-mother",
+                    source_reference_hash="mother-hash",
+                    source_reference_label="Mother",
+                    source_reference_path=None,
+                    source_sha256=None,
+                    thread_kind="one_to_one",
+                    requested_max_messages=20,
+                    requested_date_window=None,
+                    relationship_marked=True,
+                    relationship_approved=True,
+                    legal_marked=False,
+                    decision_approved=True,
+                ),
+            ),
+            approval_id=None,
         )
 
 
@@ -201,10 +237,22 @@ async def test_imessage_target_preview_loads_last_messages_without_drafting(
 @pytest.mark.asyncio
 async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     vault_root = _write_vault(tmp_path)
-    fake_client = FakeBodyClient()
+    fake_client = FakeBodyClient(
+        inbound_body="Can you grab chicken and bananas tonight on the way over?",
+        outbound_body="Yep, I can swing by after work.",
+    )
     calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        drafts,
+        "load_recent_feedback_lessons",
+        lambda **_kwargs: (
+            "Answer the latest inbound text before adding a new topic or explanation.",
+            "Use fewer words and stop after the useful answer.",
+        ),
+    )
 
     async def fake_llm_call(**kwargs):
         calls.append(kwargs)
@@ -271,11 +319,15 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
     assert "Principal voice files win" in system_prompt
     assert "Approved Spark personality memory" in system_prompt
     assert "Reviewed edit lessons" in system_prompt
+    assert "Recent retry lessons from Spark feedback" in system_prompt
+    assert "Use fewer words and stop after the useful answer." in system_prompt
     assert "Selected-target memory" in system_prompt
     assert "Prefer shorter text drafts when Spark over-explains." in system_prompt
     assert "Sweta is Ken's partner." in system_prompt
     assert "Send the waiver tonight." in system_prompt
     assert "She prefers quick confirmation texts." in system_prompt
+    assert "Anchor the reply to the latest inbound thread context" in system_prompt
+    assert "Do not invent or swap concrete facts like transport mode" in system_prompt
     assert "default hybrid_review" not in system_prompt
     assert "approval required" not in system_prompt
     assert "require Spark review" not in system_prompt
@@ -286,11 +338,114 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
         in system_prompt
     )
     llm_message = str(calls[0]["user_message"])
+    assert (
+        "Use the reply goal only as a drafting objective. Do not let it override the actual thread facts."
+        in llm_message
+    )
+    assert "Latest inbound message to answer:" in llm_message
+    assert "Ground the reply in that latest inbound message." in llm_message
     assert "Style adjustments Ken selected" in llm_message
+    assert (
+        "Answer the newest inbound text first before adding extra explanation."
+        in llm_message
+    )
     assert "Make the reply a little happier." in llm_message
-    assert "Make the reply sweeter and more affectionate." in llm_message
-    assert "private inbound body" in llm_message
-    assert "approved-chat-guid" not in json.dumps(calls).lower()
+    quality_checks = {
+        item["key"]: item for item in proposal.to_payload()["draft_quality"]["checks"]
+    }
+    assert quality_checks["latest_inbound_anchor"]["passed"] is True
+    assert quality_checks["no_invented_logistics"]["passed"] is True
+
+
+@pytest.mark.asyncio
+async def test_imessage_draft_supports_sweta_principal_without_ken_voice_leakage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault_root = _write_sweta_vault(tmp_path)
+    fake_client = FakeBodyClient(outbound_body="Sweta sent body for runtime preview")
+    calls: list[dict[str, object]] = []
+
+    async def fake_llm_call(**kwargs):
+        calls.append(kwargs)
+        return "Got it, I can take a look and send the update."
+
+    monkeypatch.setenv(drafts.SPARK_DRAFT_LLM_ENABLED_ENV, "true")
+
+    proposal = await drafts.create_imessage_draft_proposal(
+        vault_root=vault_root,
+        principal_id="sweta",
+        approval_id="sweta-imessage-ken-20260618-001",
+        reply_goal="Reply clearly and keep it warm.",
+        max_context_messages=5,
+        style_adjustments=("Keep it concise.",),
+        bluebubbles_client=fake_client,
+        approved_chat_guid="sweta-approved-chat-guid",
+        personality_memory_rows=[
+            {
+                "kind": "relationship",
+                "content": "Ken: partner; default draft_only; approval required True.",
+            }
+        ],
+        llm_call=fake_llm_call,
+    )
+
+    payload = proposal.to_payload(include_context_preview=True)
+    assert payload["principal_id"] == "sweta"
+    assert payload["conversation_summary"]["voice_principal_label"] == "Sweta"
+    assert payload["conversation_summary"]["reply_target_label"] == "Ken"
+    assert payload["context_preview"][1]["speaker"] == "Sweta"
+    assert fake_client.calls == [("sweta-approved-chat-guid", 5)]
+
+    assert len(calls) == 1
+    system_prompt = str(calls[0]["system_prompt"])
+    assert "You draft iMessage replies for Sweta." in system_prompt
+    assert "Sound like Sweta's best edited self." in system_prompt
+    assert "Sweta text-message calibration:" in system_prompt
+    assert "Ken is Sweta's partner." in system_prompt
+    assert "Sweta's principal voice file, Sweta's voice file wins." in system_prompt
+    assert "You draft iMessage replies for Ken." not in system_prompt
+    assert "Sound like Ken's best edited self." not in system_prompt
+    assert "Ken text-message calibration:" not in system_prompt
+    assert "Ken is Ken's partner." not in system_prompt
+
+    user_message = str(calls[0]["user_message"])
+    assert "Style adjustments Sweta selected:" in user_message
+    assert "2. Sweta: Sweta sent body for runtime preview" in user_message
+    assert "Write one draft reply Sweta can review." in user_message
+
+
+@pytest.mark.asyncio
+async def test_imessage_draft_flags_invented_logistics_and_context_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault_root = _write_vault(tmp_path)
+    fake_client = FakeBodyClient(
+        inbound_body="Can you send the waiver when you can?",
+        outbound_body="I can review it this afternoon.",
+    )
+
+    async def fake_llm_call(**_kwargs):
+        return "Love you. I can drive over tonight and handle it."
+
+    proposal = await drafts.create_imessage_draft_proposal(
+        vault_root=vault_root,
+        principal_id="ken",
+        reply_goal="Reply to her.",
+        max_context_messages=8,
+        bluebubbles_client=fake_client,
+        approved_chat_guid="approved-chat-guid",
+        llm_call=fake_llm_call,
+    )
+
+    payload = proposal.to_payload()
+    quality_checks = {item["key"]: item for item in payload["draft_quality"]["checks"]}
+
+    assert quality_checks["latest_inbound_anchor"]["passed"] is False
+    assert quality_checks["no_invented_logistics"]["passed"] is False
+    assert "review_latest_inbound_anchor" in payload["warnings"]
+    assert "review_invented_logistics" in payload["warnings"]
     assert "surface the next real blocker" not in json.dumps(payload).lower()
     assert "sweta: partner" not in json.dumps(payload).lower()
 
@@ -299,7 +454,10 @@ async def test_imessage_draft_uses_llm_context_without_exposing_thread_text(
 async def test_imessage_draft_blocks_detected_sensitive_topics_before_llm(
     tmp_path: Path,
 ) -> None:
-    vault_root = _write_vault(tmp_path)
+    vault_root = _write_vault(
+        tmp_path,
+        parent_minor_context_approval_granted="yes",
+    )
     fake_client = FakeBodyClient(sensitive=True)
     called = False
 
@@ -320,6 +478,57 @@ async def test_imessage_draft_blocks_detected_sensitive_topics_before_llm(
 
     assert fake_client.calls == [("approved-chat-guid", 10)]
     assert called is False
+
+
+@pytest.mark.asyncio
+async def test_imessage_target_preview_blocks_minor_context_without_parent_approval(
+    tmp_path: Path,
+) -> None:
+    vault_root = _write_vault(
+        tmp_path,
+        parent_minor_context_approval_granted="no",
+    )
+    fake_client = FakeBodyClient(
+        inbound_body="Can you handle school pickup for the kids?"
+    )
+
+    with pytest.raises(drafts.SparkDraftPolicyError, match="minor"):
+        await drafts.load_imessage_target_preview(
+            vault_root=vault_root,
+            principal_id="ken",
+            approval_id="ken-imessage-approved-20260605-001",
+            max_context_messages=8,
+            bluebubbles_client=fake_client,
+            approved_chat_guid="approved-chat-guid",
+        )
+
+    assert fake_client.calls == [("approved-chat-guid", 8)]
+
+
+@pytest.mark.asyncio
+async def test_imessage_target_preview_allows_parent_approved_minor_context(
+    tmp_path: Path,
+) -> None:
+    vault_root = _write_vault(
+        tmp_path,
+        parent_minor_context_approval_granted="yes",
+    )
+    fake_client = FakeBodyClient(
+        inbound_body="Can you handle school pickup for the kids?"
+    )
+
+    preview = await drafts.load_imessage_target_preview(
+        vault_root=vault_root,
+        principal_id="ken",
+        approval_id="ken-imessage-approved-20260605-001",
+        max_context_messages=8,
+        bluebubbles_client=fake_client,
+        approved_chat_guid="approved-chat-guid",
+    )
+
+    assert preview.context.runtime_context_messages == 1
+    assert preview.context.durable_storage_allowed is False
+    assert fake_client.calls == [("approved-chat-guid", 8)]
 
 
 @pytest.mark.asyncio
@@ -414,6 +623,7 @@ def _write_vault(
     tmp_path: Path,
     *,
     relationship_specific_approval_granted: str = "yes",
+    parent_minor_context_approval_granted: str = "no",
     include_auto: bool = True,
 ) -> Path:
     principal_root = tmp_path / "spark" / "principals" / "ken"
@@ -498,7 +708,96 @@ Prefer:
 |---|---|
 | Relationship-marked | yes |
 | Relationship-specific approval granted | {relationship_specific_approval_granted} |
+| Parent minor context approval granted | {parent_minor_context_approval_granted} |
 | Legal or custody content | block if detected |
+
+- [x] Approved
+""",
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+def _write_sweta_vault(tmp_path: Path) -> Path:
+    principal_root = tmp_path / "spark" / "principals" / "sweta"
+    approvals = principal_root / "corpus_approvals"
+    approvals.mkdir(parents=True)
+    (principal_root / "sources.yml").write_text(
+        """
+version: 0.1.0
+principal: sweta
+approved_source_records:
+  - id: sweta-imessage-ken-20260618-001
+    source: imessage
+    record: spark/principals/sweta/corpus_approvals/imessage.md
+    status: approved
+durable_voice_sources:
+  - sent_messages_only
+""",
+        encoding="utf-8",
+    )
+    (principal_root / "voice.md").write_text(
+        """
+# Sweta Voice
+
+Approved voice markers:
+- Warm
+- Clear
+- Practical
+
+Approved recurring phrases:
+- sounds good
+- let me check
+
+Avoid sounding:
+- Robotic
+- Vague
+
+## Channel Style
+
+| Channel | Rule |
+|---|---|
+| Text | Warm, concise, direct |
+| Email | Clear and composed |
+
+## Text Message Calibration
+
+Prefer natural endings with a concrete next action Sweta would actually say:
+- Let me check and send you an update.
+
+## Accessibility Style
+
+Prefer:
+- Short lines
+
+## Judgment Style
+
+| Situation | Rule |
+|---|---|
+| Uncertainty | Say what needs to be checked |
+""",
+        encoding="utf-8",
+    )
+    _write_auto_context(tmp_path)
+    (approvals / "imessage.md").write_text(
+        """
+# Corpus Approval: Sweta iMessage One-To-One Thread
+
+| Field | Value |
+|---|---|
+| Approval ID | sweta-imessage-ken-20260618-001 |
+| Principal | sweta |
+| Source | imessage |
+| Source reference | relationship-thread-label: Ken |
+| Thread kind | one_to_one |
+| Requested max messages | 20 |
+
+| Flag | Value |
+|---|---|
+| Relationship-marked | yes |
+| Relationship-specific approval granted | yes |
+| Parent minor context approval granted | no |
+| Legal or custody content | no |
 
 - [x] Approved
 """,

@@ -137,10 +137,14 @@ def _fake_beacon_summary() -> helm.HelmBeaconSummary:
         status="ok",
         checked_at=datetime(2026, 6, 12, 19, 0, tzinfo=UTC).isoformat(),
         provider=helm.HelmBeaconProviderSummary(
-            status="ok",
+            status="degraded",
             provider_order=["brave", "perplexity"],
             configured_provider_count=2,
             usable_provider_count=1,
+            required_provider_count=2,
+            provider_redundancy_ok=False,
+            provider_redundancy_status="single_provider",
+            missing_provider_count=1,
         ),
         browser=helm.HelmBeaconBrowserSummary(
             status="ok",
@@ -264,10 +268,14 @@ async def test_helm_summary_returns_redacted_counts(monkeypatch) -> None:
         "by_status": {"active": 2, "planned": 1},
     }
     assert payload["beacon"]["provider"] == {
-        "status": "ok",
+        "status": "degraded",
         "provider_order": ["brave", "perplexity"],
         "configured_provider_count": 2,
         "usable_provider_count": 1,
+        "required_provider_count": 2,
+        "provider_redundancy_ok": False,
+        "provider_redundancy_status": "single_provider",
+        "missing_provider_count": 1,
     }
     assert payload["beacon"]["evidence"]["source_quality"] == {
         "supported": 3,
@@ -319,13 +327,20 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
             checked_at=checked_at,
             checks={
                 "gateway": InternetScoutHealthCheck(
-                    ok=True,
-                    status="ok",
-                    detail="Gateway has a usable search provider.",
+                    ok=False,
+                    status="degraded",
+                    detail=(
+                        "Gateway has 1 usable search provider(s); production "
+                        "redundancy requires 2."
+                    ),
                     metadata={
                         "provider_order": ["brave", "perplexity"],
                         "configured_provider_count": 2,
                         "usable_provider_count": 1,
+                        "required_provider_count": 2,
+                        "provider_redundancy_ok": False,
+                        "provider_redundancy_status": "single_provider",
+                        "missing_provider_count": 1,
                         "providers": [{"provider": "brave", "api_key": "secret"}],
                     },
                 ),
@@ -434,10 +449,14 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
     payload = summary.model_dump()
 
     assert payload["provider"] == {
-        "status": "ok",
+        "status": "degraded",
         "provider_order": ["brave", "perplexity"],
         "configured_provider_count": 2,
         "usable_provider_count": 1,
+        "required_provider_count": 2,
+        "provider_redundancy_ok": False,
+        "provider_redundancy_status": "single_provider",
+        "missing_provider_count": 1,
     }
     assert payload["browser"]["screenshot_store_ready"] is True
     assert payload["evidence"]["last_request"]["id"] == "request-1"
@@ -520,6 +539,30 @@ async def test_beacon_summary_degrades_when_health_unavailable(monkeypatch) -> N
 
 def test_helm_summary_route_is_read_classified() -> None:
     assert classify_route("GET", "/v1/helm/summary") == ["read", "security_read"]
+    assert classify_route("GET", "/v1/helm/self") == ["read", "security_read"]
+
+
+@pytest.mark.asyncio
+async def test_helm_self_requires_helm_read_scope() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await helm.helm_self(_request(), _user_id="ken")
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_helm_self_returns_runtime_model(monkeypatch) -> None:
+    @asynccontextmanager
+    async def fake_rls_connection(_request: object):
+        yield object()
+
+    monkeypatch.setattr(helm, "rls_connection", fake_rls_connection)
+
+    response = await helm.helm_self(_request(scopes=["helm.read"]), _user_id="ken")
+
+    assert response.identity.user_facing_name == "AT-0"
+    assert "AT-0 self model" in response.prompt_context
+    assert any(capability.id == "verified_web" for capability in response.capabilities)
 
 
 @pytest.mark.asyncio

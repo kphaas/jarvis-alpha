@@ -21,6 +21,15 @@ from brain.agents.privacy_scrub.drafts import (
     TargetReviewPacket,
 )
 from brain.agents.privacy_scrub.identity import IdentityTuple, TupleType
+from brain.agents.privacy_scrub.lifecycle import (
+    PrivacyGatewayDryRunResult,
+    PrivacyGatewayLivePreflightResult,
+    PrivacyLifecycleAuthorizationRequired,
+    RemovalRequestTransitionResult,
+    StoredPrivacyAuthorization,
+    StoredRemovalRequest,
+    StoredRemovalRequestEvent,
+)
 from brain.agents.privacy_scrub.removal_control import (
     RemovalBenchmark,
     RemovalControlCounts,
@@ -158,6 +167,79 @@ def _stored_privacy_event(
     )
 
 
+def _stored_authorization(subject_id: UUID) -> StoredPrivacyAuthorization:
+    return StoredPrivacyAuthorization(
+        id=uuid4(),
+        subject_id=subject_id,
+        authorization_type="agent_authorization",
+        status="active",
+        authorization_payload_hash="sha256:" + "7" * 64,
+        payload_key_version="payload-v1",
+        expires_at=None,
+        revoked_at=None,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+
+def _stored_removal_request(
+    *,
+    request_id: UUID,
+    subject_id: UUID,
+    action_id: UUID | None,
+    status: str = "queued",
+    evidence_count: int = 0,
+    dry_run: bool = False,
+    live_preflight: bool = False,
+) -> StoredRemovalRequest:
+    dry_run_hash = "sha256:" + "a" * 64 if dry_run else None
+    idempotency_digest = "hmac-sha256:" + "b" * 64 if dry_run else None
+    live_hash = "sha256:" + "c" * 64 if live_preflight else None
+    return StoredRemovalRequest(
+        id=request_id,
+        subject_id=subject_id,
+        target_id="beenverified",
+        target_name="BeenVerified",
+        target_category="data_broker",
+        authorization_id=uuid4(),
+        action_id=action_id,
+        lifecycle_status=status,
+        request_payload_hash="sha256:" + "8" * 64,
+        payload_key_version="payload-v1",
+        target_opt_out_method="web_form",
+        current_evidence_count=evidence_count,
+        next_check_at=None,
+        last_event_at=datetime.now(UTC),
+        dry_run_payload_hash=dry_run_hash,
+        dry_run_payload_key_version="payload-v1" if dry_run else None,
+        dry_run_prepared_at=datetime.now(UTC) if dry_run else None,
+        live_preflight_payload_hash=live_hash,
+        live_preflight_payload_key_version=("payload-v1" if live_preflight else None),
+        live_preflight_at=datetime.now(UTC) if live_preflight else None,
+        live_preflight_status="live_disabled" if live_preflight else None,
+        live_preflight_approval_queue_id=uuid4() if live_preflight else None,
+        gateway_idempotency_key_digest=idempotency_digest,
+        created_by_user_id="ken",
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+
+def _stored_removal_event(
+    *,
+    request_id: UUID,
+    event_type: str,
+) -> StoredRemovalRequestEvent:
+    return StoredRemovalRequestEvent(
+        id=uuid4(),
+        request_id=request_id,
+        event_type=event_type,
+        actor="ken",
+        event_payload_hash="sha256:" + "9" * 64,
+        created_at=datetime.now(UTC),
+    )
+
+
 def test_privacy_intake_routes_are_classified_t2_security_writes() -> None:
     for path in (
         "/v1/privacy/subjects",
@@ -168,10 +250,21 @@ def test_privacy_intake_routes_are_classified_t2_security_writes() -> None:
         f"/v1/privacy/case-drafts/{uuid4()}/submit-approval",
         f"/v1/privacy/case-drafts/{uuid4()}/archive",
         f"/v1/privacy/subjects/{uuid4()}/removal-control/seed",
+        f"/v1/privacy/subjects/{uuid4()}/authorizations",
+        f"/v1/privacy/actions/{uuid4()}/removal-request",
+        f"/v1/privacy/removal-requests/{uuid4()}/transition",
+        f"/v1/privacy/removal-requests/{uuid4()}/dry-run",
     ):
         classes = classify_route("POST", path)
         assert classes == ["write", "security_write"]
         assert determine_risk_tier(classes) == "T2"
+
+    live_classes = classify_route(
+        "POST",
+        f"/v1/privacy/removal-requests/{uuid4()}/live-preflight",
+    )
+    assert live_classes == ["write", "security_write", "external_call"]
+    assert determine_risk_tier(live_classes) == "T2"
 
 
 def test_privacy_target_routes_are_classified() -> None:
@@ -179,6 +272,8 @@ def test_privacy_target_routes_are_classified() -> None:
         "/v1/privacy/case-drafts",
         "/v1/privacy/actions/approved",
         "/v1/privacy/removal-control/summary",
+        "/v1/privacy/removal-requests",
+        f"/v1/privacy/subjects/{uuid4()}/authorizations",
         f"/v1/privacy/case-drafts/{uuid4()}",
         f"/v1/privacy/case-drafts/{uuid4()}/timeline",
         f"/v1/privacy/case-drafts/{uuid4()}/report",
@@ -338,8 +433,284 @@ async def test_seed_privacy_removal_control_returns_created_counts(
     assert response.counts.total_created == 5
     assert response.counts.total_skipped == 0
     assert calls.conn is not None
+
+
+@pytest.mark.asyncio
+async def test_create_privacy_authorization_returns_hash_only_metadata(
+    monkeypatch,
+) -> None:
+    subject_id = uuid4()
+    calls = SimpleNamespace(subject_id=None, actor=None, signed_payload=None)
+
+    class FakeLifecycleRepo:
+        def __init__(self, conn, crypto) -> None:
+            assert conn is not None
+            assert crypto is not None
+
+        async def create_authorization(
+            self,
+            *,
+            subject_id: UUID,
+            actor: str,
+            authorization_type: str,
+            signed_payload: dict[str, object],
+            expires_at,
+        ):
+            calls.subject_id = subject_id
+            calls.actor = actor
+            calls.signed_payload = signed_payload
+            assert authorization_type == "agent_authorization"
+            assert expires_at is None
+            return _stored_authorization(subject_id)
+
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "_load_crypto_or_503", lambda: object())
+    monkeypatch.setattr(
+        privacy,
+        "PrivacyAuthorizationLifecycleRepository",
+        FakeLifecycleRepo,
+    )
+
+    response = await privacy.create_privacy_authorization(
+        _request(),
+        subject_id,
+        privacy.PrivacyAuthorizationCreateIn(
+            signed_payload={
+                "authorization_scope": "broker_removal",
+                "plaintext": "not returned",
+            },
+        ),
+        "ken",
+    )
+
+    assert response.subject_id == subject_id
+    assert response.status == "active"
+    assert response.authorization_payload_hash.startswith("sha256:")
+    assert not hasattr(response, "signed_payload")
     assert calls.actor == "ken"
-    assert calls.subject_id == subject_id
+    assert calls.signed_payload == {
+        "authorization_scope": "broker_removal",
+        "plaintext": "not returned",
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_privacy_removal_request_maps_missing_authorization(
+    monkeypatch,
+) -> None:
+    action_id = uuid4()
+
+    class FakeLifecycleRepo:
+        def __init__(self, conn, crypto) -> None:
+            assert conn is not None
+            assert crypto is not None
+
+        async def create_request_for_action(self, **kwargs):
+            raise PrivacyLifecycleAuthorizationRequired("authorization required")
+
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "_load_crypto_or_503", lambda: object())
+    monkeypatch.setattr(
+        privacy,
+        "PrivacyAuthorizationLifecycleRepository",
+        FakeLifecycleRepo,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await privacy.create_privacy_removal_request(
+            _request(),
+            action_id,
+            privacy.PrivacyRemovalRequestCreateIn(operator_note="queue it"),
+            "ken",
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "privacy_authorization_required"
+
+
+@pytest.mark.asyncio
+async def test_transition_privacy_removal_request_returns_proof_metadata(
+    monkeypatch,
+) -> None:
+    request_id = uuid4()
+    subject_id = uuid4()
+    action_id = uuid4()
+
+    class FakeLifecycleRepo:
+        def __init__(self, conn, crypto) -> None:
+            assert conn is not None
+            assert crypto is not None
+
+        async def transition_request(self, **kwargs):
+            assert kwargs["request_id"] == request_id
+            assert kwargs["actor"] == "ken"
+            assert kwargs["lifecycle_status"] == "completed"
+            return RemovalRequestTransitionResult(
+                request=_stored_removal_request(
+                    request_id=request_id,
+                    subject_id=subject_id,
+                    action_id=action_id,
+                    status="completed",
+                    evidence_count=1,
+                ),
+                event=_stored_removal_event(
+                    request_id=request_id,
+                    event_type="completed",
+                ),
+                evidence_created=True,
+            )
+
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "_load_crypto_or_503", lambda: object())
+    monkeypatch.setattr(
+        privacy,
+        "PrivacyAuthorizationLifecycleRepository",
+        FakeLifecycleRepo,
+    )
+
+    response = await privacy.transition_privacy_removal_request(
+        _request(),
+        request_id,
+        privacy.PrivacyRemovalRequestTransitionIn(
+            lifecycle_status="completed",
+            evidence_reference="proof://removed",
+        ),
+        "ken",
+    )
+
+    assert response.event_type == "completed"
+    assert response.event_payload_hash.startswith("sha256:")
+    assert response.evidence_created is True
+    assert response.request.lifecycle_status == "completed"
+    assert response.request.current_evidence_count == 1
+
+
+@pytest.mark.asyncio
+async def test_prepare_privacy_gateway_dry_run_returns_gateway_hash_metadata(
+    monkeypatch,
+) -> None:
+    request_id = uuid4()
+    subject_id = uuid4()
+    action_id = uuid4()
+
+    class FakeLifecycleRepo:
+        def __init__(self, conn, crypto) -> None:
+            assert conn is not None
+            assert crypto is not None
+
+        async def prepare_gateway_dry_run(self, **kwargs):
+            assert kwargs["request_id"] == request_id
+            assert kwargs["actor"] == "ken"
+            return PrivacyGatewayDryRunResult(
+                request=_stored_removal_request(
+                    request_id=request_id,
+                    subject_id=subject_id,
+                    action_id=action_id,
+                    dry_run=True,
+                ),
+                event=_stored_removal_event(
+                    request_id=request_id,
+                    event_type="dry_run_prepared",
+                ),
+                gateway_path="/v1/cloud/privacy/removal/dry-run",
+                gateway_status="dry_run_ready",
+                egress_mode="gateway_dry_run",
+                outbound_enabled=False,
+                would_send=False,
+                adapter_kind="gateway_web_form_dry_run",
+                idempotency_key_digest="hmac-sha256:" + "b" * 64,
+                dry_run_payload_hash="sha256:" + "a" * 64,
+                prepared_at=datetime.now(UTC),
+            )
+
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "_load_crypto_or_503", lambda: object())
+    monkeypatch.setattr(
+        privacy,
+        "PrivacyAuthorizationLifecycleRepository",
+        FakeLifecycleRepo,
+    )
+
+    response = await privacy.prepare_privacy_gateway_dry_run(
+        _request(),
+        request_id,
+        "ken",
+    )
+
+    assert response.event_type == "dry_run_prepared"
+    assert response.gateway_status == "dry_run_ready"
+    assert response.gateway_path == "/v1/cloud/privacy/removal/dry-run"
+    assert response.outbound_enabled is False
+    assert response.would_send is False
+    assert response.request.dry_run_payload_hash == "sha256:" + "a" * 64
+    assert not hasattr(response, "gateway_payload")
+
+
+@pytest.mark.asyncio
+async def test_prepare_privacy_gateway_live_preflight_returns_proof_metadata(
+    monkeypatch,
+) -> None:
+    request_id = uuid4()
+    subject_id = uuid4()
+    action_id = uuid4()
+    approval_queue_id = uuid4()
+
+    class FakeLifecycleRepo:
+        def __init__(self, conn, crypto) -> None:
+            assert conn is not None
+            assert crypto is not None
+
+        async def prepare_gateway_live_preflight(self, **kwargs):
+            assert kwargs["request_id"] == request_id
+            assert kwargs["actor"] == "ken"
+            return PrivacyGatewayLivePreflightResult(
+                request=_stored_removal_request(
+                    request_id=request_id,
+                    subject_id=subject_id,
+                    action_id=action_id,
+                    dry_run=True,
+                    live_preflight=True,
+                ),
+                event=_stored_removal_event(
+                    request_id=request_id,
+                    event_type="live_preflight_blocked",
+                ),
+                gateway_path="/v1/cloud/privacy/removal/live-preflight",
+                gateway_status="live_disabled",
+                egress_mode="gateway_live_preflight",
+                outbound_enabled=False,
+                would_send=False,
+                target_http_attempted=False,
+                adapter_kind="beenverified_web_form_live_preflight",
+                idempotency_key_digest="hmac-sha256:" + "b" * 64,
+                live_preflight_payload_hash="sha256:" + "c" * 64,
+                approval_queue_id=approval_queue_id,
+                prepared_at=datetime.now(UTC),
+            )
+
+    monkeypatch.setattr(privacy, "rls_connection", _fake_rls_connection)
+    monkeypatch.setattr(privacy, "_load_crypto_or_503", lambda: object())
+    monkeypatch.setattr(
+        privacy,
+        "PrivacyAuthorizationLifecycleRepository",
+        FakeLifecycleRepo,
+    )
+
+    response = await privacy.prepare_privacy_gateway_live_preflight(
+        _request(),
+        request_id,
+        "ken",
+    )
+
+    assert response.event_type == "live_preflight_blocked"
+    assert response.gateway_status == "live_disabled"
+    assert response.gateway_path == "/v1/cloud/privacy/removal/live-preflight"
+    assert response.outbound_enabled is False
+    assert response.would_send is False
+    assert response.target_http_attempted is False
+    assert response.approval_queue_id == approval_queue_id
+    assert response.request.live_preflight_payload_hash == "sha256:" + "c" * 64
+    assert not hasattr(response, "gateway_payload")
 
 
 @pytest.mark.asyncio
@@ -1429,11 +1800,16 @@ def test_privacy_route_has_no_outbound_imports_or_plaintext_logging() -> None:
         Path(__file__).resolve().parents[1] / "brain" / "routes" / "privacy.py"
     ).read_text(encoding="utf-8")
     forbidden = (
-        "requests",
-        "httpx",
-        "smtplib",
-        "selenium",
-        "playwright",
+        "import requests",
+        "from requests",
+        "import httpx",
+        "from httpx",
+        "import smtplib",
+        "from smtplib",
+        "import selenium",
+        "from selenium",
+        "import playwright",
+        "from playwright",
         "logger",
         "print(",
     )

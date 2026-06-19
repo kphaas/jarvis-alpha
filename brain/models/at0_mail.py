@@ -15,6 +15,21 @@ class At0MailScanResponse(BaseModel):
     draft_proposals_created: int
 
 
+class At0MailMailboxList(BaseModel):
+    mailboxes: list[str]
+
+
+class At0SparkProfileOut(BaseModel):
+    spark_id: str
+    display_name: str
+    channel: str
+    voice: list[str]
+    reply_boundaries: list[str]
+    can_send: bool
+    requires_human_approval: bool
+    draft_engine: str
+
+
 class At0MailScanRunOut(BaseModel):
     id: UUID
     trigger: str
@@ -39,6 +54,7 @@ class At0MailCountRow(BaseModel):
 
 
 class At0MailDraftCountRow(BaseModel):
+    mailbox: str | None = None
     status: str
     count: int
 
@@ -47,6 +63,35 @@ class At0MailDashboardOut(BaseModel):
     message_counts: list[At0MailCountRow]
     draft_counts: list[At0MailDraftCountRow]
     latest_scan: At0MailScanRunOut | None = None
+
+
+class At0MailGraphHealthOut(BaseModel):
+    id: UUID
+    status: Literal["ok", "failed"]
+    trigger: str
+    checked_at: datetime
+    mailboxes_checked: int
+    messages_seen: int
+    graph_roles: list[str]
+    missing_graph_roles: list[str]
+    current_send_failures: int
+    stuck_sending_count: int
+    last_sent_at: datetime | None = None
+    error_type: str | None = None
+    error_message: str | None = None
+    requires_attention: bool
+
+
+class At0MailHealthOut(BaseModel):
+    status: Literal["ok", "running", "stale", "failed", "missing"]
+    checked_at: datetime
+    stale_after_minutes: int
+    age_minutes: int | None = None
+    requires_attention: bool
+    latest_scan: At0MailScanRunOut | None = None
+    latest_graph_health: At0MailGraphHealthOut | None = None
+    message_count: int
+    draft_count: int
 
 
 class At0MailMessageOut(BaseModel):
@@ -87,6 +132,11 @@ class At0MailDraftProposalOut(BaseModel):
     reviewer_notes: str | None
     reviewed_by: str | None
     reviewed_at: datetime | None
+    sent_at: datetime | None = None
+    send_failed_at: datetime | None = None
+    send_error_type: str | None = None
+    send_error_message: str | None = None
+    send_attempt_count: int = 0
     created_at: datetime
     sender_name: str | None
     sender_email: str | None
@@ -103,3 +153,13 @@ class At0MailDraftProposalList(BaseModel):
 class At0MailDraftStatusUpdate(BaseModel):
     status: Literal["needs_review", "approved", "rejected"]
     reviewer_notes: str | None = None
+
+
+class At0MailDraftSendOut(BaseModel):
+    draft_id: UUID
+    mail_message_id: UUID
+    mailbox: str
+    status: Literal["sent"]
+    graph_status_code: int
+    send_attempt_count: int
+    sent_at: datetime

@@ -17,6 +17,7 @@ class AskCanaryCase:
     request_mode: str = "deep_research"
     expected_host: str = DEFAULT_EXPECTED_HOST
     expected_any_hosts: tuple[str, ...] = ()
+    required_host_groups: tuple[tuple[str, ...], ...] = ()
     forbidden_hosts: tuple[str, ...] = DEFAULT_FORBIDDEN_HOSTS
     expected_mode: str = "deep_research"
     expected_web_suggestion_mode: str | None = None
@@ -89,6 +90,23 @@ EXTENDED_CANARY_CASES: tuple[AskCanaryCase, ...] = (
         min_independent_source_count=2,
     ),
     AskCanaryCase(
+        name="official_openai_anthropic_api_comparison",
+        prompt=(
+            "Compare the OpenAI Responses API and Anthropic Messages API for "
+            "building a chat gateway. Use official vendor docs only and cite them."
+        ),
+        expected_host="platform.openai.com",
+        expected_any_hosts=("platform.openai.com", "docs.anthropic.com"),
+        required_host_groups=(
+            ("openai.com", "platform.openai.com", "docs.openai.com"),
+            ("anthropic.com", "docs.anthropic.com"),
+        ),
+        forbidden_hosts=("wikipedia.org", "reddit.com"),
+        min_accepted_citations=2,
+        min_planned_query_count=2,
+        min_independent_source_count=2,
+    ),
+    AskCanaryCase(
         name="multi_source_non_ai_serverless_comparison",
         prompt=(
             "Compare Cloudflare Workers and AWS Lambda for serverless functions. "
@@ -100,6 +118,28 @@ EXTENDED_CANARY_CASES: tuple[AskCanaryCase, ...] = (
             "cloudflare.com",
             "docs.aws.amazon.com",
             "aws.amazon.com",
+        ),
+        forbidden_hosts=("wikipedia.org", "reddit.com"),
+        min_accepted_citations=2,
+        min_planned_query_count=2,
+        min_independent_source_count=2,
+    ),
+    AskCanaryCase(
+        name="official_cloudflare_aws_serverless_comparison",
+        prompt=(
+            "Compare Cloudflare Workers and AWS Lambda for serverless functions. "
+            "Prefer official vendor docs and cite them."
+        ),
+        expected_host="developers.cloudflare.com",
+        expected_any_hosts=(
+            "developers.cloudflare.com",
+            "cloudflare.com",
+            "docs.aws.amazon.com",
+            "aws.amazon.com",
+        ),
+        required_host_groups=(
+            ("cloudflare.com", "developers.cloudflare.com"),
+            ("aws.amazon.com", "docs.aws.amazon.com"),
         ),
         forbidden_hosts=("wikipedia.org", "reddit.com"),
         min_accepted_citations=2,
@@ -231,6 +271,10 @@ def evaluate_ask_canary(
             "expected_host_present": any(
                 host.lower() in haystack for host in canary_case.expected_hosts
             ),
+            "required_host_groups_present": _required_host_groups_present(
+                haystack=haystack,
+                required_host_groups=canary_case.required_host_groups,
+            ),
             "forbidden_host_absent": all(
                 host.lower() not in haystack for host in canary_case.forbidden_hosts
             ),
@@ -344,3 +388,16 @@ def _int_value(value: object) -> int:
     if isinstance(value, int):
         return value
     return 0
+
+
+def _required_host_groups_present(
+    *,
+    haystack: str,
+    required_host_groups: tuple[tuple[str, ...], ...],
+) -> bool:
+    if not required_host_groups:
+        return True
+    return all(
+        any(host.lower() in haystack for host in group)
+        for group in required_host_groups
+    )

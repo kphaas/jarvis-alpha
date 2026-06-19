@@ -1,0 +1,106 @@
+# News and media feed APIs.
+#
+# Quality vs cost tradeoff is severe in this category. Free tiers are
+# heavily limited; paid tiers are expensive but provide licensed content.
+
+- id: newsapi-org
+  name: NewsAPI.org
+  domain: news
+  url: https://newsapi.org/
+  api_base_url: https://newsapi.org/v2/
+  auth:
+    type: api-key
+    notes: |
+      Developer (free): 100 req/day, articles up to 24h old, dev/non-commercial only.
+      Business ($449/mo): 250k req/month, real-time, commercial use.
+  pricing: freemium
+  free_tier: 100 req/day, dev only, 24h delay
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - headline-aggregation
+    - keyword-search-across-sources
+    - source-filtering
+  notes: |
+    Free tier is for prototyping only. Production use requires paid tier.
+    Source coverage is wide but quality varies — no editorial curation.
+    Useful for jarvis-capture / news triage. NOT a primary financial news source.
+  last_verified: 2026-05-01
+  review_cadence_days: 90
+
+- id: gdelt
+  name: GDELT Project
+  domain: news
+  url: https://www.gdeltproject.org/
+  api_base_url: https://api.gdeltproject.org/api/v2/
+  auth:
+    type: none
+    notes: No auth. Fair-use, undocumented hard limits — be reasonable.
+  pricing: free
+  free_tier: unlimited (fair use)
+  license: cc-by                    # Creative Commons Attribution
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - global-event-monitoring
+    - news-tone-analysis
+    - geopolitical-tracking
+    - bulk-news-analytics
+  notes: |
+    Open dataset of global news + events, updated every 15 minutes.
+    Quirky API, scaled for analytics not real-time consumer news.
+    Excellent for geopolitical / macro context; not for tactical headlines.
+    Tone and theme dimensions are interesting alt-data inputs.
+  last_verified: 2026-05-01
+  review_cadence_days: 180
+
+- id: mediastack
+  name: Mediastack
+  domain: news
+  url: https://mediastack.com/
+  api_base_url: http://api.mediastack.com/v1/
+  auth:
+    type: api-key
+    notes: |
+      Free: 100 req/month, HTTPS not available.
+      Paid tiers from $25/mo for HTTPS + higher limits.
+  pricing: freemium
+  free_tier: 100 req/month, HTTP only
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - headline-aggregation
+    - source-and-language-filtering
+  notes: |
+    Free tier with HTTP-only is operationally a non-starter — minimum is paid HTTPS tier.
+    Backup vendor to NewsAPI.org. Coverage similar.
+  last_verified: 2026-05-01
+  review_cadence_days: 90
+
+- id: ap-news-api
+  name: Associated Press Content API
+  domain: news
+  url: https://developer.ap.org/
+  api_base_url: https://api.ap.org/
+  auth:
+    type: api-key
+    notes: |
+      License negotiation required. No self-serve signup.
+      Pricing is enterprise — typically $5k+/year.
+  pricing: paid
+  free_tier: null
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - licensed-wire-content
+    - breaking-news
+    - photo-and-video-licensing
+  notes: |
+    Genuine wire-service content with editorial standards. Worth it ONLY if
+    Jarvis is producing user-facing content that needs licensed sources.
+    Not justified for personal-use Jarvis.
+  last_verified: 2026-05-01
+  review_cadence_days: 365

@@ -3,10 +3,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   LoaderCircle,
-  Plus,
   Save,
   ShieldCheck,
-  Trash2,
 } from 'lucide-react'
 import { useSparkGuardrails } from '../../hooks/useSparkGuardrails'
 import type {
@@ -157,32 +155,6 @@ function SparkGuardrailsEditor({
     }))
   }
 
-  function addRelationship() {
-    const relationship: SparkProtectedRelationship = {
-      id: `relationship-${Date.now()}`,
-      label: 'New relationship',
-      relationship: 'relationship',
-      sensitivity: 'relationship',
-      default_mode: 'draft_only',
-      approval_required: true,
-      notes: null,
-    }
-    setDraft((current) => ({
-      ...current,
-      protected_relationships: [...current.protected_relationships, relationship],
-    }))
-  }
-
-  function removeRelationship(id: string) {
-    setDraft((current) => {
-      if (current.protected_relationships.length === 1) return current
-      return {
-        ...current,
-        protected_relationships: current.protected_relationships.filter((item) => item.id !== id),
-      }
-    })
-  }
-
   function save() {
     if (!dirty || state.saveGuardrailsLoading) return
     state.saveGuardrails(draft)
@@ -193,9 +165,14 @@ function SparkGuardrailsEditor({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <ShieldCheck className="h-4 w-4 text-emerald-400" />
-          <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>Guardrails</h2>
+          <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>
+            Relationships and guardrails
+          </h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <span className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${okClass}`}>
+            core family only
+          </span>
           <span className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${warnClass}`}>
             no auto send
           </span>
@@ -266,18 +243,16 @@ function SparkGuardrailsEditor({
         </div>
 
         <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <span className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
-              Relationships
-            </span>
-            <button
-              type="button"
-              onClick={addRelationship}
-              className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-xs font-bold ${border}`}
-            >
-              <Plus className="h-4 w-4" />
-              Add
-            </button>
+          <div>
+            <div className="flex items-center justify-between gap-3">
+              <span className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+                Core family targets
+              </span>
+            </div>
+            <p className={`mt-2 text-xs ${muted}`}>
+              Spark favorite targets come from this fixed core-family roster. Switching the voice
+              profile hides the active person automatically.
+            </p>
           </div>
 
           <div className="space-y-3">
@@ -377,14 +352,6 @@ function SparkGuardrailsEditor({
                       />
                       Approval
                     </label>
-                    <button
-                      type="button"
-                      onClick={() => removeRelationship(relationship.id)}
-                      disabled={draft.protected_relationships.length === 1}
-                      className={`inline-flex min-h-11 items-center rounded-lg border px-3 transition ${border} disabled:opacity-40`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
                   </div>
                 </div>
               </div>

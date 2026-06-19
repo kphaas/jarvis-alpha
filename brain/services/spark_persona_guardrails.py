@@ -40,6 +40,40 @@ class SparkProtectedRelationship(BaseModel):
     notes: str | None = Field(default=None, max_length=240)
 
 
+CORE_FAMILY_TARGET_ORDER = ("ken", "sweta", "ryleigh", "sloane")
+CORE_FAMILY_TARGET_DEFAULTS = {
+    "ken": SparkProtectedRelationship(
+        id="ken",
+        label="Ken",
+        relationship="family",
+        sensitivity="family",
+        default_mode="draft_only",
+        notes="Core family target for partner and child voice profiles.",
+    ),
+    "sweta": SparkProtectedRelationship(
+        id="sweta",
+        label="Sweta",
+        relationship="partner",
+        sensitivity="relationship",
+        default_mode="hybrid_review",
+    ),
+    "ryleigh": SparkProtectedRelationship(
+        id="ryleigh",
+        label="Ryleigh",
+        relationship="child",
+        sensitivity="minor",
+        notes="Draft-only until Ken explicitly approves a relationship policy.",
+    ),
+    "sloane": SparkProtectedRelationship(
+        id="sloane",
+        label="Sloane",
+        relationship="child",
+        sensitivity="minor",
+        notes="Draft-only until Ken explicitly approves a relationship policy.",
+    ),
+}
+
+
 class SparkPersonaCalibration(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -98,7 +132,8 @@ def load_spark_guardrails(path: Path | None = None) -> SparkGuardrailState:
     if not state_path.exists():
         return default_spark_guardrails()
     payload = json.loads(state_path.read_text(encoding="utf-8"))
-    return SparkGuardrailState.model_validate(payload)
+    state = SparkGuardrailState.model_validate(payload)
+    return _normalize_guardrail_state(state)
 
 
 def save_spark_guardrails(
@@ -106,7 +141,9 @@ def save_spark_guardrails(
     path: Path | None = None,
 ) -> SparkGuardrailState:
     state_path = path or guardrail_state_path()
-    saved = state.model_copy(update={"updated_at": _utc_now_iso()})
+    saved = _normalize_guardrail_state(state).model_copy(
+        update={"updated_at": _utc_now_iso()}
+    )
     state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     tmp_path = state_path.with_name(f".{state_path.name}.{os.getpid()}.tmp")
     tmp_path.write_text(
@@ -131,39 +168,10 @@ def default_spark_guardrails() -> SparkGuardrailState:
             "security",
         ],
         protected_relationships=[
-            SparkProtectedRelationship(
-                id="ryleigh",
-                label="Ryleigh",
-                relationship="child",
-                sensitivity="minor",
-                notes="Draft-only until Ken explicitly approves a relationship policy.",
-            ),
-            SparkProtectedRelationship(
-                id="sloane",
-                label="Sloane",
-                relationship="child",
-                sensitivity="minor",
-                notes="Draft-only until Ken explicitly approves a relationship policy.",
-            ),
-            SparkProtectedRelationship(
-                id="sweta",
-                label="Sweta",
-                relationship="partner",
-                sensitivity="relationship",
-                default_mode="hybrid_review",
-            ),
-            SparkProtectedRelationship(
-                id="meagan",
-                label="Meagan",
-                relationship="co-parent",
-                sensitivity="custody",
-            ),
-            SparkProtectedRelationship(
-                id="mother",
-                label="Mother",
-                relationship="parent",
-                sensitivity="family",
-            ),
+            CORE_FAMILY_TARGET_DEFAULTS["ken"],
+            CORE_FAMILY_TARGET_DEFAULTS["sweta"],
+            CORE_FAMILY_TARGET_DEFAULTS["ryleigh"],
+            CORE_FAMILY_TARGET_DEFAULTS["sloane"],
         ],
         calibration=SparkPersonaCalibration(
             target_voice=[
@@ -205,3 +213,55 @@ def default_spark_guardrails() -> SparkGuardrailState:
 
 def _utc_now_iso() -> str:
     return datetime.now(tz=UTC).isoformat().replace("+00:00", "Z")
+
+
+def core_family_target_ids() -> tuple[str, ...]:
+    return CORE_FAMILY_TARGET_ORDER
+
+
+def core_family_target_labels() -> tuple[str, ...]:
+    return tuple(
+        CORE_FAMILY_TARGET_DEFAULTS[target_id].label
+        for target_id in CORE_FAMILY_TARGET_ORDER
+    )
+
+
+def is_core_family_target_label(value: str | None) -> bool:
+    if not value:
+        return False
+    normalized = _normalize_relationship_token(value)
+    return normalized in {
+        _normalize_relationship_token(label) for label in core_family_target_labels()
+    }
+
+
+def _normalize_guardrail_state(state: SparkGuardrailState) -> SparkGuardrailState:
+    return state.model_copy(
+        update={
+            "protected_relationships": _normalize_protected_relationships(
+                state.protected_relationships
+            )
+        }
+    )
+
+
+def _normalize_protected_relationships(
+    relationships: list[SparkProtectedRelationship],
+) -> list[SparkProtectedRelationship]:
+    relationship_by_id = {
+        _normalize_relationship_token(item.id): item
+        for item in relationships
+        if _normalize_relationship_token(item.id) in CORE_FAMILY_TARGET_DEFAULTS
+    }
+    normalized: list[SparkProtectedRelationship] = []
+    for target_id in CORE_FAMILY_TARGET_ORDER:
+        existing = relationship_by_id.get(target_id)
+        if existing is not None:
+            normalized.append(existing.model_copy(update={"id": target_id}))
+            continue
+        normalized.append(CORE_FAMILY_TARGET_DEFAULTS[target_id])
+    return normalized
+
+
+def _normalize_relationship_token(value: str) -> str:
+    return "".join(ch for ch in value.strip().lower() if ch.isalnum())

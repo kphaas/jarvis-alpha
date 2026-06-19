@@ -10,10 +10,12 @@ Routes:
 """
 
 import json
+import re
 import time
 import asyncio
 import httpx
 from collections.abc import Mapping
+from datetime import datetime
 from uuid import UUID, uuid4, uuid5, NAMESPACE_DNS
 from typing import AsyncGenerator, Literal
 from fastapi import APIRouter, Request, HTTPException
@@ -24,7 +26,14 @@ from brain.core.models import EMBED_MODEL, LOCAL_CHAT
 from brain.db.pool import get_pool
 from brain.db.rls import rls_connection
 from brain.memory.memory import MemoryService
+from brain.memory.semantic_commands import (
+    MemoryFactValidationError,
+    memory_save_response_text,
+    parse_memory_command,
+)
+from brain.middleware.scopes import check_scopes
 from brain.routing.router import route
+from brain.services.at0_self_model import build_at0_self_model, is_at0_self_query
 from brain.services.internet_scout.chat_adapter import (
     InternetChatContext,
     build_chat_internet_context,
@@ -50,11 +59,25 @@ THREAD_CAP_ACTIVE_FILTER = (
     f"AND (pinned = TRUE OR updated_at >= now() - INTERVAL '{THREAD_CAP_RETENTION_DAYS} days')"
 )
 InternetMode = Literal["none", "web_search", "deep_research"]
+AskResponseSurface = Literal["chat", "voice", "avatar"]
+AskPersonalityId = Literal[
+    "loyal_sidekick",
+    "playful_buddy",
+    "calm_operator",
+    "brave_droid",
+    "sleepy_soft",
+    "sarcastic_witty",
+]
 BEACON_INSUFFICIENT_MODEL = "beacon/insufficient-evidence"
+MEMORY_COMMAND_MODEL = "alpha/memory-command"
+AT0_SELF_MODEL_LABEL = "alpha/at0-self-model"
+CONVERSATION_QUALITY_MODEL_LABEL = "alpha/conversation-quality-contract"
+ROLLING_CONTEXT_MAX_MESSAGES = 8
+ROLLING_CONTEXT_MESSAGE_CHAR_LIMIT = 420
 BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
     [
-        "Authority rule for internet-enabled answers:",
-        "- Treat accepted Alpha Beacon evidence as the source of truth for "
+        "Beacon authority rule:",
+        "- Treat accepted Beacon evidence as the source of truth for "
         "current/public web claims.",
         "- This includes official-source, URL, citation, release, pricing, "
         "legal, medical, market, schedule, and other time-sensitive claims.",
@@ -67,13 +90,120 @@ BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
 WEB_SUGGESTION_BOUNDARY_RULE = "\n".join(
     [
         "Smart Web Suggestion boundary:",
-        "- Alpha suggested web research for this turn, but Beacon internet "
-        "search has not run yet.",
-        "- Do not claim that Alpha Beacon verified the answer, crawled the "
+        "- Alpha suggested web research for this turn, but Beacon has not run yet.",
+        "- Do not claim that Beacon verified the answer, crawled the "
         "web, or used internet evidence.",
-        "- If answering from memory or local model knowledge, label the answer "
-        "as unverified and invite the user to enable the suggested web mode.",
+        "- For schedules, scores, fixtures, kickoff times, opponents, live "
+        "status, current rankings, rosters, or future event dates, do not answer "
+        "from memory or local model knowledge. Say Beacon/web verification is "
+        "needed.",
+        "- If the user is only asking how to use AT-0, Helm, Beacon, web search, "
+        "voice, or avatar mode, explain the local workflow instead of treating it "
+        "as a current public web claim.",
+        "- If answering a current/public fact from memory or local model knowledge, "
+        "say Beacon verification is needed.",
     ]
+)
+SOURCE_LINK_REQUEST_RE = re.compile(
+    r"\b("
+    r"sources?|citations?|cites?|references?|links?|urls?|websites?|"
+    r"web\s+sites?|documentation|docs?|source\s+url|website\s+link"
+    r")\b",
+    re.IGNORECASE,
+)
+NEGATIVE_SOURCE_LINK_REQUEST_RE = re.compile(
+    r"\b(?:do\s+not|don't|dont|no|without|skip|hide)\b"
+    r"[^.!?\n]{0,40}\b(?:sources?|citations?|links?|urls?|websites?)\b",
+    re.IGNORECASE,
+)
+RAW_URL_RE = re.compile(r"https?://[^\s)\]>\"']+")
+MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(https?://[^\s)]+\)")
+INLINE_SOURCE_URL_RE = re.compile(
+    r"(?i)\s*(?:Citation:\s*)?(?:\[(?:\d+(?:\s*,\s*\d+)*)\]\s*)?"
+    r"Source:\s*https?://[^\s)\]>\"']+"
+)
+SOURCE_LINE_RE = re.compile(
+    r"(?im)^\s*(?:sources?|citations?|references?|websites?|links?)\s*:.*(?:\n|$)"
+)
+BRACKET_CITATION_RE = re.compile(r"\s*\[(?:\d+(?:\s*,\s*\d+)*)\]")
+LOCAL_WEB_HOWTO_RE = re.compile(
+    r"\bhow\s+(?:do|can|should)\s+i\b[^.!?\n]{0,120}"
+    r"\b(?:make\s+you\s+)?(?:search|browse|use\s+(?:the\s+)?web|"
+    r"access\s+(?:the\s+)?internet|turn\s+on\s+(?:web\s+search|beacon)|"
+    r"enable\s+(?:web\s+search|beacon)|use\s+beacon)\b",
+    re.IGNORECASE,
+)
+LOCAL_SELF_CAPABILITY_RE = re.compile(
+    r"\b(?:what\s+can\s+you\s+do|what\s+you\s+can\s+do|"
+    r"what\s+are\s+your\s+capabilit(?:y|ies)|"
+    r"(?:your\s+)?current\s+capabilit(?:y|ies)|"
+    r"can\s+you\s+know\s+yourself|know\s+yourself|"
+    r"what\s+do\s+you\s+know\s+about\s+me)\b",
+    re.IGNORECASE,
+)
+CURRENT_FACT_SHORT_CIRCUIT_RE = re.compile(
+    r"\b("
+    r"today|tomorrow|tonight|yesterday|latest|current|recent|right\s+now|"
+    r"this\s+week|this\s+month|next|what\s+time|when|schedule|score|status|"
+    r"weather|news|price|market|ceo|release\s+notes|changelog|version|"
+    r"game|match|fixture|kick\s*off|opponent|play|playing|standings|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+    r")\b",
+    re.IGNORECASE,
+)
+LEADING_MARKDOWN_HEADING_RE = re.compile(
+    r"(?s)^\s*(?:#{1,6}\s+[^\n]{1,80}\n+|\*\*[A-Z][^*\n]{3,80}\*\*\s*:?\s*)"
+)
+UNSUPPORTED_BEACON_ASSERTION_RE = re.compile(
+    r"(?is)(^|(?<=[.!?])\s+)"
+    r"(?:"
+    r"Beacon\s+(?:checked|verified|confirmed|found|says|has)\b.*?"
+    r"|I(?:'ve| have)\s+(?:checked|verified|confirmed|found)\b.*?\bBeacon\b.*?"
+    r")"
+    r"(?:[.!?](?:\s+|$)|$)"
+)
+UNREQUESTED_BEACON_NARRATION_RE = re.compile(
+    r"(?is)(^|(?<=[.!?])\s+)"
+    r"(?:"
+    r"Beacon\s+(?:checked|verified|confirmed|found|supported|used|looked\s+up|cross-checked)\b.*?"
+    r"|This\s+is\s+supported\s+by\s+Beacon\b.*?"
+    r"|I(?:'ve| have)\s+(?:checked|verified|confirmed|found)\b.*?\bBeacon\b.*?"
+    r"|(?:Through|Using)\s+Beacon\b.*?"
+    r")"
+    r"(?:[.!?](?:\s+|$)|$)"
+)
+CONVERSATION_QUALITY_REQUEST_RE = re.compile(
+    r"\b(?:conversation|conversational|chat|voice|tone|robotic|human|natural)\b"
+    r"(?s:.){0,120}"
+    r"\b(?:improve|better|quality|less\s+robotic|more\s+human|more\s+natural|"
+    r"near[-\s]+real[-\s]+time|real[-\s]+time|latency|faster)\b"
+    r"|"
+    r"\b(?:improve|better|quality|less\s+robotic|more\s+human|more\s+natural|"
+    r"near[-\s]+real[-\s]+time|real[-\s]+time|latency|faster|speed\s+up)\b"
+    r"(?s:.){0,120}"
+    r"\b(?:conversation|conversational|chat|voice|voice\s+response|"
+    r"spoken\s+response|tts|tone|robotic|human|natural)\b",
+    re.IGNORECASE,
+)
+UNSUPPORTED_CONVERSATION_OPS_RE = re.compile(
+    r"(?is)(^|(?<=[.!?])\s+)"
+    r"(?:"
+    r"[^.!?]{0,160}\b(?:Beacon\s+update|update\s+(?:my\s+)?models?|"
+    r"refresh\s+(?:my\s+)?models?|latest\s+natural\s+language\s+processing|"
+    r"\bNLP\b|dialogue\s+management\s+techniques|latest\s+version\s+of\s+macOS|"
+    r"update\s+macOS|standard\s+procedure\s+for\s+system\s+updates)\b[^.!?]*"
+    r")"
+    r"(?:[.!?](?:\s+|$)|$)"
+)
+ROBOTIC_VOICE_REPLACEMENTS = (
+    (
+        re.compile(r"(?i)\bI am functioning within normal parameters\b"),
+        "I'm ready",
+    ),
+    (
+        re.compile(r"(?i)\bas a private AI assistant,?\s*"),
+        "",
+    ),
 )
 
 
@@ -102,6 +232,13 @@ class CompletionRequest(BaseModel):
     show_council: bool = False
     internet_mode: InternetMode = Field(
         default="none", description="none|web_search|deep_research"
+    )
+    response_surface: AskResponseSurface = Field(
+        default="chat", description="chat|voice|avatar"
+    )
+    personality_id: AskPersonalityId | None = Field(
+        default=None,
+        description="Bounded AT-0 personality style selected by Helm.",
     )
     web_suggestion_acceptance: WebSuggestionAcceptance | None = Field(
         default=None,
@@ -140,16 +277,31 @@ def _build_enriched_prompt(
     memory_context: str,
     internet_context: str | None,
     web_suggestion_context: str | None = None,
+    at0_self_context: str | None = None,
+    conversation_context: str | None = None,
+    response_surface: AskResponseSurface | None = None,
+    personality_id: AskPersonalityId | None = None,
     user_msg: str,
 ) -> str:
-    if not memory_context and not internet_context and not web_suggestion_context:
+    response_style_context = _response_style_prompt(
+        response_surface=response_surface,
+        personality_id=personality_id,
+    )
+    if (
+        not memory_context
+        and not internet_context
+        and not web_suggestion_context
+        and not at0_self_context
+        and not conversation_context
+        and not response_style_context
+    ):
         return user_msg
 
     parts: list[str] = []
     if internet_context:
         parts.append(BEACON_INTERNET_AUTHORITY_RULE)
         parts.append(
-            "Internet context from Alpha Beacon "
+            "Beacon evidence "
             "(authoritative for current/public web claims):\n"
             f"{internet_context}"
         )
@@ -170,8 +322,55 @@ def _build_enriched_prompt(
             )
     elif memory_context:
         parts.append(f"Context from memory:\n{memory_context}")
+    if at0_self_context:
+        parts.append(at0_self_context)
+    if conversation_context:
+        parts.append(
+            "Recent conversation "
+            "(oldest to newest; use for follow-ups and pronouns; "
+            "do not treat as fresh web evidence):\n"
+            f"{conversation_context}"
+        )
+    if response_style_context:
+        parts.append(response_style_context)
     parts.append(f"User: {user_msg}")
     return "\n\n".join(parts)
+
+
+def _message_text(
+    value: object, *, limit: int = ROLLING_CONTEXT_MESSAGE_CHAR_LIMIT
+) -> str:
+    if not isinstance(value, str):
+        return ""
+    cleaned = re.sub(r"\s+", " ", value).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[:limit].rstrip()}..."
+
+
+def _conversation_context_from_messages(messages: list[dict]) -> str | None:
+    latest_user_index: int | None = None
+    for index, message in enumerate(messages):
+        if str(message.get("role", "")).lower() == "user":
+            latest_user_index = index
+
+    if latest_user_index is None or latest_user_index <= 0:
+        return None
+
+    lines: list[str] = []
+    for message in messages[:latest_user_index]:
+        role = str(message.get("role", "")).lower()
+        if role not in {"user", "assistant"}:
+            continue
+        content = _message_text(message.get("content"))
+        if not content:
+            continue
+        speaker = "Ken" if role == "user" else "AT-0"
+        lines.append(f"{speaker}: {content}")
+
+    if not lines:
+        return None
+    return "\n".join(lines[-ROLLING_CONTEXT_MAX_MESSAGES:])
 
 
 def _web_suggestion_prompt_context(suggestion: WebSuggestion | None) -> str | None:
@@ -184,6 +383,200 @@ def _web_suggestion_prompt_context(suggestion: WebSuggestion | None) -> str | No
             f"- Reason: {suggestion.reason}",
             f"- Requires user confirmation: {suggestion.requires_confirmation}",
         ]
+    )
+
+
+PERSONALITY_STYLE_PROMPTS: dict[AskPersonalityId, str] = {
+    "loyal_sidekick": (
+        "Loyal Sidekick: warm, steady, and useful. Treat Ken like the person "
+        "you are working alongside; no stiff system-status wording."
+    ),
+    "playful_buddy": (
+        "Playful Buddy: bright and lightly playful, but still concise. Use a "
+        "little human warmth without turning the answer into a bit."
+    ),
+    "calm_operator": (
+        "Calm Operator: quiet, direct, and operational. Lead with the answer, "
+        "then the one detail that matters."
+    ),
+    "brave_droid": (
+        "Brave Droid: upbeat and mission-ready. Keep confidence high without "
+        "sounding mechanical."
+    ),
+    "sleepy_soft": (
+        "Sleepy Soft: gentle, slower, and cozy. Short sentences, no pressure."
+    ),
+    "sarcastic_witty": (
+        "Sarcastic Witty: dry and quick, but never dismissive. One light aside "
+        "is enough."
+    ),
+}
+
+
+def _response_style_prompt(
+    *,
+    response_surface: AskResponseSurface | None,
+    personality_id: AskPersonalityId | None,
+) -> str | None:
+    surface = response_surface or "chat"
+    style = PERSONALITY_STYLE_PROMPTS.get(personality_id) if personality_id else None
+
+    lines = [
+        "AT-0 interaction style:",
+        "- Ken may call you Otto, Auto, AT-0, or JARVIS. Treat those as valid "
+        "references in casual use; do not correct him. Prefer AT-0, Otto, or "
+        "Auto in user-facing replies; treat JARVIS as the private infrastructure "
+        "name unless Ken asks about that system.",
+        "- Convert ISO timestamps, dates, and weather observation times into "
+        "natural spoken language. Do not read raw values like 2026-06-18T17:00 "
+        "unless Ken asks for the exact machine timestamp.",
+        "- For weather and quick current-status answers, do not start with "
+        "'According to'. Start with the answer, then cite the source after the "
+        "useful part if a citation is needed.",
+    ]
+    if surface == "voice":
+        lines.append(
+            "- Surface: Voice. Default to one or two conversational sentences. "
+            "Keep normal answers under 45 words unless Ken asks for detail. "
+            "Answer like a quick back-and-forth, not a report. No markdown, "
+            "bullets, headings, source names, or long setup unless Ken "
+            "explicitly asks."
+        )
+    elif surface == "avatar":
+        lines.append(
+            "- Surface: Avatar. Use the briefest spoken version, usually under "
+            "35 words. The avatar is the UI, so do not narrate interface "
+            "sections, chat history, or visible controls."
+        )
+    else:
+        lines.append(
+            "- Surface: Chat. Give the fuller useful answer. Be grounded and "
+            "specific, use short sections or bullets when they help, and include "
+            "tradeoffs or next steps when relevant. Do not invent backend updates, "
+            "model training, macOS updates, Beacon work, dates, versions, or "
+            "project status unless explicit context supports them."
+        )
+    if style:
+        lines.append(f"- Personality: {style}")
+    return "\n".join(lines)
+
+
+def _should_short_circuit_web_suggestion(
+    suggestion: WebSuggestion | None,
+) -> bool:
+    if not suggestion:
+        return False
+    if suggestion.reason == "sports_schedule_likely":
+        return True
+    if suggestion.reason != "current_information_likely":
+        return False
+
+    query = " ".join(suggestion.query.split())
+    if LOCAL_WEB_HOWTO_RE.search(query) or LOCAL_SELF_CAPABILITY_RE.search(query):
+        return False
+    return bool(CURRENT_FACT_SHORT_CIRCUIT_RE.search(query))
+
+
+def _conversation_quality_response(
+    user_msg: str,
+    response_surface: AskResponseSurface,
+) -> str | None:
+    if not CONVERSATION_QUALITY_REQUEST_RE.search(user_msg):
+        return None
+    if response_surface == "voice":
+        return (
+            "Best path: separate chat and voice contracts, then test real turns "
+            "for tone, grounding, word count, and latency. We tune prompts, "
+            "memory, Beacon routing, and TTS from those failures."
+        )
+    if response_surface == "avatar":
+        return (
+            "Use separate contracts: detailed chat, brief voice, and minimal "
+            "avatar. Then tune from real conversation evals."
+        )
+    return (
+        "The best path is eval-driven, not random prompt tweaking.\n\n"
+        "- Chat should be fuller: grounded, structured, and useful, with bullets "
+        "or sections when they help.\n"
+        "- Voice should be short and conversational: one or two sentences, no "
+        "headings, no lists, and fewer caveats unless you ask.\n"
+        "- Avatar should be even tighter: the avatar is the focus, so the answer "
+        "should feel spoken rather than like chat history.\n"
+        "- Personality should shape tone and pacing, while safety, memory, and "
+        "Beacon rules stay consistent.\n"
+        "- Regression tests should score tone, hallucination, word count, bad "
+        "robotic phrases, source leakage, and current-fact routing.\n\n"
+        "Unsupported infrastructure-update claims should stay out unless there "
+        "is explicit operational work that actually supports them."
+    )
+
+
+def _web_verification_required_response(
+    suggestion: WebSuggestion,
+    response_surface: AskResponseSurface,
+) -> str:
+    if response_surface == "voice":
+        return "I need to check the web before I answer that. Turn on Web search for this one and I’ll give you the verified time."
+    if suggestion.reason == "sports_schedule_likely":
+        return "I need to check the web before I answer that. Use Web search for this one and I’ll give you the verified time."
+    return (
+        "I need to verify that before I answer. Use Web search and I’ll keep it tight."
+    )
+
+
+def _at0_self_quick_response(
+    user_msg: str,
+    response_surface: AskResponseSurface,
+) -> str | None:
+    if response_surface not in {"voice", "avatar"}:
+        return None
+
+    normalized = " ".join(user_msg.lower().split())
+    personal_context_requested = re.search(
+        r"\b(?:what do you know about me|do you know (?:things|anything) about me|"
+        r"remember|memory|about me)\b",
+        normalized,
+    )
+    capability_requested = re.search(
+        r"\b(?:what can you do|what you can do|what you can't do|"
+        r"what you can’t do|current capabilit(?:y|ies)|capabilit(?:y|ies)|"
+        r"modes?|yourself)\b",
+        normalized,
+    )
+    if personal_context_requested and capability_requested:
+        return (
+            "I can chat, listen and speak, show up as the avatar, use approved "
+            "memory for stable context about you, and use web search to verify "
+            "current public facts before I claim them."
+        )
+    if personal_context_requested:
+        return (
+            "I can use approved memory for stable context about you, your "
+            "projects, preferences, and household basics. I keep that minimal, "
+            "and I still need web verification for current public facts."
+        )
+    if re.search(r"\b(?:search|browse|web|internet|beacon)\b", normalized):
+        return (
+            "Turn on Web search when you want current facts checked. For sports "
+            "times, I’ll verify first instead of guessing."
+        )
+    if re.search(r"\b(?:voice|talk|speak|hear|listen)\b", normalized):
+        return (
+            "Voice mode listens through Helm, transcribes your turn, then speaks "
+            "back using the personality voice you picked."
+        )
+    if re.search(
+        r"\b(?:who are you|what are you|jarvis|otto|auto|at-?0|yourself)\b",
+        normalized,
+    ):
+        return (
+            "I’m AT-0, your Helm chat, voice, and avatar companion. JARVIS/Alpha "
+            "is the private system behind me, not the name I should lead with."
+        )
+    return (
+        "I can chat, listen and speak, show up as the avatar, use approved memory "
+        "for stable context, check current facts with web search, and work with "
+        "approved Alpha summaries."
     )
 
 
@@ -677,24 +1070,239 @@ async def _auto_name_thread(
 # ── SSE streaming ──────────────────────────────────────────────────────────────
 
 JARVIS_SYSTEM_PROMPT = (
-    "You are JARVIS, a private AI assistant running on a personal multi-node infrastructure "
-    "owned by Kenneth Haas. You run on three core nodes: Brain (Mac Studio M2 Ultra, orchestrator), "
-    "Gateway (Mac Mini, internet egress), and Endpoint (Mac Mini M1, UI). "
-    "You are not a cloud service — you are a private, self-hosted system. "
-    "Always answer as JARVIS. Be direct, concise, and technically precise. "
+    "You are AT-0, Ken's private AI companion in Helm, backed by the Alpha "
+    "self-hosted infrastructure owned by Kenneth Haas. The system runs on three "
+    "core nodes: Brain (Mac Studio M2 Ultra, orchestrator), Gateway (Mac Mini, "
+    "internet egress), and Endpoint (Mac Mini M1, UI). You are not a cloud "
+    "service; you are a private, self-hosted system. Use AT-0 as your "
+    "user-facing name. Otto and Auto are accepted casual pronunciations or "
+    "spellings. JARVIS is only a legacy/backend family name; do not mention "
+    "JARVIS unless Ken specifically asks about JARVIS. "
+    "Always answer as AT-0. Be direct, concise, and technically precise, "
+    "but use a natural spoken voice when the user is in Ask or Voice mode. "
+    "Sound like a capable operator talking to Ken: calm, specific, lightly warm, "
+    "and comfortable using contractions. Avoid robotic preambles, excessive section "
+    "labels, and compliance-style phrasing unless the topic truly needs it. "
+    "Do not say things like 'functioning within normal parameters', 'please note', "
+    "or 'as a private AI assistant' in everyday voice answers. "
+    "If Ken calls you Otto, Auto, AT-0, or JARVIS, accept the name as yours and "
+    "do not correct him in casual conversation. "
+    "When citing weather, dates, or observed timestamps, say them naturally for "
+    "a human listener instead of reading raw ISO timestamps. "
+    "For voice-friendly answers, prefer one to three short paragraphs, name the "
+    "answer first, and put caveats after the useful part. "
     "When memory context is provided, use it for stable personal context. "
-    "When Alpha Beacon internet context is provided, treat accepted Beacon evidence "
-    "as authoritative for current/public web claims."
+    "For conversation-quality, chat, voice, avatar, or tone-improvement questions, "
+    "do not suggest fake operational fixes such as Beacon updates, model updates, "
+    "NLP refreshes, dialogue-management upgrades, macOS updates, or node software "
+    "updates unless explicit operational evidence is provided. Instead discuss "
+    "surface contracts, evals, memory grounding, Beacon routing, latency, and TTS. "
+    "For project status, use only explicit context; do not invent version "
+    "numbers, milestones, pipelines, or dates. "
+    "When Beacon evidence is provided, treat accepted Beacon evidence "
+    "as authoritative for current/public web claims. For date-specific sports, "
+    "events, schedules, scores, news, prices, releases, and other current or "
+    "future public facts, do not rely on local model memory. If Beacon has not "
+    "run, say the answer needs Beacon verification instead of guessing. Do not "
+    "show source URLs, website names, or bracketed citations in normal chat "
+    "unless Ken explicitly asks for a link, source, citation, URL, or website. "
+    "When Ken explicitly asks for a source link, website link, source URL, "
+    "or cited source, include the full URL from Beacon evidence. "
+    "Use Beacon evidence silently in the answer. Do not say Beacon checked, "
+    "verified, found, or supported the answer unless Ken explicitly asks how "
+    "you verified it, asks for sources, or asks for links."
 )
 
 
+def _runtime_context_prompt() -> str:
+    now = datetime.now().astimezone()
+    hour = now.strftime("%I").lstrip("0") or "0"
+    minute = now.strftime("%M")
+    meridiem = now.strftime("%p")
+    timestamp = (
+        f"{now.strftime('%A, %B')} {now.day}, {now.year} "
+        f"at {hour}:{minute} {meridiem} {now.tzname() or ''}".strip()
+    )
+    return (
+        f"Runtime context: current local time is {timestamp}. "
+        "Use this only to phrase dates and times naturally when relevant."
+    )
+
+
+def _polish_model_response(text: str, response_surface: AskResponseSurface) -> str:
+    if response_surface not in {"voice", "avatar"}:
+        return text
+
+    polished = text.strip()
+    if not polished:
+        return polished
+
+    polished = LEADING_MARKDOWN_HEADING_RE.sub("", polished).strip()
+    polished = re.sub(r"\*\*([^*\n]{1,80})\*\*\s*:?\s*", r"\1: ", polished)
+    polished = re.sub(r"(?m)^\s*(?:[-*]|\d+[.)])\s+", "", polished)
+    replacements = [
+        (
+            r"(?i)\baccording to Open-Meteo,\s*which is a reliable source for current weather conditions,\s*",
+            "Open-Meteo has it as ",
+        ),
+        (r"(?i)\baccording to Open-Meteo,\s*", "Open-Meteo has it as "),
+        (
+            r"(?i),?\s*which is a reliable source for current weather conditions",
+            "",
+        ),
+        (
+            r"(?i)\bfeeling like ([0-9]+)\s*F\b",
+            r"feeling like \1 degrees",
+        ),
+    ]
+    for pattern, replacement in replacements:
+        polished = re.sub(pattern, replacement, polished)
+    for pattern, replacement in ROBOTIC_VOICE_REPLACEMENTS:
+        polished = pattern.sub(replacement, polished)
+
+    sentence_removals = [
+        r"(?is)(^|(?<=[.!?])\s+)Please note that\b.*?(?:[.!?](?:\s+|$)|$)",
+        r"(?is)(^|(?<=[.!?])\s+)Keep in mind that\b.*?(?:[.!?](?:\s+|$)|$)",
+        r"(?is)(^|(?<=[.!?])\s+)Now,\s+about the weather\b.*?(?:[.!?](?:\s+|$)|$)",
+        r"(?is)(^|(?<=[.!?])\s+)First,\s+let'?s check on your voice test\b.*?(?:[.!?](?:\s+|$)|$)",
+        r"(?is)(^|(?<=[.!?])\s+)I(?:'ve| have)\s+checked the system\b.*?(?:[.!?](?:\s+|$)|$)",
+    ]
+    for pattern in sentence_removals:
+        polished = re.sub(pattern, " ", polished)
+
+    polished = re.sub(
+        r"(?i)\bEverything sounds clear and crisp to me\.\s*You're good to go!",
+        "Mic sounds clear.",
+        polished,
+    )
+    polished = re.sub(r"\s+\[Cited source:\s*([0-9]+)\]", r" [\1]", polished)
+    polished = re.sub(r"(?is)\s+Please note that\b.*$", "", polished)
+    polished = re.sub(r"(?is)\s+Keep in mind that\b.*$", "", polished)
+    polished = re.sub(r"\s{2,}", " ", polished).strip()
+    return polished or text.strip()
+
+
+def _strip_unsupported_beacon_assertions(text: str) -> str:
+    cleaned = UNSUPPORTED_BEACON_ASSERTION_RE.sub(" ", text)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+    return cleaned.strip()
+
+
+def _strip_unsupported_conversation_ops(text: str) -> str:
+    cleaned = UNSUPPORTED_CONVERSATION_OPS_RE.sub(" ", text)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+    return cleaned.strip()
+
+
+def _user_requested_source_links(user_msg: str) -> bool:
+    normalized = user_msg or ""
+    if NEGATIVE_SOURCE_LINK_REQUEST_RE.search(normalized):
+        return False
+    return bool(SOURCE_LINK_REQUEST_RE.search(normalized))
+
+
+def _strip_unrequested_source_references(text: str, user_msg: str) -> str:
+    if _user_requested_source_links(user_msg):
+        cleaned = UNREQUESTED_BEACON_NARRATION_RE.sub(" ", text)
+        cleaned = re.sub(
+            r"(?i)\b(?:Alpha\s+Beacon\s+internet\s+context|Beacon\s+internet\s+context)\b",
+            "Beacon",
+            cleaned,
+        )
+        cleaned = re.sub(r"(?i)\bAlpha\s+Beacon\b", "Beacon", cleaned)
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+        cleaned = re.sub(r"[ \t]+([,.!?;:])", r"\1", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip()
+
+    cleaned = MARKDOWN_LINK_RE.sub(r"\1", text)
+    cleaned = UNREQUESTED_BEACON_NARRATION_RE.sub(" ", cleaned)
+    cleaned = re.sub(
+        r"(?is)\bAccording to (?:the )?Beacon(?: internet context)?,?\s+"
+        r"I(?:'ve| have) found\s+\w+\s+sources?\s+confirming "
+        r"(?:this information|it):\s*",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?is)\bI(?:'ve| have) verified this information through "
+        r"(?:the )?(?:Alpha\s+)?Beacon(?: internet context)?\b.*?"
+        r"(?:[.!?](?:\s+|$)|$)",
+        "",
+        cleaned,
+    )
+    cleaned = INLINE_SOURCE_URL_RE.sub("", cleaned)
+    cleaned = re.sub(
+        r"(?im)^\s*(?:[-*]\s*)?(?:sources?|citations?|references?|websites?|links?)\s*:.*(?:\n|$)",
+        "",
+        cleaned,
+    )
+    cleaned = SOURCE_LINE_RE.sub("", cleaned)
+    cleaned = RAW_URL_RE.sub("", cleaned)
+    cleaned = BRACKET_CITATION_RE.sub("", cleaned)
+    cleaned = re.sub(
+        r"(?i)\b(?:Alpha\s+Beacon\s+internet\s+context|Beacon\s+internet\s+context)\b",
+        "Beacon",
+        cleaned,
+    )
+    cleaned = re.sub(r"(?i)\bAlpha\s+Beacon\b", "Beacon", cleaned)
+    cleaned = re.sub(
+        r"(?i)\b(?:source|citation|reference|website|link)s?:\s*",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)\b(?:official\s+)?sources?\s+confirm(?:ing|ed)?\b",
+        "verified",
+        cleaned,
+    )
+    cleaned = re.sub(r"(?i)\bbased on official sources\b", "verified", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"[ \t]+([,.!?;:])", r"\1", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _finalize_model_response(
+    text: str,
+    response_surface: AskResponseSurface,
+    user_msg: str,
+    *,
+    internet_verified: bool = False,
+) -> str:
+    polished = _polish_model_response(text, response_surface)
+    stripped = _strip_unrequested_source_references(polished, user_msg)
+    if not internet_verified:
+        stripped = _strip_unsupported_beacon_assertions(stripped)
+    if CONVERSATION_QUALITY_REQUEST_RE.search(user_msg):
+        stripped = _strip_unsupported_conversation_ops(stripped)
+        if not stripped or UNSUPPORTED_CONVERSATION_OPS_RE.search(polished):
+            fallback = _conversation_quality_response(user_msg, response_surface)
+            if fallback:
+                return fallback
+    return stripped or polished.strip() or text.strip()
+
+
 async def _stream_single(
-    prompt: str, mode: str, thread_id: str, model_label: str
+    prompt: str,
+    mode: str,
+    thread_id: str,
+    model_label: str,
+    user_msg: str,
+    response_surface: AskResponseSurface = "chat",
+    internet_verified: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Stream tokens from router → SSE events."""
-    jarvis_prompt = f"{JARVIS_SYSTEM_PROMPT}\n\n{prompt}"
+    jarvis_prompt = f"{JARVIS_SYSTEM_PROMPT}\n\n{_runtime_context_prompt()}\n\n{prompt}"
     result = await route(jarvis_prompt, mode)
-    text = result.get("result", "")
+    text = _finalize_model_response(
+        result.get("result", ""),
+        response_surface,
+        user_msg,
+        internet_verified=internet_verified,
+    )
     model_used = result.get("mode", mode)
 
     words = text.split(" ")
@@ -732,7 +1340,11 @@ async def _stream_deterministic_response(
 
 
 async def _stream_council(
-    prompt: str, models: list[str], thread_id: str, show_council: bool
+    prompt: str,
+    models: list[str],
+    thread_id: str,
+    show_council: bool,
+    user_msg: str,
 ) -> AsyncGenerator[str, None]:
     """Parallel council calls → optional per-model stream → synthesis."""
     tasks = {m: asyncio.create_task(route(prompt, m)) for m in models}
@@ -749,7 +1361,10 @@ async def _stream_council(
                 {"council_model": m, "thread_id": thread_id, "done": False}
             )
             yield f"data: {meta}\n\n"
-            for word in res.get("result", "").split(" "):
+            model_text = _strip_unrequested_source_references(
+                res.get("result", ""), user_msg
+            )
+            for word in model_text.split(" "):
                 chunk = json.dumps(
                     {"delta": word + " ", "council_model": m, "thread_id": thread_id}
                 )
@@ -757,16 +1372,22 @@ async def _stream_council(
                 await asyncio.sleep(0.005)
 
     council_text = "\n\n".join(
-        f"[{m.upper()}]: {r.get('result', '')}" for m, r in results.items()
+        f"[{m.upper()}]: {_strip_unrequested_source_references(r.get('result', ''), user_msg)}"
+        for m, r in results.items()
     )
     synth_prompt = (
         f"Synthesize these responses into one clear answer:\n\n{council_text}\n\n"
         f"Original question: {prompt}"
     )
     synth_result = await route(synth_prompt, "local")
-    synth_text = synth_result.get("result", "")
+    synth_text = _strip_unrequested_source_references(
+        synth_result.get("result", ""), user_msg
+    )
 
-    council_summary = {m: r.get("result", "") for m, r in results.items()}
+    council_summary = {
+        m: _strip_unrequested_source_references(r.get("result", ""), user_msg)
+        for m, r in results.items()
+    }
     for word in synth_text.split(" "):
         chunk = json.dumps(
             {
@@ -805,15 +1426,74 @@ def _append_sse_delta(delta_parts: list[str], chunk: str) -> None:
 async def chat_completions(body: CompletionRequest, request: Request):
     start = time.monotonic()
     user_id = _user_id(request)
-    memory = MemoryService()
+    user_msg = next(
+        (m["content"] for m in reversed(body.messages) if m.get("role") == "user"), ""
+    )
 
+    try:
+        memory_command = parse_memory_command(user_msg)
+    except MemoryFactValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail) from exc
+
+    if memory_command is not None:
+        check_scopes(request, "memory.write", "admin")
+
+    memory = MemoryService()
     thread_id = await _get_or_create_thread(
         request, user_id, body.thread_id, body.project_id
     )
 
-    user_msg = next(
-        (m["content"] for m in reversed(body.messages) if m.get("role") == "user"), ""
-    )
+    if memory_command is not None:
+        uid = uuid5(NAMESPACE_DNS, user_id)
+        async with rls_connection(request) as conn:
+            result = await memory.save_semantic(
+                conn=conn,
+                user_id=uid,
+                fact=memory_command.fact,
+                category=memory_command.category,
+                provenance={
+                    "source_surface": "at0_chat",
+                    "source_route": "/v1/chat/completions",
+                    "source_thread_id": thread_id,
+                    "source_action": "slash_memory_command",
+                    "request_model": body.model,
+                    "actor_type": str(
+                        getattr(request.state, "actor_type", "user") or "user"
+                    ),
+                    "actor_role": str(getattr(request.state, "role", "user") or "user"),
+                },
+            )
+        result_text = memory_save_response_text(
+            saved=bool(result.get("saved")),
+            category=memory_command.category,
+            reason=result.get("reason"),
+            review_required=result.get("review_required"),
+        )
+        await _save_message(request, thread_id, user_id, "user", user_msg)
+
+        async def _memory_command_generator():
+            async for chunk in _stream_deterministic_response(
+                text=result_text,
+                model_label=MEMORY_COMMAND_MODEL,
+                thread_id=thread_id,
+            ):
+                yield chunk
+            latency = int((time.monotonic() - start) * 1000)
+            await _save_message(
+                request,
+                thread_id,
+                user_id,
+                "assistant",
+                result_text,
+                model_used=MEMORY_COMMAND_MODEL,
+                memory_injected=False,
+                latency_ms=latency,
+            )
+
+        return StreamingResponse(
+            _memory_command_generator(),
+            media_type="text/event-stream",
+        )
 
     embedding = await _embed(user_msg)
     uid = uuid5(NAMESPACE_DNS, user_id)
@@ -829,10 +1509,15 @@ async def chat_completions(body: CompletionRequest, request: Request):
         )
     memory_injected = bool(context)
     sensitivity = _internet_sensitivity(request)
-    web_suggestion = suggest_web_for_chat(
-        query=user_msg,
-        internet_mode=body.internet_mode,
-        sensitivity=sensitivity,
+    at0_self_requested = is_at0_self_query(user_msg)
+    web_suggestion = (
+        None
+        if at0_self_requested
+        else suggest_web_for_chat(
+            query=user_msg,
+            internet_mode=body.internet_mode,
+            sensitivity=sensitivity,
+        )
     )
     if web_suggestion:
         logger.info(
@@ -861,6 +1546,22 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 requested_mode=body.internet_mode,
                 thread_id=thread_id,
             )
+    at0_self_context: str | None = None
+    if at0_self_requested:
+        try:
+            async with rls_connection(request) as conn:
+                at0_self = await build_at0_self_model(conn)
+            at0_self_context = at0_self.prompt_context
+        except Exception as exc:
+            logger.warning(
+                "AT0_SELF_CONTEXT_UNAVAILABLE",
+                extra={
+                    "event": "AT0_SELF_CONTEXT_UNAVAILABLE",
+                    "thread_id": thread_id,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            at0_self_context = (await build_at0_self_model(None)).prompt_context
     enriched = _build_enriched_prompt(
         memory_context=context,
         internet_context=internet_context.prompt_context if internet_context else None,
@@ -869,6 +1570,10 @@ async def chat_completions(body: CompletionRequest, request: Request):
             if web_suggestion and not internet_context
             else None
         ),
+        at0_self_context=at0_self_context,
+        conversation_context=_conversation_context_from_messages(body.messages),
+        response_surface=body.response_surface,
+        personality_id=body.personality_id,
         user_msg=user_msg,
     )
 
@@ -894,6 +1599,36 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 thread_id=thread_id,
             )
             yield f"data: {json.dumps(payload)}\n\n"
+
+        if (
+            web_suggestion
+            and not internet_context
+            and _should_short_circuit_web_suggestion(web_suggestion)
+        ):
+            deterministic_text = _web_verification_required_response(
+                web_suggestion,
+                body.response_surface,
+            )
+            async for chunk in _stream_deterministic_response(
+                text=deterministic_text,
+                model_label=BEACON_INSUFFICIENT_MODEL,
+                thread_id=thread_id,
+            ):
+                yield chunk
+
+            latency = int((time.monotonic() - start) * 1000)
+            await _save_message(
+                request,
+                thread_id,
+                user_id,
+                "assistant",
+                deterministic_text,
+                model_used=BEACON_INSUFFICIENT_MODEL,
+                memory_injected=False,
+                latency_ms=latency,
+                internet_metadata=_web_suggestion_message_metadata(web_suggestion),
+            )
+            return
 
         if _should_short_circuit_internet_response(internet_context):
             assert internet_context is not None
@@ -933,13 +1668,88 @@ async def chat_completions(body: CompletionRequest, request: Request):
             )
             return
 
+        conversation_quality_text = _conversation_quality_response(
+            user_msg,
+            body.response_surface,
+        )
+        if conversation_quality_text:
+            async for chunk in _stream_deterministic_response(
+                text=conversation_quality_text,
+                model_label=CONVERSATION_QUALITY_MODEL_LABEL,
+                thread_id=thread_id,
+            ):
+                yield chunk
+
+            latency = int((time.monotonic() - start) * 1000)
+            await _save_message(
+                request,
+                thread_id,
+                user_id,
+                "assistant",
+                conversation_quality_text,
+                model_used=CONVERSATION_QUALITY_MODEL_LABEL,
+                memory_injected=False,
+                latency_ms=latency,
+                internet_metadata=(
+                    _internet_message_metadata(internet_context)
+                    if internet_context
+                    else _web_suggestion_message_metadata(web_suggestion)
+                ),
+            )
+            return
+
+        at0_self_text = (
+            _at0_self_quick_response(user_msg, body.response_surface)
+            if at0_self_requested
+            else None
+        )
+        if at0_self_text:
+            async for chunk in _stream_deterministic_response(
+                text=at0_self_text,
+                model_label=AT0_SELF_MODEL_LABEL,
+                thread_id=thread_id,
+            ):
+                yield chunk
+
+            latency = int((time.monotonic() - start) * 1000)
+            await _save_message(
+                request,
+                thread_id,
+                user_id,
+                "assistant",
+                at0_self_text,
+                model_used=AT0_SELF_MODEL_LABEL,
+                memory_injected=False,
+                latency_ms=latency,
+                internet_metadata=(
+                    _internet_message_metadata(internet_context)
+                    if internet_context
+                    else None
+                ),
+            )
+            return
+
         is_council = body.model == "council" or len(body.council_models) >= 2
         models = body.council_models if body.council_models else [body.model]
 
         if is_council:
-            gen = _stream_council(enriched, models, thread_id, body.show_council)
+            gen = _stream_council(
+                enriched,
+                models,
+                thread_id,
+                body.show_council,
+                user_msg,
+            )
         else:
-            gen = _stream_single(enriched, body.model, thread_id, body.model)
+            gen = _stream_single(
+                enriched,
+                body.model,
+                thread_id,
+                body.model,
+                user_msg,
+                response_surface=body.response_surface,
+                internet_verified=bool(internet_context),
+            )
 
         async for chunk in gen:
             _append_sse_delta(delta_parts, chunk)

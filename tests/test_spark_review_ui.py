@@ -112,10 +112,15 @@ def test_spark_approval_handoff_ui_links_to_spark_review() -> None:
     spark_source = SPARK_PAGE.read_text(encoding="utf-8")
 
     assert "spark_draft_handoff" in approvals_source
-    assert "/spark?approval=" in approvals_source
+    assert "new URLSearchParams({ approval: item.id })" in approvals_source
+    assert "buildSparkReviewUrl" in approvals_source
     assert "Review Spark" in approvals_source
+    assert "Return to Spark send" in approvals_source
     assert "useSearchParams" in spark_source
     assert "Approval queue" in spark_source
+    assert 'searchParams.get("principal")' in spark_source
+    assert 'searchParams.get("target")' in spark_source
+    assert "approval_queue_id === activeApproval" in spark_source
 
 
 def test_spark_guardrail_ui_is_editable_without_message_content() -> None:
@@ -195,14 +200,18 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     )
 
     assert "SPARK_PRINCIPALS" in source
+    assert "ken" in source
     assert "sweta" in source
     assert "ryleigh" in source
     assert "sloane" in source
-    assert "meagan" in source
-    assert "mother" in source
+    assert "meagan" not in source
+    assert "mother" not in source
     assert "Review console" in source
     assert "Voice profile" in source
     assert "Draft target" in source
+    assert "core family" in source
+    assert "Approved-thread onboarding" in source
+    assert "Relationships" in source
     assert "Reply cockpit" in source
     assert "approval before send" in source
     assert "Generate for" in source
@@ -210,14 +219,14 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "useSparkIMessageTargetPreview" in source
     assert "last 8 texts" in source
     assert "needs approved thread" in source
+    assert ".filter((targetId) => targetId !== principalId)" in source
     assert "Thread preview" in source
     assert "Decision rail" in source
     assert "Outbox cockpit" in source
     assert "metadata only" in source
     assert "Refresh outbox" in source
     assert "Review details" in source
-    assert "Memory and guardrails" in source
-    assert "Guardrails" in source
+    assert "Relationships and guardrails" in source
     assert "Side-by-side" in source
     assert "Compare" in source
     assert "Thread context" in source
@@ -228,7 +237,6 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Recent thread" in source
     assert "Ken-like score" in source
     assert "Channel parity" in source
-    assert "Draft memory debug" in source
     assert "Memory scorecard" in source
     assert "include_context_preview" in source
     assert "include_memory_preview" in source
@@ -242,8 +250,8 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "runtime only" in source
     assert "newest first" in source
     assert "Edit learning" in source
-    assert "Sounds like me" in source
-    assert "Out of context" in source
+    assert "Keep this direction" in source
+    assert "Wrong context" in source
     assert "Too robotic" in source
     assert "Too formal" in source
     assert "Too wordy" in source
@@ -251,18 +259,19 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Feedback retry" in source
     assert "Try again with feedback" in source
     assert "regenerateWithFeedback" in source
-    assert "Make the reply shorter and less wordy" in source
+    assert "one or two short text-message sentences" in source
     assert "Pick up to 2 signals before retrying." in source
-    assert "Tone" in source
+    assert "Tone direction" in source
     assert "Send only after approval passes" in source
-    assert "Send blocked until the outbox item is approved" in source
+    assert "Send can resume from the persisted outbox" in source
+    assert "Send blocked until the outbox item is approved and persisted" in source
     assert "Happier" in source
     assert "Sweeter" in source
     assert "Relaxed" in source
+    assert "Serious" in source
+    assert "Confident" in source
     assert "Smart" in source
     assert "Blunt" in source
-    assert "Concise" in source
-    assert "Confused" in source
     assert "style_adjustments" in source
     assert "spark.draft.send" not in source
     assert "/message/text" not in source
