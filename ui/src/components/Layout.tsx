@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Zap, Home, Newspaper, Network,
@@ -9,10 +9,12 @@ import {
   User, ChevronRight, Lock, Unlock, RefreshCw,
   FolderOpen, Wrench, Fingerprint, Sparkles,
   Inbox,
+  HeartPulse, Scale, Printer, Hammer,
 } from 'lucide-react'
 import type { Theme } from '../types'
 import { useAppStore } from '../store'
 import { PinModal } from './PinModal'
+import { SPACES, getSpaceRoute } from '../lib/spaces'
 
 const NAV = [
   { group: 'OBSERVE', items: [
@@ -44,9 +46,24 @@ const NAV = [
   ]},
 ]
 
-const SPACE_ITEMS = [
-  { to: '/space/familyvault', label: 'Family Vault', icon: FolderOpen },
-]
+const SPACE_ICON_BY_SLUG: Record<string, typeof FolderOpen> = {
+  family: FolderOpen,
+  financial: DollarSign,
+  medical: HeartPulse,
+  legal: Scale,
+  home: Home,
+  printer: Printer,
+  forge: Wrench,
+  smithy: Hammer,
+  spark: Sparkles,
+  privacy: Fingerprint,
+}
+
+const SPACE_ITEMS = SPACES.map((space) => ({
+  to: getSpaceRoute(space),
+  label: space.label,
+  icon: SPACE_ICON_BY_SLUG[space.slug] ?? FolderOpen,
+}))
 
 interface Props {
   theme: Theme
@@ -63,6 +80,7 @@ export function Layout({ theme, children, monthSpend = 0, budget = 500, onRefres
   const [pendingSpaceTo, setPendingSpaceTo] = useState<string | null>(null)
   const isDark = theme === 'dark'
   const location = useLocation()
+  const navigate = useNavigate()
 
   const border = isDark ? 'border-white/10' : 'border-[#141414]'
   const sidebarBg = isDark ? 'bg-[#0F0F0F]' : 'bg-[#E4E3E0]'
@@ -254,7 +272,7 @@ export function Layout({ theme, children, monthSpend = 0, budget = 500, onRefres
               setVaultUnlocked(true)
               setShowPin(false)
               if (pendingSpaceTo) {
-                window.location.href = pendingSpaceTo
+                navigate(pendingSpaceTo)
                 setPendingSpaceTo(null)
               }
             }}
