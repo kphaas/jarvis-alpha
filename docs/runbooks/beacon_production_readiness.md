@@ -16,6 +16,9 @@ This runbook covers the MVP production closeout for P13-P17:
 - P16: production agent wrapper
 - P17: smoke and rollback
 
+Longer-term industry gap closure is tracked in
+`docs/state/BEACON_INDUSTRY_GAP_TRACKER.md`.
+
 ## Required Environment
 
 Gateway:

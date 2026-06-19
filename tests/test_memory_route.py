@@ -149,6 +149,80 @@ class FakeMemoryService:
             ][:recent_limit],
         }
 
+    async def admin_inventory(self, conn: object, *, limit: int = 100) -> dict:
+        return {
+            "health": {
+                "principal_count": 1,
+                "total_semantic": 1,
+                "total_working": 3,
+                "total_episodic": 2,
+                "semantic_review_count": 1,
+                "dream_reviewed_writes_open": 2,
+                "dream_approval_mismatch_count": 0,
+                "stale_dream_reviewed_writes": 0,
+                "dream_approved_waiting_execution": 1,
+                "unread_memory_buddy_events": 2,
+                "high_priority_buddy_events": 1,
+                "last_semantic_write_at": datetime(2026, 6, 18, tzinfo=UTC),
+                "last_semantic_review_at": datetime(2026, 6, 18, tzinfo=UTC),
+                "last_working_memory_at": datetime(2026, 6, 18, tzinfo=UTC),
+                "last_episodic_memory_at": None,
+                "last_dream_extraction_at": datetime(2026, 6, 18, tzinfo=UTC),
+                "last_dream_proposal_update_at": datetime(2026, 6, 18, tzinfo=UTC),
+                "last_memory_alert_at": datetime(2026, 6, 18, tzinfo=UTC),
+                "last_memory_activity_at": datetime(2026, 6, 18, tzinfo=UTC),
+            },
+            "users": [
+                {
+                    "principal_id": "17eaebb1-d614-5558-bf31-df498d7a61b6",
+                    "profile_id": "ken",
+                    "display_name": "Ken",
+                    "role": "admin",
+                    "child_age": None,
+                    "aliases": ["17eaebb1-d614-5558-bf31-df498d7a61b6", "ken"],
+                    "semantic_count": 1,
+                    "semantic_review_count": 1,
+                    "working_count": 3,
+                    "episodic_count": 2,
+                    "dream_reviewed_writes_open": 2,
+                    "dream_approval_mismatch_count": 0,
+                    "last_activity_at": datetime(2026, 6, 18, tzinfo=UTC),
+                }
+            ][:limit],
+        }
+
+    async def admin_user_memory(
+        self,
+        conn: object,
+        *,
+        principal_id: UUID,
+        principal_aliases: list[str],
+        semantic_limit: int = 100,
+        working_limit: int = 50,
+        proposal_limit: int = 25,
+    ) -> dict:
+        assert str(principal_id) == "17eaebb1-d614-5558-bf31-df498d7a61b6"
+        assert "ken" in principal_aliases
+        summary = await self.summarize(
+            conn=conn,
+            user_id=principal_id,
+            semantic_limit=semantic_limit,
+            working_limit=working_limit,
+        )
+        summary["recent_dream_proposals"] = [
+            {
+                "proposal_id": "55555555-5555-4555-8555-555555555555",
+                "proposed_action": "promote_episodic_to_semantic",
+                "executable": True,
+                "status": "queued",
+                "approval_queue_id": "66666666-6666-4666-8666-666666666666",
+                "approval_status": "approved",
+                "created_at": datetime(2026, 6, 18, tzinfo=UTC),
+                "updated_at": datetime(2026, 6, 18, tzinfo=UTC),
+            }
+        ][:proposal_limit]
+        return summary
+
     async def save_semantic(
         self,
         *,
@@ -196,6 +270,13 @@ class FakeMemoryService:
 
 @asynccontextmanager
 async def fake_rls_connection(_request: object):
+    yield object()
+
+
+@asynccontextmanager
+async def fake_platform_admin_connection(*, source: str, audit_actor: str):
+    assert source == "http"
+    assert audit_actor == "ken"
     yield object()
 
 
@@ -247,6 +328,78 @@ async def test_memory_telemetry_omits_raw_fact_text(
     assert response.recent_dream_proposals[0].approval_status == "approved"
     assert not hasattr(response.recent_semantic_saves[0], "fact")
     assert not hasattr(response.recent_dream_proposals[0], "evidence")
+
+
+@pytest.mark.asyncio
+async def test_memory_admin_users_requires_read_scope(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        memory_route,
+        "platform_admin_connection",
+        fake_platform_admin_connection,
+    )
+    monkeypatch.setattr(memory_route, "MemoryService", FakeMemoryService)
+
+    with pytest.raises(HTTPException) as exc:
+        await memory_route.list_memory_admin_users(request=_request())
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_memory_admin_users_lists_principals(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        memory_route,
+        "platform_admin_connection",
+        fake_platform_admin_connection,
+    )
+    monkeypatch.setattr(memory_route, "MemoryService", FakeMemoryService)
+
+    response = await memory_route.list_memory_admin_users(
+        request=_request(scopes=["memory.read"]),
+        limit=100,
+    )
+
+    assert response.status == "ok"
+    assert response.users[0].profile_id == "ken"
+    assert response.users[0].display_name == "Ken"
+    assert response.health.principal_count == 1
+    assert response.health.total_working == 3
+    assert response.health.dream_reviewed_writes_open == 2
+    assert response.health.last_semantic_write_at == "2026-06-18T00:00:00+00:00"
+    assert response.users[0].semantic_count == 1
+    assert response.users[0].working_count == 3
+    assert response.users[0].dream_approval_mismatch_count == 0
+
+
+@pytest.mark.asyncio
+async def test_memory_admin_user_detail_shows_selected_memory(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        memory_route,
+        "platform_admin_connection",
+        fake_platform_admin_connection,
+    )
+    monkeypatch.setattr(memory_route, "MemoryService", FakeMemoryService)
+
+    response = await memory_route.get_memory_admin_user_detail(
+        principal_id="ken",
+        request=_request(scopes=["memory.read"]),
+        semantic_limit=100,
+        working_limit=50,
+        proposal_limit=25,
+    )
+
+    assert response.status == "ok"
+    assert response.profile_id == "ken"
+    assert response.principal_id == "17eaebb1-d614-5558-bf31-df498d7a61b6"
+    assert response.semantic[0].fact == "Beacon should beat stale memory."
+    assert response.working[0].summary == "Recent Ask exchange."
+    assert response.recent_dream_proposals[0].status == "queued"
 
 
 @pytest.mark.asyncio

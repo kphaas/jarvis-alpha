@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
-from uuid import UUID
+from uuid import NAMESPACE_DNS, UUID, uuid5
 
 import asyncpg
 
@@ -717,6 +717,343 @@ class MemoryService:
             "recent_dream_proposals": [dict(row) for row in recent_dream_proposals],
         }
 
+    async def admin_inventory(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        limit: int = 100,
+    ) -> dict:
+        """Return per-principal memory inventory for operator review."""
+        identity_rows = await conn.fetch(
+            """
+            WITH identities AS (
+                SELECT
+                    p.id::text AS profile_id,
+                    p.display_name::text AS display_name,
+                    p.role::text AS role,
+                    p.child_age::int AS child_age
+                FROM public.alpha_profiles p
+                WHERE COALESCE(p.active, true) = true
+                UNION
+                SELECT
+                    u.id::text AS profile_id,
+                    split_part(u.email::text, '@', 1) AS display_name,
+                    u.role::text AS role,
+                    u.child_age::int AS child_age
+                FROM public.alpha_users u
+            )
+            SELECT DISTINCT ON (profile_id)
+                profile_id,
+                COALESCE(NULLIF(display_name, ''), profile_id) AS display_name,
+                COALESCE(NULLIF(role, ''), 'user') AS role,
+                child_age
+            FROM identities
+            WHERE profile_id IS NOT NULL AND profile_id <> ''
+            ORDER BY profile_id, display_name
+            """,
+        )
+        principal_rows = await conn.fetch(
+            """
+            WITH principals AS (
+                SELECT user_id::text AS principal_id
+                FROM public.alpha_semantic_memory
+                UNION
+                SELECT user_id::text AS principal_id
+                FROM public.alpha_conversation_memory
+                UNION
+                SELECT user_id::text AS principal_id
+                FROM public.alpha_memory_consolidation_proposals
+            ),
+            semantic_counts AS (
+                SELECT
+                    user_id::text AS principal_id,
+                    COUNT(*)::int AS semantic_count,
+                    COUNT(*) FILTER (
+                        WHERE review_status = 'pending_review'
+                    )::int AS pending_review,
+                    MAX(updated_at) AS semantic_last_at
+                FROM public.alpha_semantic_memory
+                GROUP BY user_id
+            ),
+            conversation_counts AS (
+                SELECT
+                    user_id::text AS principal_id,
+                    COUNT(*) FILTER (WHERE tier = 'working')::int AS working_count,
+                    COUNT(*) FILTER (WHERE tier = 'episodic')::int AS episodic_count,
+                    MAX(created_at) AS conversation_last_at
+                FROM public.alpha_conversation_memory
+                GROUP BY user_id
+            ),
+            proposal_counts AS (
+                SELECT
+                    p.user_id::text AS principal_id,
+                    COUNT(*) FILTER (
+                        WHERE p.executable
+                          AND p.status IN ('pending_review', 'queued', 'approved')
+                    )::int AS dream_reviewed_writes_open,
+                    COUNT(*) FILTER (
+                        WHERE p.executable
+                          AND p.status IN ('queued', 'approved')
+                          AND (
+                            p.approval_queue_id IS NULL
+                            OR q.id IS NULL
+                            OR q.status NOT IN ('pending', 'approved')
+                            OR q.expires_at IS NULL
+                            OR q.expires_at <= now()
+                          )
+                    )::int AS dream_approval_mismatch_count,
+                    MAX(p.updated_at) AS proposal_last_at
+                FROM public.alpha_memory_consolidation_proposals p
+                LEFT JOIN public.alpha_approval_queue q
+                  ON q.id = p.approval_queue_id
+                GROUP BY p.user_id
+            )
+            SELECT
+                principals.principal_id,
+                COALESCE(semantic_counts.semantic_count, 0)::int AS semantic_count,
+                COALESCE(semantic_counts.pending_review, 0)::int AS pending_review,
+                COALESCE(conversation_counts.working_count, 0)::int AS working_count,
+                COALESCE(conversation_counts.episodic_count, 0)::int AS episodic_count,
+                COALESCE(proposal_counts.dream_reviewed_writes_open, 0)::int
+                    AS dream_reviewed_writes_open,
+                COALESCE(proposal_counts.dream_approval_mismatch_count, 0)::int
+                    AS dream_approval_mismatch_count,
+                GREATEST(
+                    semantic_counts.semantic_last_at,
+                    conversation_counts.conversation_last_at,
+                    proposal_counts.proposal_last_at
+                ) AS last_activity_at
+            FROM principals
+            LEFT JOIN semantic_counts USING (principal_id)
+            LEFT JOIN conversation_counts USING (principal_id)
+            LEFT JOIN proposal_counts USING (principal_id)
+            ORDER BY last_activity_at DESC NULLS LAST, principal_id ASC
+            LIMIT $1
+            """,
+            limit,
+        )
+        health = await self.admin_health(conn)
+        inventory = _merge_admin_inventory(identity_rows, principal_rows, limit=limit)
+        inventory["health"] = health
+        return inventory
+
+    async def admin_health(self, conn: asyncpg.Connection) -> dict[str, Any]:
+        """Return aggregate memory health metrics for operator dashboards."""
+
+        row = await conn.fetchrow(
+            """
+            WITH principals AS (
+                SELECT p.id::text AS principal_id
+                FROM public.alpha_profiles p
+                WHERE COALESCE(p.active, true) = true
+                UNION
+                SELECT u.id::text AS principal_id
+                FROM public.alpha_users u
+                UNION
+                SELECT user_id::text AS principal_id
+                FROM public.alpha_semantic_memory
+                UNION
+                SELECT user_id::text AS principal_id
+                FROM public.alpha_conversation_memory
+                UNION
+                SELECT user_id::text AS principal_id
+                FROM public.alpha_memory_consolidation_proposals
+            ),
+            semantic AS (
+                SELECT
+                    COUNT(*)::int AS total_semantic,
+                    COUNT(*) FILTER (
+                        WHERE review_status = 'pending_review'
+                    )::int AS semantic_review_count,
+                    MAX(created_at) AS last_semantic_write_at,
+                    MAX(reviewed_at) FILTER (
+                        WHERE reviewed_at IS NOT NULL
+                    ) AS last_semantic_review_at
+                FROM public.alpha_semantic_memory
+            ),
+            conversation AS (
+                SELECT
+                    COUNT(*) FILTER (WHERE tier = 'working')::int AS total_working,
+                    COUNT(*) FILTER (WHERE tier = 'episodic')::int AS total_episodic,
+                    MAX(created_at) FILTER (
+                        WHERE tier = 'working'
+                    ) AS last_working_memory_at,
+                    MAX(created_at) FILTER (
+                        WHERE tier = 'episodic'
+                    ) AS last_episodic_memory_at
+                FROM public.alpha_conversation_memory
+            ),
+            proposals AS (
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE p.executable
+                          AND p.status IN ('pending_review', 'queued', 'approved')
+                    )::int AS dream_reviewed_writes_open,
+                    COUNT(*) FILTER (
+                        WHERE p.executable
+                          AND p.status IN ('queued', 'approved')
+                          AND (
+                            p.approval_queue_id IS NULL
+                            OR q.id IS NULL
+                            OR q.status NOT IN ('pending', 'approved')
+                            OR q.expires_at IS NULL
+                            OR q.expires_at <= now()
+                          )
+                    )::int AS dream_approval_mismatch_count,
+                    COUNT(*) FILTER (
+                        WHERE p.executable
+                          AND p.status IN ('pending_review', 'queued', 'approved')
+                          AND p.updated_at < now() - INTERVAL '48 hours'
+                    )::int AS stale_dream_reviewed_writes,
+                    COUNT(*) FILTER (
+                        WHERE p.executable
+                          AND p.status = 'queued'
+                          AND q.status = 'approved'
+                    )::int AS dream_approved_waiting_execution,
+                    MAX(created_at) AS last_dream_extraction_at,
+                    MAX(updated_at) AS last_dream_proposal_update_at
+                FROM public.alpha_memory_consolidation_proposals p
+                LEFT JOIN public.alpha_approval_queue q
+                  ON q.id = p.approval_queue_id
+            ),
+            buddy AS (
+                SELECT
+                    COUNT(*) FILTER (WHERE read = false)::int AS unread_memory_buddy_events,
+                    COUNT(*) FILTER (WHERE priority >= 3)::int
+                        AS high_priority_buddy_events,
+                    MAX(created_at) AS last_memory_alert_at
+                FROM public.alpha_buddy_events
+                WHERE source = 'semantic_memory_review'
+                   OR source = 'memory_observability_monitor'
+                   OR payload ? 'memory_id'
+                   OR title ILIKE '%memory%'
+            )
+            SELECT
+                (SELECT COUNT(*)::int FROM principals) AS principal_count,
+                semantic.total_semantic,
+                semantic.semantic_review_count,
+                semantic.last_semantic_write_at,
+                semantic.last_semantic_review_at,
+                conversation.total_working,
+                conversation.total_episodic,
+                conversation.last_working_memory_at,
+                conversation.last_episodic_memory_at,
+                proposals.dream_reviewed_writes_open,
+                proposals.dream_approval_mismatch_count,
+                proposals.stale_dream_reviewed_writes,
+                proposals.dream_approved_waiting_execution,
+                proposals.last_dream_extraction_at,
+                proposals.last_dream_proposal_update_at,
+                buddy.unread_memory_buddy_events,
+                buddy.high_priority_buddy_events,
+                buddy.last_memory_alert_at,
+                GREATEST(
+                    semantic.last_semantic_write_at,
+                    conversation.last_working_memory_at,
+                    conversation.last_episodic_memory_at,
+                    proposals.last_dream_proposal_update_at,
+                    buddy.last_memory_alert_at
+                ) AS last_memory_activity_at
+            FROM semantic, conversation, proposals, buddy
+            """,
+        )
+        return dict(row or {})
+
+    async def admin_user_memory(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        principal_id: UUID,
+        principal_aliases: list[str],
+        semantic_limit: int = 100,
+        working_limit: int = 50,
+        proposal_limit: int = 25,
+    ) -> dict:
+        """Return bounded raw memory rows for one operator-selected principal."""
+        semantic_rows = await conn.fetch(
+            """
+            SELECT id::text, fact, category, source, provenance,
+                   review_status, review_reason, reviewed_at, reviewed_by,
+                   created_at, updated_at
+            FROM public.alpha_semantic_memory
+            WHERE user_id = $1
+              AND COALESCE(review_status, 'active') <> 'archived'
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT $2
+            """,
+            principal_id,
+            semantic_limit,
+        )
+        semantic_metrics = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*)::int AS semantic_count,
+                COUNT(*) FILTER (WHERE review_status = 'pending_review')::int
+                    AS semantic_review_count
+            FROM public.alpha_semantic_memory
+            WHERE user_id = $1
+              AND COALESCE(review_status, 'active') <> 'archived'
+            """,
+            principal_id,
+        )
+        conversation_counts = await conn.fetch(
+            """
+            SELECT tier, COUNT(*)::int AS count
+            FROM public.alpha_conversation_memory
+            WHERE user_id = ANY($1::text[])
+            GROUP BY tier
+            """,
+            principal_aliases,
+        )
+        working_rows = await conn.fetch(
+            """
+            SELECT id::text, session_id, summary, memory_type AS role,
+                   importance_score, created_at
+            FROM public.alpha_conversation_memory
+            WHERE user_id = ANY($1::text[])
+              AND tier = 'working'
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            principal_aliases,
+            working_limit,
+        )
+        recent_dream_proposals = await conn.fetch(
+            """
+            SELECT
+                p.id::text AS proposal_id,
+                p.proposed_action,
+                p.executable,
+                p.status,
+                p.approval_queue_id::text,
+                q.status AS approval_status,
+                p.created_at,
+                p.updated_at
+            FROM public.alpha_memory_consolidation_proposals p
+            LEFT JOIN public.alpha_approval_queue q
+              ON q.id = p.approval_queue_id
+            WHERE p.user_id = $1
+            ORDER BY p.updated_at DESC
+            LIMIT $2
+            """,
+            principal_id,
+            proposal_limit,
+        )
+        tier_counts = {
+            str(row["tier"]): int(row["count"]) for row in conversation_counts
+        }
+        return {
+            "semantic_count": int((semantic_metrics or {}).get("semantic_count") or 0),
+            "semantic_review_count": int(
+                (semantic_metrics or {}).get("semantic_review_count") or 0
+            ),
+            "episodic_count": tier_counts.get("episodic", 0),
+            "working_count": tier_counts.get("working", 0),
+            "semantic": [_semantic_summary_row(row) for row in semantic_rows],
+            "working": [dict(row) for row in working_rows],
+            "recent_dream_proposals": [dict(row) for row in recent_dream_proposals],
+        }
+
 
 def _semantic_summary_row(row: asyncpg.Record) -> dict[str, Any]:
     payload = dict(row)
@@ -735,3 +1072,101 @@ def _json_object(value: object) -> dict[str, Any]:
         if isinstance(decoded, dict):
             return {str(key): item for key, item in decoded.items()}
     return {}
+
+
+def _merge_admin_inventory(
+    identity_rows: list[asyncpg.Record],
+    principal_rows: list[asyncpg.Record],
+    *,
+    limit: int,
+) -> dict:
+    identities: dict[str, dict[str, Any]] = {}
+    alias_to_key: dict[str, str] = {}
+    for row in identity_rows:
+        profile_id = str(row["profile_id"])
+        canonical_id = _canonical_principal_id(profile_id)
+        identity = {
+            "principal_id": canonical_id,
+            "profile_id": profile_id,
+            "display_name": str(row["display_name"] or profile_id),
+            "role": str(row["role"] or "user"),
+            "child_age": row["child_age"],
+            "aliases": sorted({profile_id, canonical_id}),
+        }
+        identities[canonical_id] = identity
+        alias_to_key[profile_id] = canonical_id
+        alias_to_key[canonical_id] = canonical_id
+
+    entries: dict[str, dict[str, Any]] = {}
+    for canonical_id, identity in identities.items():
+        entries[canonical_id] = {
+            **identity,
+            "semantic_count": 0,
+            "semantic_review_count": 0,
+            "working_count": 0,
+            "episodic_count": 0,
+            "dream_reviewed_writes_open": 0,
+            "dream_approval_mismatch_count": 0,
+            "last_activity_at": None,
+        }
+
+    for row in principal_rows:
+        principal_id = str(row["principal_id"])
+        key = alias_to_key.get(principal_id, principal_id)
+        if key not in entries:
+            entries[key] = {
+                "principal_id": principal_id,
+                "profile_id": None,
+                "display_name": principal_id,
+                "role": "unknown",
+                "child_age": None,
+                "aliases": [principal_id],
+                "semantic_count": 0,
+                "semantic_review_count": 0,
+                "working_count": 0,
+                "episodic_count": 0,
+                "dream_reviewed_writes_open": 0,
+                "dream_approval_mismatch_count": 0,
+                "last_activity_at": None,
+            }
+        entry = entries[key]
+        entry["semantic_count"] += int(row["semantic_count"] or 0)
+        entry["semantic_review_count"] += int(row["pending_review"] or 0)
+        entry["working_count"] += int(row["working_count"] or 0)
+        entry["episodic_count"] += int(row["episodic_count"] or 0)
+        entry["dream_reviewed_writes_open"] += int(
+            row["dream_reviewed_writes_open"] or 0
+        )
+        entry["dream_approval_mismatch_count"] += int(
+            row["dream_approval_mismatch_count"] or 0
+        )
+        entry["last_activity_at"] = _max_datetime(
+            entry["last_activity_at"],
+            row["last_activity_at"],
+        )
+
+    items = sorted(
+        entries.values(),
+        key=lambda item: (
+            item["last_activity_at"] is not None,
+            str(item["last_activity_at"] or ""),
+            item["display_name"],
+        ),
+        reverse=True,
+    )
+    return {"users": items[:limit]}
+
+
+def _canonical_principal_id(profile_id: str) -> str:
+    try:
+        return str(UUID(profile_id))
+    except ValueError:
+        return str(uuid5(NAMESPACE_DNS, profile_id))
+
+
+def _max_datetime(left: object, right: object) -> object:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return max(left, right)
