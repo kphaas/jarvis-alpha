@@ -41,6 +41,10 @@ ALLOWED_AUDIO_TYPES = {
     "audio/webm",
     "application/octet-stream",
 }
+PRESERVED_TRANSCRIBE_BACKEND_DETAILS = {
+    "voice_backend_empty_transcript",
+    "voice_backend_unavailable",
+}
 _family_voice_token_cache: dict[str, Any] = {}
 
 
@@ -263,6 +267,17 @@ def _transcript_from_payload(payload: dict[str, Any]) -> str:
     return ""
 
 
+def _backend_error_detail(response: httpx.Response) -> str | None:
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    detail = payload.get("detail")
+    return detail if isinstance(detail, str) and detail.strip() else None
+
+
 async def _forward_voice_upload(
     *,
     request: Request,
@@ -307,10 +322,16 @@ async def _forward_voice_upload(
         )
         raise HTTPException(status_code=502, detail="voice_backend_rejected")
     if response.status_code >= 400:
+        backend_detail = _backend_error_detail(response)
         logger.warning(
             "helm_voice_transcribe_backend_failed",
-            extra={"backend_status": response.status_code},
+            extra={
+                "backend_status": response.status_code,
+                "backend_detail": backend_detail,
+            },
         )
+        if backend_detail in PRESERVED_TRANSCRIBE_BACKEND_DETAILS:
+            raise HTTPException(status_code=502, detail=backend_detail)
         raise HTTPException(status_code=502, detail="voice_backend_failed")
 
     try:
