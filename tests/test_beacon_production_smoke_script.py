@@ -67,3 +67,28 @@ def test_remote_smoke_without_token_source_fails_explicitly(monkeypatch):
             base_url=smoke_beacon_production.DEFAULT_BASE_URL,
             token_ssh_target=None,
         )
+
+
+def test_health_check_metadata_extracts_browser_runtime_limits():
+    metadata = smoke_beacon_production._health_check_metadata(
+        {
+            "browser_runtime": {
+                "status": "ok",
+                "metadata": {
+                    "runtime": "playwright",
+                    "timeout_ms": 20_000,
+                    "max_steps": 5,
+                    "max_runs_per_hour": 3,
+                },
+            }
+        },
+        "browser_runtime",
+    )
+
+    assert metadata["max_steps"] == 5
+    assert smoke_beacon_production._int(metadata["timeout_ms"]) == 20_000
+
+
+def test_health_check_metadata_missing_check_is_empty():
+    assert smoke_beacon_production._health_check_metadata({}, "browser_runtime") == {}
+    assert smoke_beacon_production._int("not-a-number") == 0

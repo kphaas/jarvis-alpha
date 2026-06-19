@@ -23,7 +23,9 @@ P10/P11:
 - Browser-use approval requests can be queued and an approved-runner route can
   verify and consume the exact approval row.
 - Browser runs have an hourly operator quota, same-host observation checks,
-  screenshot review markers, and content-addressed screenshot storage.
+  strict same-host network allowlists, screenshot review markers,
+  content-addressed screenshot storage, no-download/no-form/no-credential-entry
+  enforcement, timeout/step caps, and append-only per-action audit events.
 - The browser runner is adapter-based and fails closed unless
   `BEACON_BROWSER_RUNTIME=playwright` is configured with the reviewed runtime
   settings.
@@ -62,5 +64,6 @@ deployment, set:
 - `BEACON_BROWSER_SCREENSHOT_DIR=<local private screenshot path>`
 - `BEACON_BROWSER_PLAYWRIGHT_VERSION=1.49.1`
 - `BEACON_BROWSER_TIMEOUT_MS=20000` unless a smaller reviewed value is needed
+- `BEACON_BROWSER_MAX_STEPS=5` maximum; lower values are allowed
 - `BEACON_BROWSER_MAX_RUNS_PER_HOUR=3` unless the operator approves a higher
   bounded limit

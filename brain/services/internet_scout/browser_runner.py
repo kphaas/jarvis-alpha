@@ -6,7 +6,8 @@ import hashlib
 from importlib import import_module, metadata
 import os
 from pathlib import Path
-from typing import Protocol
+from time import perf_counter
+from typing import Awaitable, Callable, Protocol
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -16,6 +17,7 @@ from brain.services.internet_scout.evidence import (
     build_source_reference,
 )
 from brain.services.internet_scout.models import (
+    BrowserActionAuditEvent,
     BrowserRunObservation,
     BrowserSandboxPolicy,
     EvidenceClaim,
@@ -32,6 +34,9 @@ from brain.services.internet_scout.sanitizer import sanitize_untrusted_text
 EXPECTED_PLAYWRIGHT_VERSION = "1.49.1"
 DEFAULT_BROWSER_RUNS_PER_HOUR = 3
 DEFAULT_BROWSER_TIMEOUT_MS = 20_000
+DEFAULT_BROWSER_MAX_STEPS = 5
+
+BrowserActionAuditCallback = Callable[[BrowserActionAuditEvent], Awaitable[None]]
 
 
 class BrowserRuntimeUnavailableError(RuntimeError):
@@ -48,6 +53,7 @@ class BrowserTaskAdapter(Protocol):
         *,
         request: InternetScoutRequest,
         sandbox: BrowserSandboxPolicy,
+        audit_action: BrowserActionAuditCallback | None = None,
     ) -> list[BrowserRunObservation]:
         """Run the approved task and return reviewed observations."""
 
@@ -61,7 +67,17 @@ class DisabledBrowserTaskAdapter:
         *,
         request: InternetScoutRequest,
         sandbox: BrowserSandboxPolicy,
+        audit_action: BrowserActionAuditCallback | None = None,
     ) -> list[BrowserRunObservation]:
+        await _emit_action(
+            audit_action,
+            BrowserActionAuditEvent(
+                sequence=0,
+                action="runtime",
+                status="failed",
+                blocked_reason=self.reason,
+            ),
+        )
         raise BrowserRuntimeUnavailableError(self.reason)
 
 
@@ -116,6 +132,7 @@ class PlaywrightBrowserTaskAdapter:
         *,
         request: InternetScoutRequest,
         sandbox: BrowserSandboxPolicy,
+        audit_action: BrowserActionAuditCallback | None = None,
     ) -> list[BrowserRunObservation]:
         if not request.urls:
             raise BrowserSandboxPolicyError("browser_start_url_required")
@@ -129,11 +146,26 @@ class PlaywrightBrowserTaskAdapter:
                     accept_downloads=False,
                     ignore_https_errors=False,
                 )
+                await context.route(
+                    "**/*",
+                    lambda route: _enforce_browser_request_allowlist(
+                        route,
+                        allowed_hosts=set(sandbox.allowed_hosts),
+                    ),
+                )
                 page = await context.new_page()
-                await page.goto(
-                    request.urls[0],
-                    wait_until="domcontentloaded",
-                    timeout=self.timeout_ms,
+                page.set_default_timeout(self.timeout_ms)
+                await _timed_action(
+                    audit_action,
+                    action="navigate",
+                    sequence=1,
+                    host=sandbox.allowed_hosts[0],
+                    url_hash=_hash_url(request.urls[0]),
+                    operation=lambda: page.goto(
+                        request.urls[0],
+                        wait_until="domcontentloaded",
+                        timeout=self.timeout_ms,
+                    ),
                 )
                 final_url = str(page.url)
                 final_safety = validate_url(final_url)
@@ -141,19 +173,65 @@ class PlaywrightBrowserTaskAdapter:
                     not final_safety.allowed
                     or final_safety.host not in sandbox.allowed_hosts
                 ):
+                    await _emit_action(
+                        audit_action,
+                        BrowserActionAuditEvent(
+                            sequence=2,
+                            action="navigate",
+                            status="blocked",
+                            host=final_safety.host,
+                            url_hash=_hash_url(final_url),
+                            blocked_reason="browser_cross_host_navigation_blocked",
+                        ),
+                    )
                     raise BrowserSandboxPolicyError(
                         "browser_cross_host_navigation_blocked"
                     )
+                await _timed_action(
+                    audit_action,
+                    action="inspect_controls",
+                    sequence=3,
+                    host=final_safety.host,
+                    url_hash=_hash_url(final_url),
+                    operation=lambda: _assert_no_disallowed_form_controls(page),
+                )
                 title = await page.title()
-                raw_visible_text = await page.locator("body").inner_text(
-                    timeout=self.timeout_ms
+                raw_visible_text = await _timed_action(
+                    audit_action,
+                    action="extract_text",
+                    sequence=4,
+                    host=final_safety.host,
+                    url_hash=_hash_url(final_url),
+                    operation=lambda: page.locator("body").inner_text(
+                        timeout=self.timeout_ms
+                    ),
                 )
                 sanitized = sanitize_untrusted_text(raw_visible_text, max_chars=5000)
-                screenshot = await page.screenshot(full_page=True)
+                screenshot = await _timed_action(
+                    audit_action,
+                    action="screenshot",
+                    sequence=5,
+                    host=final_safety.host,
+                    url_hash=_hash_url(final_url),
+                    operation=lambda: page.screenshot(full_page=True),
+                )
                 screenshot_ref = self.screenshot_store.save_png(screenshot)
                 content_hash = hashlib.sha256(
                     sanitized.text.encode("utf-8")
                 ).hexdigest()
+                await _emit_action(
+                    audit_action,
+                    BrowserActionAuditEvent(
+                        sequence=6,
+                        action="observe",
+                        status="succeeded",
+                        host=final_safety.host,
+                        url_hash=_hash_url(final_url),
+                        content_hash=content_hash,
+                        screenshot_ref=screenshot_ref,
+                        metadata={"risk_marker_count": len(sanitized.risk_markers)},
+                    ),
+                )
                 return [
                     BrowserRunObservation(
                         url=final_safety.normalized_url or final_url,
@@ -185,13 +263,65 @@ class BrowserTaskRunner:
         plan: InternetScoutPlan,
         max_steps: int,
         require_screenshot: bool,
+        audit_action: BrowserActionAuditCallback | None = None,
     ) -> InternetScoutBrowserRunResponse:
-        sandbox = build_browser_sandbox_policy(
-            request,
-            max_steps=max_steps,
-            require_screenshot=require_screenshot,
+        action_audit: list[BrowserActionAuditEvent] = []
+
+        async def record_action(event: BrowserActionAuditEvent) -> None:
+            action_audit.append(event)
+            if audit_action is not None:
+                await audit_action(event)
+
+        await _emit_action(
+            record_action,
+            BrowserActionAuditEvent(
+                sequence=0,
+                action="sandbox",
+                status="started",
+                metadata={
+                    "requested_max_steps": max_steps,
+                    "require_screenshot": require_screenshot,
+                },
+            ),
         )
-        observations = await self.adapter.run(request=request, sandbox=sandbox)
+        try:
+            sandbox = build_browser_sandbox_policy(
+                request,
+                max_steps=max_steps,
+                require_screenshot=require_screenshot,
+            )
+        except BrowserSandboxPolicyError as exc:
+            await _emit_action(
+                record_action,
+                BrowserActionAuditEvent(
+                    sequence=1,
+                    action="sandbox",
+                    status="blocked",
+                    blocked_reason=str(exc),
+                ),
+            )
+            raise
+        await _emit_action(
+            record_action,
+            BrowserActionAuditEvent(
+                sequence=1,
+                action="sandbox",
+                status="succeeded",
+                metadata={
+                    "allowed_host_count": len(sandbox.allowed_hosts),
+                    "max_steps": sandbox.max_steps,
+                    "allow_downloads": sandbox.allow_downloads,
+                    "allow_forms": sandbox.allow_forms,
+                    "allow_cross_host_navigation": sandbox.allow_cross_host_navigation,
+                    "network_mode": sandbox.network_mode,
+                },
+            ),
+        )
+        observations = await self.adapter.run(
+            request=request,
+            sandbox=sandbox,
+            audit_action=record_action,
+        )
         _validate_observations(observations, sandbox)
         packet = packet_from_browser_observations(
             request=request,
@@ -205,6 +335,7 @@ class BrowserTaskRunner:
             sandbox=sandbox,
             evidence=packet,
             observations=observations,
+            action_audit=action_audit,
             screenshots_review_required=True,
             blocked_reasons=[],
         )
@@ -231,6 +362,15 @@ def browser_hourly_run_limit() -> int:
         default=DEFAULT_BROWSER_RUNS_PER_HOUR,
         minimum=1,
         maximum=10,
+    )
+
+
+def browser_max_steps_limit() -> int:
+    return _bounded_int_env(
+        "BEACON_BROWSER_MAX_STEPS",
+        default=DEFAULT_BROWSER_MAX_STEPS,
+        minimum=1,
+        maximum=DEFAULT_BROWSER_MAX_STEPS,
     )
 
 
@@ -276,6 +416,7 @@ def browser_runtime_health() -> dict[str, object]:
             minimum=5_000,
             maximum=60_000,
         ),
+        "max_steps": browser_max_steps_limit(),
         "max_runs_per_hour": browser_hourly_run_limit(),
     }
 
@@ -293,6 +434,9 @@ def build_browser_sandbox_policy(
     require_screenshot: bool,
 ) -> BrowserSandboxPolicy:
     normalized = normalize_browser_request(request)
+    max_allowed_steps = browser_max_steps_limit()
+    if max_steps > max_allowed_steps:
+        raise BrowserSandboxPolicyError("browser_max_steps_exceeded")
     decision = evaluate_policy(normalized)
     if decision.tool != InternetTool.BROWSER_USE or not decision.requires_approval:
         raise BrowserSandboxPolicyError("browser_use_request_required")
@@ -304,10 +448,15 @@ def build_browser_sandbox_policy(
         raise BrowserSandboxPolicyError("browser_start_url_required")
 
     hosts: list[str] = []
+    first_host: str | None = None
     for url in normalized.urls:
         safety = validate_url(url)
         if not safety.allowed or safety.host is None:
             raise BrowserSandboxPolicyError("browser_start_url_not_public")
+        if first_host is None:
+            first_host = safety.host
+        elif safety.host != first_host:
+            raise BrowserSandboxPolicyError("browser_start_urls_must_share_host")
         if safety.host not in hosts:
             hosts.append(safety.host)
 
@@ -320,6 +469,156 @@ def build_browser_sandbox_policy(
         allow_cross_host_navigation=False,
         network_mode="public_web_only",
     )
+
+
+async def _emit_action(
+    audit_action: BrowserActionAuditCallback | None,
+    event: BrowserActionAuditEvent,
+) -> None:
+    if audit_action is not None:
+        await audit_action(event)
+
+
+async def _timed_action(
+    audit_action: BrowserActionAuditCallback | None,
+    *,
+    action: str,
+    sequence: int,
+    host: str | None,
+    url_hash: str | None,
+    operation,
+):
+    started = perf_counter()
+    await _emit_action(
+        audit_action,
+        BrowserActionAuditEvent(
+            sequence=sequence,
+            action=action,
+            status="started",
+            host=host,
+            url_hash=url_hash,
+        ),
+    )
+    try:
+        result = await operation()
+    except BrowserSandboxPolicyError as exc:
+        await _emit_action(
+            audit_action,
+            BrowserActionAuditEvent(
+                sequence=sequence,
+                action=action,
+                status="blocked",
+                host=host,
+                url_hash=url_hash,
+                elapsed_ms=_elapsed_ms(started),
+                blocked_reason=str(exc),
+            ),
+        )
+        raise
+    except Exception as exc:
+        await _emit_action(
+            audit_action,
+            BrowserActionAuditEvent(
+                sequence=sequence,
+                action=action,
+                status="failed",
+                host=host,
+                url_hash=url_hash,
+                elapsed_ms=_elapsed_ms(started),
+                blocked_reason=exc.__class__.__name__,
+            ),
+        )
+        raise
+    await _emit_action(
+        audit_action,
+        BrowserActionAuditEvent(
+            sequence=sequence,
+            action=action,
+            status="succeeded",
+            host=host,
+            url_hash=url_hash,
+            elapsed_ms=_elapsed_ms(started),
+        ),
+    )
+    return result
+
+
+async def _enforce_browser_request_allowlist(route, *, allowed_hosts: set[str]) -> None:
+    request = route.request
+    url = str(request.url)
+    safety = validate_url(url)
+    if not safety.allowed or safety.host not in allowed_hosts:
+        await route.abort("blockedbyclient")
+        return
+    await route.continue_()
+
+
+async def _assert_no_disallowed_form_controls(page) -> None:
+    controls = await page.evaluate(
+        """
+        () => Array.from(
+          document.querySelectorAll('form,input,textarea,select,[contenteditable="true"]')
+        ).slice(0, 50).map((el) => ({
+          tag: String(el.tagName || '').toLowerCase(),
+          type: String(el.getAttribute('type') || '').toLowerCase(),
+          name: String(el.getAttribute('name') || '').toLowerCase(),
+          id: String(el.getAttribute('id') || '').toLowerCase(),
+          autocomplete: String(el.getAttribute('autocomplete') || '').toLowerCase(),
+          placeholder: String(el.getAttribute('placeholder') || '').toLowerCase(),
+          contentEditable: String(el.getAttribute('contenteditable') || '').toLowerCase()
+        }))
+        """
+    )
+    reason = classify_disallowed_browser_controls(controls)
+    if reason is not None:
+        raise BrowserSandboxPolicyError(reason)
+
+
+def classify_disallowed_browser_controls(controls: object) -> str | None:
+    if not isinstance(controls, list) or not controls:
+        return None
+    credential_markers = {
+        "password",
+        "passwd",
+        "passcode",
+        "otp",
+        "token",
+        "email",
+        "username",
+        "login",
+        "tel",
+        "phone",
+        "card",
+        "cc",
+        "credit",
+        "ssn",
+    }
+    for control in controls:
+        if not isinstance(control, dict):
+            return "browser_forms_blocked"
+        haystack = " ".join(
+            str(control.get(key, "")).lower()
+            for key in (
+                "tag",
+                "type",
+                "name",
+                "id",
+                "autocomplete",
+                "placeholder",
+                "contentEditable",
+            )
+        )
+        if any(marker in haystack for marker in credential_markers):
+            return "browser_credential_fields_blocked"
+    return "browser_forms_blocked"
+
+
+def _hash_url(url: str) -> str:
+    return "sha256:" + hashlib.sha256(url.encode("utf-8")).hexdigest()
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((perf_counter() - started) * 1000))
 
 
 def packet_from_browser_observations(
