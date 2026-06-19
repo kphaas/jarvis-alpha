@@ -86,6 +86,40 @@ def test_eval_smart_web_suggestion_does_not_silently_search() -> None:
     assert suggestion.mode == "deep_research"
 
 
+def test_chat_rolling_context_uses_prior_turns_only() -> None:
+    context = chat._conversation_context_from_messages(
+        [
+            {"role": "user", "content": "Remember that my daughter has soccer at 3."},
+            {"role": "assistant", "content": "Got it, soccer is at 3."},
+            {"role": "user", "content": "What time was that again?"},
+        ]
+    )
+
+    assert context is not None
+    assert "Ken: Remember that my daughter has soccer at 3." in context
+    assert "AT-0: Got it, soccer is at 3." in context
+    assert "What time was that again?" not in context
+
+
+def test_chat_enriched_prompt_includes_recent_conversation_context() -> None:
+    prompt = chat._build_enriched_prompt(
+        memory_context="",
+        internet_context=None,
+        conversation_context=(
+            "Ken: My favorite voice is playful buddy.\n"
+            "AT-0: I will keep that tone ready."
+        ),
+        user_msg="What tone are you using?",
+    )
+
+    assert "Recent conversation" in prompt
+    assert "Ken: My favorite voice is playful buddy." in prompt
+    assert prompt.index("Recent conversation") < prompt.index(
+        "User: What tone are you using?"
+    )
+    assert prompt.endswith("User: What tone are you using?")
+
+
 def test_at0_voice_surface_injects_style_context() -> None:
     prompt = chat._build_enriched_prompt(
         memory_context="",

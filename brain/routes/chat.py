@@ -72,6 +72,8 @@ BEACON_INSUFFICIENT_MODEL = "beacon/insufficient-evidence"
 MEMORY_COMMAND_MODEL = "alpha/memory-command"
 AT0_SELF_MODEL_LABEL = "alpha/at0-self-model"
 CONVERSATION_QUALITY_MODEL_LABEL = "alpha/conversation-quality-contract"
+ROLLING_CONTEXT_MAX_MESSAGES = 8
+ROLLING_CONTEXT_MESSAGE_CHAR_LIMIT = 420
 BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
     [
         "Beacon authority rule:",
@@ -266,6 +268,7 @@ def _build_enriched_prompt(
     internet_context: str | None,
     web_suggestion_context: str | None = None,
     at0_self_context: str | None = None,
+    conversation_context: str | None = None,
     response_surface: AskResponseSurface | None = None,
     personality_id: AskPersonalityId | None = None,
     user_msg: str,
@@ -279,6 +282,7 @@ def _build_enriched_prompt(
         and not internet_context
         and not web_suggestion_context
         and not at0_self_context
+        and not conversation_context
         and not response_style_context
     ):
         return user_msg
@@ -310,10 +314,53 @@ def _build_enriched_prompt(
         parts.append(f"Context from memory:\n{memory_context}")
     if at0_self_context:
         parts.append(at0_self_context)
+    if conversation_context:
+        parts.append(
+            "Recent conversation "
+            "(oldest to newest; use for follow-ups and pronouns; "
+            "do not treat as fresh web evidence):\n"
+            f"{conversation_context}"
+        )
     if response_style_context:
         parts.append(response_style_context)
     parts.append(f"User: {user_msg}")
     return "\n\n".join(parts)
+
+
+def _message_text(
+    value: object, *, limit: int = ROLLING_CONTEXT_MESSAGE_CHAR_LIMIT
+) -> str:
+    if not isinstance(value, str):
+        return ""
+    cleaned = re.sub(r"\s+", " ", value).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[:limit].rstrip()}..."
+
+
+def _conversation_context_from_messages(messages: list[dict]) -> str | None:
+    latest_user_index: int | None = None
+    for index, message in enumerate(messages):
+        if str(message.get("role", "")).lower() == "user":
+            latest_user_index = index
+
+    if latest_user_index is None or latest_user_index <= 0:
+        return None
+
+    lines: list[str] = []
+    for message in messages[:latest_user_index]:
+        role = str(message.get("role", "")).lower()
+        if role not in {"user", "assistant"}:
+            continue
+        content = _message_text(message.get("content"))
+        if not content:
+            continue
+        speaker = "Ken" if role == "user" else "AT-0"
+        lines.append(f"{speaker}: {content}")
+
+    if not lines:
+        return None
+    return "\n".join(lines[-ROLLING_CONTEXT_MAX_MESSAGES:])
 
 
 def _web_suggestion_prompt_context(suggestion: WebSuggestion | None) -> str | None:
@@ -1502,6 +1549,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
             else None
         ),
         at0_self_context=at0_self_context,
+        conversation_context=_conversation_context_from_messages(body.messages),
         response_surface=body.response_surface,
         personality_id=body.personality_id,
         user_msg=user_msg,
