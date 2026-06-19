@@ -11,6 +11,7 @@
 # Usage:
 #   bash scripts/jarvisalpha_commit.sh "<commit message>"
 #   bash scripts/jarvisalpha_commit.sh --auto-merge "<commit message>"
+#   JARVIS_ALPHA_REPO_DIR=/path/to/worktree bash scripts/jarvisalpha_commit.sh "<commit message>"
 #
 # Flags:
 #   --auto-merge   After PR is opened, enable GitHub auto-merge (squash + delete branch).
@@ -21,7 +22,7 @@
 set -uo pipefail
 
 # ── Config ────────────────────────────────────────────────
-REPO_DIR="${HOME}/jarvis-alpha"
+REPO_DIR="${JARVIS_ALPHA_REPO_DIR:-${HOME}/jarvis-alpha}"
 
 # ── Args ──────────────────────────────────────────────────
 AUTO_MERGE=0
@@ -107,14 +108,15 @@ cd "$REPO_DIR"
 BRANCH=$(git branch --show-current)
 if [[ "$BRANCH" == "main" || "$BRANCH" == "master" ]]; then
   printf '%bERROR: jarvis-alpha is P-trait. Branch first:%b\n' "$RED$BOLD" "$RESET" >&2
-  printf '  jarvis_branch claude-code/<descriptor>  (agent work)\n' >&2
+  printf '  jarvis_branch codex/<descriptor>        (Codex agent work)\n' >&2
+  printf '  jarvis_branch claude-code/<descriptor>  (Claude Code agent work)\n' >&2
   printf '  jarvis_branch feature/<descriptor>      (human work)\n' >&2
   exit 1
 fi
 case "$BRANCH" in
-  feature/*|claude-code/*|hotfix/*|chore/*) ;;
+  codex/*|feature/*|claude-code/*|hotfix/*|chore/*) ;;
   *)
-    printf 'ERROR: Branch name '\''%s'\'' must start with one of: feature/ claude-code/ hotfix/ chore/\n' "$BRANCH" >&2
+    printf 'ERROR: Branch name '\''%s'\'' must start with one of: codex/ feature/ claude-code/ hotfix/ chore/\n' "$BRANCH" >&2
     exit 4
     ;;
 esac
