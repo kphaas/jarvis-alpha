@@ -98,21 +98,39 @@ def test_at0_voice_surface_injects_style_context() -> None:
     assert "AT-0 interaction style:" in prompt
     assert "Surface: Voice" in prompt
     assert "one or two conversational sentences" in prompt
-    assert "under 60 words" in prompt
+    assert "under 45 words" in prompt
     assert "No markdown" in prompt
     assert "Calm Operator" in prompt
     assert "do not correct him" in prompt
     assert "User: How is the weather?" in prompt
 
 
-def test_at0_plain_chat_without_style_keeps_prompt_unwrapped() -> None:
+def test_at0_chat_surface_injects_detailed_grounded_contract() -> None:
     prompt = chat._build_enriched_prompt(
         memory_context="",
         internet_context=None,
         user_msg="Hello",
     )
 
-    assert prompt == "Hello"
+    assert "Surface: Chat" in prompt
+    assert "fuller useful answer" in prompt
+    assert "short sections or bullets" in prompt
+    assert "Do not invent backend updates" in prompt
+    assert prompt.endswith("User: Hello")
+
+
+def test_at0_avatar_surface_injects_brief_presence_contract() -> None:
+    prompt = chat._build_enriched_prompt(
+        memory_context="",
+        internet_context=None,
+        response_surface="avatar",
+        user_msg="Hello",
+    )
+
+    assert "Surface: Avatar" in prompt
+    assert "under 35 words" in prompt
+    assert "do not narrate interface" in prompt
+    assert prompt.endswith("User: Hello")
 
 
 def test_at0_voice_polish_removes_robotic_weather_preamble() -> None:
@@ -127,6 +145,19 @@ def test_at0_voice_polish_removes_robotic_weather_preamble() -> None:
     assert "reliable source for current weather conditions" not in polished
     assert "feeling like 73 degrees" in polished
     assert "Please note" not in polished
+
+
+def test_at0_voice_polish_replaces_robotic_status_phrases() -> None:
+    polished = chat._polish_model_response(
+        "As a private AI assistant, I am functioning within normal parameters. "
+        "Please note that diagnostics are nominal.",
+        "voice",
+    )
+
+    assert "private AI assistant" not in polished
+    assert "functioning within normal parameters" not in polished
+    assert "Please note" not in polished
+    assert polished.startswith("I'm ready")
 
 
 def test_at0_voice_polish_removes_markdown_heading() -> None:
@@ -154,6 +185,24 @@ def test_at0_final_response_strips_unsupported_beacon_claim() -> None:
 
     assert finalized == "We are close to a two-second voice response."
     assert "Beacon checked" not in finalized
+
+
+def test_at0_final_response_replaces_fake_conversation_update_plan() -> None:
+    finalized = chat._finalize_model_response(
+        "**Update Conversational Models** Run a Beacon update from Alpha. "
+        "Then update macOS on each node and refresh my models with the latest NLP "
+        "and dialogue management techniques.",
+        "chat",
+        "What is the best way to improve AT-0 conversation quality in chat and voice?",
+        internet_verified=False,
+    )
+
+    assert "eval-driven" in finalized
+    assert "Chat should be fuller" in finalized
+    assert "Voice should be short" in finalized
+    assert "Beacon update" not in finalized
+    assert "macOS" not in finalized
+    assert "NLP" not in finalized
 
 
 def test_eval_sports_schedule_suggests_web_search() -> None:
@@ -198,6 +247,50 @@ def test_eval_avatar_web_howto_is_self_query_not_stale_fact() -> None:
     assert suggestion is not None
     assert suggestion.reason == "current_information_likely"
     assert chat._should_short_circuit_web_suggestion(suggestion) is False
+
+
+def test_eval_current_capabilities_is_self_query_not_stale_fact() -> None:
+    query = "Can you know yourself and your current capabilities? Explain how."
+    suggestion = suggest_web_for_chat(
+        query=query,
+        internet_mode="none",
+        sensitivity="normal",
+    )
+
+    assert is_at0_self_query(query) is True
+    assert suggestion is not None
+    assert suggestion.reason == "current_information_likely"
+    assert chat._should_short_circuit_web_suggestion(suggestion) is False
+
+
+def test_conversation_quality_voice_response_stays_brief_and_conversational() -> None:
+    response = chat._conversation_quality_response(
+        "How do we improve conversation quality in chat and voice?",
+        "voice",
+    )
+
+    assert response is not None
+    assert len(response.split()) <= 45
+    assert "**" not in response
+    assert "\n" not in response
+    assert "Beacon update" not in response
+    assert "macOS" not in response
+
+
+def test_conversation_quality_chat_response_is_detailed_and_structured() -> None:
+    response = chat._conversation_quality_response(
+        "What is the best way to improve AT-0 conversation quality in chat and voice?",
+        "chat",
+    )
+
+    assert response is not None
+    assert "eval-driven" in response
+    assert "- Chat should be fuller" in response
+    assert "- Voice should be short" in response
+    assert "- Avatar should be even tighter" in response
+    assert len(response.split()) > 80
+    assert "Beacon update" not in response
+    assert "macOS" not in response
 
 
 def test_at0_self_quick_response_is_concise_for_voice_capabilities() -> None:
