@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid5, NAMESPACE_DNS
 
@@ -9,6 +10,9 @@ import pytest
 from fastapi import HTTPException
 
 from brain.routes import memory as memory_route
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _request(*, scopes: list[str] | None = None, role: str = "user"):
@@ -30,6 +34,8 @@ class FakeMemoryService:
     working_forgets: list[UUID] = []
     marked_buddy_events: list[tuple[UUID, list[UUID], bool, str]] = []
     suppressed_buddy_events: list[tuple[UUID, int, bool, str]] = []
+    admin_marked_buddy_events: list[tuple[list[UUID], bool, str]] = []
+    admin_suppressed_buddy_events: list[tuple[int, bool, str]] = []
 
     async def summarize(
         self,
@@ -321,6 +327,44 @@ class FakeMemoryService:
         return {
             "status": "duplicates_suppressed",
             "suppressed_count": 1,
+            "suppressed_ids": ["77777777-7777-4777-8777-777777777777"],
+            "window_hours": window_hours,
+        }
+
+    async def admin_mark_memory_buddy_events_read(
+        self,
+        *,
+        conn: object,
+        event_ids: list[UUID] | None = None,
+        high_priority_only: bool = False,
+        marked_by: str = "unknown",
+    ) -> dict:
+        self.admin_marked_buddy_events.append(
+            (event_ids or [], high_priority_only, marked_by)
+        )
+        return {
+            "status": "marked_read",
+            "marked_count": 5,
+            "marked_ids": [
+                "44444444-4444-4444-8444-444444444444",
+                "55555555-5555-4555-8555-555555555555",
+            ],
+        }
+
+    async def admin_suppress_duplicate_memory_buddy_events(
+        self,
+        *,
+        conn: object,
+        window_hours: int = 168,
+        high_priority_only: bool = False,
+        suppressed_by: str = "unknown",
+    ) -> dict:
+        self.admin_suppressed_buddy_events.append(
+            (window_hours, high_priority_only, suppressed_by)
+        )
+        return {
+            "status": "duplicates_suppressed",
+            "suppressed_count": 4,
             "suppressed_ids": ["77777777-7777-4777-8777-777777777777"],
             "window_hours": window_hours,
         }
@@ -645,6 +689,57 @@ async def test_memory_buddy_controls_require_scope_and_scope_to_memory(
     assert service.suppressed_buddy_events == [
         (uuid5(NAMESPACE_DNS, "ken"), 24, True, "ken")
     ]
+
+
+@pytest.mark.asyncio
+async def test_memory_admin_buddy_controls_use_platform_admin_connection(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = FakeMemoryService()
+    monkeypatch.setattr(
+        memory_route,
+        "platform_admin_connection",
+        fake_platform_admin_connection,
+    )
+    monkeypatch.setattr(memory_route, "MemoryService", lambda: service)
+    event_id = UUID("44444444-4444-4444-8444-444444444444")
+
+    with pytest.raises(HTTPException) as exc:
+        await memory_route.admin_mark_memory_buddy_events_read(
+            body=memory_route.MemoryBuddyEventsReadRequest(event_ids=[event_id]),
+            request=_request(),
+        )
+
+    assert exc.value.status_code == 403
+
+    marked = await memory_route.admin_mark_memory_buddy_events_read(
+        body=memory_route.MemoryBuddyEventsReadRequest(
+            event_ids=[event_id],
+            high_priority_only=True,
+        ),
+        request=_request(scopes=["memory.write"]),
+    )
+    suppressed = await memory_route.admin_suppress_duplicate_memory_buddy_events(
+        body=memory_route.MemoryBuddyEventsSuppressRequest(
+            window_hours=24,
+            high_priority_only=True,
+        ),
+        request=_request(scopes=["memory.write"]),
+    )
+
+    assert marked.status == "marked_read"
+    assert marked.marked_count == 5
+    assert suppressed.status == "duplicates_suppressed"
+    assert suppressed.window_hours == 24
+    assert service.admin_marked_buddy_events == [([event_id], True, "ken")]
+    assert service.admin_suppressed_buddy_events == [(24, True, "ken")]
+
+
+def test_memory_admin_buddy_sql_casts_actor_parameter() -> None:
+    source = (REPO_ROOT / "brain" / "memory" / "memory.py").read_text()
+
+    assert "'marked_by', $3::text" in source
+    assert "'suppressed_by', $3::text" in source
 
 
 @pytest.mark.asyncio
