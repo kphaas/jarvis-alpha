@@ -30,6 +30,7 @@ REQUIRED_MEMORY_TABLES = (
     "alpha_semantic_memory",
     "alpha_conversation_memory",
     "alpha_buddy_events",
+    "alpha_buddy_events_archive",
     "alpha_memory_consolidation_proposals",
     "alpha_memory_consolidation_execution_ledger",
     "alpha_approval_queue",
@@ -39,6 +40,8 @@ REQUIRED_MEMORY_TABLES = (
 REQUIRED_FORCE_RLS_TABLES = (
     "alpha_semantic_memory",
     "alpha_conversation_memory",
+    "alpha_buddy_events",
+    "alpha_buddy_events_archive",
     "alpha_memory_consolidation_proposals",
     "alpha_memory_consolidation_execution_ledger",
     "alpha_approval_queue",

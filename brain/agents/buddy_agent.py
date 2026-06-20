@@ -98,6 +98,8 @@ def memory_maintenance_changed_count(value: object) -> int:
     total = 0
     for key in (
         "evicted_working",
+        "archived_buddy_events",
+        "pruned_buddy_event_archive",
         "evicted_episodic",
         "capped_episodic",
         "capped_semantic",

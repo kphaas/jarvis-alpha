@@ -297,9 +297,11 @@ def test_restore_drill_verifies_memory_tables_and_force_rls():
         encoding="utf-8"
     )
 
-    assert "EXPECTED_MEMORY_FORCE_RLS_TABLES=4" in text
+    assert "EXPECTED_MEMORY_FORCE_RLS_TABLES=6" in text
     assert "alpha_semantic_memory" in text
     assert "alpha_conversation_memory" in text
+    assert "alpha_buddy_events" in text
+    assert "alpha_buddy_events_archive" in text
     assert "alpha_memory_consolidation_proposals" in text
     assert "alpha_memory_consolidation_execution_ledger" in text
     assert "memory_force_rls_${MEMORY_FORCE_RLS}_expected_" in text

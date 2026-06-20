@@ -10,6 +10,8 @@ def test_memory_readiness_sql_checks_tables_rls_restore_and_audit() -> None:
 
     assert "alpha_semantic_memory" in sql
     assert "alpha_conversation_memory" in sql
+    assert "alpha_buddy_events" in sql
+    assert "alpha_buddy_events_archive" in sql
     assert "alpha_memory_consolidation_proposals" in sql
     assert "alpha_memory_consolidation_execution_ledger" in sql
     assert "alpha_approval_audit" in sql
