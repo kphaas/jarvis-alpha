@@ -50,6 +50,9 @@ def readiness_sql() -> str:
     required_tables = ", ".join(f"('{name}')" for name in REQUIRED_MEMORY_TABLES)
     force_tables = ", ".join(f"('{name}')" for name in REQUIRED_FORCE_RLS_TABLES)
     return f"""
+-- Runtime audit and restore drill counts are queried separately after table
+-- presence is known, so missing required tables produce a red report instead
+-- of a relation-not-found crash.
 WITH required_tables(name) AS (
     VALUES {required_tables}
 ),
@@ -69,31 +72,7 @@ force_rls_status AS (
     FROM required_force_rls r
     LEFT JOIN pg_class c
       ON c.relname = r.name
-    LEFT JOIN pg_namespace n
-      ON n.oid = c.relnamespace
-     AND n.nspname = 'public'
-),
-audit AS (
-    SELECT
-        (SELECT COUNT(*)::int FROM public.alpha_approval_audit)
-            AS approval_audit_rows,
-        (SELECT COUNT(*)::int
-           FROM public.alpha_memory_consolidation_execution_ledger)
-            AS consolidation_ledger_rows,
-        (SELECT COUNT(*)::int
-           FROM public.alpha_approval_queue
-          WHERE status IN ('pending', 'approved')
-            AND expires_at > now())
-            AS active_approval_rows
-),
-restore AS (
-    SELECT COUNT(*)::int AS restore_drill_events_30d
-    FROM public.alpha_buddy_events
-    WHERE created_at >= now() - INTERVAL '30 days'
-      AND (
-        source = 'restore_drill_alpha'
-        OR title ILIKE 'Restore drill%'
-      )
+     AND c.relnamespace = 'public'::regnamespace
 )
 SELECT jsonb_build_object(
     'required_tables', (
@@ -114,10 +93,46 @@ SELECT jsonb_build_object(
         FROM force_rls_status
         WHERE NOT force_rls
     ), '[]'::jsonb),
-    'audit', to_jsonb(audit),
-    'restore', to_jsonb(restore)
+    'audit', jsonb_build_object(
+        'approval_audit_rows', 0,
+        'consolidation_ledger_rows', 0,
+        'active_approval_rows', 0
+    ),
+    'restore', jsonb_build_object('restore_drill_events_30d', 0)
 )::text
-FROM audit, restore;
+;
+"""
+
+
+def audit_sql() -> str:
+    return """
+SELECT jsonb_build_object(
+    'approval_audit_rows',
+        (SELECT COUNT(*)::int FROM public.alpha_approval_audit),
+    'consolidation_ledger_rows',
+        (SELECT COUNT(*)::int
+           FROM public.alpha_memory_consolidation_execution_ledger),
+    'active_approval_rows',
+        (SELECT COUNT(*)::int
+           FROM public.alpha_approval_queue
+          WHERE status IN ('pending', 'approved')
+            AND expires_at > now())
+)::text;
+"""
+
+
+def restore_sql() -> str:
+    return """
+SELECT jsonb_build_object(
+    'restore_drill_events_30d',
+        COUNT(*)::int
+)::text
+FROM public.alpha_buddy_events
+WHERE created_at >= now() - INTERVAL '30 days'
+  AND (
+    source = 'restore_drill_alpha'
+    OR title ILIKE 'Restore drill%'
+  );
 """
 
 
@@ -220,6 +235,7 @@ def main() -> int:
     try:
         raw_db = run_psql_json(readiness_sql(), env)
         db = raw_db if isinstance(raw_db, dict) else {}
+        db.update(runtime_readiness_counts(db, env))
         report = build_report(db=db, local=local_readiness(REPO_ROOT))
         print(json.dumps(report, sort_keys=True))
     except Exception as exc:
@@ -246,6 +262,28 @@ def _list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if item]
+
+
+def runtime_readiness_counts(
+    db: dict[str, Any],
+    env: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    missing_tables = set(_list(db.get("missing_tables")))
+    runtime: dict[str, dict[str, Any]] = {}
+    audit_tables = {
+        "alpha_approval_audit",
+        "alpha_memory_consolidation_execution_ledger",
+        "alpha_approval_queue",
+    }
+    if not audit_tables.intersection(missing_tables):
+        raw_audit = run_psql_json(audit_sql(), env)
+        if isinstance(raw_audit, dict):
+            runtime["audit"] = raw_audit
+    if "alpha_buddy_events" not in missing_tables:
+        raw_restore = run_psql_json(restore_sql(), env)
+        if isinstance(raw_restore, dict):
+            runtime["restore"] = raw_restore
+    return runtime
 
 
 if __name__ == "__main__":
