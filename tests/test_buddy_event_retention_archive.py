@@ -125,9 +125,20 @@ def test_buddy_maintenance_owner_grants_are_reversible() -> None:
     source = OWNER_GRANTS_ROLLBACK.read_text(encoding="utf-8")
 
     assert "REVOKE EXECUTE ON FUNCTION public.evict_expired_working_memory()" in source
-    assert "REVOKE EXECUTE ON FUNCTION public.archive_old_low_priority_buddy_events(" in source
-    assert "REVOKE EXECUTE ON FUNCTION public.evict_episodic_memory_older_than(" in source
-    assert "REVOKE EXECUTE ON FUNCTION public.cap_episodic_memory(TEXT, INTEGER)" in source
-    assert "REVOKE EXECUTE ON FUNCTION public.cap_semantic_memory(TEXT, INTEGER)" in source
+    assert (
+        "REVOKE EXECUTE ON FUNCTION public.archive_old_low_priority_buddy_events("
+        in source
+    )
+    assert (
+        "REVOKE EXECUTE ON FUNCTION public.evict_episodic_memory_older_than(" in source
+    )
+    assert (
+        "REVOKE EXECUTE ON FUNCTION public.cap_episodic_memory(TEXT, INTEGER)" in source
+    )
+    assert (
+        "REVOKE EXECUTE ON FUNCTION public.cap_semantic_memory(TEXT, INTEGER)" in source
+    )
     assert "ARRAY[]::aclitem[]" in source
-    assert "Buddy maintenance owner grant rollback left explicit EXECUTE grants" in source
+    assert (
+        "Buddy maintenance owner grant rollback left explicit EXECUTE grants" in source
+    )
