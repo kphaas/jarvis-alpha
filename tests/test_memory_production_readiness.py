@@ -73,6 +73,31 @@ def test_memory_readiness_report_rag_states() -> None:
     assert "missing_tables" in failing["failures"]
 
 
+def test_memory_readiness_runtime_counts_skip_missing_tables(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_run_psql_json(sql: str, env: dict[str, str]) -> dict:
+        calls.append(sql)
+        return {"unexpected": True}
+
+    monkeypatch.setattr(readiness, "run_psql_json", fake_run_psql_json)
+
+    runtime = readiness.runtime_readiness_counts(
+        {
+            "missing_tables": [
+                "alpha_approval_audit",
+                "alpha_buddy_events",
+            ],
+        },
+        {},
+    )
+
+    assert runtime == {}
+    assert calls == []
+
+
 def test_memory_readiness_local_files_check(tmp_path: Path) -> None:
     (tmp_path / "scripts").mkdir()
     (tmp_path / "launchagents").mkdir()
