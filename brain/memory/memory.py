@@ -593,18 +593,55 @@ class MemoryService:
         )
         buddy_metrics = await conn.fetchrow(
             """
+            WITH memory_events AS (
+                SELECT
+                    priority,
+                    read,
+                    source,
+                    title,
+                    COALESCE(payload, '{}'::jsonb) AS payload
+                FROM alpha_buddy_events
+                WHERE user_id = $1
+                  AND created_at >= now() - INTERVAL '7 days'
+                  AND (
+                    source IN (
+                        'semantic_memory_review',
+                        'memory_observability_monitor',
+                        'memory_consolidation',
+                        'spark_memory_grounding'
+                    )
+                    OR COALESCE(payload, '{}'::jsonb) ? 'memory_id'
+                    OR COALESCE(payload, '{}'::jsonb) ? 'proposal_id'
+                    OR COALESCE(payload, '{}'::jsonb) ? 'fingerprint'
+                    OR (priority >= 3 AND title ILIKE '%memory%')
+                  )
+            ),
+            actionable AS (
+                SELECT *,
+                    read = false
+                    AND NOT (
+                        payload ? 'memory_suppression'
+                        OR payload ? 'memory_admin_suppression'
+                    )
+                    AND (
+                        source IN (
+                            'semantic_memory_review',
+                            'memory_observability_monitor'
+                        )
+                        OR payload ? 'memory_id'
+                        OR payload ? 'proposal_id'
+                        OR priority >= 3
+                    ) AS actionable_unread
+                FROM memory_events
+            )
             SELECT
                 COUNT(*)::int AS memory_buddy_events_7d,
-                COUNT(*) FILTER (WHERE read = false)::int AS unread_memory_buddy_events,
-                COUNT(*) FILTER (WHERE priority >= 3)::int AS high_priority_buddy_events
-            FROM alpha_buddy_events
-            WHERE user_id = $1
-              AND created_at >= now() - INTERVAL '7 days'
-              AND (
-                source = 'semantic_memory_review'
-                OR payload ? 'memory_id'
-                OR title ILIKE '%memory%'
-              )
+                COUNT(*) FILTER (WHERE actionable_unread)::int
+                    AS unread_memory_buddy_events,
+                COUNT(*) FILTER (
+                    WHERE actionable_unread AND priority >= 3
+                )::int AS high_priority_buddy_events
+            FROM actionable
             """,
             str(user_id),
         )
@@ -622,9 +659,16 @@ class MemoryService:
             FROM alpha_buddy_events
             WHERE user_id = $1
               AND (
-                source = 'semantic_memory_review'
-                OR payload ? 'memory_id'
-                OR title ILIKE '%memory%'
+                source IN (
+                    'semantic_memory_review',
+                    'memory_observability_monitor',
+                    'memory_consolidation',
+                    'spark_memory_grounding'
+                )
+                OR COALESCE(payload, '{}'::jsonb) ? 'memory_id'
+                OR COALESCE(payload, '{}'::jsonb) ? 'proposal_id'
+                OR COALESCE(payload, '{}'::jsonb) ? 'fingerprint'
+                OR (priority >= 3 AND title ILIKE '%memory%')
               )
             ORDER BY created_at DESC
             LIMIT $2
@@ -1156,17 +1200,55 @@ class MemoryService:
                 LEFT JOIN public.alpha_approval_queue q
                   ON q.id = p.approval_queue_id
             ),
+            buddy_events AS (
+                SELECT
+                    priority,
+                    read,
+                    source,
+                    title,
+                    created_at,
+                    COALESCE(payload, '{}'::jsonb) AS payload
+                FROM public.alpha_buddy_events
+                WHERE source IN (
+                        'semantic_memory_review',
+                        'memory_observability_monitor',
+                        'memory_consolidation',
+                        'spark_memory_grounding'
+                    )
+                   OR COALESCE(payload, '{}'::jsonb) ? 'memory_id'
+                   OR COALESCE(payload, '{}'::jsonb) ? 'proposal_id'
+                   OR COALESCE(payload, '{}'::jsonb) ? 'fingerprint'
+                   OR (priority >= 3 AND title ILIKE '%memory%')
+            ),
+            buddy_actionable AS (
+                SELECT *,
+                    read = false
+                    AND created_at >= now() - INTERVAL '7 days'
+                    AND NOT (
+                        payload ? 'memory_suppression'
+                        OR payload ? 'memory_admin_suppression'
+                    )
+                    AND (
+                        source IN (
+                            'semantic_memory_review',
+                            'memory_observability_monitor'
+                        )
+                        OR payload ? 'memory_id'
+                        OR payload ? 'proposal_id'
+                        OR priority >= 3
+                    ) AS actionable_unread
+                FROM buddy_events
+            ),
             buddy AS (
                 SELECT
-                    COUNT(*) FILTER (WHERE read = false)::int AS unread_memory_buddy_events,
-                    COUNT(*) FILTER (WHERE priority >= 3)::int
+                    COUNT(*) FILTER (WHERE actionable_unread)::int
+                        AS unread_memory_buddy_events,
+                    COUNT(*) FILTER (
+                        WHERE actionable_unread AND priority >= 3
+                    )::int
                         AS high_priority_buddy_events,
                     MAX(created_at) AS last_memory_alert_at
-                FROM public.alpha_buddy_events
-                WHERE source = 'semantic_memory_review'
-                   OR source = 'memory_observability_monitor'
-                   OR payload ? 'memory_id'
-                   OR title ILIKE '%memory%'
+                FROM buddy_actionable
             )
             SELECT
                 (SELECT COUNT(*)::int FROM principals) AS principal_count,

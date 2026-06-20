@@ -193,13 +193,13 @@ def evaluate_metrics(
             "unread_memory_buddy_events",
             thresholds.max_unread_memory_buddy_events,
             "warn",
-            "unread memory Buddy events above operator-noise SLO",
+            "actionable unread memory Buddy events above operator-noise SLO",
         ),
         (
             "high_priority_buddy_events",
             thresholds.max_high_priority_unread,
             "warn",
-            "high-priority memory Buddy events above review SLO",
+            "high-priority unread memory Buddy events above review SLO",
         ),
         (
             "dream_approved_waiting_execution",
@@ -342,18 +342,50 @@ WITH semantic AS (
     FROM public.alpha_semantic_memory
 ),
 buddy AS (
+    WITH memory_events AS (
+        SELECT
+            priority,
+            read,
+            source,
+            title,
+            COALESCE(payload, '{{}}'::jsonb) AS payload
+        FROM public.alpha_buddy_events
+        WHERE created_at >= now() - INTERVAL '7 days'
+          AND (
+            source IN (
+                'semantic_memory_review',
+                '{MONITOR_SOURCE}',
+                'memory_consolidation',
+                'spark_memory_grounding'
+            )
+            OR COALESCE(payload, '{{}}'::jsonb) ? 'memory_id'
+            OR COALESCE(payload, '{{}}'::jsonb) ? 'proposal_id'
+            OR COALESCE(payload, '{{}}'::jsonb) ? 'fingerprint'
+            OR (priority >= 3 AND title ILIKE '%memory%')
+          )
+    ),
+    actionable AS (
+        SELECT *,
+            read = false
+            AND NOT (
+                payload ? 'memory_suppression'
+                OR payload ? 'memory_admin_suppression'
+            )
+            AND (
+                source IN ('semantic_memory_review', '{MONITOR_SOURCE}')
+                OR payload ? 'memory_id'
+                OR payload ? 'proposal_id'
+                OR priority >= 3
+            ) AS actionable_unread
+        FROM memory_events
+    )
     SELECT
         COUNT(*)::int AS memory_buddy_events_7d,
-        COUNT(*) FILTER (WHERE read = false)::int AS unread_memory_buddy_events,
-        COUNT(*) FILTER (WHERE priority >= 3)::int AS high_priority_buddy_events
-    FROM public.alpha_buddy_events
-    WHERE created_at >= now() - INTERVAL '7 days'
-      AND (
-        source = 'semantic_memory_review'
-        OR source = '{MONITOR_SOURCE}'
-        OR payload ? 'memory_id'
-        OR title ILIKE '%memory%'
-      )
+        COUNT(*) FILTER (WHERE actionable_unread)::int
+            AS unread_memory_buddy_events,
+        COUNT(*) FILTER (WHERE actionable_unread AND priority >= 3)::int
+            AS high_priority_buddy_events
+    FROM actionable
 ),
 proposal AS (
     SELECT

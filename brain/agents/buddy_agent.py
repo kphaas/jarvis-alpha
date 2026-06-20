@@ -74,6 +74,57 @@ def _payload_for_agent_event(payload_json: str):
         return {"raw": str(payload_json)}
 
 
+def _decode_memory_maintenance_payload(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
+
+
+def _maintenance_errors(payload: dict[str, object]) -> list[object]:
+    errors = payload.get("errors")
+    return errors if isinstance(errors, list) else []
+
+
+def memory_maintenance_changed_count(value: object) -> int:
+    """Return row-change count from the DB maintenance payload."""
+
+    payload = _decode_memory_maintenance_payload(value)
+    total = 0
+    for key in (
+        "evicted_working",
+        "evicted_episodic",
+        "capped_episodic",
+        "capped_semantic",
+        "promoted",
+    ):
+        try:
+            total += max(0, int(payload.get(key) or 0))
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def should_write_memory_maintenance_event(value: object) -> bool:
+    """Suppress no-op per-minute maintenance rows; preserve changes/errors."""
+
+    payload = _decode_memory_maintenance_payload(value)
+    return (
+        bool(_maintenance_errors(payload))
+        or memory_maintenance_changed_count(payload) > 0
+    )
+
+
+def memory_maintenance_event_priority(value: object) -> int:
+    payload = _decode_memory_maintenance_payload(value)
+    return 3 if _maintenance_errors(payload) else 1
+
+
 async def _write_event(
     pool: asyncpg.Pool,
     *,
@@ -372,15 +423,18 @@ async def _run_cycle(pool: asyncpg.Pool) -> None:
                     str(user_id),
                 )
 
-            await _write_event(
-                pool,
-                user_id=user_id,
-                event_type="system",
-                title="Memory maintenance complete",
-                body="Completed per-user memory maintenance cycle.",
-                priority=1,
-                payload=maintenance_result,
-            )
+            if should_write_memory_maintenance_event(maintenance_result):
+                priority = memory_maintenance_event_priority(maintenance_result)
+                changed = memory_maintenance_changed_count(maintenance_result)
+                await _write_event(
+                    pool,
+                    user_id=user_id,
+                    event_type="alert" if priority >= 3 else "system",
+                    title="Memory maintenance changed rows",
+                    body=f"Memory maintenance changed {changed} row(s).",
+                    priority=priority,
+                    payload=maintenance_result,
+                )
 
             async with pool.acquire() as conn:
                 aging = await conn.fetch(

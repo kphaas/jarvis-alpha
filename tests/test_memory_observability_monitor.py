@@ -167,6 +167,9 @@ def test_memory_observability_sql_uses_aggregate_metrics_only() -> None:
     assert "alpha_semantic_memory" in sql
     assert "alpha_memory_consolidation_proposals" in sql
     assert "q.expires_at <= now()" in sql
+    assert "actionable_unread" in sql
+    assert "payload ? 'memory_suppression'" in sql
+    assert "priority >= 3 and title ilike '%memory%'" in sql
     assert "fact" not in sql
     assert "evidence" not in sql
 

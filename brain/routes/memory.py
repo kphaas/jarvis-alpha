@@ -944,12 +944,12 @@ def _memory_health_state(metrics: dict[str, object]) -> MemoryHealthState:
             thresholds.max_dream_reviewed_writes_open,
         ),
         (
-            "unread Buddy events",
+            "actionable unread Buddy events",
             value("unread_memory_buddy_events"),
             thresholds.max_unread_memory_buddy_events,
         ),
         (
-            "high-priority Buddy events",
+            "high-priority unread Buddy events",
             value("high_priority_buddy_events"),
             thresholds.max_high_priority_buddy_events,
         ),
