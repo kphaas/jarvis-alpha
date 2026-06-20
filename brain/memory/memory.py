@@ -419,8 +419,12 @@ class MemoryService:
         category: str,
         updated_by: str,
     ) -> dict:
-        review_status = "pending_review" if category in {"health", "child_profile"} else "active"
-        review_reason = "sensitive_category" if review_status == "pending_review" else None
+        review_status = (
+            "pending_review" if category in {"health", "child_profile"} else "active"
+        )
+        review_reason = (
+            "sensitive_category" if review_status == "pending_review" else None
+        )
         payload = await conn.fetchrow(
             """
             UPDATE public.alpha_semantic_memory
