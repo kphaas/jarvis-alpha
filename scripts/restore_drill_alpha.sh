@@ -286,9 +286,26 @@ if ! "$DOCKER" run -d --name "$CONTAINER" \
     exit 4
 fi
 
-# wait for ready (max 30s): pg_isready is necessary but not sufficient — it can
-# go green during a brief restart window between init and accepting queries.
-# Require pg_isready AND a real SELECT 1 to succeed.
+# The official Postgres image starts a temporary server during initdb, shuts it
+# down, then starts the final server. pg_isready and SELECT 1 can briefly pass
+# during the temporary phase, which races pg_restore into "server is shutting
+# down". Wait for the final init marker before trusting readiness.
+INIT_COMPLETE=false
+for i in $(seq 1 60); do
+    if "$DOCKER" logs "$CONTAINER" 2>&1 | grep -q 'PostgreSQL init process complete'; then
+        INIT_COMPLETE=true; break
+    fi
+    sleep 1
+done
+if [[ "$INIT_COMPLETE" != "true" ]]; then
+    log_json "$(make_event fatal reason=container_init_not_complete_60s)"
+    mm_notify critical "Restore drill FAILED" "container init never completed"
+    buddy_event alert "Restore drill failed" "reason=container_init_not_complete run=${RUN_TS}" 3
+    exit 4
+fi
+log_json "$(make_event container_init_complete container="$CONTAINER")"
+
+# Wait for final ready (max 30s). Require pg_isready AND a real SELECT 1.
 READY=false
 for i in $(seq 1 30); do
     if "$DOCKER" exec "$CONTAINER" pg_isready -U postgres >/dev/null 2>&1 \

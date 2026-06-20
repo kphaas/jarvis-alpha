@@ -235,6 +235,19 @@ def test_restore_drill_finds_macos_tool_paths_outside_login_path():
     assert "DOCKER=$(find_tool docker || true)" in text
 
 
+def test_restore_drill_waits_for_final_postgres_startup():
+    text = (REPO_ROOT / "scripts" / "restore_drill_alpha.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "PostgreSQL init process complete" in text
+    assert "container_init_complete" in text
+    assert "container_init_not_complete_60s" in text
+    assert text.index("PostgreSQL init process complete") < text.index(
+        '"$DOCKER" exec "$CONTAINER" pg_restore'
+    )
+
+
 def test_pg_backup_calls_preflight():
     """pg_backup must short-circuit on preflight failure."""
     text = (REPO_ROOT / "scripts" / "pg_backup_alpha.sh").read_text(encoding="utf-8")
