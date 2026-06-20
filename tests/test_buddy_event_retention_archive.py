@@ -26,8 +26,14 @@ def test_buddy_event_archive_table_is_force_rls_admin_only() -> None:
     source = MIGRATION.read_text(encoding="utf-8")
 
     assert "CREATE TABLE IF NOT EXISTS public.alpha_buddy_events_archive" in source
-    assert "ALTER TABLE public.alpha_buddy_events_archive ENABLE ROW LEVEL SECURITY" in source
-    assert "ALTER TABLE public.alpha_buddy_events_archive FORCE ROW LEVEL SECURITY" in source
+    assert (
+        "ALTER TABLE public.alpha_buddy_events_archive ENABLE ROW LEVEL SECURITY"
+        in source
+    )
+    assert (
+        "ALTER TABLE public.alpha_buddy_events_archive FORCE ROW LEVEL SECURITY"
+        in source
+    )
     assert "buddy_events_archive_isolation" in source
     assert "current_setting('jarvis.role', true) = 'platform_admin'" in source
     assert "current_setting('rls.role', true) = 'platform_admin'" in source
@@ -37,7 +43,10 @@ def test_buddy_event_archive_table_is_force_rls_admin_only() -> None:
 def test_buddy_event_retention_function_is_bounded_and_safe() -> None:
     source = MIGRATION.read_text(encoding="utf-8")
 
-    assert "CREATE OR REPLACE FUNCTION public.archive_old_low_priority_buddy_events" in source
+    assert (
+        "CREATE OR REPLACE FUNCTION public.archive_old_low_priority_buddy_events"
+        in source
+    )
     assert "SECURITY DEFINER" in source
     assert "PERFORM set_config('rls.role', 'platform_admin', true)" in source
     assert "PERFORM set_config('jarvis.role', 'platform_admin', true)" in source
@@ -47,10 +56,15 @@ def test_buddy_event_retention_function_is_bounded_and_safe() -> None:
     assert "COALESCE(source, '') <> 'restore_drill_alpha'" in source
     assert "title NOT ILIKE 'Restore drill%'" in source
     assert "pruned_archive_count" in source
-    assert "GRANT EXECUTE ON FUNCTION public.archive_old_low_priority_buddy_events" in source
+    assert (
+        "GRANT EXECUTE ON FUNCTION public.archive_old_low_priority_buddy_events"
+        in source
+    )
 
 
-def test_buddy_maintenance_reports_retention_counts_without_raw_payload_expansion() -> None:
+def test_buddy_maintenance_reports_retention_counts_without_raw_payload_expansion() -> (
+    None
+):
     source = MIGRATION.read_text(encoding="utf-8")
     agent = BUDDY_AGENT.read_text(encoding="utf-8")
 
@@ -65,7 +79,9 @@ def test_buddy_retention_rollback_fails_safely_when_archive_has_rows() -> None:
     source = ROLLBACK.read_text(encoding="utf-8")
 
     assert "Refusing rollback: alpha_buddy_events_archive contains rows" in source
-    assert "DROP FUNCTION IF EXISTS public.archive_old_low_priority_buddy_events" in source
+    assert (
+        "DROP FUNCTION IF EXISTS public.archive_old_low_priority_buddy_events" in source
+    )
     assert "DROP TABLE IF EXISTS public.alpha_buddy_events_archive" in source
     assert "CREATE OR REPLACE FUNCTION public.run_buddy_memory_maintenance" in source
 
