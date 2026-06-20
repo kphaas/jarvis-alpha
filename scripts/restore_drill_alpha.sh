@@ -28,7 +28,7 @@ REF_TABLES=105
 REF_TOLERANCE=2
 EXPECTED_PRIVACY_TABLES=16
 EXPECTED_PRIVACY_FORCE_RLS_TABLES=16
-EXPECTED_MEMORY_FORCE_RLS_TABLES=4
+EXPECTED_MEMORY_FORCE_RLS_TABLES=6
 
 # Tools
 find_tool() {
@@ -367,7 +367,7 @@ HAS_CONVMEM=$(psqlc "SELECT count(*) FROM information_schema.tables WHERE table_
 HAS_SEMANTIC_MEMORY=$(psqlc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='alpha_semantic_memory'")
 HAS_MEMORY_PROPOSALS=$(psqlc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='alpha_memory_consolidation_proposals'")
 HAS_MEMORY_LEDGER=$(psqlc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='alpha_memory_consolidation_execution_ledger'")
-MEMORY_FORCE_RLS=$(psqlc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relname IN ('alpha_semantic_memory','alpha_conversation_memory','alpha_memory_consolidation_proposals','alpha_memory_consolidation_execution_ledger') AND c.relrowsecurity AND c.relforcerowsecurity" 2>/dev/null || echo ERR)
+MEMORY_FORCE_RLS=$(psqlc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relname IN ('alpha_semantic_memory','alpha_conversation_memory','alpha_buddy_events','alpha_buddy_events_archive','alpha_memory_consolidation_proposals','alpha_memory_consolidation_execution_ledger') AND c.relrowsecurity AND c.relforcerowsecurity" 2>/dev/null || echo ERR)
 PRIVACY_TABLES=$(psqlc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'alpha_privacy_%'" 2>/dev/null || echo ERR)
 PRIVACY_FORCE_RLS=$(psqlc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relname LIKE 'alpha_privacy_%' AND c.relrowsecurity AND c.relforcerowsecurity" 2>/dev/null || echo ERR)
 
