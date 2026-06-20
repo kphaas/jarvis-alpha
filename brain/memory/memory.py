@@ -805,7 +805,7 @@ class MemoryService:
                        COALESCE(e.payload, '{}'::jsonb),
                        '{memory_admin_read}',
                        jsonb_build_object(
-                           'marked_by', $3,
+                           'marked_by', $3::text,
                            'marked_at', now()::text
                        ),
                        true
@@ -935,7 +935,7 @@ class MemoryService:
                        '{memory_admin_suppression}',
                        jsonb_build_object(
                            'reason', 'duplicate',
-                           'suppressed_by', $3,
+                           'suppressed_by', $3::text,
                            'suppressed_at', now()::text
                        ),
                        true

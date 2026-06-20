@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid5, NAMESPACE_DNS
 
@@ -9,6 +10,9 @@ import pytest
 from fastapi import HTTPException
 
 from brain.routes import memory as memory_route
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _request(*, scopes: list[str] | None = None, role: str = "user"):
@@ -729,6 +733,13 @@ async def test_memory_admin_buddy_controls_use_platform_admin_connection(
     assert suppressed.window_hours == 24
     assert service.admin_marked_buddy_events == [([event_id], True, "ken")]
     assert service.admin_suppressed_buddy_events == [(24, True, "ken")]
+
+
+def test_memory_admin_buddy_sql_casts_actor_parameter() -> None:
+    source = (REPO_ROOT / "brain" / "memory" / "memory.py").read_text()
+
+    assert "'marked_by', $3::text" in source
+    assert "'suppressed_by', $3::text" in source
 
 
 @pytest.mark.asyncio
