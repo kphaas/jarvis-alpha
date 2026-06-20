@@ -175,6 +175,12 @@ def build_report(
         warnings.append("approval_audit_empty")
     if int(restore.get("restore_drill_events_30d") or 0) < 1:
         warnings.append("restore_drill_not_observed_30d")
+    next_actions = build_next_actions(
+        missing_tables=missing_tables,
+        force_rls_missing=force_rls_missing,
+        local_missing=local_missing,
+        warnings=warnings,
+    )
 
     if failures:
         status = "fail"
@@ -208,6 +214,13 @@ def build_report(
         },
         "warnings": warnings,
         "failures": failures,
+        "production_ready": not failures and not warnings,
+        "next_actions": next_actions,
+        "gap_summary": {
+            "p0": sum(1 for action in next_actions if action["priority"] == "P0"),
+            "p1": sum(1 for action in next_actions if action["priority"] == "P1"),
+            "p2": sum(1 for action in next_actions if action["priority"] == "P2"),
+        },
     }
 
 
@@ -265,6 +278,79 @@ def _list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if item]
+
+
+def build_next_actions(
+    *,
+    missing_tables: list[str],
+    force_rls_missing: list[str],
+    local_missing: list[str],
+    warnings: list[str],
+) -> list[dict[str, str]]:
+    actions: list[dict[str, str]] = []
+    if missing_tables:
+        actions.append(
+            _action(
+                priority="P0",
+                gap="missing_memory_tables",
+                item="Apply or repair memory schema migrations",
+                detail=", ".join(missing_tables),
+            )
+        )
+    if force_rls_missing:
+        actions.append(
+            _action(
+                priority="P0",
+                gap="force_rls_missing",
+                item="Enable FORCE RLS on memory governance tables",
+                detail=", ".join(force_rls_missing),
+            )
+        )
+    if local_missing:
+        actions.append(
+            _action(
+                priority="P1",
+                gap="local_readiness_files_missing",
+                item="Install missing backup, restore, or monitor files",
+                detail=", ".join(local_missing),
+            )
+        )
+    if "approval_audit_empty" in warnings:
+        actions.append(
+            _action(
+                priority="P1",
+                gap="approval_audit_empty",
+                item="Run an approval-path smoke and confirm audit rows",
+                detail="approval_audit_rows=0",
+            )
+        )
+    if "restore_drill_not_observed_30d" in warnings:
+        actions.append(
+            _action(
+                priority="P1",
+                gap="restore_drill_not_observed_30d",
+                item="Run the Alpha memory restore drill and confirm Buddy event",
+                detail="restore_drill_events_30d=0",
+            )
+        )
+    return actions
+
+
+def _action(
+    *,
+    priority: str,
+    gap: str,
+    item: str,
+    detail: str,
+) -> dict[str, str]:
+    return {
+        "priority": priority,
+        "gap": gap,
+        "item": item,
+        "detail": detail,
+        "owner": "Ken",
+        "target_date": "TBD",
+    }
 
 
 def runtime_readiness_counts(
