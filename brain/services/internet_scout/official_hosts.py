@@ -12,6 +12,7 @@ _OFFICIAL_HOSTS_BY_TERM: dict[str, tuple[str, ...]] = {
     "brave": (
         "brave.com",
         "search.brave.com",
+        "api.search.brave.com",
         "api-dashboard.search.brave.com",
         "docs.brave.com",
     ),

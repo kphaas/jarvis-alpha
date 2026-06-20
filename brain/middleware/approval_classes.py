@@ -130,6 +130,8 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/memory/admin/dream-proposals": ["read"],
     "POST /v1/memory/buddy-events/read": ["write"],
     "POST /v1/memory/buddy-events/suppress-duplicates": ["write"],
+    "POST /v1/memory/admin/buddy-events/read": ["write"],
+    "POST /v1/memory/admin/buddy-events/suppress-duplicates": ["write"],
     # --- ADR-0026 reviewed memory consolidation bridge ---
     # Proposal creation and execution own their proposal-specific T5 approval
     # queue/validation in-route. The outer middleware must pass them through so
