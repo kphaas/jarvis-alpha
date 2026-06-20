@@ -410,6 +410,121 @@ class MemoryService:
             return json.loads(payload)
         return dict(payload)
 
+    async def update_semantic(
+        self,
+        conn: asyncpg.Connection,
+        user_id: UUID,
+        memory_id: UUID,
+        fact: str,
+        category: str,
+        updated_by: str,
+    ) -> dict:
+        review_status = "pending_review" if category in {"health", "child_profile"} else "active"
+        review_reason = "sensitive_category" if review_status == "pending_review" else None
+        payload = await conn.fetchrow(
+            """
+            UPDATE public.alpha_semantic_memory
+               SET fact = $3,
+                   category = $4,
+                   review_status = $5,
+                   review_reason = $6,
+                   reviewed_at = NULL,
+                   reviewed_by = NULL,
+                   updated_at = NOW(),
+                   provenance = COALESCE(provenance, '{}'::jsonb) || jsonb_build_object(
+                       'last_user_edit_action', 'correct',
+                       'last_user_edit_by', $7,
+                       'last_user_edit_at', NOW()::text,
+                       'review_lane', CASE WHEN $5 = 'pending_review' THEN 'high_visibility' ELSE 'standard' END
+                   )
+             WHERE user_id = $1
+               AND id = $2
+               AND COALESCE(review_status, 'active') <> 'archived'
+             RETURNING id::text,
+                       fact,
+                       category,
+                       source,
+                       provenance,
+                       review_status,
+                       review_reason,
+                       reviewed_at,
+                       reviewed_by,
+                       created_at,
+                       updated_at
+            """,
+            user_id,
+            memory_id,
+            fact,
+            category,
+            review_status,
+            review_reason,
+            updated_by,
+        )
+        if payload is None:
+            return {"status": "not_found", "memory_id": str(memory_id)}
+        result = dict(payload)
+        result["status"] = "updated"
+        result["review_required"] = review_status == "pending_review"
+        if review_status == "pending_review":
+            result["buddy_event_id"] = await self._record_semantic_review_event(
+                conn=conn,
+                user_id=user_id,
+                memory_id=memory_id,
+                category=category,
+                review_status=review_status,
+                review_reason=review_reason,
+            )
+        return result
+
+    async def _record_semantic_review_event(
+        self,
+        *,
+        conn: asyncpg.Connection,
+        user_id: UUID,
+        memory_id: UUID,
+        category: str,
+        review_status: str,
+        review_reason: str | None,
+    ) -> str | None:
+        try:
+            event_id = await conn.fetchval(
+                """
+                SELECT public.record_buddy_event(
+                    $1,
+                    'alert',
+                    'Memory review needed',
+                    'A health or child-profile memory was edited and needs review.',
+                    3,
+                    'semantic_memory_review',
+                    $2::jsonb
+                )
+                """,
+                str(user_id),
+                json.dumps(
+                    {
+                        "memory_id": str(memory_id),
+                        "category": category,
+                        "review_status": review_status,
+                        "review_reason": review_reason,
+                        "source_surface": "memory_api",
+                        "contains_fact": False,
+                    },
+                    sort_keys=True,
+                ),
+            )
+        except Exception as exc:
+            logger.warning(
+                "semantic memory review event failed during update: %s",
+                exc,
+                extra={
+                    "event": "MEMORY_SEMANTIC_UPDATE_REVIEW_EVENT_FAILED",
+                    "user_id": str(user_id),
+                    "memory_id": str(memory_id),
+                },
+            )
+            return None
+        return str(event_id) if event_id else None
+
     async def forget_by_topic(
         self, conn: asyncpg.Connection, user_id: UUID, topic: str
     ) -> int:

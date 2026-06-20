@@ -247,6 +247,23 @@ class SaveSemanticMemoryResponse(BaseModel):
     result: dict[str, object]
 
 
+class UpdateSemanticMemoryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fact: str = Field(min_length=3, max_length=1000)
+    category: MemoryCategory = "project"
+
+
+class UpdateSemanticMemoryResponse(BaseModel):
+    status: Literal["updated", "not_found", "error"]
+    result: dict[str, object]
+
+
+class DeleteSemanticMemoryResponse(BaseModel):
+    status: Literal["deleted", "not_found", "error"]
+    result: dict[str, object]
+
+
 class ReviewSemanticMemoryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -510,6 +527,84 @@ async def save_semantic_memory(
         status="saved" if result.get("saved") else "not_saved",
         result=result,
     )
+
+
+@router.patch(
+    "/v1/memory/semantic/{memory_id}",
+    response_model=UpdateSemanticMemoryResponse,
+)
+async def update_semantic_memory(
+    memory_id: UUID,
+    body: UpdateSemanticMemoryRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> UpdateSemanticMemoryResponse:
+    check_scopes(request, "memory.write", "admin")
+    try:
+        fact = sanitize_semantic_fact(body.fact)
+    except MemoryFactValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail) from exc
+    uid = _request_user_uuid(request)
+    async with rls_connection(request) as conn:
+        result = await MemoryService().update_semantic(
+            conn=conn,
+            user_id=uid,
+            memory_id=memory_id,
+            fact=fact,
+            category=body.category,
+            updated_by=_review_actor(request),
+        )
+    status = str(result.get("status") or "error")
+    logger.info(
+        "MEMORY_SEMANTIC_UPDATE",
+        extra={
+            "event": "MEMORY_SEMANTIC_UPDATE",
+            "user_id": str(uid),
+            "memory_id": str(memory_id),
+            "category": body.category,
+            "status": status,
+            "review_required": bool(result.get("review_required")),
+        },
+    )
+    if status not in {"updated", "not_found", "error"}:
+        status = "error"
+    return UpdateSemanticMemoryResponse(status=status, result=result)
+
+
+@router.delete(
+    "/v1/memory/semantic/{memory_id}",
+    response_model=DeleteSemanticMemoryResponse,
+)
+async def delete_semantic_memory(
+    memory_id: UUID,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> DeleteSemanticMemoryResponse:
+    check_scopes(request, "memory.write", "admin")
+    uid = _request_user_uuid(request)
+    async with rls_connection(request) as conn:
+        result = await MemoryService().review_semantic(
+            conn=conn,
+            user_id=uid,
+            memory_id=memory_id,
+            action="archive",
+            reviewed_by=_review_actor(request),
+            note="user_deleted",
+        )
+    raw_status = str(result.get("status") or "error")
+    status = "deleted" if raw_status == "reviewed" else raw_status
+    logger.info(
+        "MEMORY_SEMANTIC_DELETE",
+        extra={
+            "event": "MEMORY_SEMANTIC_DELETE",
+            "user_id": str(uid),
+            "memory_id": str(memory_id),
+            "status": status,
+        },
+    )
+    if status not in {"deleted", "not_found", "error"}:
+        status = "error"
+    return DeleteSemanticMemoryResponse(status=status, result=result)
 
 
 @router.post(
