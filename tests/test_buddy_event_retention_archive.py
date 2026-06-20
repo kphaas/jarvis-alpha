@@ -18,6 +18,20 @@ ROLLBACK = (
     / "rollbacks"
     / "20260620_081000_buddy_event_retention_archive_rollback.sql"
 )
+OWNER_GRANTS_MIGRATION = (
+    REPO_ROOT
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260620_180000_buddy_maintenance_owner_grants.sql"
+)
+OWNER_GRANTS_ROLLBACK = (
+    REPO_ROOT
+    / "brain"
+    / "db"
+    / "rollbacks"
+    / "20260620_180000_buddy_maintenance_owner_grants_rollback.sql"
+)
 BUDDY_AGENT = REPO_ROOT / "brain" / "agents" / "buddy_agent.py"
 SECDEF_CANARY = REPO_ROOT / "scripts" / "postgres_secdef_canary.py"
 
@@ -91,3 +105,40 @@ def test_buddy_retention_is_in_secdef_canary() -> None:
 
     assert "public.archive_old_low_priority_buddy_events(" in source
     assert "SELECT public.archive_old_low_priority_buddy_events(14, 180, 1);" in source
+
+
+def test_buddy_maintenance_owner_can_execute_all_delegates() -> None:
+    source = OWNER_GRANTS_MIGRATION.read_text(encoding="utf-8")
+
+    assert "TO jarvis_alpha_owner" in source
+    assert "public.evict_expired_working_memory()" in source
+    assert "public.archive_old_low_priority_buddy_events(" in source
+    assert "public.evict_episodic_memory_older_than(" in source
+    assert "public.cap_episodic_memory(TEXT, INTEGER)" in source
+    assert "public.cap_semantic_memory(TEXT, INTEGER)" in source
+    assert "has_function_privilege('jarvis_alpha_owner'" in source
+    assert "Buddy maintenance owner grant postcheck failed" in source
+    assert "Buddy maintenance owner grant restored PUBLIC execute" in source
+
+
+def test_buddy_maintenance_owner_grants_are_reversible() -> None:
+    source = OWNER_GRANTS_ROLLBACK.read_text(encoding="utf-8")
+
+    assert "REVOKE EXECUTE ON FUNCTION public.evict_expired_working_memory()" in source
+    assert (
+        "REVOKE EXECUTE ON FUNCTION public.archive_old_low_priority_buddy_events("
+        in source
+    )
+    assert (
+        "REVOKE EXECUTE ON FUNCTION public.evict_episodic_memory_older_than(" in source
+    )
+    assert (
+        "REVOKE EXECUTE ON FUNCTION public.cap_episodic_memory(TEXT, INTEGER)" in source
+    )
+    assert (
+        "REVOKE EXECUTE ON FUNCTION public.cap_semantic_memory(TEXT, INTEGER)" in source
+    )
+    assert "ARRAY[]::aclitem[]" in source
+    assert (
+        "Buddy maintenance owner grant rollback left explicit EXECUTE grants" in source
+    )
