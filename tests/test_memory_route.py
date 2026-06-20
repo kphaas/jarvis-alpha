@@ -29,6 +29,7 @@ def _request(*, scopes: list[str] | None = None, role: str = "user"):
 
 class FakeMemoryService:
     saved: list[tuple[UUID, str, str, dict[str, object]]] = []
+    updated: list[tuple[UUID, UUID, str, str, str]] = []
     reviewed: list[tuple[UUID, UUID, str, str, str | None]] = []
     forgotten: list[tuple[UUID, str]] = []
     working_forgets: list[UUID] = []
@@ -36,6 +37,17 @@ class FakeMemoryService:
     suppressed_buddy_events: list[tuple[UUID, int, bool, str]] = []
     admin_marked_buddy_events: list[tuple[list[UUID], bool, str]] = []
     admin_suppressed_buddy_events: list[tuple[int, bool, str]] = []
+
+    def __init__(self) -> None:
+        self.saved = []
+        self.updated = []
+        self.reviewed = []
+        self.forgotten = []
+        self.working_forgets = []
+        self.marked_buddy_events = []
+        self.suppressed_buddy_events = []
+        self.admin_marked_buddy_events = []
+        self.admin_suppressed_buddy_events = []
 
     async def summarize(
         self,
@@ -271,6 +283,28 @@ class FakeMemoryService:
             "saved": True,
             "fact": fact,
             "category": category,
+            "review_required": category in {"health", "child_profile"},
+        }
+
+    async def update_semantic(
+        self,
+        *,
+        conn: object,
+        user_id: UUID,
+        memory_id: UUID,
+        fact: str,
+        category: str,
+        updated_by: str,
+    ) -> dict:
+        self.updated.append((user_id, memory_id, fact, category, updated_by))
+        return {
+            "status": "updated",
+            "memory_id": str(memory_id),
+            "fact": fact,
+            "category": category,
+            "review_status": "pending_review"
+            if category in {"health", "child_profile"}
+            else "active",
             "review_required": category in {"health", "child_profile"},
         }
 
@@ -604,6 +638,81 @@ async def test_save_semantic_memory_sanitizes_and_stores(
                 "source_route": "/v1/memory/summary",
                 "source_surface": "memory_api",
             },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_semantic_memory_requires_scope_and_records_actor(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = FakeMemoryService()
+    monkeypatch.setattr(memory_route, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(memory_route, "MemoryService", lambda: service)
+    memory_id = UUID("11111111-1111-4111-8111-111111111111")
+    body = memory_route.UpdateSemanticMemoryRequest(
+        fact="  Sloane   has  a kidney precaution.  ",
+        category="health",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await memory_route.update_semantic_memory(
+            memory_id=memory_id,
+            body=body,
+            request=_request(),
+        )
+
+    assert exc.value.status_code == 403
+
+    response = await memory_route.update_semantic_memory(
+        memory_id=memory_id,
+        body=body,
+        request=_request(scopes=["memory.write"]),
+    )
+
+    assert response.status == "updated"
+    assert response.result["review_required"] is True
+    assert service.updated == [
+        (
+            uuid5(NAMESPACE_DNS, "ken"),
+            memory_id,
+            "Sloane has a kidney precaution.",
+            "health",
+            "ken",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_semantic_memory_archives_with_user_deleted_note(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = FakeMemoryService()
+    monkeypatch.setattr(memory_route, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(memory_route, "MemoryService", lambda: service)
+    memory_id = UUID("11111111-1111-4111-8111-111111111111")
+
+    with pytest.raises(HTTPException) as exc:
+        await memory_route.delete_semantic_memory(
+            memory_id=memory_id,
+            request=_request(),
+        )
+
+    assert exc.value.status_code == 403
+
+    response = await memory_route.delete_semantic_memory(
+        memory_id=memory_id,
+        request=_request(scopes=["memory.write"]),
+    )
+
+    assert response.status == "deleted"
+    assert service.reviewed == [
+        (
+            uuid5(NAMESPACE_DNS, "ken"),
+            memory_id,
+            "archive",
+            "ken",
+            "user_deleted",
         )
     ]
 
