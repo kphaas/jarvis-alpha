@@ -370,6 +370,13 @@ SELECT public.record_watchdog_event(
             "SELECT public.run_buddy_memory_maintenance('phase3b_canary_user');",
         ),
         CanarySpec(
+            "public.archive_old_low_priority_buddy_events("
+            "p_hot_keep_days integer, p_archive_keep_days integer, "
+            "p_batch_limit integer"
+            ")",
+            "SELECT public.archive_old_low_priority_buddy_events(14, 180, 1);",
+        ),
+        CanarySpec(
             "public.save_semantic_memory(p_user_id uuid, p_fact text, p_category text)",
             """
 SELECT public.save_semantic_memory(

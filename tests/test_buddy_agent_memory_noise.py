@@ -28,6 +28,8 @@ def test_memory_maintenance_writes_only_changes_or_errors() -> None:
     changed = json.dumps(
         {
             "evicted_working": 2,
+            "archived_buddy_events": 4,
+            "pruned_buddy_event_archive": 1,
             "evicted_episodic": 0,
             "capped_episodic": 1,
             "capped_semantic": 0,
@@ -43,7 +45,7 @@ def test_memory_maintenance_writes_only_changes_or_errors() -> None:
     }
 
     assert should_write_memory_maintenance_event(changed) is True
-    assert memory_maintenance_changed_count(changed) == 3
+    assert memory_maintenance_changed_count(changed) == 8
     assert memory_maintenance_event_priority(changed) == 1
     assert should_write_memory_maintenance_event(failed) is True
     assert memory_maintenance_event_priority(failed) == 3

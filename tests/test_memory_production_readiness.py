@@ -10,6 +10,8 @@ def test_memory_readiness_sql_checks_tables_rls_restore_and_audit() -> None:
 
     assert "alpha_semantic_memory" in sql
     assert "alpha_conversation_memory" in sql
+    assert "alpha_buddy_events" in sql
+    assert "alpha_buddy_events_archive" in sql
     assert "alpha_memory_consolidation_proposals" in sql
     assert "alpha_memory_consolidation_execution_ledger" in sql
     assert "alpha_approval_audit" in sql
@@ -65,10 +67,29 @@ def test_memory_readiness_report_rag_states() -> None:
     )
 
     assert passing["rag"] == "green"
+    assert passing["production_ready"] is True
+    assert passing["next_actions"] == []
+    assert passing["gap_summary"] == {"p0": 0, "p1": 0, "p2": 0}
     assert warning["rag"] == "yellow"
+    assert warning["production_ready"] is False
     assert "restore_drill_not_observed_30d" in warning["warnings"]
+    assert warning["gap_summary"] == {"p0": 0, "p1": 2, "p2": 0}
+    assert [action["gap"] for action in warning["next_actions"]] == [
+        "approval_audit_empty",
+        "restore_drill_not_observed_30d",
+    ]
     assert failing["rag"] == "red"
+    assert failing["production_ready"] is False
     assert "missing_tables" in failing["failures"]
+    assert failing["gap_summary"] == {"p0": 1, "p1": 0, "p2": 0}
+    assert failing["next_actions"][0] == {
+        "priority": "P0",
+        "gap": "missing_memory_tables",
+        "item": "Apply or repair memory schema migrations",
+        "detail": "alpha_semantic_memory",
+        "owner": "Ken",
+        "target_date": "TBD",
+    }
 
 
 def test_memory_readiness_runtime_counts_skip_missing_tables(
