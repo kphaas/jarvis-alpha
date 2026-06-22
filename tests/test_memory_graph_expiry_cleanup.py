@@ -40,5 +40,7 @@ def test_graph_expired_proposal_cleanup_is_secdef_and_rejects_expired() -> None:
 def test_graph_expired_proposal_cleanup_rollback_drops_function_only() -> None:
     source = ROLLBACK.read_text(encoding="utf-8")
 
-    assert "DROP FUNCTION IF EXISTS public.expire_stale_memory_graph_proposals" in source
+    assert (
+        "DROP FUNCTION IF EXISTS public.expire_stale_memory_graph_proposals" in source
+    )
     assert "UPDATE public.alpha_memory_graph_proposals" not in source
