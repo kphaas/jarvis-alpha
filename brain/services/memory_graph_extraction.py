@@ -18,6 +18,7 @@ import asyncpg
 
 GRAPH_EXTRACTION_PIPELINE = "dream_buddy_graph_extraction"
 GRAPH_EXTRACTION_SOURCE_SURFACE = "memory_graph_extraction"
+GRAPH_ENTITY_RESOLUTION_VERSION = "label_hash_v1"
 MAX_GRAPH_EXTRACTION_RECORDS = 20
 MAX_LABEL_PREVIEW = 160
 
@@ -36,6 +37,8 @@ class MemoryGraphExtractionRecord:
     source_candidate_id: str
     proposed_action: str
     object_type: str
+    entity_key: str
+    entity_type: str
     label_preview: str
     payload: dict[str, Any]
     reason: str
@@ -45,10 +48,13 @@ class MemoryGraphExtractionRecord:
 @dataclass(frozen=True, slots=True)
 class PersistedMemoryGraphExtractionProposal:
     proposal_id: str | None
+    existing_object_id: str | None
     source_kind: str
     source_candidate_id: str
     proposed_action: str
     object_type: str
+    entity_key: str
+    entity_type: str
     status: str
     approval_queue_id: str | None
     parameters_hash: str
@@ -101,15 +107,38 @@ async def create_memory_graph_extraction_proposals(
     persisted: list[PersistedMemoryGraphExtractionProposal] = []
 
     for record in records:
+        active_entity = await _existing_graph_entity(conn, record)
+        if active_entity is not None:
+            persisted.append(
+                PersistedMemoryGraphExtractionProposal(
+                    proposal_id=None,
+                    existing_object_id=str(active_entity["object_id"]),
+                    source_kind=record.source_kind,
+                    source_candidate_id=record.source_candidate_id,
+                    proposed_action=record.proposed_action,
+                    object_type=record.object_type,
+                    entity_key=record.entity_key,
+                    entity_type=record.entity_type,
+                    status="active",
+                    approval_queue_id=None,
+                    parameters_hash=record.parameters_hash,
+                    existing=True,
+                )
+            )
+            continue
+
         existing = await _existing_graph_proposal(conn, record)
         if existing is not None:
             persisted.append(
                 PersistedMemoryGraphExtractionProposal(
                     proposal_id=str(existing["proposal_id"]),
+                    existing_object_id=None,
                     source_kind=record.source_kind,
                     source_candidate_id=record.source_candidate_id,
                     proposed_action=record.proposed_action,
                     object_type=record.object_type,
+                    entity_key=record.entity_key,
+                    entity_type=record.entity_type,
                     status=str(existing["status"]),
                     approval_queue_id=_optional_str(existing["approval_queue_id"]),
                     parameters_hash=str(existing["parameters_hash"]),
@@ -143,10 +172,13 @@ async def create_memory_graph_extraction_proposals(
         persisted.append(
             PersistedMemoryGraphExtractionProposal(
                 proposal_id=_optional_str(result.get("proposal_id")),
+                existing_object_id=None,
                 source_kind=record.source_kind,
                 source_candidate_id=record.source_candidate_id,
                 proposed_action=record.proposed_action,
                 object_type=record.object_type,
+                entity_key=record.entity_key,
+                entity_type=record.entity_type,
                 status=str(result.get("status") or "not_queued"),
                 approval_queue_id=_optional_str(result.get("approval_queue_id")),
                 parameters_hash=str(
@@ -220,7 +252,8 @@ def memory_graph_extraction_summary_body(
     return (
         f"Temporal graph extraction reviewed {candidate_count} candidate(s) "
         f"across {user_count} user(s). Queued {queued_count}; reused "
-        f"{existing_count} existing open proposal(s). Execution remains T5-gated."
+        f"{existing_count} existing proposal/entity match(es). Execution remains "
+        "T5-gated."
     )
 
 
@@ -247,29 +280,34 @@ def _dream_candidate_record(
     memory_ids = _source_memory_ids(candidate)
     source_candidate_id = f"dream:{candidate_id}"
     confidence = _confidence(candidate.get("confidence"), default=0.75)
-    payload = {
-        "node_type": node_type,
-        "label_preview": label_preview,
-        "label_hash": _label_hash(label_preview),
-        "external_ref_type": "alpha_conversation_memory" if memory_ids else None,
-        "external_ref_id": memory_ids[0] if len(memory_ids) == 1 else None,
-        "source": "dream",
-        "confidence": confidence,
-        "properties": {
-            "extraction_kind": "dream_consolidation",
-            "candidate_action": action,
-            "tier": _optional_str(candidate.get("tier")),
-            "reason": _optional_str(candidate.get("reason")),
-            "source_memory_count": len(memory_ids),
-            "source_memory_ids": memory_ids,
+    payload = _with_entity_resolution(
+        principal_id=principal_id,
+        entity_type=node_type,
+        label_preview=label_preview,
+        payload={
+            "node_type": node_type,
+            "label_preview": label_preview,
+            "label_hash": _label_hash(label_preview),
+            "external_ref_type": "alpha_conversation_memory" if memory_ids else None,
+            "external_ref_id": memory_ids[0] if len(memory_ids) == 1 else None,
+            "source": "dream",
+            "confidence": confidence,
+            "properties": {
+                "extraction_kind": "dream_consolidation",
+                "candidate_action": action,
+                "tier": _optional_str(candidate.get("tier")),
+                "reason": _optional_str(candidate.get("reason")),
+                "source_memory_count": len(memory_ids),
+                "source_memory_ids": memory_ids,
+            },
+            "provenance": {
+                "source_pipeline": GRAPH_EXTRACTION_PIPELINE,
+                "source_candidate_id": source_candidate_id,
+                "source_candidate_action": action,
+                "source_memory_ids": memory_ids,
+            },
         },
-        "provenance": {
-            "source_pipeline": GRAPH_EXTRACTION_PIPELINE,
-            "source_candidate_id": source_candidate_id,
-            "source_candidate_action": action,
-            "source_memory_ids": memory_ids,
-        },
-    }
+    )
     return _record(
         principal_id=principal_id,
         source_kind="dream",
@@ -298,29 +336,34 @@ def _buddy_event_record(
     payload_meta = payload_value if isinstance(payload_value, dict) else {}
     source_candidate_id = f"buddy:{event_id}"
     label_preview = _clean_preview(f"Buddy signal: {title}")
-    payload = {
-        "node_type": "other",
-        "label_preview": label_preview,
-        "label_hash": _label_hash(label_preview),
-        "external_ref_type": "alpha_buddy_events",
-        "external_ref_id": event_id,
-        "source": "buddy",
-        "confidence": 0.7,
-        "properties": {
-            "extraction_kind": "buddy_event_signal",
-            "event_type": _optional_str(event.get("event_type")),
-            "event_priority": priority,
-            "event_source": _optional_str(event.get("source")),
-            "memory_id_present": "memory_id" in payload_meta,
-            "proposal_id_present": "proposal_id" in payload_meta,
-            "fingerprint_present": "fingerprint" in payload_meta,
+    payload = _with_entity_resolution(
+        principal_id=principal_id,
+        entity_type="other",
+        label_preview=label_preview,
+        payload={
+            "node_type": "other",
+            "label_preview": label_preview,
+            "label_hash": _label_hash(label_preview),
+            "external_ref_type": "alpha_buddy_events",
+            "external_ref_id": event_id,
+            "source": "buddy",
+            "confidence": 0.7,
+            "properties": {
+                "extraction_kind": "buddy_event_signal",
+                "event_type": _optional_str(event.get("event_type")),
+                "event_priority": priority,
+                "event_source": _optional_str(event.get("source")),
+                "memory_id_present": "memory_id" in payload_meta,
+                "proposal_id_present": "proposal_id" in payload_meta,
+                "fingerprint_present": "fingerprint" in payload_meta,
+            },
+            "provenance": {
+                "source_pipeline": GRAPH_EXTRACTION_PIPELINE,
+                "source_candidate_id": source_candidate_id,
+                "buddy_event_id": event_id,
+            },
         },
-        "provenance": {
-            "source_pipeline": GRAPH_EXTRACTION_PIPELINE,
-            "source_candidate_id": source_candidate_id,
-            "buddy_event_id": event_id,
-        },
-    }
+    )
     return _record(
         principal_id=principal_id,
         source_kind="buddy",
@@ -344,12 +387,16 @@ def _record(
     payload: dict[str, Any],
     reason: str,
 ) -> MemoryGraphExtractionRecord:
+    entity = _dict(payload.get("properties")).get("entity_resolution")
+    entity_data = entity if isinstance(entity, dict) else {}
     return MemoryGraphExtractionRecord(
         principal_id=principal_id,
         source_kind=source_kind,
         source_candidate_id=source_candidate_id,
         proposed_action=proposed_action,
         object_type=object_type,
+        entity_key=str(entity_data.get("entity_key") or ""),
+        entity_type=str(entity_data.get("entity_type") or "other"),
         label_preview=label_preview,
         payload=payload,
         reason=reason[:300],
@@ -378,8 +425,13 @@ async def _existing_graph_proposal(
           AND proposed_action = $2
           AND object_type = $3
           AND status IN ('pending_review', 'queued', 'approved')
-          AND payload->'provenance'->>'source_pipeline' = $4
-          AND payload->'provenance'->>'source_candidate_id' = $5
+          AND (
+              (
+                  payload->'provenance'->>'source_pipeline' = $4
+                  AND payload->'provenance'->>'source_candidate_id' = $5
+              )
+              OR payload->'provenance'->>'entity_key' = $6
+          )
         ORDER BY updated_at DESC, created_at DESC
         LIMIT 1
         """,
@@ -388,6 +440,31 @@ async def _existing_graph_proposal(
         record.object_type,
         GRAPH_EXTRACTION_PIPELINE,
         record.source_candidate_id,
+        record.entity_key,
+    )
+
+
+async def _existing_graph_entity(
+    conn: asyncpg.Connection,
+    record: MemoryGraphExtractionRecord,
+) -> asyncpg.Record | None:
+    if record.proposed_action != "create_node" or not record.entity_key:
+        return None
+    return await conn.fetchrow(
+        """
+        SELECT id::text AS object_id
+        FROM public.alpha_memory_graph_nodes
+        WHERE principal_id = $1::uuid
+          AND node_type = $2
+          AND label_hash = $3
+          AND review_status = 'active'
+          AND valid_to IS NULL
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT 1
+        """,
+        record.principal_id,
+        record.entity_type,
+        str(record.payload.get("label_hash") or ""),
     )
 
 
@@ -415,6 +492,51 @@ def _clean_preview(value: str) -> str:
 
 def _label_hash(value: str) -> str:
     return hashlib.sha256(value.strip().casefold().encode("utf-8")).hexdigest()
+
+
+def _entity_key(
+    *,
+    principal_id: str,
+    entity_type: str,
+    label_hash: str,
+) -> str:
+    encoded = f"{principal_id}|node|{entity_type}|{label_hash}".encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _with_entity_resolution(
+    *,
+    principal_id: str,
+    entity_type: str,
+    label_preview: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    label_hash = str(payload.get("label_hash") or _label_hash(label_preview))
+    entity_key = _entity_key(
+        principal_id=principal_id,
+        entity_type=entity_type,
+        label_hash=label_hash,
+    )
+    resolution = {
+        "entity_key": entity_key,
+        "entity_type": entity_type,
+        "canonical_label_hash": label_hash,
+        "method": GRAPH_ENTITY_RESOLUTION_VERSION,
+    }
+    properties = _dict(payload.get("properties"))
+    provenance = _dict(payload.get("provenance"))
+    return {
+        **payload,
+        "properties": {
+            **properties,
+            "entity_resolution": resolution,
+        },
+        "provenance": {
+            **provenance,
+            "entity_key": entity_key,
+            "entity_resolution_method": GRAPH_ENTITY_RESOLUTION_VERSION,
+        },
+    }
 
 
 def _record_parameters_hash(
@@ -457,6 +579,10 @@ def _without_none(value: dict[str, Any]) -> dict[str, Any]:
         else:
             cleaned[key] = item
     return cleaned
+
+
+def _dict(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def _optional_str(value: object) -> str | None:

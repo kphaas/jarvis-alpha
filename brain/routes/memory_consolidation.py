@@ -51,10 +51,13 @@ class MemoryConsolidationProposalItem(BaseModel):
 
 class MemoryGraphExtractionProposalItem(BaseModel):
     proposal_id: str | None
+    existing_object_id: str | None = None
     source_kind: str
     source_candidate_id: str
     proposed_action: str
     object_type: str
+    entity_key: str | None = None
+    entity_type: str | None = None
     status: str
     approval_queue_id: str | None
     parameters_hash: str
@@ -136,10 +139,13 @@ async def create_memory_consolidation_proposals(
             graph_proposals = [
                 MemoryGraphExtractionProposalItem(
                     proposal_id=None,
+                    existing_object_id=None,
                     source_kind=record.source_kind,
                     source_candidate_id=record.source_candidate_id,
                     proposed_action=record.proposed_action,
                     object_type=record.object_type,
+                    entity_key=record.entity_key,
+                    entity_type=record.entity_type,
                     status="pending_review",
                     approval_queue_id=None,
                     parameters_hash=record.parameters_hash,
@@ -384,10 +390,13 @@ def _graph_extraction_item(
 ) -> MemoryGraphExtractionProposalItem:
     return MemoryGraphExtractionProposalItem(
         proposal_id=item.proposal_id,
+        existing_object_id=item.existing_object_id,
         source_kind=item.source_kind,
         source_candidate_id=item.source_candidate_id,
         proposed_action=item.proposed_action,
         object_type=item.object_type,
+        entity_key=item.entity_key,
+        entity_type=item.entity_type,
         status=item.status,
         approval_queue_id=item.approval_queue_id,
         parameters_hash=item.parameters_hash,
