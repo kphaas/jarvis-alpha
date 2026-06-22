@@ -14,6 +14,10 @@ def test_memory_readiness_sql_checks_tables_rls_restore_and_audit() -> None:
     assert "alpha_buddy_events_archive" in sql
     assert "alpha_memory_consolidation_proposals" in sql
     assert "alpha_memory_consolidation_execution_ledger" in sql
+    assert "alpha_memory_graph_nodes" in sql
+    assert "alpha_memory_graph_edges" in sql
+    assert "alpha_memory_graph_proposals" in sql
+    assert "alpha_memory_graph_audit" in sql
     assert "alpha_approval_audit" in sql
     assert "relrowsecurity" in sql
     assert "relforcerowsecurity" in sql
@@ -107,6 +111,7 @@ def test_memory_readiness_runtime_counts_skip_missing_tables(
         {
             "missing_tables": [
                 "alpha_approval_audit",
+                "alpha_memory_graph_audit",
                 "alpha_buddy_events",
             ],
         },

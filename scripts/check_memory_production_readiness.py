@@ -33,6 +33,10 @@ REQUIRED_MEMORY_TABLES = (
     "alpha_buddy_events_archive",
     "alpha_memory_consolidation_proposals",
     "alpha_memory_consolidation_execution_ledger",
+    "alpha_memory_graph_nodes",
+    "alpha_memory_graph_edges",
+    "alpha_memory_graph_proposals",
+    "alpha_memory_graph_audit",
     "alpha_approval_queue",
     "alpha_approval_audit",
 )
@@ -44,6 +48,10 @@ REQUIRED_FORCE_RLS_TABLES = (
     "alpha_buddy_events_archive",
     "alpha_memory_consolidation_proposals",
     "alpha_memory_consolidation_execution_ledger",
+    "alpha_memory_graph_nodes",
+    "alpha_memory_graph_edges",
+    "alpha_memory_graph_proposals",
+    "alpha_memory_graph_audit",
     "alpha_approval_queue",
     "alpha_approval_audit",
 )
@@ -99,6 +107,7 @@ SELECT jsonb_build_object(
     'audit', jsonb_build_object(
         'approval_audit_rows', 0,
         'consolidation_ledger_rows', 0,
+        'graph_audit_rows', 0,
         'active_approval_rows', 0
     ),
     'restore', jsonb_build_object('restore_drill_events_30d', 0)
@@ -115,6 +124,9 @@ SELECT jsonb_build_object(
     'consolidation_ledger_rows',
         (SELECT COUNT(*)::int
            FROM public.alpha_memory_consolidation_execution_ledger),
+    'graph_audit_rows',
+        (SELECT COUNT(*)::int
+           FROM public.alpha_memory_graph_audit),
     'active_approval_rows',
         (SELECT COUNT(*)::int
            FROM public.alpha_approval_queue
@@ -362,6 +374,7 @@ def runtime_readiness_counts(
     audit_tables = {
         "alpha_approval_audit",
         "alpha_memory_consolidation_execution_ledger",
+        "alpha_memory_graph_audit",
         "alpha_approval_queue",
     }
     if not audit_tables.intersection(missing_tables):

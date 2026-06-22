@@ -20,6 +20,10 @@ def test_memory_observability_metrics_pass_when_under_slo() -> None:
         "stale_dream_reviewed_writes": 0,
         "dream_approval_mismatch_count": 0,
         "dream_executed_without_ledger": 0,
+        "graph_stale_proposals": 0,
+        "graph_approval_mismatch_count": 0,
+        "graph_executed_without_audit": 0,
+        "graph_open_proposals": 0,
         "dream_reviewed_writes_open": 0,
         "unread_memory_buddy_events": 1,
         "high_priority_buddy_events": 1,
@@ -39,6 +43,9 @@ def test_memory_observability_metrics_fail_on_integrity_drift() -> None:
         "stale_dream_reviewed_writes": 1,
         "dream_approval_mismatch_count": 1,
         "dream_executed_without_ledger": 1,
+        "graph_stale_proposals": 1,
+        "graph_approval_mismatch_count": 1,
+        "graph_executed_without_audit": 1,
     }
 
     status, violations = monitor.evaluate_metrics(metrics, monitor.Thresholds())
@@ -48,6 +55,8 @@ def test_memory_observability_metrics_fail_on_integrity_drift() -> None:
     assert "pending_review" in keys
     assert "stale_dream_reviewed_writes" in keys
     assert "dream_executed_without_ledger" in keys
+    assert "graph_stale_proposals" in keys
+    assert "graph_executed_without_audit" in keys
 
 
 def test_memory_observability_metrics_warn_on_queue_pressure() -> None:
@@ -59,6 +68,17 @@ def test_memory_observability_metrics_warn_on_queue_pressure() -> None:
 
     assert status == "warn"
     assert violations[0]["severity"] == "warn"
+
+
+def test_memory_observability_metrics_warn_on_open_graph_writes() -> None:
+    thresholds = monitor.Thresholds(max_graph_open_proposals=2)
+    status, violations = monitor.evaluate_metrics(
+        {"graph_open_proposals": 3},
+        thresholds,
+    )
+
+    assert status == "warn"
+    assert violations[0]["key"] == "graph_open_proposals"
 
 
 def test_memory_observability_metrics_warn_on_open_writes_and_noise() -> None:
@@ -166,6 +186,8 @@ def test_memory_observability_sql_uses_aggregate_metrics_only() -> None:
     assert "count(*)" in sql
     assert "alpha_semantic_memory" in sql
     assert "alpha_memory_consolidation_proposals" in sql
+    assert "alpha_memory_graph_proposals" in sql
+    assert "alpha_memory_graph_audit" in sql
     assert "q.expires_at <= now()" in sql
     assert "actionable_unread" in sql
     assert "payload ? 'memory_suppression'" in sql

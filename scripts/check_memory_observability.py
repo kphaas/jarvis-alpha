@@ -31,6 +31,10 @@ class Thresholds:
     max_stale_dream_reviewed_writes: int = 0
     max_dream_approval_mismatch_count: int = 0
     max_dream_executed_without_ledger: int = 0
+    max_graph_stale_proposals: int = 0
+    max_graph_approval_mismatch_count: int = 0
+    max_graph_executed_without_audit: int = 0
+    max_graph_open_proposals: int = 25
     max_unread_memory_buddy_events: int = 500
     max_high_priority_unread: int = 10
     max_dream_approved_waiting_execution: int = 100
@@ -81,6 +85,26 @@ def thresholds_from_env(env: dict[str, str] | None = None) -> Thresholds:
             "MEMORY_OBS_MAX_DREAM_EXECUTED_WITHOUT_LEDGER",
             defaults.max_dream_executed_without_ledger,
         ),
+        max_graph_stale_proposals=_env_int(
+            source,
+            "MEMORY_OBS_MAX_GRAPH_STALE_PROPOSALS",
+            defaults.max_graph_stale_proposals,
+        ),
+        max_graph_approval_mismatch_count=_env_int(
+            source,
+            "MEMORY_OBS_MAX_GRAPH_APPROVAL_MISMATCH_COUNT",
+            defaults.max_graph_approval_mismatch_count,
+        ),
+        max_graph_executed_without_audit=_env_int(
+            source,
+            "MEMORY_OBS_MAX_GRAPH_EXECUTED_WITHOUT_AUDIT",
+            defaults.max_graph_executed_without_audit,
+        ),
+        max_graph_open_proposals=_env_int(
+            source,
+            "MEMORY_OBS_MAX_GRAPH_OPEN_PROPOSALS",
+            defaults.max_graph_open_proposals,
+        ),
         max_unread_memory_buddy_events=_env_int(
             source,
             "MEMORY_OBS_MAX_UNREAD_MEMORY_BUDDY_EVENTS",
@@ -110,6 +134,7 @@ def flatten_metrics(raw: dict[str, Any]) -> dict[str, int]:
         "semantic_metrics",
         "buddy_metrics",
         "proposal_metrics",
+        "graph_metrics",
     ):
         values = raw.get(section) or {}
         if not isinstance(values, dict):
@@ -184,10 +209,34 @@ def evaluate_metrics(
             "Dream proposal executed without execution ledger row",
         ),
         (
+            "graph_stale_proposals",
+            thresholds.max_graph_stale_proposals,
+            "fail",
+            "temporal graph proposals became stale before execution",
+        ),
+        (
+            "graph_approval_mismatch_count",
+            thresholds.max_graph_approval_mismatch_count,
+            "fail",
+            "temporal graph proposal approval queue drift detected",
+        ),
+        (
+            "graph_executed_without_audit",
+            thresholds.max_graph_executed_without_audit,
+            "fail",
+            "temporal graph proposal executed without audit row",
+        ),
+        (
             "dream_reviewed_writes_open",
             thresholds.max_dream_reviewed_writes_open,
             "warn",
             "Dream reviewed writes are waiting for operator action",
+        ),
+        (
+            "graph_open_proposals",
+            thresholds.max_graph_open_proposals,
+            "warn",
+            "temporal graph reviewed writes are waiting for operator action",
         ),
         (
             "unread_memory_buddy_events",
@@ -436,6 +485,37 @@ proposal AS (
       ON l.proposal_id = p.id
      AND l.status = 'executed'
 ),
+graph AS (
+    SELECT
+        (SELECT COUNT(*)::int FROM public.alpha_memory_graph_nodes)
+            AS graph_nodes,
+        (SELECT COUNT(*)::int FROM public.alpha_memory_graph_edges)
+            AS graph_edges,
+        COUNT(*) FILTER (
+            WHERE p.status IN ('pending_review', 'queued', 'approved')
+        )::int AS graph_open_proposals,
+        COUNT(*) FILTER (WHERE p.status = 'stale')::int
+            AS graph_stale_proposals,
+        COUNT(*) FILTER (
+            WHERE p.status IN ('queued', 'approved')
+              AND (
+                p.approval_queue_id IS NULL
+                OR q.id IS NULL
+                OR q.status NOT IN ('pending', 'approved')
+                OR q.expires_at IS NULL
+                OR q.expires_at <= now()
+              )
+        )::int AS graph_approval_mismatch_count,
+        COUNT(*) FILTER (
+            WHERE p.status = 'executed'
+              AND a.proposal_id IS NULL
+        )::int AS graph_executed_without_audit
+    FROM public.alpha_memory_graph_proposals p
+    LEFT JOIN public.alpha_approval_queue q
+      ON q.id = p.approval_queue_id
+    LEFT JOIN public.alpha_memory_graph_audit a
+      ON a.proposal_id = p.id
+),
 recent_monitor_alerts AS (
     SELECT COALESCE(
         jsonb_agg(payload->>'fingerprint') FILTER (WHERE payload ? 'fingerprint'),
@@ -449,9 +529,10 @@ SELECT jsonb_build_object(
     'semantic_metrics', to_jsonb(semantic),
     'buddy_metrics', to_jsonb(buddy),
     'proposal_metrics', to_jsonb(proposal),
+    'graph_metrics', to_jsonb(graph),
     'recent_alert_fingerprints', recent_monitor_alerts.fingerprints
 )::text
-FROM semantic, buddy, proposal, recent_monitor_alerts;
+FROM semantic, buddy, proposal, graph, recent_monitor_alerts;
 """
 
 
