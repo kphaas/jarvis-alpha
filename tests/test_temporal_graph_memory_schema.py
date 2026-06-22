@@ -75,6 +75,10 @@ def test_temporal_graph_public_execute_is_revoked() -> None:
     assert "REVOKE ALL ON FUNCTION public.propose_memory_graph_write" in source
     assert "REVOKE ALL ON FUNCTION public.execute_memory_graph_proposal" in source
     assert "REVOKE ALL ON FUNCTION public.list_memory_graph_current" in source
+    assert "has_function_privilege('PUBLIC'" not in source
+    assert "aclexplode(" in source
+    assert "acl.grantee = 0" in source
+    assert "acl.privilege_type = 'EXECUTE'" in source
     assert "Temporal graph memory public EXECUTE postcheck failed" in source
 
 
