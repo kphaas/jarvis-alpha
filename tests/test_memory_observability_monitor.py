@@ -200,6 +200,8 @@ def test_memory_observability_cleanup_sql_calls_secdef_function() -> None:
     sql = monitor.cleanup_sql().lower()
 
     assert "expire_stale_memory_consolidation_proposals" in sql
+    assert "expire_stale_memory_graph_proposals" in sql
+    assert "jsonb_build_object" in sql
     assert "fact" not in sql
     assert "evidence" not in sql
 

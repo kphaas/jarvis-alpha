@@ -544,11 +544,18 @@ def fetch_metrics(env: dict[str, str], thresholds: Thresholds) -> dict[str, Any]
 
 
 def cleanup_sql() -> str:
-    return "SELECT public.expire_stale_memory_consolidation_proposals()::text;"
+    return """
+SELECT jsonb_build_object(
+    'memory_consolidation',
+        public.expire_stale_memory_consolidation_proposals(),
+    'memory_graph',
+        public.expire_stale_memory_graph_proposals()
+)::text;
+"""
 
 
 def cleanup_stale_memory_consolidation_proposals(env: dict[str, str]) -> dict[str, Any]:
-    """Expire stale Dream proposals before evaluating SLO drift."""
+    """Expire no-longer-executable Dream and graph proposals before SLO checks."""
 
     result = run_psql_json(cleanup_sql(), env)
     return result if isinstance(result, dict) else {}
