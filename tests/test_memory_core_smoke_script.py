@@ -104,6 +104,9 @@ def test_dream_queue_checks_require_review_gated_t5_proposal_ids() -> None:
         "report_status": "review_ready",
         "candidate_count": 1,
         "executable_count": 1,
+        "graph_candidate_count": 1,
+        "graph_queued_count": 1,
+        "graph_existing_count": 0,
         "write_actions_enabled": False,
         "proposals": [
             {
@@ -111,6 +114,16 @@ def test_dream_queue_checks_require_review_gated_t5_proposal_ids() -> None:
                 "approval_queue_id": "approval-1",
                 "proposed_action": "promote_episodic_to_semantic",
                 "executable": True,
+                "status": "queued",
+            }
+        ],
+        "graph_proposals": [
+            {
+                "proposal_id": "graph-proposal-1",
+                "approval_queue_id": "graph-approval-1",
+                "source_kind": "dream",
+                "proposed_action": "create_node",
+                "object_type": "node",
                 "status": "queued",
             }
         ],
@@ -122,6 +135,10 @@ def test_dream_queue_checks_require_review_gated_t5_proposal_ids() -> None:
     response["proposals"][0]["approval_queue_id"] = None
     checks = smoke_memory_core._dream_proposal_checks(response=response, dry_run=False)
     assert checks["queued_has_proposal_and_approval_ids"] is False
+    response["proposals"][0]["approval_queue_id"] = "approval-1"
+    response["graph_proposals"][0]["approval_queue_id"] = None
+    checks = smoke_memory_core._dream_proposal_checks(response=response, dry_run=False)
+    assert checks["graph_queued_has_proposal_and_approval_ids"] is False
 
 
 def test_cleanup_sql_scopes_deletes_to_synthetic_marker() -> None:
@@ -134,5 +151,7 @@ def test_cleanup_sql_scopes_deletes_to_synthetic_marker() -> None:
     assert "summary ILIKE '%abc123%'" in sql
     assert "event.payload->>'source_surface' = 'memory_core_smoke'" in sql
     assert "fact ILIKE '%abc123%'" in sql
+    assert "alpha_memory_graph_proposals" in sql
+    assert "dream_buddy_graph_extraction" in sql
     assert "DELETE FROM public.alpha_approval_audit" in sql
     assert "DELETE FROM public.alpha_approval_queue" in sql

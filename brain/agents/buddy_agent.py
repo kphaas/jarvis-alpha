@@ -22,6 +22,11 @@ from brain.services.memory_consolidation import (
     collect_memory_consolidation_report,
     memory_consolidation_summary_body,
 )
+from brain.services.memory_graph_extraction import (
+    collect_buddy_graph_signal_events,
+    create_memory_graph_extraction_proposals,
+    memory_graph_extraction_summary_body,
+)
 from brain.services.spark_memory_grounding import collect_spark_memory_grounding_status
 from brain.services.spark_personality_memory import (
     collect_spark_personality_memory_status,
@@ -325,6 +330,9 @@ async def _maybe_write_memory_consolidation_summary(pool: asyncpg.Pool) -> None:
 
     try:
         reports: list[dict[str, object]] = []
+        graph_candidate_count = 0
+        graph_queued_count = 0
+        graph_existing_count = 0
         async with platform_admin_connection(
             source="buddy",
             audit_actor="buddy:memory_consolidation_summary",
@@ -338,6 +346,44 @@ async def _maybe_write_memory_consolidation_summary(pool: asyncpg.Pool) -> None:
                     conn,
                     str(row["user_id"]),
                 )
+                try:
+                    buddy_events = await collect_buddy_graph_signal_events(
+                        conn,
+                        str(row["user_id"]),
+                    )
+                    graph_proposals = await create_memory_graph_extraction_proposals(
+                        conn,
+                        report=report,
+                        actor_sub="buddy:memory_graph_extraction",
+                        buddy_events=buddy_events,
+                    )
+                    graph_candidate_count += len(graph_proposals)
+                    graph_queued_count += sum(
+                        1
+                        for proposal in graph_proposals
+                        if proposal.status == "queued" and not proposal.existing
+                    )
+                    graph_existing_count += sum(
+                        1 for proposal in graph_proposals if proposal.existing
+                    )
+                    report["graph_candidate_count"] = len(graph_proposals)
+                    report["graph_queued_count"] = sum(
+                        1
+                        for proposal in graph_proposals
+                        if proposal.status == "queued" and not proposal.existing
+                    )
+                    report["graph_existing_count"] = sum(
+                        1 for proposal in graph_proposals if proposal.existing
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "memory graph extraction proposals failed user=%s: %s",
+                        row["user_id"],
+                        exc,
+                    )
+                    report["graph_candidate_count"] = 0
+                    report["graph_queued_count"] = 0
+                    report["graph_existing_count"] = 0
                 reports.append(report)
 
         if not reports:
@@ -350,13 +396,28 @@ async def _maybe_write_memory_consolidation_summary(pool: asyncpg.Pool) -> None:
             int(report.get("blocked_candidate_count") or 0) for report in reports
         )
         if len(reports) == 1:
-            body = memory_consolidation_summary_body(reports[0])
+            body = (
+                memory_consolidation_summary_body(reports[0])
+                + " "
+                + memory_graph_extraction_summary_body(
+                    user_count=1,
+                    candidate_count=graph_candidate_count,
+                    queued_count=graph_queued_count,
+                    existing_count=graph_existing_count,
+                )
+            )
         else:
             body = (
                 "Dream memory consolidation backlog across "
                 f"{len(reports)} users: {total_candidates} review candidates. "
                 f"Blocked suspicious candidates: {total_blocked}. "
-                "Planner writes are disabled; executable proposals require T5 review."
+                "Planner writes are disabled; executable proposals require T5 review. "
+                + memory_graph_extraction_summary_body(
+                    user_count=len(reports),
+                    candidate_count=graph_candidate_count,
+                    queued_count=graph_queued_count,
+                    existing_count=graph_existing_count,
+                )
             )
         priority = 2 if total_candidates else 1
         await _write_event(
@@ -372,6 +433,9 @@ async def _maybe_write_memory_consolidation_summary(pool: asyncpg.Pool) -> None:
                 "user_count": len(reports),
                 "candidate_count": total_candidates,
                 "blocked_candidate_count": total_blocked,
+                "graph_candidate_count": graph_candidate_count,
+                "graph_queued_count": graph_queued_count,
+                "graph_existing_count": graph_existing_count,
                 "write_actions_enabled": False,
                 "users": [
                     {
@@ -392,6 +456,9 @@ async def _maybe_write_memory_consolidation_summary(pool: asyncpg.Pool) -> None:
                         "procedural_count": len(
                             report.get("procedural_candidates") or []
                         ),
+                        "graph_candidate_count": report.get("graph_candidate_count"),
+                        "graph_queued_count": report.get("graph_queued_count"),
+                        "graph_existing_count": report.get("graph_existing_count"),
                     }
                     for report in reports
                 ],

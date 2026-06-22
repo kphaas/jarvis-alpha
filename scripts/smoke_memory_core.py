@@ -415,12 +415,25 @@ def _dream_proposals_check(
     proposals = [
         item for item in response.get("proposals", []) if isinstance(item, dict)
     ]
+    graph_proposals = [
+        item for item in response.get("graph_proposals", []) if isinstance(item, dict)
+    ]
     executable = [item for item in proposals if item.get("executable") is True]
+    queued_graph = [
+        item
+        for item in graph_proposals
+        if _optional_string(item.get("proposal_id"))
+        and _optional_string(item.get("approval_queue_id"))
+        and item.get("status") == "queued"
+    ]
     detail = {
         "status": response.get("status"),
         "candidate_count": response.get("candidate_count"),
         "executable_count": response.get("executable_count"),
         "informational_count": response.get("informational_count"),
+        "graph_candidate_count": response.get("graph_candidate_count"),
+        "graph_queued_count": response.get("graph_queued_count"),
+        "graph_existing_count": response.get("graph_existing_count"),
         "queued_proposals": len(
             [
                 item
@@ -429,11 +442,19 @@ def _dream_proposals_check(
                 and _optional_string(item.get("approval_queue_id"))
             ]
         ),
+        "queued_graph_proposals": len(queued_graph),
         "actions": sorted(
             {
                 str(item.get("proposed_action"))
                 for item in proposals
                 if item.get("proposed_action")
+            }
+        ),
+        "graph_sources": sorted(
+            {
+                str(item.get("source_kind"))
+                for item in graph_proposals
+                if item.get("source_kind")
             }
         ),
         "checks": checks,
@@ -450,11 +471,17 @@ def _dream_proposal_checks(
     proposals = [
         item for item in response.get("proposals", []) if isinstance(item, dict)
     ]
+    graph_proposals = [
+        item for item in response.get("graph_proposals", []) if isinstance(item, dict)
+    ]
     executable = [item for item in proposals if item.get("executable") is True]
     promoted = [
         item
         for item in executable
         if item.get("proposed_action") == "promote_episodic_to_semantic"
+    ]
+    dream_graph = [
+        item for item in graph_proposals if item.get("source_kind") == "dream"
     ]
     return {
         "status_matches_mode": response.get("status")
@@ -480,6 +507,25 @@ def _dream_proposal_checks(
                 and _optional_string(item.get("approval_queue_id"))
                 and item.get("status") == "queued"
                 for item in promoted
+            )
+        ),
+        "graph_candidate_found": int(response.get("graph_candidate_count") or 0) >= 1,
+        "graph_dream_source_present": bool(dream_graph),
+        "graph_dry_run_has_no_queue_ids": (
+            not dry_run
+            or all(
+                item.get("proposal_id") is None
+                and item.get("approval_queue_id") is None
+                for item in graph_proposals
+            )
+        ),
+        "graph_queued_has_proposal_and_approval_ids": (
+            dry_run
+            or any(
+                _optional_string(item.get("proposal_id"))
+                and _optional_string(item.get("approval_queue_id"))
+                and item.get("status") == "queued"
+                for item in dream_graph
             )
         ),
     }
@@ -696,10 +742,36 @@ smoke_proposals AS (
             OR p.source_memory_ids && ARRAY(SELECT id FROM smoke_conversation)
        )
 ),
+smoke_graph_proposals AS (
+    SELECT p.id, p.approval_queue_id
+      FROM public.alpha_memory_graph_proposals AS p
+     WHERE p.principal_id = '{user_id}'::uuid
+       AND p.payload->'provenance'->>'source_pipeline'
+           = 'dream_buddy_graph_extraction'
+       AND (
+            p.payload->>'label_preview' ILIKE '%{smoke_id}%'
+            OR p.payload->'provenance'->'source_memory_ids'
+               ?| ARRAY(SELECT id FROM smoke_conversation)
+       )
+),
 approval_ids AS (
     SELECT approval_queue_id AS id
       FROM smoke_proposals
      WHERE approval_queue_id IS NOT NULL
+    UNION
+    SELECT approval_queue_id AS id
+      FROM smoke_graph_proposals
+     WHERE approval_queue_id IS NOT NULL
+),
+deleted_graph_audit AS (
+    DELETE FROM public.alpha_memory_graph_audit AS audit
+     WHERE audit.proposal_id IN (SELECT id FROM smoke_graph_proposals)
+     RETURNING 1
+),
+deleted_graph_proposals AS (
+    DELETE FROM public.alpha_memory_graph_proposals AS p
+     WHERE p.id IN (SELECT id FROM smoke_graph_proposals)
+     RETURNING 1
 ),
 deleted_ledger AS (
     DELETE FROM public.alpha_memory_consolidation_execution_ledger AS ledger
@@ -747,6 +819,8 @@ deleted_conversation AS (
      RETURNING 1
 )
 SELECT json_build_object(
+    'graph_audit', (SELECT COUNT(*) FROM deleted_graph_audit),
+    'graph_proposals', (SELECT COUNT(*) FROM deleted_graph_proposals),
     'ledger', (SELECT COUNT(*) FROM deleted_ledger),
     'proposals', (SELECT COUNT(*) FROM deleted_proposals),
     'approval_audit', (SELECT COUNT(*) FROM deleted_approval_audit),
