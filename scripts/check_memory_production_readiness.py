@@ -105,17 +105,10 @@ graph_function_status AS (
         f.signature,
         f.func_oid,
         f.func_oid IS NOT NULL AS present,
-        EXISTS (
-            SELECT 1
-            FROM aclexplode(
-                CASE
-                    WHEN p.oid IS NULL THEN ARRAY[]::aclitem[]
-                    ELSE COALESCE(p.proacl, acldefault('f', p.proowner))
-                END
-            ) acl
-            WHERE acl.grantee = 0
-              AND acl.privilege_type = 'EXECUTE'
-        ) AS public_execute,
+        CASE
+            WHEN f.func_oid IS NULL THEN false
+            ELSE has_function_privilege('public', f.func_oid, 'EXECUTE')
+        END AS public_execute,
         CASE
             WHEN to_regrole('jarvis_alpha_app') IS NULL
               OR f.func_oid IS NULL THEN false
@@ -127,7 +120,6 @@ graph_function_status AS (
             ELSE has_function_privilege('jarvis_alpha_writer', f.func_oid, 'EXECUTE')
         END AS writer_execute
     FROM graph_function_oids f
-    LEFT JOIN pg_proc p ON p.oid = f.func_oid
 )
 SELECT jsonb_build_object(
     'required_tables', (

@@ -10,13 +10,23 @@ from brain.services.memory_graph_extraction import (
 
 
 class FakeGraphConn:
-    def __init__(self, *, existing: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        existing: bool = False,
+        active_entity: bool = False,
+    ) -> None:
         self.existing = existing
+        self.active_entity = active_entity
         self.fetchrow_calls: list[tuple[str, tuple[object, ...]]] = []
         self.fetchval_calls: list[tuple[str, tuple[object, ...]]] = []
 
     async def fetchrow(self, query: str, *args: object):
         self.fetchrow_calls.append((query, args))
+        if "alpha_memory_graph_nodes" in query:
+            if self.active_entity:
+                return {"object_id": "55555555-5555-4555-8555-555555555555"}
+            return None
         if not self.existing:
             return None
         return {
@@ -60,6 +70,13 @@ def test_graph_extraction_builds_dream_and_buddy_records_without_event_body() ->
     assert records[2].payload["source"] == "buddy"
     assert records[2].payload["external_ref_type"] == "alpha_buddy_events"
     assert GRAPH_EXTRACTION_PIPELINE in str(records[0].payload["provenance"])
+    assert records[0].entity_type == "fact"
+    assert len(records[0].entity_key) == 64
+    assert (
+        records[0].payload["properties"]["entity_resolution"]["method"]
+        == "label_hash_v1"
+    )
+    assert records[0].payload["provenance"]["entity_key"] == records[0].entity_key
     assert "this body must not be persisted" not in str(records)
 
 
@@ -86,6 +103,24 @@ async def test_graph_extraction_reuses_existing_open_proposal() -> None:
 
     assert proposals[0].existing is True
     assert proposals[0].proposal_id == "33333333-3333-4333-8333-333333333333"
+    assert proposals[0].existing_object_id is None
+    assert conn.fetchval_calls == []
+
+
+@pytest.mark.asyncio
+async def test_graph_extraction_reuses_active_entity_without_queueing() -> None:
+    conn = FakeGraphConn(active_entity=True)
+
+    proposals = await create_memory_graph_extraction_proposals(
+        conn,  # type: ignore[arg-type]
+        report=_report(),
+        actor_sub="ken",
+    )
+
+    assert proposals[0].existing is True
+    assert proposals[0].proposal_id is None
+    assert proposals[0].existing_object_id == "55555555-5555-4555-8555-555555555555"
+    assert proposals[0].status == "active"
     assert conn.fetchval_calls == []
 
 
@@ -102,6 +137,8 @@ async def test_graph_extraction_queues_new_t5_reviewed_graph_proposal() -> None:
     assert proposals[0].existing is False
     assert proposals[0].status == "queued"
     assert proposals[0].approval_queue_id == "22222222-2222-4222-8222-222222222222"
+    assert len(proposals[0].entity_key) == 64
+    assert proposals[0].entity_type == "fact"
     assert any("propose_memory_graph_write" in call[0] for call in conn.fetchval_calls)
     query, args = conn.fetchval_calls[0]
     assert "propose_memory_graph_write" in query

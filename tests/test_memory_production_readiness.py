@@ -26,6 +26,8 @@ def test_memory_readiness_sql_checks_tables_rls_restore_and_audit() -> None:
     assert "graph_public_execute_grants" in sql
     assert "graph_open_proposals" in sql
     assert "graph_stale_proposals" in sql
+    assert "has_function_privilege('public'" in sql
+    assert "aclexplode" not in sql
     assert "fact" not in sql
     assert "evidence" not in sql
 
