@@ -1126,12 +1126,20 @@ BEGIN
     ),
     resolved AS (
         SELECT to_regprocedure(identity) AS oid FROM expected
+    ),
+    public_grants AS (
+        SELECT p.oid
+          FROM pg_proc p
+          JOIN resolved r ON r.oid = p.oid
+          CROSS JOIN LATERAL aclexplode(
+              COALESCE(p.proacl, acldefault('f', p.proowner))
+          ) AS acl
+         WHERE acl.grantee = 0
+           AND acl.privilege_type = 'EXECUTE'
     )
     SELECT COUNT(*)::INTEGER
       INTO v_public_execute
-      FROM pg_proc p
-      JOIN resolved r ON r.oid = p.oid
-     WHERE has_function_privilege('PUBLIC', p.oid, 'EXECUTE');
+      FROM public_grants;
 
     IF COALESCE(v_public_execute, 0) <> 0 THEN
         RAISE EXCEPTION 'Temporal graph memory public EXECUTE postcheck failed';
