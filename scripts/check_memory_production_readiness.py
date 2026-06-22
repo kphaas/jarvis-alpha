@@ -77,6 +77,7 @@ graph_functions(signature) AS (
         ('public.list_memory_graph_current(uuid,timestamp with time zone,integer)'),
         ('public.list_memory_graph_history(uuid,uuid,integer)'),
         ('public.list_memory_graph_proposals(uuid,text,integer)'),
+        ('public.expire_stale_memory_graph_proposals()'),
         ('public.memory_graph_health()')
 ),
 graph_function_oids AS (
