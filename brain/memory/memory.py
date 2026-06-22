@@ -17,6 +17,8 @@ from jarvis_common.logging_config import get_logger
 logger = get_logger("alpha_memory")
 
 SEMANTIC_CAP = 50
+GRAPH_NODE_LIMIT = 8
+GRAPH_EDGE_LIMIT = 8
 EPISODIC_LIMIT = 5
 WORKING_LIMIT = 10
 
@@ -103,6 +105,7 @@ class MemoryService:
     ) -> str:
         spark_grounding = await self._get_spark_grounding(conn, principal_id)
         semantic = await self._get_semantic(conn, user_id, prompt=prompt)
+        graph = await self._get_graph(conn, user_id, prompt=prompt)
         episodic = await self._get_episodic(conn, user_id, embedding)
         working = await self._get_working(conn, session_id)
 
@@ -115,6 +118,10 @@ class MemoryService:
             facts = "\n".join(f"- {r['fact']}" for r in semantic)
             parts.append(f"[ALWAYS KNOWN]\n{facts}")
 
+        if graph:
+            graph_lines = "\n".join(self._graph_context_line(row) for row in graph)
+            parts.append(f"[TEMPORAL GRAPH]\n{graph_lines}")
+
         if episodic:
             memories = "\n".join(f"- {r['summary']}" for r in episodic)
             parts.append(f"[RELEVANT PAST]\n{memories}")
@@ -124,6 +131,19 @@ class MemoryService:
             parts.append(f"[RECENT CONVERSATION]\n{turns}")
 
         return "\n\n".join(parts)
+
+    @staticmethod
+    def _graph_context_line(row: dict[str, Any]) -> str:
+        item_type = str(row.get("item_type") or "node")
+        label = str(row.get("label_preview") or row.get("label") or "").strip()
+        kind = str(row.get("kind") or "related").replace("_", " ")
+        source = str(row.get("source") or "unknown")
+        confidence = float(row.get("confidence") or 0)
+        if item_type == "edge":
+            return f"- Relation: {label} ({kind}, confidence {confidence:.2f}, source {source})"
+        return (
+            f"- {kind.title()}: {label} (confidence {confidence:.2f}, source {source})"
+        )
 
     async def _get_spark_grounding(
         self,
@@ -223,6 +243,270 @@ class MemoryService:
             user_id,
             SEMANTIC_CAP,
         )
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # TEMPORAL GRAPH — bounded hybrid recall over people/projects/relations
+    # ------------------------------------------------------------------
+
+    async def _get_graph(
+        self,
+        conn: asyncpg.Connection,
+        user_id: UUID,
+        *,
+        prompt: str = "",
+    ) -> list[dict]:
+        query = (prompt or "").strip()
+        try:
+            if query:
+                rows = await conn.fetch(
+                    """
+                    WITH active_nodes AS (
+                        SELECT
+                            n.id,
+                            n.node_type,
+                            n.label_preview,
+                            n.properties,
+                            n.source,
+                            n.confidence,
+                            n.valid_from,
+                            n.valid_to,
+                            n.updated_at,
+                            COUNT(e.id) FILTER (
+                                WHERE e.review_status = 'active'
+                                  AND e.valid_to IS NULL
+                            ) AS relation_count
+                        FROM public.alpha_memory_graph_nodes n
+                        LEFT JOIN public.alpha_memory_graph_edges e
+                          ON e.principal_id = n.principal_id
+                         AND (e.from_node_id = n.id OR e.to_node_id = n.id)
+                        WHERE n.principal_id = $1
+                          AND n.review_status = 'active'
+                          AND n.valid_from <= NOW()
+                          AND (n.valid_to IS NULL OR n.valid_to > NOW())
+                        GROUP BY n.id
+                    ),
+                    ranked_nodes AS (
+                        SELECT
+                            'node' AS item_type,
+                            n.node_type AS kind,
+                            n.label_preview,
+                            n.source,
+                            n.confidence,
+                            n.valid_from,
+                            n.valid_to,
+                            ts_rank_cd(
+                                to_tsvector(
+                                    'simple',
+                                    n.label_preview || ' ' || n.node_type || ' ' || n.properties::text
+                                ),
+                                plainto_tsquery('simple', $2)
+                            ) AS text_rank,
+                            (
+                                ts_rank_cd(
+                                    to_tsvector(
+                                        'simple',
+                                        n.label_preview || ' ' || n.node_type || ' ' || n.properties::text
+                                    ),
+                                    plainto_tsquery('simple', $2)
+                                )
+                                + CASE n.node_type
+                                    WHEN 'person' THEN 0.20
+                                    WHEN 'project' THEN 0.18
+                                    WHEN 'relationship' THEN 0.16
+                                    WHEN 'task' THEN 0.12
+                                    ELSE 0.0
+                                  END
+                                + (0.05 * LEAST(n.relation_count, 4))
+                                + (0.10 * n.confidence)
+                                + (
+                                    0.05 * POWER(
+                                        0.997,
+                                        EXTRACT(EPOCH FROM (NOW() - n.updated_at)) / 3600.0
+                                    )
+                                  )
+                            ) AS retrieval_score
+                        FROM active_nodes n
+                    ),
+                    active_edges AS (
+                        SELECT
+                            e.edge_type,
+                            from_node.label_preview
+                                || ' '
+                                || replace(e.edge_type, '_', ' ')
+                                || ' '
+                                || to_node.label_preview AS label_preview,
+                            e.properties,
+                            e.source,
+                            e.confidence,
+                            e.valid_from,
+                            e.valid_to,
+                            e.updated_at
+                        FROM public.alpha_memory_graph_edges e
+                        JOIN public.alpha_memory_graph_nodes from_node
+                          ON from_node.id = e.from_node_id
+                         AND from_node.principal_id = e.principal_id
+                        JOIN public.alpha_memory_graph_nodes to_node
+                          ON to_node.id = e.to_node_id
+                         AND to_node.principal_id = e.principal_id
+                        WHERE e.principal_id = $1
+                          AND e.review_status = 'active'
+                          AND e.valid_from <= NOW()
+                          AND (e.valid_to IS NULL OR e.valid_to > NOW())
+                          AND from_node.review_status = 'active'
+                          AND to_node.review_status = 'active'
+                          AND from_node.valid_from <= NOW()
+                          AND to_node.valid_from <= NOW()
+                          AND (from_node.valid_to IS NULL OR from_node.valid_to > NOW())
+                          AND (to_node.valid_to IS NULL OR to_node.valid_to > NOW())
+                    ),
+                    ranked_edges AS (
+                        SELECT
+                            'edge' AS item_type,
+                            e.edge_type AS kind,
+                            e.label_preview,
+                            e.source,
+                            e.confidence,
+                            e.valid_from,
+                            e.valid_to,
+                            ts_rank_cd(
+                                to_tsvector(
+                                    'simple',
+                                    e.label_preview || ' ' || e.edge_type || ' ' || e.properties::text
+                                ),
+                                plainto_tsquery('simple', $2)
+                            ) AS text_rank,
+                            (
+                                ts_rank_cd(
+                                    to_tsvector(
+                                        'simple',
+                                        e.label_preview || ' ' || e.edge_type || ' ' || e.properties::text
+                                    ),
+                                    plainto_tsquery('simple', $2)
+                                )
+                                + CASE e.edge_type
+                                    WHEN 'works_on' THEN 0.18
+                                    WHEN 'knows' THEN 0.14
+                                    WHEN 'depends_on' THEN 0.14
+                                    WHEN 'prefers' THEN 0.12
+                                    ELSE 0.0
+                                  END
+                                + (0.10 * e.confidence)
+                                + (
+                                    0.05 * POWER(
+                                        0.997,
+                                        EXTRACT(EPOCH FROM (NOW() - e.updated_at)) / 3600.0
+                                    )
+                                  )
+                            ) AS retrieval_score
+                        FROM active_edges e
+                    ),
+                    node_hits AS (
+                        SELECT *
+                        FROM ranked_nodes
+                        WHERE text_rank > 0
+                           OR label_preview ILIKE ('%' || $2 || '%')
+                        ORDER BY retrieval_score DESC
+                        LIMIT $3
+                    ),
+                    edge_hits AS (
+                        SELECT *
+                        FROM ranked_edges
+                        WHERE text_rank > 0
+                           OR label_preview ILIKE ('%' || $2 || '%')
+                        ORDER BY retrieval_score DESC
+                        LIMIT $4
+                    )
+                    SELECT *
+                    FROM (
+                        SELECT * FROM node_hits
+                        UNION ALL
+                        SELECT * FROM edge_hits
+                    ) hits
+                    ORDER BY retrieval_score DESC, confidence DESC
+                    """,
+                    user_id,
+                    query,
+                    GRAPH_NODE_LIMIT,
+                    GRAPH_EDGE_LIMIT,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    WITH node_hits AS (
+                        SELECT
+                            'node' AS item_type,
+                            n.node_type AS kind,
+                            n.label_preview,
+                            n.source,
+                            n.confidence,
+                            n.valid_from,
+                            n.valid_to,
+                            (0.10 * n.confidence) AS retrieval_score
+                        FROM public.alpha_memory_graph_nodes n
+                        WHERE n.principal_id = $1
+                          AND n.review_status = 'active'
+                          AND n.valid_from <= NOW()
+                          AND (n.valid_to IS NULL OR n.valid_to > NOW())
+                        ORDER BY n.updated_at DESC, n.confidence DESC
+                        LIMIT $2
+                    ),
+                    edge_hits AS (
+                        SELECT
+                            'edge' AS item_type,
+                            e.edge_type AS kind,
+                            from_node.label_preview
+                                || ' '
+                                || replace(e.edge_type, '_', ' ')
+                                || ' '
+                                || to_node.label_preview AS label_preview,
+                            e.source,
+                            e.confidence,
+                            e.valid_from,
+                            e.valid_to,
+                            (0.10 * e.confidence) AS retrieval_score
+                        FROM public.alpha_memory_graph_edges e
+                        JOIN public.alpha_memory_graph_nodes from_node
+                          ON from_node.id = e.from_node_id
+                         AND from_node.principal_id = e.principal_id
+                        JOIN public.alpha_memory_graph_nodes to_node
+                          ON to_node.id = e.to_node_id
+                         AND to_node.principal_id = e.principal_id
+                        WHERE e.principal_id = $1
+                          AND e.review_status = 'active'
+                          AND e.valid_from <= NOW()
+                          AND (e.valid_to IS NULL OR e.valid_to > NOW())
+                          AND from_node.review_status = 'active'
+                          AND to_node.review_status = 'active'
+                          AND from_node.valid_from <= NOW()
+                          AND to_node.valid_from <= NOW()
+                          AND (from_node.valid_to IS NULL OR from_node.valid_to > NOW())
+                          AND (to_node.valid_to IS NULL OR to_node.valid_to > NOW())
+                        ORDER BY e.updated_at DESC, e.confidence DESC
+                        LIMIT $3
+                    )
+                    SELECT *
+                    FROM (
+                        SELECT * FROM node_hits
+                        UNION ALL
+                        SELECT * FROM edge_hits
+                    ) hits
+                    ORDER BY retrieval_score DESC, confidence DESC
+                    """,
+                    user_id,
+                    GRAPH_NODE_LIMIT,
+                    GRAPH_EDGE_LIMIT,
+                )
+        except Exception as exc:
+            logger.warning(
+                "temporal_graph_memory_unavailable",
+                extra={
+                    "event": "temporal_graph_memory_unavailable",
+                    "error_class": exc.__class__.__name__,
+                    "user_id": str(user_id),
+                },
+            )
+            return []
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
