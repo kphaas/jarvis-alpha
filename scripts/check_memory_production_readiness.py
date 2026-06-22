@@ -70,6 +70,21 @@ WITH required_tables(name) AS (
 required_force_rls(name) AS (
     VALUES {force_tables}
 ),
+graph_functions(signature) AS (
+    VALUES
+        ('public.propose_memory_graph_write(uuid,text,text,jsonb,text,text,text)'),
+        ('public.execute_memory_graph_proposal(uuid,uuid,text)'),
+        ('public.list_memory_graph_current(uuid,timestamp with time zone,integer)'),
+        ('public.list_memory_graph_history(uuid,uuid,integer)'),
+        ('public.list_memory_graph_proposals(uuid,text,integer)'),
+        ('public.memory_graph_health()')
+),
+graph_function_oids AS (
+    SELECT
+        signature,
+        to_regprocedure(signature) AS func_oid
+    FROM graph_functions
+),
 table_status AS (
     SELECT
         r.name,
@@ -84,6 +99,35 @@ force_rls_status AS (
     LEFT JOIN pg_class c
       ON c.relname = r.name
      AND c.relnamespace = 'public'::regnamespace
+),
+graph_function_status AS (
+    SELECT
+        f.signature,
+        f.func_oid,
+        f.func_oid IS NOT NULL AS present,
+        EXISTS (
+            SELECT 1
+            FROM aclexplode(
+                CASE
+                    WHEN p.oid IS NULL THEN ARRAY[]::aclitem[]
+                    ELSE COALESCE(p.proacl, acldefault('f', p.proowner))
+                END
+            ) acl
+            WHERE acl.grantee = 0
+              AND acl.privilege_type = 'EXECUTE'
+        ) AS public_execute,
+        CASE
+            WHEN to_regrole('jarvis_alpha_app') IS NULL
+              OR f.func_oid IS NULL THEN false
+            ELSE has_function_privilege('jarvis_alpha_app', f.func_oid, 'EXECUTE')
+        END AS app_execute,
+        CASE
+            WHEN to_regrole('jarvis_alpha_writer') IS NULL
+              OR f.func_oid IS NULL THEN false
+            ELSE has_function_privilege('jarvis_alpha_writer', f.func_oid, 'EXECUTE')
+        END AS writer_execute
+    FROM graph_function_oids f
+    LEFT JOIN pg_proc p ON p.oid = f.func_oid
 )
 SELECT jsonb_build_object(
     'required_tables', (
@@ -108,7 +152,31 @@ SELECT jsonb_build_object(
         'approval_audit_rows', 0,
         'consolidation_ledger_rows', 0,
         'graph_audit_rows', 0,
+        'graph_open_proposals', 0,
+        'graph_stale_proposals', 0,
         'active_approval_rows', 0
+    ),
+    'access', jsonb_build_object(
+        'graph_functions_missing', COALESCE((
+            SELECT jsonb_agg(signature ORDER BY signature)
+            FROM graph_function_status
+            WHERE NOT present
+        ), '[]'::jsonb),
+        'graph_public_execute_grants', COALESCE((
+            SELECT jsonb_agg(signature ORDER BY signature)
+            FROM graph_function_status
+            WHERE public_execute
+        ), '[]'::jsonb),
+        'graph_app_execute_missing', COALESCE((
+            SELECT jsonb_agg(signature ORDER BY signature)
+            FROM graph_function_status
+            WHERE NOT app_execute
+        ), '[]'::jsonb),
+        'graph_writer_execute_missing', COALESCE((
+            SELECT jsonb_agg(signature ORDER BY signature)
+            FROM graph_function_status
+            WHERE NOT writer_execute
+        ), '[]'::jsonb)
     ),
     'restore', jsonb_build_object('restore_drill_events_30d', 0)
 )::text
@@ -127,6 +195,14 @@ SELECT jsonb_build_object(
     'graph_audit_rows',
         (SELECT COUNT(*)::int
            FROM public.alpha_memory_graph_audit),
+    'graph_open_proposals',
+        (SELECT COUNT(*)::int
+           FROM public.alpha_memory_graph_proposals
+          WHERE status IN ('pending_review', 'queued', 'approved')),
+    'graph_stale_proposals',
+        (SELECT COUNT(*)::int
+           FROM public.alpha_memory_graph_proposals
+          WHERE status = 'stale'),
     'active_approval_rows',
         (SELECT COUNT(*)::int
            FROM public.alpha_approval_queue
@@ -161,6 +237,7 @@ def local_readiness(repo_root: Path) -> dict[str, bool]:
         "observability_monitor": repo_root
         / "scripts"
         / "check_memory_observability.py",
+        "memory_core_smoke": repo_root / "scripts" / "smoke_memory_core.py",
     }
     return {name: path.is_file() for name, path in paths.items()}
 
@@ -173,18 +250,35 @@ def build_report(
     missing_tables = _list(db.get("missing_tables"))
     force_rls_missing = _list(db.get("force_rls_missing"))
     audit = db.get("audit") if isinstance(db.get("audit"), dict) else {}
+    access = db.get("access") if isinstance(db.get("access"), dict) else {}
     restore = db.get("restore") if isinstance(db.get("restore"), dict) else {}
     local_missing = sorted(name for name, present in local.items() if not present)
+    graph_functions_missing = _list(access.get("graph_functions_missing"))
+    graph_public_execute_grants = _list(access.get("graph_public_execute_grants"))
+    graph_app_execute_missing = _list(access.get("graph_app_execute_missing"))
+    graph_writer_execute_missing = _list(access.get("graph_writer_execute_missing"))
     warnings: list[str] = []
     failures: list[str] = []
     if missing_tables:
         failures.append("missing_tables")
     if force_rls_missing:
         failures.append("force_rls_missing")
+    if graph_functions_missing:
+        failures.append("graph_functions_missing")
+    if graph_public_execute_grants:
+        failures.append("graph_public_execute_grants")
+    if graph_app_execute_missing or graph_writer_execute_missing:
+        failures.append("graph_function_execute_grants_missing")
     if local_missing:
         failures.append("local_readiness_files_missing")
     if int(audit.get("approval_audit_rows") or 0) < 1:
         warnings.append("approval_audit_empty")
+    if int(audit.get("graph_audit_rows") or 0) < 1:
+        warnings.append("graph_audit_empty")
+    if int(audit.get("graph_stale_proposals") or 0) > 0:
+        warnings.append("graph_stale_proposals_present")
+    if int(audit.get("graph_open_proposals") or 0) > 50:
+        warnings.append("graph_open_proposal_pressure")
     if int(restore.get("restore_drill_events_30d") or 0) < 1:
         warnings.append("restore_drill_not_observed_30d")
     next_actions = build_next_actions(
@@ -192,6 +286,11 @@ def build_report(
         force_rls_missing=force_rls_missing,
         local_missing=local_missing,
         warnings=warnings,
+        graph_functions_missing=graph_functions_missing,
+        graph_public_execute_grants=graph_public_execute_grants,
+        graph_execute_missing=sorted(
+            set(graph_app_execute_missing + graph_writer_execute_missing)
+        ),
     )
 
     if failures:
@@ -221,6 +320,7 @@ def build_report(
             "force_rls_missing": force_rls_missing,
             "local_missing": local_missing,
             "audit": audit,
+            "access": access,
             "restore": restore,
             "local": local,
         },
@@ -298,6 +398,9 @@ def build_next_actions(
     force_rls_missing: list[str],
     local_missing: list[str],
     warnings: list[str],
+    graph_functions_missing: list[str] | None = None,
+    graph_public_execute_grants: list[str] | None = None,
+    graph_execute_missing: list[str] | None = None,
 ) -> list[dict[str, str]]:
     actions: list[dict[str, str]] = []
     if missing_tables:
@@ -325,6 +428,60 @@ def build_next_actions(
                 gap="local_readiness_files_missing",
                 item="Install missing backup, restore, or monitor files",
                 detail=", ".join(local_missing),
+            )
+        )
+    if graph_functions_missing:
+        actions.append(
+            _action(
+                priority="P0",
+                gap="graph_functions_missing",
+                item="Apply or repair temporal graph SECDEF functions",
+                detail=", ".join(graph_functions_missing),
+            )
+        )
+    if graph_public_execute_grants:
+        actions.append(
+            _action(
+                priority="P0",
+                gap="graph_public_execute_grants",
+                item="Revoke public EXECUTE on temporal graph functions",
+                detail=", ".join(graph_public_execute_grants),
+            )
+        )
+    if graph_execute_missing:
+        actions.append(
+            _action(
+                priority="P0",
+                gap="graph_function_execute_grants_missing",
+                item="Grant app/writer EXECUTE on temporal graph functions",
+                detail=", ".join(graph_execute_missing),
+            )
+        )
+    if "graph_audit_empty" in warnings:
+        actions.append(
+            _action(
+                priority="P1",
+                gap="graph_audit_empty",
+                item="Run graph proposal execute smoke and confirm audit rows",
+                detail="graph_audit_rows=0",
+            )
+        )
+    if "graph_stale_proposals_present" in warnings:
+        actions.append(
+            _action(
+                priority="P1",
+                gap="graph_stale_proposals_present",
+                item="Review or archive stale temporal graph proposals",
+                detail="graph_stale_proposals>0",
+            )
+        )
+    if "graph_open_proposal_pressure" in warnings:
+        actions.append(
+            _action(
+                priority="P1",
+                gap="graph_open_proposal_pressure",
+                item="Drain temporal graph reviewed-write queue",
+                detail="graph_open_proposals>50",
             )
         )
     if "approval_audit_empty" in warnings:

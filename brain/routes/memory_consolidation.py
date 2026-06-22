@@ -16,6 +16,12 @@ from brain.services.memory_consolidation_proposals import (
     build_memory_consolidation_proposal_records,
     create_reviewed_memory_consolidation_proposals,
 )
+from brain.services.memory_graph_extraction import (
+    PersistedMemoryGraphExtractionProposal,
+    build_memory_graph_extraction_records,
+    collect_buddy_graph_signal_events,
+    create_memory_graph_extraction_proposals,
+)
 from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
@@ -29,6 +35,7 @@ class CreateMemoryConsolidationProposalsRequest(BaseModel):
     semantic_limit: int = Field(default=200, ge=1, le=500)
     conversation_limit: int = Field(default=200, ge=1, le=500)
     dry_run: bool = False
+    include_graph_proposals: bool = True
 
 
 class MemoryConsolidationProposalItem(BaseModel):
@@ -42,6 +49,18 @@ class MemoryConsolidationProposalItem(BaseModel):
     parameters_hash: str
 
 
+class MemoryGraphExtractionProposalItem(BaseModel):
+    proposal_id: str | None
+    source_kind: str
+    source_candidate_id: str
+    proposed_action: str
+    object_type: str
+    status: str
+    approval_queue_id: str | None
+    parameters_hash: str
+    existing: bool = False
+
+
 class CreateMemoryConsolidationProposalsResponse(BaseModel):
     status: Literal["dry_run", "queued"]
     target_user_id: str
@@ -49,8 +68,14 @@ class CreateMemoryConsolidationProposalsResponse(BaseModel):
     candidate_count: int
     executable_count: int
     informational_count: int
+    graph_candidate_count: int = 0
+    graph_queued_count: int = 0
+    graph_existing_count: int = 0
     write_actions_enabled: bool
     proposals: list[MemoryConsolidationProposalItem]
+    graph_proposals: list[MemoryGraphExtractionProposalItem] = Field(
+        default_factory=list
+    )
 
 
 class MemoryConsolidationExecutionResponse(BaseModel):
@@ -84,6 +109,16 @@ async def create_memory_consolidation_proposals(
             conversation_limit=body.conversation_limit,
         )
         records = build_memory_consolidation_proposal_records(report)
+        buddy_events = (
+            await collect_buddy_graph_signal_events(conn, target_user_id)
+            if body.include_graph_proposals
+            else []
+        )
+        graph_records = (
+            build_memory_graph_extraction_records(report, buddy_events=buddy_events)
+            if body.include_graph_proposals
+            else []
+        )
         if body.dry_run:
             proposals = [
                 MemoryConsolidationProposalItem(
@@ -98,6 +133,20 @@ async def create_memory_consolidation_proposals(
                 )
                 for record in records
             ]
+            graph_proposals = [
+                MemoryGraphExtractionProposalItem(
+                    proposal_id=None,
+                    source_kind=record.source_kind,
+                    source_candidate_id=record.source_candidate_id,
+                    proposed_action=record.proposed_action,
+                    object_type=record.object_type,
+                    status="pending_review",
+                    approval_queue_id=None,
+                    parameters_hash=record.parameters_hash,
+                    existing=False,
+                )
+                for record in graph_records
+            ]
             status: Literal["dry_run", "queued"] = "dry_run"
         else:
             persisted = await create_reviewed_memory_consolidation_proposals(
@@ -107,10 +156,29 @@ async def create_memory_consolidation_proposals(
                 actor_type=actor_type,
             )
             proposals = [_proposal_item(item) for item in persisted]
+            graph_persisted = (
+                await create_memory_graph_extraction_proposals(
+                    conn,
+                    report=report,
+                    actor_sub=actor_sub,
+                    buddy_events=buddy_events,
+                )
+                if body.include_graph_proposals
+                else []
+            )
+            graph_proposals = [_graph_extraction_item(item) for item in graph_persisted]
             status = "queued"
 
     executable_count = sum(1 for proposal in proposals if proposal.executable)
     informational_count = len(proposals) - executable_count
+    graph_queued_count = sum(
+        1
+        for proposal in graph_proposals
+        if proposal.status == "queued"
+        and proposal.proposal_id
+        and not proposal.existing
+    )
+    graph_existing_count = sum(1 for proposal in graph_proposals if proposal.existing)
     logger.info(
         "MEMORY_CONSOLIDATION_PROPOSALS_CREATED",
         extra={
@@ -118,6 +186,9 @@ async def create_memory_consolidation_proposals(
             "target_user_id": str(target_user_id),
             "candidate_count": len(proposals),
             "executable_count": executable_count,
+            "graph_candidate_count": len(graph_proposals),
+            "graph_queued_count": graph_queued_count,
+            "graph_existing_count": graph_existing_count,
             "dry_run": body.dry_run,
         },
     )
@@ -128,8 +199,12 @@ async def create_memory_consolidation_proposals(
         candidate_count=int(report.get("candidate_count") or 0),
         executable_count=executable_count,
         informational_count=informational_count,
+        graph_candidate_count=len(graph_proposals),
+        graph_queued_count=graph_queued_count,
+        graph_existing_count=graph_existing_count,
         write_actions_enabled=False,
         proposals=proposals,
+        graph_proposals=graph_proposals,
     )
 
 
@@ -301,6 +376,22 @@ def _proposal_item(
         status=item.status,
         approval_queue_id=item.approval_queue_id,
         parameters_hash=item.parameters_hash,
+    )
+
+
+def _graph_extraction_item(
+    item: PersistedMemoryGraphExtractionProposal,
+) -> MemoryGraphExtractionProposalItem:
+    return MemoryGraphExtractionProposalItem(
+        proposal_id=item.proposal_id,
+        source_kind=item.source_kind,
+        source_candidate_id=item.source_candidate_id,
+        proposed_action=item.proposed_action,
+        object_type=item.object_type,
+        status=item.status,
+        approval_queue_id=item.approval_queue_id,
+        parameters_hash=item.parameters_hash,
+        existing=item.existing,
     )
 
 
