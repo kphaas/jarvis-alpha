@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -6,16 +6,13 @@ import {
   Activity, Bug, Bot, Terminal, Globe,
   ShieldAlert, ShieldCheck, DollarSign,
   FileText, Settings, Moon, Sun,
-  User, ChevronRight, Lock, Unlock, RefreshCw,
+  User, ChevronRight, Lock, RefreshCw,
   FolderOpen, Wrench, Fingerprint, Sparkles,
   Inbox,
-  HeartPulse, Scale, Printer, Hammer, ExternalLink,
   Gauge,
 } from 'lucide-react'
 import type { Theme } from '../types'
 import { useAppStore } from '../store'
-import { PinModal } from './PinModal'
-import { SPACES, getSpaceRoute } from '../lib/spaces'
 
 const NAV = [
   { group: 'OBSERVE', items: [
@@ -47,27 +44,10 @@ const NAV = [
     { to: '/documents', label: 'Documents',    icon: FileText      },
     { to: '/settings',  label: 'Settings',     icon: Settings      },
   ]},
+  { group: 'SPACES', items: [
+    { to: '/space',     label: 'Spaces',       icon: FolderOpen    },
+  ]},
 ]
-
-const SPACE_ICON_BY_SLUG: Record<string, typeof FolderOpen> = {
-  family: FolderOpen,
-  financial: DollarSign,
-  medical: HeartPulse,
-  legal: Scale,
-  home: Home,
-  printer: Printer,
-  forge: Wrench,
-  smithy: Hammer,
-  spark: Sparkles,
-  privacy: Fingerprint,
-}
-
-const SPACE_ITEMS = SPACES.map((space) => ({
-  to: getSpaceRoute(space),
-  href: space.launchUrl,
-  label: space.label,
-  icon: SPACE_ICON_BY_SLUG[space.slug] ?? FolderOpen,
-}))
 
 interface Props {
   theme: Theme
@@ -79,9 +59,7 @@ interface Props {
 }
 
 export function Layout({ theme, children, monthSpend = 0, budget = 500, onRefresh, loading }: Props) {
-  const { vaultUnlocked, setVaultUnlocked, setTheme } = useAppStore()
-  const [showPin, setShowPin] = useState(false)
-  const [pendingSpaceHref, setPendingSpaceHref] = useState<string | null>(null)
+  const { setTheme } = useAppStore()
   const isDark = theme === 'dark'
   const location = useLocation()
 
@@ -93,14 +71,7 @@ export function Layout({ theme, children, monthSpend = 0, budget = 500, onRefres
     : [...NAV.flatMap(g => g.items)]
         .sort((a, b) => b.to.length - a.to.length)
         .find(i => location.pathname.startsWith(i.to) && i.to !== '/')?.label
-    ?? SPACE_ITEMS.find(i => location.pathname.startsWith(i.to))?.label
     ?? ''
-
-  const handleSpaceClick = (href: string) => {
-    if (vaultUnlocked) return
-    setPendingSpaceHref(href)
-    setShowPin(true)
-  }
 
   return (
     <div className={`flex h-screen overflow-hidden font-sans transition-colors duration-300 ${isDark ? 'bg-[#0A0A0A] text-[#E4E3E0]' : 'bg-[#E4E3E0] text-[#141414]'}`}>
@@ -169,52 +140,6 @@ export function Layout({ theme, children, monthSpend = 0, budget = 500, onRefres
             </div>
           ))}
 
-          {/* Spaces group */}
-          <div>
-            <div className="flex items-center gap-1.5 px-2 pt-4 pb-1">
-              {vaultUnlocked
-                ? <Unlock className="w-2.5 h-2.5 text-emerald-500" />
-                : <Lock className="w-2.5 h-2.5 opacity-40" />}
-              <p className="text-[8px] font-mono uppercase font-bold opacity-30 tracking-widest flex-1">Spaces</p>
-              {vaultUnlocked && <span className="text-[7px] font-mono text-emerald-500 uppercase">Unlocked</span>}
-            </div>
-            {SPACE_ITEMS.map(item => (
-              vaultUnlocked ? (
-                <a
-                  key={item.to}
-                  href={item.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 text-sm font-medium ${
-                    location.pathname === item.to
-                      ? isDark ? 'bg-emerald-500 text-[#0A0A0A]' : 'bg-[#141414] text-[#E4E3E0]'
-                      : subtle
-                  }`}
-                >
-                  <item.icon className="w-4 h-4 flex-shrink-0" />
-                  <span className="truncate">{item.label}</span>
-                  {location.pathname === item.to ? (
-                    <motion.div layoutId="active-nav-space" className="ml-auto">
-                      <ChevronRight className="w-3 h-3" />
-                    </motion.div>
-                  ) : (
-                    <ExternalLink className="ml-auto h-3 w-3 opacity-30" />
-                  )}
-                </a>
-              ) : (
-                <button
-                  key={item.to}
-                  type="button"
-                  onClick={() => handleSpaceClick(item.href)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 text-sm font-medium ${subtle} opacity-60`}
-                >
-                  <item.icon className="w-4 h-4 flex-shrink-0" />
-                  <span className="truncate">{item.label}</span>
-                  <Lock className="ml-auto w-3 h-3 opacity-25" />
-                </button>
-              )
-            ))}
-          </div>
         </nav>
 
         {/* System status */}
@@ -265,25 +190,6 @@ export function Layout({ theme, children, monthSpend = 0, budget = 500, onRefres
         </main>
       </div>
 
-      {/* PIN Modal */}
-      <AnimatePresence>
-        {showPin && (
-          <PinModal
-            theme={theme}
-            title="Spaces"
-            subtitle="Enter PIN to unlock all spaces"
-            onUnlock={() => {
-              setVaultUnlocked(true)
-              setShowPin(false)
-              if (pendingSpaceHref) {
-                window.open(pendingSpaceHref, '_blank', 'noopener,noreferrer')
-                setPendingSpaceHref(null)
-              }
-            }}
-            onCancel={() => { setShowPin(false); setPendingSpaceHref(null) }}
-          />
-        )}
-      </AnimatePresence>
     </div>
   )
 }

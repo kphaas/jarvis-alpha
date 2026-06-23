@@ -24,10 +24,22 @@ function alphaUrl(path: string): string {
 
 const FAMILY_UI_URL =
   normalizeBaseUrl(import.meta.env.VITE_FAMILY_UI_URL as string | undefined) ??
-  alphaUrl('/space/family')
+  'https://jarvis-endpoint.tail40ed36.ts.net:4200'
+const FINANCIAL_UI_URL =
+  normalizeBaseUrl(import.meta.env.VITE_FINANCIAL_UI_URL as string | undefined) ??
+  'https://jarvis-sandbox.tail40ed36.ts.net:5443/admin/net-worth'
+const MEDICAL_UI_URL =
+  normalizeBaseUrl(import.meta.env.VITE_MEDICAL_UI_URL as string | undefined) ??
+  'https://jarvis-endpoint.tail40ed36.ts.net:4217/lab-ui'
+const PRINTY_UI_URL =
+  normalizeBaseUrl(import.meta.env.VITE_PRINTY_UI_URL as string | undefined) ??
+  'http://jarvis-print.tail40ed36.ts.net:5002'
 const FORGE_UI_URL =
   normalizeBaseUrl(import.meta.env.VITE_FORGE_UI_URL as string | undefined) ??
-  alphaUrl('/space/forge')
+  'https://jarvis-sandbox.tail40ed36.ts.net:5001'
+const SMITHY_UI_URL =
+  normalizeBaseUrl(import.meta.env.VITE_SMITHY_UI_URL as string | undefined) ??
+  'https://jarvis-sandbox.tail40ed36.ts.net:5001/smithy/'
 
 export const SPACES: SpaceDefinition[] = [
   {
@@ -46,8 +58,8 @@ export const SPACES: SpaceDefinition[] = [
     summary: 'Money, banking posture, broker boundaries, and trade guard evidence.',
     status: 'Guarded',
     tabs: ['Accounts', 'Budget', 'Bills', 'Investments', 'Trade Guard'],
-    launchUrl: alphaUrl('/space/financial'),
-    launchLabel: 'Financial Space',
+    launchUrl: FINANCIAL_UI_URL,
+    launchLabel: 'Financial Dashboard',
   },
   {
     slug: 'medical',
@@ -55,8 +67,8 @@ export const SPACES: SpaceDefinition[] = [
     summary: 'Health records, appointments, medication context, and PHI-gated recall.',
     status: 'PHI gated',
     tabs: ['Records', 'Appointments', 'Medications', 'Care Team', 'Vault'],
-    launchUrl: alphaUrl('/space/medical'),
-    launchLabel: 'Medical Space',
+    launchUrl: MEDICAL_UI_URL,
+    launchLabel: 'VYVE Lab Workbench',
   },
   {
     slug: 'legal',
@@ -78,13 +90,13 @@ export const SPACES: SpaceDefinition[] = [
   },
   {
     slug: 'printer',
-    label: 'Printer',
+    label: 'Printy',
     summary: 'Crucible fabrication, print queue, materials, and printer health.',
     status: 'Fabrication',
     tabs: ['Crucible', 'Print Queue', 'Materials', 'Printer Health', 'Parts'],
-    launchUrl: alphaUrl('/space/printer'),
-    launchLabel: 'Printer Space',
-    aliases: ['crucible', 'print-copilot'],
+    launchUrl: PRINTY_UI_URL,
+    launchLabel: 'Printy',
+    aliases: ['crucible', 'print-copilot', 'printer'],
   },
   {
     slug: 'forge',
@@ -101,8 +113,8 @@ export const SPACES: SpaceDefinition[] = [
     summary: 'Ideas, specs, architecture decisions, and build-ready handoffs.',
     status: 'Spec shop',
     tabs: ['Ideas', 'Specs', 'ADRs', 'Roadmap', 'Handoffs'],
-    launchUrl: alphaUrl('/space/smithy'),
-    launchLabel: 'Smithy Space',
+    launchUrl: SMITHY_UI_URL,
+    launchLabel: 'Smithy',
   },
   {
     slug: 'spark',
