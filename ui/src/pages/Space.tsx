@@ -13,23 +13,25 @@ export default function Space() {
 
   const space = getSpaceBySlug(slug)
   const tabs = space?.tabs ?? []
-  const label = space?.label ?? slug ?? 'Space'
-  const summary = space?.summary ?? 'Protected AT0 domain workspace.'
-  const status = space?.status ?? 'Private workspace'
+  const label = space?.label ?? 'Spaces'
+  const summary = space?.summary ?? 'Single launchpad for AT-0 domain apps and operator work surfaces.'
+  const status = space?.status ?? 'Unlocked launchpad'
 
   return (
     <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
       <div>
         <h1 className="font-serif italic text-3xl">{label}</h1>
-        <p className="text-[10px] font-mono uppercase opacity-50 mt-1">{status} · PIN protected</p>
+        <p className="text-[10px] font-mono uppercase opacity-50 mt-1">{status}</p>
       </div>
-      <div className="flex flex-wrap gap-2">
-        {tabs.map(tab => (
-          <div key={tab} className={`px-4 py-2 rounded-xl border ${border} ${subtle} text-sm opacity-60`}>
-            {tab}
-          </div>
-        ))}
-      </div>
+      {tabs.length ? (
+        <div className="flex flex-wrap gap-2">
+          {tabs.map(tab => (
+            <div key={tab} className={`px-4 py-2 rounded-xl border ${border} ${subtle} text-sm opacity-60`}>
+              {tab}
+            </div>
+          ))}
+        </div>
+      ) : null}
       <div className={`rounded-lg border ${border} p-5`}>
         <p className="text-sm opacity-70">{summary}</p>
       </div>

@@ -45,6 +45,7 @@ export default function App() {
                   <Route path="/" element={<Home />} />
                   <Route path="/ask" element={<Navigate to="/" replace />} />
                   <Route path="/vault" element={<Vault />} />
+                  <Route path="/space" element={<Space />} />
                   <Route path="/space/:slug" element={<Space />} />
                   <Route path="/briefing" element={<Briefing />} />
                   <Route path="/briefings/:batchRunId" element={<BriefingDetail />} />
