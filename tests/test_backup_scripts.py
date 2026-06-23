@@ -277,12 +277,15 @@ def test_restore_drill_buddy_event_uses_authenticated_brain_psql():
     assert "-h 127.0.0.1 -U jarvisbrain -d jarvis_alpha" in text
 
 
-def test_restore_drill_reference_table_count_matches_current_baseline():
+def test_restore_drill_table_count_is_lower_bound_not_exact_baseline():
     text = (REPO_ROOT / "scripts" / "restore_drill_alpha.sh").read_text(
         encoding="utf-8"
     )
-    assert "REF_TABLES=105" in text
-    assert "including views" in text
+    assert "MIN_PUBLIC_RELATIONS=105" in text
+    assert "Exact relation count grows with normal" in text
+    assert "table_count=${TABLE_COUNT}_minimum=${MIN_PUBLIC_RELATIONS}" in text
+    assert "minimum_table_count:$min_tables" in text
+    assert "diff=$(( TABLE_COUNT - REF_TABLES ))" not in text
 
 
 def test_restore_drill_verifies_privacy_tables_and_force_rls():

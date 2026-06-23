@@ -21,11 +21,10 @@ REPORT_JSON="${LOG_DIR}/restore_drill_${RUN_TS}.json"
 DRILL_DB="jarvis_alpha_drill"
 IMAGE="pgvector/pgvector:pg16"
 
-# Live Brain reference baseline (verified after memory observability/Spark
-# readiness work, 2026-06-18). Counts information_schema public entries,
-# including views.
-REF_TABLES=105
-REF_TOLERANCE=2
+# Minimum public relation baseline. Exact relation count grows with normal
+# migrations, so critical readiness is enforced through named table, row-count,
+# FORCE RLS, and restore-error probes below.
+MIN_PUBLIC_RELATIONS=105
 EXPECTED_PRIVACY_TABLES=16
 EXPECTED_PRIVACY_FORCE_RLS_TABLES=16
 EXPECTED_MEMORY_FORCE_RLS_TABLES=6
@@ -392,11 +391,10 @@ VERIFY_PASS=true
 FAIL_REASONS=""
 add_fail() { FAIL_REASONS="${FAIL_REASONS}${FAIL_REASONS:+;}$1"; VERIFY_PASS=false; }
 
-# table count within ±REF_TOLERANCE of REF_TABLES
-diff=$(( TABLE_COUNT - REF_TABLES ))
-abs_diff=${diff#-}
-if [[ "$abs_diff" -gt "$REF_TOLERANCE" ]]; then
-    add_fail "table_count=${TABLE_COUNT}_ref=${REF_TABLES}_drift=${diff}"
+# table count is a lower-bound sanity check. Named critical table probes below
+# are the authoritative readiness checks.
+if ! [[ "$TABLE_COUNT" =~ ^[0-9]+$ ]] || [[ "$TABLE_COUNT" -lt "$MIN_PUBLIC_RELATIONS" ]]; then
+    add_fail "table_count=${TABLE_COUNT}_minimum=${MIN_PUBLIC_RELATIONS}"
 fi
 [[ "$ROWS_BUDDY" == "ERR" || "$ROWS_BUDDY" -lt 1 ]] && add_fail "alpha_buddy_events_${ROWS_BUDDY}"
 [[ "$ROWS_REQLOG" == "ERR" || "$ROWS_REQLOG" -lt 1 ]] && add_fail "jarvis_request_log_${ROWS_REQLOG}"
@@ -438,7 +436,7 @@ if [[ -n "$JQ" ]]; then
         --argjson restore_err "$RESTORE_ERR_COUNT" \
         --argjson pgaudit_err "$PGAUDIT_ERR_COUNT" \
         --argjson table_count "$TABLE_COUNT" \
-        --argjson ref_tables "$REF_TABLES" \
+        --argjson min_tables "$MIN_PUBLIC_RELATIONS" \
         --arg fail_reasons "$FAIL_REASONS" \
         --arg rows_buddy "$ROWS_BUDDY" \
         --arg rows_reqlog "$ROWS_REQLOG" \
@@ -456,7 +454,9 @@ if [[ -n "$JQ" ]]; then
             source_dump:$source_dump, image:$image, container:$container,
             pull_bytes:$pull_bytes, decrypted_bytes:$dec_bytes,
             restore_rc:$restore_rc, restore_err_count:$restore_err, pgaudit_err_count:$pgaudit_err,
-            table_count:$table_count, ref_table_count:$ref_tables,
+            table_count:$table_count,
+            minimum_table_count:$min_tables,
+            ref_table_count:$min_tables,
             row_counts:{
                 alpha_buddy_events:$rows_buddy,
                 jarvis_request_log:$rows_reqlog,
@@ -477,7 +477,7 @@ fi
 
 # ---------- 7. notify -----------------------------------------------------------
 if [[ "$DRILL_STATUS" == "pass" ]]; then
-    msg="Drill ${RUN_TS} · source ${LATEST##*/} · tables=${TABLE_COUNT}/${REF_TABLES} · memory_force_rls=${MEMORY_FORCE_RLS}/${EXPECTED_MEMORY_FORCE_RLS_TABLES} · privacy=${PRIVACY_TABLES}/${EXPECTED_PRIVACY_TABLES} force_rls=${PRIVACY_FORCE_RLS}/${EXPECTED_PRIVACY_FORCE_RLS_TABLES} · rows: buddy=${ROWS_BUDDY} reqlog=${ROWS_REQLOG} approval=${ROWS_APPROVAL} nodes=${ROWS_NODES}"
+    msg="Drill ${RUN_TS} · source ${LATEST##*/} · tables=${TABLE_COUNT} min=${MIN_PUBLIC_RELATIONS} · memory_force_rls=${MEMORY_FORCE_RLS}/${EXPECTED_MEMORY_FORCE_RLS_TABLES} · privacy=${PRIVACY_TABLES}/${EXPECTED_PRIVACY_TABLES} force_rls=${PRIVACY_FORCE_RLS}/${EXPECTED_PRIVACY_FORCE_RLS_TABLES} · rows: buddy=${ROWS_BUDDY} reqlog=${ROWS_REQLOG} approval=${ROWS_APPROVAL} nodes=${ROWS_NODES}"
     mm_notify info "Restore drill PASSED" "$msg"
     buddy_event system "Restore drill passed" "tables=${TABLE_COUNT} run=${RUN_TS}" 1
     log_json "$(make_event run_complete status=pass)"
