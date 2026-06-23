@@ -99,6 +99,10 @@ SSH/SCP gives us:
   ship pgaudit, so `pg_restore` emits 1 expected error per `CREATE EXTENSION
   pgaudit` line. The drill explicitly counts pgaudit-only errors and treats
   them as ignorable; any non-pgaudit error fails the drill.
+- **Total public relation count is a lower-bound sanity check.** Normal
+  migrations add tables and views, so exact table-count drift is not a backup
+  failure. Restore readiness is gated by named critical table probes, FORCE RLS
+  counts, row probes, and non-pgaudit restore errors.
 
 ### Neutral
 
