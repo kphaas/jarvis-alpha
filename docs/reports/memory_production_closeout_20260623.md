@@ -8,6 +8,7 @@
 | Memory SLO monitor | GREEN | `scripts/check_memory_observability.py --dry-run --no-alert` on Brain returned `status=pass`, `violations=[]`, `should_alert=false`. |
 | Temporal graph E2E | PASS | Reviewed-write create/archive path executed for one node and one edge; graph audit rows increased to 26. |
 | Graph operator UX data | PASS | Ken principal now has 7 active non-sensitive graph nodes and 5 active non-sensitive graph edges for Helm graph rendering. |
+| Helm graph browser smoke | PASS | Helm Memory > Graph renders the seeded `ken` graph, supports node selection, shows relationship history, and exposes `Queue archive`. |
 | Backup/restore evidence | PASS | Latest restore drill log on Sandbox reports `status=pass`, `table_count=110`, `fail_reasons=[]`. |
 
 ## Scope
@@ -88,6 +89,32 @@ Non-sensitive active edges:
 | Temporal graph management | `belongs_to` | AT-0 Memory |
 | Backup and restore drill | `belongs_to` | AT-0 Memory |
 | Alpha Brain | `related_to` | AT-0 Memory |
+
+## Helm Browser Smoke Evidence
+
+Live Helm URL:
+
+```text
+https://jarvis-endpoint.tail40ed36.ts.net:4300/memory?memoryTab=graph
+```
+
+Browser verification:
+
+| Step | Result |
+|---|---|
+| Open Memory tab directly | PASS - page title `jarvis-helm`; Memory tab selected. |
+| Graph tab visible | PASS - `Graph 7` selected. |
+| All-users filter | Expected empty detail state; aggregate counters still show graph health. |
+| Select principal `ken` | PASS - graph controls, clusters, nodes, edges, and minimap render. |
+| Active node counter | `7` |
+| Active edge counter | `5` |
+| Audit row counter | `26` |
+| Visible clusters | `Project`, `Task / Operator`, `Person` |
+| Click node `person Ken` | PASS - selected-object panel opens. |
+| Relationship history | PASS - shows `works on` relationship to `AT-0 Memory`. |
+| Operator action | PASS - selected panel exposes `Queue archive`. |
+
+Note: the archive execution path was already validated through Alpha reviewed-write proposal, approval, execute, and audit. Browser smoke stopped before pressing `Queue archive` to avoid archiving the seeded operator graph rows.
 
 ## Production Readiness Evidence
 
@@ -240,7 +267,7 @@ Latest restore drill file:
 |---|---|---|---|---|
 | P0 | None | Codex | 2026-06-23 | Closed |
 | P1 | None | Codex | 2026-06-23 | Closed |
-| P2 | Optional browser visual smoke of Helm graph rendering after deploy | Codex | TBD | Optional |
+| P2 | Browser visual smoke of Helm graph rendering after deploy | Codex | 2026-06-23 | Closed |
 | P2 | Revoke default PUBLIC EXECUTE on graph trigger helper | Codex | TBD | Optional hardening |
 | P2 | Add richer graph clustering/timeline UX beyond v2 controls | Codex | TBD | Product polish |
 
