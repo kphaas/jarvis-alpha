@@ -168,7 +168,11 @@ def _graph_node_payload(
     target_label: str | None,
 ) -> dict[str, Any]:
     people = [name for name in _KNOWN_PEOPLE if name in note.casefold()]
-    node_type = "project" if re.search(r"\b(plan|planning|trip|project)\b", note, re.I) else "relationship"
+    node_type = (
+        "project"
+        if re.search(r"\b(plan|planning|trip|project)\b", note, re.I)
+        else "relationship"
+    )
     label_preview = _label_preview(note)
     note_hash = hashlib.sha256(note.encode("utf-8")).hexdigest()
     return {
@@ -214,9 +218,17 @@ def _personality_kind(lowered_note: str) -> str:
         return "phrase"
     if "avoid" in lowered_note:
         return "avoid"
-    if "voice" in lowered_note or "tone" in lowered_note or "sound like" in lowered_note:
+    if (
+        "voice" in lowered_note
+        or "tone" in lowered_note
+        or "sound like" in lowered_note
+    ):
         return "voice"
-    if "value" in lowered_note or "principle" in lowered_note or "kind of person" in lowered_note:
+    if (
+        "value" in lowered_note
+        or "principle" in lowered_note
+        or "kind of person" in lowered_note
+    ):
         return "value"
     if "style" in lowered_note:
         return "style"

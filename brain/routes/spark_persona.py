@@ -946,7 +946,9 @@ async def _apply_spark_memory_route(
             reason=plan.reason,
         )
     if plan.destination == "spark_target":
-        return _route_target_memory(payload=payload, plan=plan, target_context=target_context)
+        return _route_target_memory(
+            payload=payload, plan=plan, target_context=target_context
+        )
     if plan.destination == "temporal_graph":
         result = await _route_graph_memory(request=request, payload=payload, plan=plan)
         return SparkMemoryRouteResultModel(
@@ -956,7 +958,9 @@ async def _apply_spark_memory_route(
             reason=plan.reason,
         )
     if plan.destination == "semantic":
-        result = await _route_semantic_memory(request=request, payload=payload, plan=plan)
+        result = await _route_semantic_memory(
+            request=request, payload=payload, plan=plan
+        )
         return SparkMemoryRouteResultModel(
             destination="semantic",
             status="saved" if result.get("saved") else "not_saved",
@@ -977,11 +981,7 @@ def _route_target_memory(
     plan: SparkMemoryRoutePlan,
     target_context: dict[str, str],
 ) -> SparkMemoryRouteResultModel:
-    missing = [
-        key
-        for key in plan.required_metadata
-        if not target_context.get(key)
-    ]
+    missing = [key for key in plan.required_metadata if not target_context.get(key)]
     if missing:
         return SparkMemoryRouteResultModel(
             destination="spark_target",
