@@ -1,12 +1,16 @@
 """Spark persona guardrail routes."""
 
 from __future__ import annotations
+import json
 from dataclasses import asdict
+from typing import Any
+from uuid import NAMESPACE_DNS, UUID, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from brain.db.rls import rls_connection
+from brain.memory.memory import MemoryService
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
 from brain.services.auto_brain import (
@@ -28,6 +32,10 @@ from brain.services.spark_persona_guardrails import (
     SparkGuardrailState,
     load_spark_guardrails,
     save_spark_guardrails,
+)
+from brain.services.spark_memory_router import (
+    SparkMemoryRoutePlan,
+    plan_spark_memory_route,
 )
 from brain.services.spark_target_memory import (
     SparkTargetMemoryProposal,
@@ -260,6 +268,52 @@ class SparkTargetMemoryRejectRequest(BaseModel):
 class SparkTargetMemoryRejectResponse(BaseModel):
     status: str
     result: dict[str, object]
+
+
+class SparkMemoryRouteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    principal_id: str = Field(default="ken", min_length=1, max_length=64)
+    note: str = Field(min_length=3, max_length=800)
+    dry_run: bool = False
+    target_label: str | None = Field(default=None, min_length=1, max_length=120)
+    target_ref_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    approval_id: str | None = Field(default=None, min_length=1, max_length=160)
+    approval_ref_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    source_reference_hash: str | None = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+    )
+    chat_guid_hash: str | None = Field(default=None, min_length=64, max_length=64)
+
+
+class SparkMemoryRoutePlanModel(BaseModel):
+    status: str
+    destination: str | None = None
+    reason: str
+    risk: str
+    review_lane: str
+    confidence: float
+    semantic_category: str | None = None
+    personality_kind: str | None = None
+    target_kind: str | None = None
+    graph_label_preview: str | None = None
+    required_metadata: list[str] = Field(default_factory=list)
+
+
+class SparkMemoryRouteResultModel(BaseModel):
+    destination: str
+    status: str
+    result: dict[str, Any] = Field(default_factory=dict)
+    reason: str | None = None
+
+
+class SparkMemoryRouteResponse(BaseModel):
+    status: str
+    principal_id: str
+    plan: SparkMemoryRoutePlanModel
+    results: list[SparkMemoryRouteResultModel] = Field(default_factory=list)
 
 
 @router.get("/auto-context", response_model=AutoSparkContextMetadata)
@@ -814,6 +868,297 @@ async def reject_spark_target_memory(
         status="rejected" if result.get("rejected") else "not_rejected",
         result=result,
     )
+
+
+@router.post("/memory/route", response_model=SparkMemoryRouteResponse)
+async def route_spark_memory_learning(
+    request: Request,
+    payload: SparkMemoryRouteRequest,
+    _: str = Depends(require_auth),
+) -> SparkMemoryRouteResponse:
+    check_scopes(request, "admin")
+    target_context = _target_context_from_request(payload)
+    plan = plan_spark_memory_route(
+        note=payload.note,
+        principal_id=payload.principal_id,
+        target_label=target_context.get("target_label"),
+        has_target_context=bool(target_context),
+    )
+    result_models: list[SparkMemoryRouteResultModel] = []
+    status = "planned" if payload.dry_run else "routed"
+    if plan.status == "rejected":
+        status = "not_routed"
+    elif not payload.dry_run:
+        result_models.append(
+            await _apply_spark_memory_route(
+                request=request,
+                payload=payload,
+                plan=plan,
+                target_context=target_context,
+            )
+        )
+        if result_models[0].status in {"not_routed", "not_proposed", "not_queued"}:
+            status = "not_routed"
+
+    logger.info(
+        "spark_memory_learning_routed",
+        extra={
+            "event": "spark_memory_learning_routed",
+            "component": "spark_persona",
+            "principal_id": payload.principal_id,
+            "destination": plan.destination or "",
+            "status": status,
+            "review_lane": plan.review_lane,
+            "note_length": len(payload.note),
+            "dry_run": payload.dry_run,
+            "actor_sub": str(getattr(request.state, "user_id", "unknown")),
+            "actor_type": str(getattr(request.state, "actor_type", "unknown")),
+        },
+    )
+    return SparkMemoryRouteResponse(
+        status=status,
+        principal_id=payload.principal_id,
+        plan=_route_plan_model(plan),
+        results=result_models,
+    )
+
+
+async def _apply_spark_memory_route(
+    *,
+    request: Request,
+    payload: SparkMemoryRouteRequest,
+    plan: SparkMemoryRoutePlan,
+    target_context: dict[str, str],
+) -> SparkMemoryRouteResultModel:
+    if plan.destination == "spark_personality":
+        proposal = propose_personality_memory_from_note(
+            principal_id=payload.principal_id,
+            note=plan.note,
+        )
+        return SparkMemoryRouteResultModel(
+            destination="spark_personality",
+            status="proposed" if proposal else "not_proposed",
+            result=(
+                {"proposal": asdict(proposal)}
+                if proposal
+                else {"reason": "invalid_or_sensitive_note"}
+            ),
+            reason=plan.reason,
+        )
+    if plan.destination == "spark_target":
+        return _route_target_memory(payload=payload, plan=plan, target_context=target_context)
+    if plan.destination == "temporal_graph":
+        result = await _route_graph_memory(request=request, payload=payload, plan=plan)
+        return SparkMemoryRouteResultModel(
+            destination="temporal_graph",
+            status=str(result.get("status") or "not_queued"),
+            result=result,
+            reason=plan.reason,
+        )
+    if plan.destination == "semantic":
+        result = await _route_semantic_memory(request=request, payload=payload, plan=plan)
+        return SparkMemoryRouteResultModel(
+            destination="semantic",
+            status="saved" if result.get("saved") else "not_saved",
+            result=result,
+            reason=plan.reason,
+        )
+    return SparkMemoryRouteResultModel(
+        destination="unknown",
+        status="not_routed",
+        result={"reason": "no_destination"},
+        reason=plan.reason,
+    )
+
+
+def _route_target_memory(
+    *,
+    payload: SparkMemoryRouteRequest,
+    plan: SparkMemoryRoutePlan,
+    target_context: dict[str, str],
+) -> SparkMemoryRouteResultModel:
+    missing = [
+        key
+        for key in plan.required_metadata
+        if not target_context.get(key)
+    ]
+    if missing:
+        return SparkMemoryRouteResultModel(
+            destination="spark_target",
+            status="not_routed",
+            result={"reason": "target_context_required", "missing": missing},
+            reason=plan.reason,
+        )
+    proposal = propose_target_memory_from_note(
+        principal_id=payload.principal_id,
+        approval_id=target_context["approval_id"],
+        target_ref_hash=target_context["target_ref_hash"],
+        target_label=target_context["target_label"],
+        kind=plan.target_kind or "profile_fact",  # type: ignore[arg-type]
+        note=plan.note,
+        approval_ref_hash=target_context["approval_ref_hash"],
+        source_reference_hash=target_context["source_reference_hash"],
+        chat_guid_hash=target_context["chat_guid_hash"],
+    )
+    return SparkMemoryRouteResultModel(
+        destination="spark_target",
+        status="proposed" if proposal else "not_proposed",
+        result=(
+            {"proposal": asdict(proposal)}
+            if proposal
+            else {"reason": "invalid_or_sensitive_note"}
+        ),
+        reason=plan.reason,
+    )
+
+
+async def _route_semantic_memory(
+    *,
+    request: Request,
+    payload: SparkMemoryRouteRequest,
+    plan: SparkMemoryRoutePlan,
+) -> dict[str, object]:
+    user_id = _principal_uuid(payload.principal_id)
+    provenance = {
+        "source_surface": "spark_memory_router",
+        "source_route": "/v1/spark/persona/memory/route",
+        "source_action": "spark_learning_route",
+        "actor_type": str(getattr(request.state, "actor_type", "user") or "user"),
+        "actor_role": str(getattr(request.state, "role", "admin") or "admin"),
+        "review_lane": plan.review_lane,
+        "route_reason": plan.reason,
+        "contains_raw_spark_body": False,
+        "source_note_hash": _sha256(plan.note),
+    }
+    async with rls_connection(request) as conn:
+        return await MemoryService().save_semantic(
+            conn=conn,
+            user_id=user_id,
+            fact=plan.note,
+            category=plan.semantic_category or "project",
+            provenance=provenance,
+            review_status=(
+                "pending_review"
+                if plan.review_lane == "semantic_high_visibility"
+                else None
+            ),
+            review_reason=(
+                "spark_router_high_visibility"
+                if plan.review_lane == "semantic_high_visibility"
+                else None
+            ),
+        )
+
+
+async def _route_graph_memory(
+    *,
+    request: Request,
+    payload: SparkMemoryRouteRequest,
+    plan: SparkMemoryRoutePlan,
+) -> dict[str, Any]:
+    actor = str(
+        getattr(request.state, "user_sub", None)
+        or getattr(request.state, "user_id", None)
+        or "unknown"
+    )
+    async with rls_connection(request) as conn:
+        raw = await conn.fetchval(
+            """
+            SELECT public.propose_memory_graph_write(
+                $1::uuid,
+                'create_node',
+                'node',
+                $2::jsonb,
+                'spark_memory_router',
+                $3,
+                $4
+            )
+            """,
+            str(_principal_uuid(payload.principal_id)),
+            json.dumps(plan.graph_payload or {}, sort_keys=True),
+            actor,
+            plan.reason,
+        )
+    return _json_result(raw)
+
+
+def _target_context_from_request(payload: SparkMemoryRouteRequest) -> dict[str, str]:
+    context: dict[str, str] = {}
+    if payload.approval_id:
+        try:
+            record = _approved_imessage_record(
+                principal_id=payload.principal_id,
+                approval_id=payload.approval_id,
+            )
+        except HTTPException:
+            record = None
+        if record is not None:
+            context.update(
+                {
+                    "approval_id": record.approval_id,
+                    "target_ref_hash": record.source_reference_hash,
+                    "target_label": record.source_reference_label
+                    or "Approved iMessage thread",
+                    "approval_ref_hash": record.approval_ref_hash,
+                    "source_reference_hash": record.source_reference_hash,
+                }
+            )
+    if payload.approval_id:
+        context["approval_id"] = payload.approval_id
+    if payload.target_ref_hash:
+        context["target_ref_hash"] = payload.target_ref_hash
+    if payload.target_label:
+        context["target_label"] = payload.target_label
+    if payload.approval_ref_hash:
+        context["approval_ref_hash"] = payload.approval_ref_hash
+    if payload.source_reference_hash:
+        context["source_reference_hash"] = payload.source_reference_hash
+    elif payload.target_ref_hash:
+        context.setdefault("source_reference_hash", payload.target_ref_hash)
+    if payload.chat_guid_hash:
+        context["chat_guid_hash"] = payload.chat_guid_hash
+    return context
+
+
+def _route_plan_model(plan: SparkMemoryRoutePlan) -> SparkMemoryRoutePlanModel:
+    graph_label = None
+    if plan.graph_payload:
+        graph_label = str(plan.graph_payload.get("label_preview") or "")
+    return SparkMemoryRoutePlanModel(
+        status=plan.status,
+        destination=plan.destination,
+        reason=plan.reason,
+        risk=plan.risk,
+        review_lane=plan.review_lane,
+        confidence=plan.confidence,
+        semantic_category=plan.semantic_category,
+        personality_kind=plan.personality_kind,
+        target_kind=plan.target_kind,
+        graph_label_preview=graph_label or None,
+        required_metadata=list(plan.required_metadata),
+    )
+
+
+def _principal_uuid(principal_id: str) -> UUID:
+    try:
+        return UUID(str(principal_id))
+    except ValueError:
+        return uuid5(NAMESPACE_DNS, str(principal_id))
+
+
+def _json_result(value: object) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        loaded = json.loads(value)
+        return loaded if isinstance(loaded, dict) else {"value": loaded}
+    return {"value": value}
+
+
+def _sha256(value: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _personality_item(row: dict[str, object]) -> SparkPersonalityMemoryItem:
