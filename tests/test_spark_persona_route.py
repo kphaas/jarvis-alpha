@@ -46,6 +46,7 @@ def test_spark_persona_routes_are_classified_t2_security_state() -> None:
     )
     write_classes = classify_route("PUT", "/v1/spark/persona/guardrails")
     memory_propose_classes = classify_route("POST", "/v1/spark/persona/memory/propose")
+    memory_route_classes = classify_route("POST", "/v1/spark/persona/memory/route")
     memory_write_classes = classify_route("POST", "/v1/spark/persona/memory/approve")
     memory_archive_classes = classify_route("POST", "/v1/spark/persona/memory/archive")
     memory_reject_classes = classify_route("POST", "/v1/spark/persona/memory/reject")
@@ -68,6 +69,7 @@ def test_spark_persona_routes_are_classified_t2_security_state() -> None:
     assert target_memory_read_classes == ["read", "security_read"]
     assert write_classes == ["write", "security_write"]
     assert memory_propose_classes == ["write", "security_write"]
+    assert memory_route_classes == ["write", "security_write"]
     assert memory_write_classes == ["write", "security_write"]
     assert memory_archive_classes == ["write", "security_write"]
     assert memory_reject_classes == ["write", "security_write"]
@@ -81,6 +83,7 @@ def test_spark_persona_routes_are_classified_t2_security_state() -> None:
     assert determine_risk_tier(target_memory_read_classes) == "T2"
     assert determine_risk_tier(write_classes) == "T2"
     assert determine_risk_tier(memory_propose_classes) == "T2"
+    assert determine_risk_tier(memory_route_classes) == "T2"
     assert determine_risk_tier(memory_write_classes) == "T2"
     assert determine_risk_tier(memory_archive_classes) == "T2"
     assert determine_risk_tier(memory_reject_classes) == "T2"
@@ -366,6 +369,112 @@ async def test_spark_memory_propose_returns_buddy_proposal_without_logging_note(
 
 
 @pytest.mark.asyncio
+async def test_spark_memory_route_requires_admin() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await spark_persona.route_spark_memory_learning(
+            _request(scopes=["spark.draft"]),
+            spark_persona.SparkMemoryRouteRequest(
+                principal_id="ken",
+                note="Key phrase I use: fair enough.",
+            ),
+            "user",
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_spark_memory_route_proposes_personality_without_logging_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    proposal = SparkPersonalityMemoryProposal(
+        proposal_id="proposal-456",
+        principal_id="ken",
+        kind="phrase",
+        content="Signature phrase: fair enough.",
+        source="buddy_proposal",
+        reason="Buddy proposal from reviewed memory note",
+        confidence=0.72,
+        evidence_ref_hash="e" * 64,
+    )
+    monkeypatch.setattr(spark_persona, "logger", fake_logger)
+    monkeypatch.setattr(
+        spark_persona,
+        "propose_personality_memory_from_note",
+        lambda **_kwargs: proposal,
+    )
+
+    response = await spark_persona.route_spark_memory_learning(
+        _request(role="admin"),
+        spark_persona.SparkMemoryRouteRequest(
+            principal_id="ken",
+            note="Key phrase I use: fair enough.",
+        ),
+        "user",
+    )
+
+    assert response.status == "routed"
+    assert response.plan.destination == "spark_personality"
+    assert response.results[0].status == "proposed"
+    assert response.results[0].result["proposal"]["proposal_id"] == "proposal-456"
+    logs = json.dumps(fake_logger.infos)
+    assert "fair enough" not in logs
+    assert "Key phrase" not in logs
+
+
+@pytest.mark.asyncio
+async def test_spark_memory_route_queues_graph_reviewed_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    conn = _FetchValConn(
+        {
+            "status": "queued",
+            "proposal_id": "graph-proposal-1",
+            "approval_queue_id": "queue-1",
+        }
+    )
+    monkeypatch.setattr(spark_persona, "logger", fake_logger)
+    monkeypatch.setattr(spark_persona, "rls_connection", lambda _request: conn)
+
+    response = await spark_persona.route_spark_memory_learning(
+        _request(role="admin"),
+        spark_persona.SparkMemoryRouteRequest(
+            principal_id="ken",
+            note="Sweta and Ken are planning a trip.",
+        ),
+        "user",
+    )
+
+    assert response.status == "routed"
+    assert response.plan.destination == "temporal_graph"
+    assert response.plan.review_lane == "memory_graph_reviewed_write"
+    assert response.results[0].status == "queued"
+    assert conn.args[0] == str(spark_persona._principal_uuid("ken"))
+    assert conn.args[2] == "ken"
+    logs = json.dumps(fake_logger.infos)
+    assert "planning a trip" not in logs
+
+
+@pytest.mark.asyncio
+async def test_spark_memory_route_requires_target_context_metadata() -> None:
+    response = await spark_persona.route_spark_memory_learning(
+        _request(role="admin"),
+        spark_persona.SparkMemoryRouteRequest(
+            principal_id="ken",
+            note="They prefer short confirmation texts.",
+            target_label="Sweta",
+        ),
+        "user",
+    )
+
+    assert response.status == "not_routed"
+    assert response.plan.destination == "spark_target"
+    assert response.results[0].result["reason"] == "target_context_required"
+
+
+@pytest.mark.asyncio
 async def test_spark_memory_approval_calls_reviewed_writer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -636,6 +745,19 @@ class _AsyncConn:
 
     async def __aexit__(self, *_args: object) -> None:
         return None
+
+
+class _FetchValConn(_AsyncConn):
+    def __init__(self, payload: dict[str, object]) -> None:
+        super().__init__(rows=[])
+        self.payload = payload
+        self.sql = ""
+        self.args: tuple[object, ...] = ()
+
+    async def fetchval(self, sql: str, *args: object) -> dict[str, object]:
+        self.sql = sql
+        self.args = args
+        return self.payload
 
 
 def _async_return(value: object):

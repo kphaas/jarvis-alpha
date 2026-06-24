@@ -54,6 +54,7 @@ PROPOSAL_ID = re.compile(r"^[a-f0-9]{8,64}$")
 RELATIONSHIP_NOTE = re.compile(
     r"^(?P<label>[^:]{1,80}):\s*(?P<relationship>[^;]{1,80})(?:;.*)?$"
 )
+PROPOSAL_FILENAME = "personality_memory_proposals.jsonl"
 REJECTION_FILENAME = "rejected_proposals.jsonl"
 
 
@@ -330,6 +331,22 @@ def build_personality_memory_proposals(
             existing=existing,
         )
 
+    for proposal in _proposal_rows(
+        principal_id=principal,
+        feedback_root=feedback_root,
+    ):
+        _append_proposal(
+            proposals,
+            principal_id=proposal.principal_id,
+            kind=proposal.kind,
+            content=proposal.content,
+            source=proposal.source,
+            reason=proposal.reason,
+            confidence=proposal.confidence,
+            evidence_ref_hash=proposal.evidence_ref_hash,
+            existing=existing,
+        )
+
     rejected = _rejected_proposal_ids(
         principal_id=principal,
         feedback_root=feedback_root,
@@ -375,11 +392,12 @@ def propose_personality_memory_from_note(
     *,
     principal_id: str = "ken",
     note: str,
+    feedback_root: str | Path | None = None,
 ) -> SparkPersonalityMemoryProposal | None:
     """Convert a Ken-authored memory note into a reviewed Buddy proposal.
 
-    This function never writes memory. The approval route remains the only
-    durable writer.
+    This function writes a proposal record, not durable memory. The approval
+    route remains the only durable personality-memory writer.
     """
 
     principal = safe_principal_id(principal_id) or "ken"
@@ -395,7 +413,7 @@ def propose_personality_memory_from_note(
     evidence_ref_hash = hashlib.sha256(
         f"{principal}|{clean}".encode("utf-8")
     ).hexdigest()
-    return SparkPersonalityMemoryProposal(
+    proposal = SparkPersonalityMemoryProposal(
         proposal_id=_proposal_id(principal, kind, content, "buddy_proposal"),
         principal_id=principal,
         kind=kind,
@@ -405,16 +423,18 @@ def propose_personality_memory_from_note(
         confidence=0.72,
         evidence_ref_hash=evidence_ref_hash,
     )
+    _append_proposal_row(proposal, feedback_root=feedback_root)
+    return proposal
 
 
 def _infer_note_kind(content: str) -> PersonalityMemoryKind:
     lowered = content.casefold()
+    if "phrase" in lowered or '"' in content or "'" in content:
+        return "phrase"
     if RELATIONSHIP_NOTE.match(content) or " is my " in lowered:
         return "relationship"
     if lowered.startswith(("avoid ", "do not ", "don't ", "dont ")):
         return "avoid"
-    if "phrase" in lowered or '"' in content or "'" in content:
-        return "phrase"
     if any(token in lowered for token in ("voice", "tone", "sound like")):
         return "voice"
     if any(token in lowered for token in ("value", "principle", "believe")):
@@ -472,6 +492,91 @@ def _append_proposal(
             confidence=confidence,
             evidence_ref_hash=evidence_ref_hash,
         )
+    )
+
+
+def _append_proposal_row(
+    proposal: SparkPersonalityMemoryProposal,
+    *,
+    feedback_root: str | Path | None,
+) -> None:
+    from datetime import UTC, datetime
+
+    path = _proposal_file_path(
+        principal_id=proposal.principal_id,
+        feedback_root=feedback_root,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "event": "spark_personality_memory_proposed",
+        "created_at": datetime.now(UTC).isoformat(),
+        "proposal_id": proposal.proposal_id,
+        "principal_id": proposal.principal_id,
+        "kind": proposal.kind,
+        "content": proposal.content,
+        "source": proposal.source,
+        "reason": proposal.reason,
+        "confidence": proposal.confidence,
+        "evidence_ref_hash": proposal.evidence_ref_hash,
+    }
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        handle.write("\n")
+
+
+def _proposal_rows(
+    *,
+    principal_id: str,
+    feedback_root: str | Path | None,
+) -> list[SparkPersonalityMemoryProposal]:
+    path = _proposal_file_path(principal_id=principal_id, feedback_root=feedback_root)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    proposals: list[SparkPersonalityMemoryProposal] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            proposal = _proposal_from_row(row)
+            if proposal is not None:
+                proposals.append(proposal)
+    return proposals
+
+
+def _proposal_from_row(row: dict[str, object]) -> SparkPersonalityMemoryProposal | None:
+    proposal_id = str(row.get("proposal_id") or "").strip().lower()
+    principal_id = safe_principal_id(str(row.get("principal_id") or ""))
+    kind = str(row.get("kind") or "").strip().lower()
+    content = _safe_content(str(row.get("content") or ""))
+    source = str(row.get("source") or "").strip().lower()
+    reason = _safe_content(str(row.get("reason") or ""))
+    if (
+        not PROPOSAL_ID.fullmatch(proposal_id)
+        or principal_id is None
+        or kind not in PersonalityMemoryKind.__args__
+        or source not in PersonalityMemorySource.__args__
+        or not content
+    ):
+        return None
+    confidence = float(row.get("confidence") or 0.72)
+    evidence_ref_hash = str(row.get("evidence_ref_hash") or "").strip().lower()
+    if not re.fullmatch(r"[a-f0-9]{64}", evidence_ref_hash):
+        evidence_ref_hash = None
+    return SparkPersonalityMemoryProposal(
+        proposal_id=proposal_id,
+        principal_id=principal_id,
+        kind=kind,  # type: ignore[arg-type]
+        content=content,
+        source=source,  # type: ignore[arg-type]
+        reason=reason or "Buddy proposal from reviewed memory note",
+        confidence=max(0.0, min(confidence, 1.0)),
+        evidence_ref_hash=evidence_ref_hash,
     )
 
 
@@ -568,6 +673,22 @@ def _feedback_file_path(
         / principal_id
         / "feedback"
         / FEEDBACK_FILENAME
+    )
+
+
+def _proposal_file_path(
+    *,
+    principal_id: str,
+    feedback_root: str | Path | None,
+) -> Path:
+    root = _feedback_root(feedback_root)
+    return (
+        root.expanduser()
+        / "spark"
+        / "principals"
+        / principal_id
+        / "memory_review"
+        / PROPOSAL_FILENAME
     )
 
 
