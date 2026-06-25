@@ -22,6 +22,10 @@ from brain.db.rls import platform_admin_connection, rls_connection
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
 from brain.services.at0_self_model import At0SelfModel, build_at0_self_model
+from brain.services.internet_scout.ai_news_brief import (
+    AiNewsBrief,
+    latest_ai_news_brief,
+)
 from brain.services.internet_scout.health import build_beacon_health
 from jarvis_common.logging_config import get_logger
 
@@ -1375,6 +1379,21 @@ async def helm_summary(
         ),
         beacon=beacon_summary,
     )
+
+
+@router.get("/ai-news/brief", response_model=AiNewsBrief)
+async def helm_ai_news_brief(
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> AiNewsBrief:
+    """Return the latest Auto-generated AI vendor news brief for Helm."""
+    check_scopes(request, "helm.read", "admin")
+    actor = str(getattr(request.state, "user_id", "unknown"))
+    async with platform_admin_connection(
+        source="http",
+        audit_actor=f"helm_ai_news_brief:{actor}",
+    ) as conn:
+        return await latest_ai_news_brief(conn)
 
 
 @router.get("/self", response_model=At0SelfModel)

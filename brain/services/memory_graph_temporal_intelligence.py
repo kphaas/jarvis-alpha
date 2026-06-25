@@ -203,8 +203,10 @@ def _normalize_now(value: datetime | None) -> datetime:
 
 
 def _positive_int(value: object, *, fallback: int) -> int:
+    if not isinstance(value, int | float | str | bytes | bytearray):
+        return fallback
     try:
-        parsed = int(value)  # type: ignore[arg-type]
+        parsed = int(value)
     except (TypeError, ValueError):
         return fallback
     return parsed if parsed > 0 else fallback

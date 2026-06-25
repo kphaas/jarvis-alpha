@@ -652,7 +652,56 @@ async def test_beacon_summary_degrades_when_health_unavailable(monkeypatch) -> N
 
 def test_helm_summary_route_is_read_classified() -> None:
     assert classify_route("GET", "/v1/helm/summary") == ["read", "security_read"]
+    assert classify_route("GET", "/v1/helm/ai-news/brief") == [
+        "read",
+        "security_read",
+    ]
     assert classify_route("GET", "/v1/helm/self") == ["read", "security_read"]
+
+
+@pytest.mark.asyncio
+async def test_helm_ai_news_brief_requires_helm_read_scope() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await helm.helm_ai_news_brief(_request(), _user_id="ken")
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_helm_ai_news_brief_returns_latest_auto_summary(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    @asynccontextmanager
+    async def fake_platform_admin_connection(**kwargs):
+        seen.update(kwargs)
+        yield object()
+
+    async def fake_latest_ai_news_brief(_conn):
+        from brain.services.internet_scout.ai_news_brief import AiNewsBrief
+
+        return AiNewsBrief(
+            status="ok",
+            generated_at=datetime(2026, 6, 25, 12, 15, tzinfo=UTC),
+            overall_summary="2 official AI vendor item(s) were found.",
+            item_count=2,
+            recent_item_count=2,
+            source_count=3,
+        )
+
+    monkeypatch.setattr(
+        helm, "platform_admin_connection", fake_platform_admin_connection
+    )
+    monkeypatch.setattr(helm, "latest_ai_news_brief", fake_latest_ai_news_brief)
+
+    response = await helm.helm_ai_news_brief(
+        _request(scopes=["helm.read"]),
+        _user_id="ken",
+    )
+
+    assert response.status == "ok"
+    assert response.controls.generated_by == "alpha_auto"
+    assert response.controls.egress_owner == "gateway"
+    assert seen["audit_actor"] == "helm_ai_news_brief:ken"
 
 
 @pytest.mark.asyncio
@@ -1018,6 +1067,10 @@ async def test_helm_action_proposal_queues_approval(monkeypatch) -> None:
 
 
 def test_helm_family_and_action_routes_are_classified() -> None:
+    assert classify_route("GET", "/v1/helm/ai-news/brief") == [
+        "read",
+        "security_read",
+    ]
     assert classify_route("GET", "/v1/helm/family/summary") == [
         "read",
         "security_read",

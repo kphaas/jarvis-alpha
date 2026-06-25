@@ -71,6 +71,19 @@ def test_content_metadata_allows_text_html_with_charset():
 
 
 @pytest.mark.parametrize(
+    "content_type",
+    [
+        "application/rss+xml; charset=utf-8",
+        "application/atom+xml; charset=utf-8",
+    ],
+)
+def test_content_metadata_allows_feed_xml(content_type: str) -> None:
+    result = validate_content_metadata(content_type, 2048)
+
+    assert result.allowed is True
+
+
+@pytest.mark.parametrize(
     ("content_type", "content_length", "reason"),
     [
         ("image/png", 100, "unsupported_content_type"),

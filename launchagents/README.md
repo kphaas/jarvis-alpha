@@ -53,6 +53,7 @@ These are deployed and working. Rename to categorical form is tracked as **TD-11
 | `com.jarvis.alpha.loki.plist` | Brain | KeepAlive — log aggregator |
 | `com.jarvis.alpha.at0-mail.template.plist` | Brain | Template — hourly AT-0 Herald mail intake scanner |
 | `com.jarvis.alpha.at0-mail-health.template.plist` | Brain | Template — 15-minute Herald Graph token/read/send-state monitor |
+| `com.jarvis.alpha.ai-news-brief.template.plist` | Brain | Template — daily Auto-generated AI vendor news brief for Helm |
 | `com.jarvis.alpha.gmail-health.template.plist` | Brain | Template — scheduled Gmail OAuth health watcher |
 | `com.jarvis.alpha.beacon-quality.template.plist` | Brain | Template — scheduled Beacon deterministic quality canary |
 | `com.jarvis.alpha.spark-send-readiness.template.plist` | Brain | Template — hourly non-live Spark approved-send readiness canary |
