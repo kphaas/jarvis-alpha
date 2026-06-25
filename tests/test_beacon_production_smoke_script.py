@@ -180,3 +180,60 @@ def test_source_connector_smoke_verifies_expected_citation_host(monkeypatch):
             "raw_web_content_is_untrusted": True,
         }
     ]
+
+
+def test_source_connector_smoke_accepts_pubmed_ncbi_alias_hosts(monkeypatch):
+    monkeypatch.setattr(
+        smoke_beacon_production,
+        "SOURCE_CONNECTOR_SMOKE_SPECS",
+        (
+            {
+                "data_source_id": "pubmed-eutils",
+                "query": "Use PubMed E-utilities to find GLP-1 outcomes.",
+                "hosts": (
+                    "pubmed.ncbi.nlm.nih.gov",
+                    "www.ncbi.nlm.nih.gov",
+                    "pmc.ncbi.nlm.nih.gov",
+                ),
+            },
+        ),
+    )
+
+    def fake_call_json(method, base_url, path, token, body=None):
+        assert method == "POST"
+        assert path == "/v1/internet-scout/agent/run"
+        assert body["requester"] == "beacon_smoke.pubmed-eutils"
+        return {
+            "status": "completed",
+            "selected_tool": "search",
+            "request_id": "request-pubmed",
+            "citations": [
+                {"source_url": ("https://pmc.ncbi.nlm.nih.gov/articles/PMC1234567/")}
+            ],
+            "raw_web_content_is_untrusted": True,
+        }
+
+    monkeypatch.setattr(smoke_beacon_production, "_call_json", fake_call_json)
+
+    results = smoke_beacon_production._run_source_connector_smokes(
+        "https://alpha.example.test",
+        "token",
+    )
+
+    assert results == [
+        {
+            "data_source_id": "pubmed-eutils",
+            "status": "completed",
+            "selected_tool": "search",
+            "request_id": "request-pubmed",
+            "citation_count": 1,
+            "citation_hosts": ["pmc.ncbi.nlm.nih.gov"],
+            "expected_hosts": [
+                "pubmed.ncbi.nlm.nih.gov",
+                "www.ncbi.nlm.nih.gov",
+                "pmc.ncbi.nlm.nih.gov",
+            ],
+            "host_verified": True,
+            "raw_web_content_is_untrusted": True,
+        }
+    ]
