@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
+from gateway.adapters import beacon_source_search
 from gateway.routes import cloud_routes
 
 
@@ -20,6 +21,7 @@ def reset_search_provider_circuits(monkeypatch, tmp_path):
     monkeypatch.delenv("BEACON_BRAVE_MONTHLY_SEARCH_LIMIT", raising=False)
     monkeypatch.delenv("BEACON_PERPLEXITY_DAILY_SEARCH_LIMIT", raising=False)
     monkeypatch.delenv("BEACON_PERPLEXITY_MONTHLY_SEARCH_LIMIT", raising=False)
+    monkeypatch.delenv("SEC_EDGAR_USER_AGENT", raising=False)
     monkeypatch.setenv("BEACON_SEARCH_USAGE_DIR", str(tmp_path))
     for circuit in cloud_routes._SEARCH_CIRCUITS.values():
         circuit.failures = []
@@ -1086,6 +1088,287 @@ async def test_internet_search_fails_closed_without_provider_key(monkeypatch):
 
     assert exc.value.status_code == 503
     assert exc.value.detail == "Search provider key not configured"
+
+
+@pytest.mark.asyncio
+async def test_internet_source_search_pubmed_normalizes_eutils_results(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    seen: list[tuple[str, dict[str, object]]] = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.payload = payload
+
+        def json(self):
+            return self.payload
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, *, params, headers):
+            seen.append((url, params))
+            if url.endswith("/esearch.fcgi"):
+                return FakeResponse({"esearchresult": {"idlist": ["12345"]}})
+            if url.endswith("/esummary.fcgi"):
+                return FakeResponse(
+                    {
+                        "result": {
+                            "12345": {
+                                "title": "Clinical GLP-1 outcomes",
+                                "source": "JAMA",
+                                "pubdate": "2026",
+                                "authors": [{"name": "Rivera A"}],
+                            }
+                        }
+                    }
+                )
+            raise AssertionError(url)
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.internet_source_search(
+        cloud_routes.InternetSourceSearchRequest(
+            data_source_id="pubmed-eutils",
+            query="GLP-1 treatment outcomes",
+            count=5,
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert result["provider"] == "pubmed-eutils"
+    assert seen[0][1]["db"] == "pubmed"
+    assert seen[0][1]["retmode"] == "json"
+    assert result["results"] == [
+        {
+            "title": "Clinical GLP-1 outcomes",
+            "url": "https://pubmed.ncbi.nlm.nih.gov/12345/",
+            "host": "pubmed.ncbi.nlm.nih.gov",
+            "description": "PMID 12345; journal=JAMA; published=2026; authors=Rivera A.",
+            "risk_markers": [],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_internet_source_search_sec_edgar_resolves_company_alias(monkeypatch):
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+    monkeypatch.setattr(beacon_source_search, "get_secret", fake_secret)
+    seen: list[tuple[str, dict[str, str] | None]] = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.payload = payload
+
+        def json(self):
+            return self.payload
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, *, headers, params=None):
+            seen.append((url, headers))
+            if url == "https://www.sec.gov/files/company_tickers.json":
+                return FakeResponse(
+                    {
+                        "0": {
+                            "cik_str": 320193,
+                            "ticker": "AAPL",
+                            "title": "Apple Inc.",
+                        }
+                    }
+                )
+            if url == "https://data.sec.gov/submissions/CIK0000320193.json":
+                return FakeResponse(
+                    {
+                        "name": "Apple Inc.",
+                        "filings": {
+                            "recent": {
+                                "form": ["10-K", "8-K"],
+                                "accessionNumber": [
+                                    "0000320193-26-000001",
+                                    "0000320193-26-000002",
+                                ],
+                                "primaryDocument": ["aapl-20260930.htm", "aapl-8k.htm"],
+                                "filingDate": ["2026-10-30", "2026-09-01"],
+                            }
+                        },
+                    }
+                )
+            raise AssertionError(url)
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.internet_source_search(
+        cloud_routes.InternetSourceSearchRequest(
+            data_source_id="sec-edgar",
+            query="Apple 10-K SEC EDGAR filing",
+            count=5,
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert seen[0][1]["User-Agent"] == "jarvis-alpha-beacon/1.0 security@at-0.com"
+    assert result["provider"] == "sec-edgar"
+    assert result["results"][0]["url"] == (
+        "https://www.sec.gov/Archives/edgar/data/"
+        "320193/000032019326000001/aapl-20260930.htm"
+    )
+    assert result["results"][0]["host"] == "www.sec.gov"
+    assert "form=10-K" in result["results"][0]["description"]
+
+
+@pytest.mark.asyncio
+async def test_internet_source_search_osv_uses_explicit_vulnerability_ids(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    seen: list[str] = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "id": "CVE-2026-12345",
+                "summary": "Package overflow",
+                "modified": "2026-06-01T00:00:00Z",
+                "affected": [{"package": {"name": "example-lib"}}],
+            }
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, *, headers):
+            seen.append(url)
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.internet_source_search(
+        cloud_routes.InternetSourceSearchRequest(
+            data_source_id="osv-dev",
+            query="Check CVE-2026-12345 in OSV",
+            count=5,
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert seen == ["https://api.osv.dev/v1/vulns/CVE-2026-12345"]
+    assert result["provider"] == "osv-dev"
+    assert result["results"][0]["url"] == (
+        "https://osv.dev/vulnerability/CVE-2026-12345"
+    )
+    assert "packages=example-lib" in result["results"][0]["description"]
+
+
+@pytest.mark.asyncio
+async def test_internet_source_search_cisa_kev_filters_catalog(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "vulnerabilities": [
+                    {
+                        "cveID": "CVE-2026-12345",
+                        "vendorProject": "Example",
+                        "product": "Gateway",
+                        "vulnerabilityName": "Example Gateway RCE",
+                        "dateAdded": "2026-06-01",
+                        "dueDate": "2026-06-22",
+                        "knownRansomwareCampaignUse": "Known",
+                    },
+                    {
+                        "cveID": "CVE-2025-00001",
+                        "vendorProject": "Other",
+                        "product": "Product",
+                        "vulnerabilityName": "Other bug",
+                    },
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, *, headers):
+            assert url == (
+                "https://www.cisa.gov/sites/default/files/feeds/"
+                "known_exploited_vulnerabilities.json"
+            )
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.internet_source_search(
+        cloud_routes.InternetSourceSearchRequest(
+            data_source_id="cisa-kev",
+            query="Is CVE-2026-12345 in CISA KEV?",
+            count=5,
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert result["provider"] == "cisa-kev"
+    assert len(result["results"]) == 1
+    assert result["results"][0]["url"] == (
+        "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
+        "?field_cve=CVE-2026-12345"
+    )
+    assert "known_ransomware=Known" in result["results"][0]["description"]
+
+
+@pytest.mark.asyncio
+async def test_internet_source_search_rejects_on_hold_data_sources(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+
+    with pytest.raises(HTTPException) as exc:
+        await cloud_routes.internet_source_search(
+            cloud_routes.InternetSourceSearchRequest(
+                data_source_id="quiverquant",
+                query="latest market data",
+            ),
+            authorization="Bearer gateway-token",
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "unsupported Beacon data source"
 
 
 @pytest.mark.asyncio

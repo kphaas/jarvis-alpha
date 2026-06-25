@@ -16,12 +16,16 @@ BEACON_EXECUTABLE_SEARCH_DATA_SOURCE_IDS: tuple[str, ...] = (
     "perplexity-search",
 )
 
-BEACON_APPROVED_SOURCE_DATA_SOURCE_IDS: tuple[str, ...] = (
-    "tavily-search",
+BEACON_EXECUTABLE_SOURCE_DATA_SOURCE_IDS: tuple[str, ...] = (
     "pubmed-eutils",
     "sec-edgar",
     "osv-dev",
     "cisa-kev",
+)
+
+BEACON_APPROVED_SOURCE_DATA_SOURCE_IDS: tuple[str, ...] = (
+    "tavily-search",
+    *BEACON_EXECUTABLE_SOURCE_DATA_SOURCE_IDS,
     "openalex",
     "google-workspace",
     "microsoft-graph",
