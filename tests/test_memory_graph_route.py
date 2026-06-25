@@ -6,6 +6,7 @@ from uuid import NAMESPACE_DNS, UUID, uuid5
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from brain.routes import memory_graph
 
@@ -121,6 +122,20 @@ class FakeGraphConn:
         raise AssertionError(f"unexpected query: {query}")
 
 
+class FakeGraphError(Exception):
+    def __init__(self, sqlstate: str) -> None:
+        super().__init__(sqlstate)
+        self.sqlstate = sqlstate
+
+
+class FakeGraphErrorConn(FakeGraphConn):
+    async def fetchval(self, query: str, *args: object) -> dict:
+        self.fetchval_calls.append((query, args))
+        if "execute_memory_graph_proposal" in query:
+            raise FakeGraphError("23514")
+        raise AssertionError(f"unexpected query: {query}")
+
+
 @asynccontextmanager
 async def fake_rls_connection(_request: object):
     yield FakeGraphConn()
@@ -231,6 +246,33 @@ async def test_memory_graph_propose_requires_write_scope_and_queues(
     assert "propose_memory_graph_write" in conn.fetchval_calls[0][0]
 
 
+def test_memory_graph_proposal_rejects_invalid_node_payloads() -> None:
+    with pytest.raises(ValidationError) as exc:
+        memory_graph.MemoryGraphProposalRequest(
+            proposed_action="create_node",
+            object_type="node",
+            payload={
+                "node_type": "e2e_canary",
+                "label_preview": "Disposable canary",
+                "source": "helm_e2e",
+            },
+        )
+
+    message = str(exc.value)
+    assert "payload.node_type must be one of" in message
+
+
+def test_memory_graph_proposal_rejects_invalid_archive_target() -> None:
+    with pytest.raises(ValidationError) as exc:
+        memory_graph.MemoryGraphProposalRequest(
+            proposed_action="archive_node",
+            object_type="node",
+            payload={"target_id": "not-a-uuid"},
+        )
+
+    assert "payload.target_id must be a UUID" in str(exc.value)
+
+
 @pytest.mark.asyncio
 async def test_memory_graph_execute_requires_approval_token(
     monkeypatch: pytest.MonkeyPatch,
@@ -261,3 +303,27 @@ async def test_memory_graph_execute_requires_approval_token(
     assert response.status == "executed"
     assert response.result["object_id"] == NODE_ID
     assert "execute_memory_graph_proposal" in conn.fetchval_calls[0][0]
+
+
+@pytest.mark.asyncio
+async def test_memory_graph_execute_sanitizes_db_constraint_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = FakeGraphErrorConn()
+
+    @asynccontextmanager
+    async def context(_request: object):
+        yield conn
+
+    monkeypatch.setattr(memory_graph, "rls_connection", context)
+    monkeypatch.setattr(memory_graph, "PostgresError", FakeGraphError)
+
+    with pytest.raises(HTTPException) as exc:
+        await memory_graph.execute_memory_graph_proposal(
+            proposal_id=PROPOSAL_ID,
+            request=_request(scopes=["memory.write"]),
+            x_approval_token=str(APPROVAL_ID),
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "memory graph payload violates schema constraints"
