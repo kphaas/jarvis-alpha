@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
@@ -21,13 +22,32 @@ def reset_search_provider_circuits(monkeypatch, tmp_path):
     monkeypatch.delenv("BEACON_BRAVE_MONTHLY_SEARCH_LIMIT", raising=False)
     monkeypatch.delenv("BEACON_PERPLEXITY_DAILY_SEARCH_LIMIT", raising=False)
     monkeypatch.delenv("BEACON_PERPLEXITY_MONTHLY_SEARCH_LIMIT", raising=False)
+    for data_source_id in cloud_routes.SUPPORTED_SOURCE_SEARCH_DATA_SOURCE_IDS:
+        safe_data_source_id = data_source_id.upper().replace("-", "_")
+        monkeypatch.delenv(
+            f"BEACON_{safe_data_source_id}_DAILY_SEARCH_LIMIT",
+            raising=False,
+        )
+        monkeypatch.delenv(
+            f"BEACON_{safe_data_source_id}_MONTHLY_SEARCH_LIMIT",
+            raising=False,
+        )
+    monkeypatch.delenv("BEACON_SEARCH_CIRCUIT_WINDOW_SECONDS", raising=False)
+    monkeypatch.delenv("BEACON_SEARCH_CIRCUIT_FAILURE_THRESHOLD", raising=False)
+    monkeypatch.delenv("BEACON_SEARCH_CIRCUIT_COOLDOWN_SECONDS", raising=False)
     monkeypatch.delenv("SEC_EDGAR_USER_AGENT", raising=False)
     monkeypatch.setenv("BEACON_SEARCH_USAGE_DIR", str(tmp_path))
     for circuit in cloud_routes._SEARCH_CIRCUITS.values():
         circuit.failures = []
         circuit.open_until = 0.0
+    for circuit in cloud_routes._SOURCE_SEARCH_CIRCUITS.values():
+        circuit.failures = []
+        circuit.open_until = 0.0
     yield
     for circuit in cloud_routes._SEARCH_CIRCUITS.values():
+        circuit.failures = []
+        circuit.open_until = 0.0
+    for circuit in cloud_routes._SOURCE_SEARCH_CIRCUITS.values():
         circuit.failures = []
         circuit.open_until = 0.0
 
@@ -991,6 +1011,17 @@ async def test_internet_health_reports_provider_configuration(monkeypatch):
     assert brave["data_source_id"] == "brave-search"
     assert brave["configured"] is True
     assert brave["circuit_open"] is False
+    source_search_sources = result["source_search_sources"]
+    assert result["source_search_source_count"] == 4
+    assert result["source_search_usable_count"] == 4
+    osv = next(
+        source
+        for source in source_search_sources
+        if source["data_source_id"] == "osv-dev"
+    )
+    assert osv["configured"] is True
+    assert osv["budget_exhausted"] is False
+    assert osv["circuit_open"] is False
 
 
 @pytest.mark.asyncio
@@ -1369,6 +1400,80 @@ async def test_internet_source_search_rejects_on_hold_data_sources(monkeypatch):
 
     assert exc.value.status_code == 400
     assert exc.value.detail == "unsupported Beacon data source"
+
+
+@pytest.mark.asyncio
+async def test_internet_source_search_blocks_when_budget_is_exhausted(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    monkeypatch.setenv("BEACON_OSV_DEV_DAILY_SEARCH_LIMIT", "0")
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            raise AssertionError("source budget must block before egress")
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    with pytest.raises(HTTPException) as exc:
+        await cloud_routes.internet_source_search(
+            cloud_routes.InternetSourceSearchRequest(
+                data_source_id="osv-dev",
+                query="Check CVE-2026-12345 in OSV",
+            ),
+            authorization="Bearer gateway-token",
+        )
+
+    assert exc.value.status_code == 429
+    assert exc.value.detail == "osv-dev source-search budget exhausted"
+
+
+@pytest.mark.asyncio
+async def test_internet_source_search_opens_circuit_after_provider_failure(
+    monkeypatch,
+):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    monkeypatch.setenv("BEACON_SEARCH_CIRCUIT_FAILURE_THRESHOLD", "1")
+    calls = 0
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, *, headers):
+            nonlocal calls
+            calls += 1
+            raise httpx.ConnectError("provider down")
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    with pytest.raises(HTTPException) as first:
+        await cloud_routes.internet_source_search(
+            cloud_routes.InternetSourceSearchRequest(
+                data_source_id="osv-dev",
+                query="Check CVE-2026-12345 in OSV",
+            ),
+            authorization="Bearer gateway-token",
+        )
+
+    assert first.value.status_code == 502
+
+    with pytest.raises(HTTPException) as second:
+        await cloud_routes.internet_source_search(
+            cloud_routes.InternetSourceSearchRequest(
+                data_source_id="osv-dev",
+                query="Check CVE-2026-12345 in OSV",
+            ),
+            authorization="Bearer gateway-token",
+        )
+
+    assert second.value.status_code == 503
+    assert second.value.detail == "osv-dev source-search circuit is open"
+    assert calls == 1
 
 
 @pytest.mark.asyncio
