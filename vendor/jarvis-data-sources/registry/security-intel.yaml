@@ -1,0 +1,63 @@
+# Security intelligence APIs and public vulnerability feeds.
+#
+# These sources are public security data only. They may influence Beacon,
+# Forge, and Alpha risk posture, but they do not authorize automatic remediation
+# or outbound actions.
+
+- id: osv-dev
+  name: OSV.dev API
+  domain: security-intel
+  url: https://google.github.io/osv.dev/api/
+  api_base_url: https://api.osv.dev/
+  auth:
+    type: none
+    notes: |
+      No authentication. OSV currently documents no API rate limits, but large
+      responses can exceed HTTP/1.1 limits; prefer HTTP/2 and batch queries.
+  pricing: free
+  free_tier: Unlimited under current public API policy
+  license: osv-database-license
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - vulnerability-lookup
+    - package-version-advisories
+    - dependency-risk
+    - security-evidence
+    - forge-risk-checks
+  notes: |
+    Good first security-intel source for Beacon and Forge because it supports
+    package/version and commit-based vulnerability queries. Treat results as
+    advisory evidence; remediation still needs repo-specific review and
+    approval.
+  last_verified: 2026-06-19
+  review_cadence_days: 180
+
+- id: cisa-kev
+  name: CISA Known Exploited Vulnerabilities Catalog
+  domain: security-intel
+  url: https://github.com/cisagov/kev-data
+  api_base_url: https://raw.githubusercontent.com/cisagov/kev-data/develop/
+  auth:
+    type: none
+    notes: |
+      Static JSON/CSV data feed mirrored on GitHub from CISA. The mirror updates
+      shortly after the canonical cisa.gov catalog, usually within minutes when
+      CISA publishes new or updated KEV entries.
+  pricing: free
+  free_tier: Free public static data feed
+  license: cc0
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - exploited-vulnerability-catalog
+    - remediation-prioritization
+    - security-evidence
+    - forge-risk-checks
+    - beacon-risk-context
+  notes: |
+    Use KEV as an exploited-in-the-wild priority signal, not as a complete CVE
+    database. Pair with OSV for package impact and with human review before any
+    remediation or deployment gate changes.
+  last_verified: 2026-06-19
+  review_cadence_days: 180

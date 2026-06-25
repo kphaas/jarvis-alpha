@@ -11,6 +11,7 @@ from brain.services.internet_scout.official_hosts import (
     comparison_targets,
     official_hosts_for_target,
 )
+from brain.services.internet_scout.source_selection import select_beacon_data_source_ids
 from brain.services.internet_scout.models import (
     InternetScoutFocusMode,
     InternetScoutResearchPlan,
@@ -126,6 +127,9 @@ def plan_research(
         primary_source_required=primary_source_required,
         focus_mode=focus_mode,
     )
+    recommended_data_source_ids = list(
+        select_beacon_data_source_ids(search_text, focus_mode=focus_mode)
+    )
     stop_criteria = _stop_criteria(
         intent=intent,
         authority_required=authority_required,
@@ -143,6 +147,7 @@ def plan_research(
         intent=intent,
         searches=searches,
         expected_source_types=expected_source_types,
+        recommended_data_source_ids=recommended_data_source_ids,
         stop_criteria=stop_criteria,
         focus_mode=focus_mode,
     )
@@ -161,6 +166,8 @@ def plan_research(
     notes.append(f"provider_strategy:{provider_strategy}")
     if max_extracts:
         notes.append(f"extract_top_results:{max_extracts}")
+    if recommended_data_source_ids:
+        notes.append("data_sources:" + ",".join(recommended_data_source_ids))
 
     return InternetScoutResearchPlan(
         plan_id=plan_id,
@@ -174,6 +181,7 @@ def plan_research(
         max_searches=max_searches,
         provider_strategy=provider_strategy,
         search_providers=search_providers,
+        recommended_data_source_ids=recommended_data_source_ids,
         max_extracts=max_extracts,
         stop_criteria=stop_criteria,
         notes=notes,
@@ -455,6 +463,7 @@ def _plan_id(
     intent: ResearchIntent,
     searches: list[InternetScoutResearchQuery],
     expected_source_types: list[ResearchSourceType],
+    recommended_data_source_ids: list[str],
     stop_criteria: InternetScoutResearchStopCriteria,
     focus_mode: InternetScoutFocusMode,
 ) -> str:
@@ -471,6 +480,7 @@ def _plan_id(
             for item in searches
         ],
         "expected_source_types": expected_source_types,
+        "recommended_data_source_ids": recommended_data_source_ids,
         "stop_criteria": stop_criteria.model_dump(mode="json"),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()

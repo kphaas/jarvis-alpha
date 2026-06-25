@@ -291,6 +291,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/spark/persona/target-memory": ["read", "security_read"],
     "PUT /v1/spark/persona/guardrails": ["write", "security_write"],
     "POST /v1/spark/persona/memory/propose": ["write", "security_write"],
+    "POST /v1/spark/persona/memory/route": ["write", "security_write"],
     "POST /v1/spark/persona/memory/approve": ["write", "security_write"],
     "POST /v1/spark/persona/memory/archive": ["write", "security_write"],
     "POST /v1/spark/persona/memory/reject": ["write", "security_write"],
@@ -401,6 +402,15 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # Manual run is still guarded in-route by agent allowlist, active/enabled
     # status, T1/T2 risk tier, and explicit metadata.manual_run_enabled.
     "POST /v1/agents/{agent_id}/run": ["write", "security_write"],
+    # --- Alpha Agent Board — governed queue metadata, no agent execution ---
+    "GET /v1/agent-board": ["read", "security_read"],
+    "GET /v1/agent-board/registry": ["read", "security_read"],
+    "GET /v1/agent-board/work-items/{work_item_id}": ["read", "security_read"],
+    "POST /v1/agent-board/work-items": ["write", "security_write"],
+    "PATCH /v1/agent-board/work-items/{work_item_id}/status": [
+        "write",
+        "security_write",
+    ],
     # --- Privacy scrub intake — encrypted local-only writes, no outbound action ---
     "POST /v1/privacy/subjects": ["write", "security_write"],
     "POST /v1/privacy/subjects/{subject_id}/identity-tuples": [

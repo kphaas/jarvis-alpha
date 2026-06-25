@@ -8,31 +8,39 @@
   name: QuiverQuant
   domain: financial-alt-data
   url: https://www.quiverquant.com/
-  api_base_url: https://api.quiverquant.com/beta/
+  api_base_url: https://api.quiverquant.com
   auth:
     type: bearer
     notes: |
       Bearer token from account dashboard.
-      Tiers from $10/mo (basic API) to $50/mo (premium with full historical).
-      Hard rate limits not published; observed ~300 req/min ceiling.
-  pricing: freemium
-  free_tier: Limited preview tier (current Congress trades only, delayed)
+      API pricing currently starts at $30/mo monthly or $25/mo billed annually
+      for Hobbyist, with Trader at $75/mo monthly or $62.50/mo billed annually.
+      Commercial rights require the Commercial tier. Public rate limits are not
+      published in the current pricing/docs pages.
+  pricing: paid
+  free_tier: null
   license: vendor-tos
   baa_available: not-applicable
   phi_safe: false
   primary_use_cases:
     - congressional-trades
+    - politician-net-worth
     - government-contracts
     - lobbying-data
+    - corporate-donors
+    - insider-trading
+    - hedge-fund-activity
     - patent-data
-    - wsb-mentions
+    - quiver-newsfeed
   notes: |
     Already noted in jarvis-financial v2 for Congress Agent.
+    Quiver's web Premium product and Quiver API are separate products; do not
+    assume web-account access grants API/commercial rights.
     Congressional trades are filed under STOCK Act with up to 45-day lag —
     the data is real but stale, not market-moving on disclosure day.
     Hit rate of "follow Congress trades" strategies is hotly debated; backtest
     rigorously before allocating capital.
-  last_verified: 2026-05-01
+  last_verified: 2026-06-25
   review_cadence_days: 30
 
 - id: capitol-trades

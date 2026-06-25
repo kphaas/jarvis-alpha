@@ -142,3 +142,33 @@
     Latency on real-time quotes is variable; not for HFT-style use.
   last_verified: 2026-05-01
   review_cadence_days: 90
+
+- id: sec-edgar
+  name: SEC EDGAR Data APIs
+  domain: financial-market
+  url: https://www.sec.gov/search-filings/edgar-application-programming-interfaces
+  api_base_url: https://data.sec.gov/
+  auth:
+    type: none
+    notes: |
+      No API key. SEC fair access policy currently caps automated access at
+      10 requests/second and requires a declared User-Agent with organization
+      and contact email. Bulk ZIP archives are available for large pulls.
+  pricing: free
+  free_tier: Free public access under SEC fair-access limits
+  license: public-domain
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - company-filings
+    - xbrl-company-facts
+    - filing-history
+    - financial-disclosure
+    - source-of-truth-company-data
+  notes: |
+    Official source for public-company filings, submissions history, and XBRL
+    company facts. Prefer EDGAR over search results for company disclosure
+    questions. Respect SEC User-Agent requirements, cache aggressively, and use
+    nightly bulk archives instead of crawling when backfilling.
+  last_verified: 2026-06-19
+  review_cadence_days: 180

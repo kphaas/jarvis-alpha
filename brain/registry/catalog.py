@@ -10,6 +10,10 @@ from __future__ import annotations
 from typing import Any
 
 from brain.registry.models import AgentSpec, SkillSpec
+from brain.services.internet_scout.source_selection import (
+    BEACON_ABILITY_DATA_SOURCE_IDS,
+    BEACON_ON_HOLD_DATA_SOURCE_IDS,
+)
 
 
 def _skill_metadata(
@@ -157,6 +161,83 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             compensation="send_followup_correction",
             test_ref="tests/test_notify_skill.py",
             extra={"egress": "gateway", "provider": "pushover", "role": "fallback"},
+        ),
+    ),
+    SkillSpec(
+        name="agent_board.read",
+        domain="agent_board",
+        action="read",
+        description=(
+            "Read Alpha Agent Board work items, assignments, and registry summaries."
+        ),
+        approval_tier="T1",
+        scope="agents.read",
+        status="active",
+        metadata=_skill_metadata(
+            data_classification="ops",
+            timeout_s=10,
+            rate_limit="60/minute/operator",
+            test_ref="tests/test_agent_board.py",
+            extra={
+                "execution_path": "fastapi_route",
+                "operator_surface": "helm",
+            },
+        ),
+    ),
+    SkillSpec(
+        name="agent_board.queue_item",
+        domain="agent_board",
+        action="queue_item",
+        description=(
+            "Queue an operator-reviewed Alpha Agent Board work item without "
+            "executing it."
+        ),
+        approval_tier="T2",
+        scope="agents.write",
+        mutates_state=True,
+        idempotency_required=True,
+        status="active",
+        metadata=_skill_metadata(
+            data_classification="ops",
+            side_effect_class="control_plane",
+            timeout_s=10,
+            retry_policy="idempotent_retry_once",
+            rate_limit="30/minute/operator",
+            compensation="cancel_work_item",
+            test_ref="tests/test_agent_board.py",
+            extra={
+                "execution_path": "fastapi_route",
+                "operator_surface": "helm",
+                "does_not_execute_agents": True,
+            },
+        ),
+    ),
+    SkillSpec(
+        name="agent_board.update_status",
+        domain="agent_board",
+        action="update_status",
+        description=(
+            "Update Alpha Agent Board status and handoff metadata without "
+            "bypassing approvals."
+        ),
+        approval_tier="T2",
+        scope="agents.write",
+        mutates_state=True,
+        idempotency_required=True,
+        status="active",
+        metadata=_skill_metadata(
+            data_classification="ops",
+            side_effect_class="control_plane",
+            timeout_s=10,
+            retry_policy="idempotent_retry_once",
+            rate_limit="60/minute/operator",
+            compensation="status_change_event_trail",
+            test_ref="tests/test_agent_board.py",
+            extra={
+                "execution_path": "fastapi_route",
+                "operator_surface": "helm",
+                "does_not_execute_agents": True,
+            },
         ),
     ),
     SkillSpec(
@@ -1138,13 +1219,16 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             model_policy="gateway_search_provider_order",
             egress_mode="gateway",
             provider="beacon",
-            data_source_ids=["brave-search", "perplexity-search"],
+            data_source_ids=list(BEACON_ABILITY_DATA_SOURCE_IDS),
             test_ref="tests/test_internet_scout_chat_adapter.py",
             runbook_ref="docs/adr/ADR-0019-beacon-internet-scout.md",
             extra={
                 "owner_agent": "internet_scout",
                 "chat_mode": "web_search",
                 "execution_path": "fastapi_route",
+                "source_selection": "registry_backed",
+                "on_hold_data_source_ids": list(BEACON_ON_HOLD_DATA_SOURCE_IDS),
+                "spend_guard": "gateway_provider_allowlist_and_budget_limits",
             },
         ),
     ),
@@ -1167,7 +1251,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             model_policy="gateway_search_provider_order",
             egress_mode="gateway",
             provider="beacon",
-            data_source_ids=["brave-search", "perplexity-search"],
+            data_source_ids=list(BEACON_ABILITY_DATA_SOURCE_IDS),
             test_ref="tests/test_internet_scout_chat_adapter.py",
             runbook_ref="docs/adr/ADR-0019-beacon-internet-scout.md",
             extra={
@@ -1175,6 +1259,9 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
                 "chat_mode": "deep_research",
                 "browser_use": "approval_queue_only",
                 "execution_path": "fastapi_route",
+                "source_selection": "registry_backed",
+                "on_hold_data_source_ids": list(BEACON_ON_HOLD_DATA_SOURCE_IDS),
+                "spend_guard": "gateway_provider_allowlist_and_budget_limits",
             },
         ),
     ),

@@ -221,6 +221,7 @@ _SEARCH_PROVIDER_DATA_SOURCE_IDS = {
     "brave": "brave-search",
     "perplexity": "perplexity-search",
 }
+_SEARCH_PROVIDER_ALLOWLIST_ENV = "BEACON_SEARCH_PROVIDER_ALLOWLIST"
 _SEARCH_CIRCUITS: dict[str, _SearchProviderCircuit] = {
     provider: _SearchProviderCircuit(failures=[]) for provider in _SEARCH_PROVIDERS
 }
@@ -582,6 +583,8 @@ async def internet_search(
     _authorize_gateway_call(authorization)
     if req.provider not in {"auto", *_SEARCH_PROVIDERS}:
         raise HTTPException(status_code=400, detail="unsupported search provider")
+    if req.provider != "auto" and req.provider not in _search_provider_allowlist():
+        raise HTTPException(status_code=403, detail="search provider not allowlisted")
 
     count = min(max(req.count, 1), 10)
     candidates = _select_search_provider_candidates(req.provider)
@@ -774,6 +777,11 @@ def _select_search_provider_candidates(
     requested_provider: str,
 ) -> list[_SearchProviderCredential]:
     if requested_provider in _SEARCH_PROVIDERS:
+        if requested_provider not in _search_provider_allowlist():
+            raise HTTPException(
+                status_code=403,
+                detail="search provider not allowlisted",
+            )
         key = _search_provider_key(requested_provider)
         if not key:
             raise HTTPException(
@@ -796,13 +804,31 @@ def _select_search_provider_candidates(
 
 
 def _configured_search_provider_order() -> tuple[str, ...]:
+    allowlist = _search_provider_allowlist()
     raw = os.getenv("BEACON_SEARCH_PROVIDER_ORDER", "searxng,brave,perplexity")
     ordered: list[str] = []
     for item in raw.split(","):
         provider = item.strip().lower()
-        if provider in _SEARCH_PROVIDERS and provider not in ordered:
+        if (
+            provider in _SEARCH_PROVIDERS
+            and provider in allowlist
+            and provider not in ordered
+        ):
             ordered.append(provider)
-    return tuple(ordered or _SEARCH_PROVIDERS)
+    if ordered:
+        return tuple(ordered)
+    return tuple(provider for provider in _SEARCH_PROVIDERS if provider in allowlist)
+
+
+def _search_provider_allowlist() -> frozenset[str]:
+    raw = os.getenv(_SEARCH_PROVIDER_ALLOWLIST_ENV)
+    if raw is None:
+        raw = ",".join(_SEARCH_PROVIDERS)
+    return frozenset(
+        provider
+        for provider in (item.strip().lower() for item in raw.split(","))
+        if provider in _SEARCH_PROVIDERS
+    )
 
 
 def _search_provider_key(provider: str) -> str | None:
@@ -856,6 +882,7 @@ def _search_provider_health(provider: str) -> dict[str, object]:
     return {
         "provider": provider,
         "data_source_id": _SEARCH_PROVIDER_DATA_SOURCE_IDS[provider],
+        "allowlisted": provider in _search_provider_allowlist(),
         "configured": _search_provider_key(provider) is not None,
         "circuit_open": cooldown_remaining_s is not None,
         "failure_count": len(circuit.failures),
@@ -882,6 +909,7 @@ def _configured_search_provider_names(
 def _search_provider_health_is_usable(provider: dict[str, object]) -> bool:
     return bool(
         provider.get("configured")
+        and provider.get("allowlisted")
         and not provider.get("circuit_open")
         and not provider.get("budget_exhausted")
     )

@@ -27,7 +27,6 @@ DEFAULT_ENDPOINT_BASE_URL = "https://jarvis-endpoint.tail40ed36.ts.net:4100"
 DEFAULT_SANDBOX_BASE_URL = "https://jarvis-sandbox.tail40ed36.ts.net:5001"
 DEFAULT_SMOKE_WEATHER_LATITUDE = 40.7128
 DEFAULT_SMOKE_WEATHER_LONGITUDE = -74.0060
-REQUIRED_SOURCE_IDS = ("open-meteo", "brave-search", "perplexity-search")
 SECRET_KEYS = ("GATEWAY_TOKEN", "ALPHA_SERVICE_TOKEN", "ALPHA_BRAIN_SERVICE_TOKEN")
 
 
@@ -120,12 +119,16 @@ def _registry_coverage(registry_root: str | None) -> SmokeResult:
         assert_skill_data_source_coverage,
         load_data_source_registry,
     )
+    from brain.services.internet_scout.source_selection import (
+        BEACON_ABILITY_DATA_SOURCE_IDS,
+    )
 
     data_sources = load_data_source_registry(registry_root)
     assert_skill_data_source_coverage(INITIAL_SKILLS, data_sources)
 
+    required_source_ids = ("open-meteo", *BEACON_ABILITY_DATA_SOURCE_IDS)
     missing = [
-        source_id for source_id in REQUIRED_SOURCE_IDS if source_id not in data_sources
+        source_id for source_id in required_source_ids if source_id not in data_sources
     ]
     if missing:
         return SmokeResult("failed", {"missing_source_ids": missing})
@@ -133,10 +136,10 @@ def _registry_coverage(registry_root: str | None) -> SmokeResult:
     return SmokeResult(
         "passed",
         {
-            "source_ids": list(REQUIRED_SOURCE_IDS),
+            "source_ids": list(required_source_ids),
             "domains": {
                 source_id: data_sources[source_id].domain
-                for source_id in REQUIRED_SOURCE_IDS
+                for source_id in required_source_ids
             },
         },
     )
@@ -171,9 +174,15 @@ def _weather_current_contract() -> SmokeResult:
 def _beacon_sources_contract() -> SmokeResult:
     from brain.registry.catalog import INITIAL_SKILLS
     from brain.registry.models import SkillManifestV1
+    from brain.services.internet_scout.source_selection import (
+        BEACON_ABILITY_DATA_SOURCE_IDS,
+        BEACON_ON_HOLD_DATA_SOURCE_IDS,
+    )
 
     detail: dict[str, Any] = {}
     ok = True
+    expected_source_ids = sorted(BEACON_ABILITY_DATA_SOURCE_IDS)
+    on_hold_source_ids = set(BEACON_ON_HOLD_DATA_SOURCE_IDS)
     for skill_name, approval_tier in (
         ("internet_scout.search", "T2"),
         ("internet_scout.deep_research", "T3"),
@@ -187,7 +196,8 @@ def _beacon_sources_contract() -> SmokeResult:
             and manifest.side_effect_class == "read"
             and manifest.egress.mode == "gateway"
             and manifest.egress.provider == "beacon"
-            and source_ids == ["brave-search", "perplexity-search"]
+            and source_ids == expected_source_ids
+            and not set(source_ids).intersection(on_hold_source_ids)
         )
         ok = ok and skill_ok
         detail[skill_name] = {
@@ -196,6 +206,7 @@ def _beacon_sources_contract() -> SmokeResult:
             "egress_mode": manifest.egress.mode,
             "provider": manifest.egress.provider,
             "data_source_ids": source_ids,
+            "on_hold_data_source_ids": sorted(on_hold_source_ids),
         }
     return SmokeResult("passed" if ok else "failed", detail)
 

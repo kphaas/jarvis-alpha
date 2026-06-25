@@ -12,6 +12,10 @@ from brain.registry.data_sources import (
 )
 from brain.registry.models import AgentSpec, SkillManifestV1, SkillSpec
 from brain.routes.registry import _agent_from_row, _skill_from_row
+from brain.services.internet_scout.source_selection import (
+    BEACON_ABILITY_DATA_SOURCE_IDS,
+    BEACON_ON_HOLD_DATA_SOURCE_IDS,
+)
 
 
 def test_initial_skill_catalog_has_minimum_foundation_entries():
@@ -21,6 +25,9 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert "notify.send" in names
     assert "notify.send_mattermost" in names
     assert "notify.send_pushover" in names
+    assert "agent_board.read" in names
+    assert "agent_board.queue_item" in names
+    assert "agent_board.update_status" in names
     assert "approval.canary_t4" in names
     assert "secrets.rotate" in names
     assert "chatops.command_read" in names
@@ -44,6 +51,11 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert skills["notify.send_mattermost"].status == "active"
     assert skills["notify.send_mattermost"].metadata["delivery"] == "incoming_webhook"
     assert skills["notify.send_pushover"].status == "active"
+    assert skills["agent_board.read"].approval_tier == "T1"
+    assert skills["agent_board.queue_item"].approval_tier == "T2"
+    assert skills["agent_board.queue_item"].mutates_state is True
+    assert skills["agent_board.queue_item"].metadata["does_not_execute_agents"] is True
+    assert skills["agent_board.update_status"].metadata["operator_surface"] == "helm"
     assert skills["approval.canary_t4"].status == "active"
     assert skills["approval.canary_t4"].approval_tier == "T4"
     assert skills["approval.canary_t4"].metadata["approval_queue_bridge"] == "enabled"
@@ -67,16 +79,32 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert skills["internet_scout.deep_research"].approval_tier == "T3"
     assert skills["internet_scout.browser_task"].approval_tier == "T4"
     assert skills["internet_scout.browser_task"].mutates_state is True
-    assert sorted(
-        skills["internet_scout.search"].metadata["manifest"]["egress"][
-            "data_source_ids"
-        ]
-    ) == ["brave-search", "perplexity-search"]
-    assert sorted(
-        skills["internet_scout.deep_research"].metadata["manifest"]["egress"][
-            "data_source_ids"
-        ]
-    ) == ["brave-search", "perplexity-search"]
+    expected_beacon_data_source_ids = sorted(BEACON_ABILITY_DATA_SOURCE_IDS)
+    assert (
+        sorted(
+            skills["internet_scout.search"].metadata["manifest"]["egress"][
+                "data_source_ids"
+            ]
+        )
+        == expected_beacon_data_source_ids
+    )
+    assert (
+        sorted(
+            skills["internet_scout.deep_research"].metadata["manifest"]["egress"][
+                "data_source_ids"
+            ]
+        )
+        == expected_beacon_data_source_ids
+    )
+    assert not set(BEACON_ON_HOLD_DATA_SOURCE_IDS).intersection(
+        expected_beacon_data_source_ids
+    )
+    assert skills["internet_scout.search"].metadata["source_selection"] == (
+        "registry_backed"
+    )
+    assert skills["internet_scout.search"].metadata["on_hold_data_source_ids"] == [
+        "quiverquant"
+    ]
     assert skills["internet_scout.search"].metadata["execution_path"] == (
         "fastapi_route"
     )
@@ -121,6 +149,15 @@ def test_active_external_data_skills_reference_vendored_data_sources():
     assert data_sources["open-meteo"].domain == "weather"
     assert data_sources["brave-search"].domain == "web-search"
     assert data_sources["perplexity-search"].domain == "web-search"
+    assert data_sources["pubmed-eutils"].domain == "medical-reference"
+    assert data_sources["sec-edgar"].domain == "financial-market"
+    assert data_sources["osv-dev"].domain == "security-intel"
+    assert data_sources["cisa-kev"].domain == "security-intel"
+    assert data_sources["openalex"].domain == "scholarly-reference"
+    assert data_sources["google-workspace"].domain == "productivity-comms"
+    assert data_sources["microsoft-graph"].domain == "productivity-comms"
+    assert data_sources["quiverquant"].domain == "financial-alt-data"
+    assert data_sources["quiverquant"].pricing == "paid"
 
     assert_skill_data_source_coverage(INITIAL_SKILLS, data_sources)
 

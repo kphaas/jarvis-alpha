@@ -164,3 +164,34 @@
     Bulk file download requires accepting license; API access does not.
   last_verified: 2026-05-01
   review_cadence_days: 365
+
+- id: pubmed-eutils
+  name: NCBI PubMed E-utilities
+  domain: medical-reference
+  url: https://www.ncbi.nlm.nih.gov/books/NBK25497/
+  api_base_url: https://eutils.ncbi.nlm.nih.gov/entrez/eutils/
+  auth:
+    type: api-key
+    notes: |
+      Anonymous access is allowed at up to 3 requests/second. Free NCBI API keys
+      raise the default supported rate to 10 requests/second. Requests should
+      include registered tool and email parameters for production integrations.
+  pricing: free
+  free_tier: 3 req/sec anonymous; 10 req/sec with free API key
+  license: nlm-terms
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - biomedical-literature-search
+    - pubmed-id-lookup
+    - abstract-retrieval
+    - citation-grounding
+    - evidence-review
+  notes: |
+    Structured NCBI interface for PubMed and related Entrez databases. Use for
+    general medical literature grounding only. Never send patient identifiers,
+    symptoms tied to an identifiable person, or PHI. PubMed metadata is public,
+    but abstracts may include copyrighted publisher content; store citations
+    and snippets conservatively.
+  last_verified: 2026-06-19
+  review_cadence_days: 180

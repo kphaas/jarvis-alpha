@@ -9,6 +9,7 @@ from brain.services.spark_personality_memory import (
     build_personality_memory_proposals,
     fetch_personality_memory,
     personality_memory_context,
+    propose_personality_memory_from_note,
     reject_personality_memory_proposal,
 )
 from brain.services.spark_persona_guardrails import default_spark_guardrails
@@ -108,6 +109,35 @@ def test_rejected_personality_memory_proposal_is_filtered(tmp_path: Path) -> Non
         / "rejected_proposals.jsonl"
     )
     assert rejection_log.exists()
+
+
+def test_manual_personality_memory_proposal_persists_to_review_lane(
+    tmp_path: Path,
+) -> None:
+    proposal = propose_personality_memory_from_note(
+        principal_id="ken",
+        note="Key phrase I use: fair enough.",
+        feedback_root=tmp_path,
+    )
+
+    assert proposal is not None
+    assert proposal.kind == "phrase"
+    proposals = build_personality_memory_proposals(
+        principal_id="ken",
+        guardrails=default_spark_guardrails(),
+        feedback_root=tmp_path,
+    )
+    proposal_ids = {item.proposal_id for item in proposals}
+    assert proposal.proposal_id in proposal_ids
+    proposal_log = (
+        tmp_path
+        / "spark"
+        / "principals"
+        / "ken"
+        / "memory_review"
+        / "personality_memory_proposals.jsonl"
+    )
+    assert proposal_log.exists()
 
 
 def test_personality_memory_context_formats_bounded_rows() -> None:
