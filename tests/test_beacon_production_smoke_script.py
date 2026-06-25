@@ -120,3 +120,63 @@ def test_gateway_health_summary_surfaces_provider_route():
         "provider_redundancy_status": "redundant",
         "provider_warning_status": None,
     }
+
+
+def test_citation_hosts_extracts_host_fields_and_urls():
+    hosts = smoke_beacon_production._citation_hosts(
+        [
+            {"host": "OSV.dev"},
+            {"source_url": "https://pubmed.ncbi.nlm.nih.gov/12345/"},
+            {"canonical_url": "https://www.sec.gov/Archives/example.htm"},
+            {"url": "not a url"},
+        ]
+    )
+
+    assert hosts == {"osv.dev", "pubmed.ncbi.nlm.nih.gov", "www.sec.gov"}
+
+
+def test_source_connector_smoke_verifies_expected_citation_host(monkeypatch):
+    monkeypatch.setattr(
+        smoke_beacon_production,
+        "SOURCE_CONNECTOR_SMOKE_SPECS",
+        (
+            {
+                "data_source_id": "osv-dev",
+                "query": "Use OSV to check CVE-2021-44228.",
+                "hosts": ("osv.dev",),
+            },
+        ),
+    )
+
+    def fake_call_json(method, base_url, path, token, body=None):
+        assert method == "POST"
+        assert path == "/v1/internet-scout/agent/run"
+        assert body["requester"] == "beacon_smoke.osv-dev"
+        return {
+            "status": "completed",
+            "selected_tool": "search",
+            "request_id": "request-1",
+            "citations": [{"source_url": "https://osv.dev/vulnerability/CVE-1"}],
+            "raw_web_content_is_untrusted": True,
+        }
+
+    monkeypatch.setattr(smoke_beacon_production, "_call_json", fake_call_json)
+
+    results = smoke_beacon_production._run_source_connector_smokes(
+        "https://alpha.example.test",
+        "token",
+    )
+
+    assert results == [
+        {
+            "data_source_id": "osv-dev",
+            "status": "completed",
+            "selected_tool": "search",
+            "request_id": "request-1",
+            "citation_count": 1,
+            "citation_hosts": ["osv.dev"],
+            "expected_hosts": ["osv.dev"],
+            "host_verified": True,
+            "raw_web_content_is_untrusted": True,
+        }
+    ]

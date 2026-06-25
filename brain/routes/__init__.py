@@ -1,0 +1,1 @@
+"""Alpha Brain route package."""
