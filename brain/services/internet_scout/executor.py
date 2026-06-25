@@ -31,6 +31,7 @@ from brain.services.internet_scout.models import (
     InternetScoutRequest,
     InternetTool,
     PolicyDecision,
+    ResearchQueryPurpose,
 )
 from brain.services.internet_scout.policy import (
     CRAWL_MAX_DEPTH_WITHOUT_APPROVAL,
@@ -40,6 +41,10 @@ from brain.services.internet_scout.policy import (
 from brain.services.internet_scout.safety import DEFAULT_MAX_CONTENT_BYTES
 from brain.services.internet_scout.research_planner import plan_research
 from brain.services.internet_scout.search_pipeline import SearchRun, rank_search_results
+from brain.services.internet_scout.source_selection import (
+    BEACON_EXECUTABLE_SOURCE_DATA_SOURCE_IDS,
+    assert_no_on_hold_data_sources,
+)
 
 logger = get_logger("alpha_brain")
 
@@ -188,7 +193,11 @@ class InternetScoutExecutor:
                 else 5
             )
         )
-        runs: list[SearchRun] = []
+        runs = await self._run_source_searches(
+            request=request,
+            research=research,
+            count=per_query_count,
+        )
         for search in searches[: research.max_searches]:
             responses = await self._search_with_provider_strategy(
                 query=search.query,
@@ -202,6 +211,52 @@ class InternetScoutExecutor:
                     required=search.required,
                 )
                 for response in responses
+            )
+        return runs
+
+    async def _run_source_searches(
+        self,
+        *,
+        request: InternetScoutRequest,
+        research: InternetScoutResearchPlan,
+        count: int,
+    ) -> list[SearchRun]:
+        if request.query is None:
+            return []
+        assert_no_on_hold_data_sources(research.recommended_data_source_ids)
+        data_source_ids = [
+            data_source_id
+            for data_source_id in dict.fromkeys(research.recommended_data_source_ids)
+            if data_source_id in BEACON_EXECUTABLE_SOURCE_DATA_SOURCE_IDS
+        ]
+        if not data_source_ids:
+            return []
+
+        runs: list[SearchRun] = []
+        for data_source_id in data_source_ids:
+            try:
+                response = await self.gateway_client.source_search(
+                    data_source_id=data_source_id,
+                    query=request.query,
+                    count=count,
+                )
+            except InternetScoutGatewayError:
+                logger.warning(
+                    "BEACON_SOURCE_SEARCH_FALLBACK",
+                    extra={
+                        "event": "BEACON_SOURCE_SEARCH_FALLBACK",
+                        "data_source_id": data_source_id,
+                    },
+                )
+                continue
+            if not response.results:
+                continue
+            runs.append(
+                SearchRun(
+                    response=response,
+                    purpose=_source_search_purpose(data_source_id),
+                    required=False,
+                )
             )
         return runs
 
@@ -271,3 +326,9 @@ class InternetScoutExecutor:
             except InternetScoutGatewayError:
                 continue
         return extract_responses
+
+
+def _source_search_purpose(data_source_id: str) -> ResearchQueryPurpose:
+    if data_source_id in {"pubmed-eutils", "sec-edgar", "osv-dev", "cisa-kev"}:
+        return "primary_source"
+    return "baseline"

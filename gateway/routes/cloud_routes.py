@@ -23,6 +23,10 @@ from brain.services.internet_scout.safety import (
 )
 from brain.services.internet_scout.sanitizer import sanitize_untrusted_text
 from gateway.adapters import ClaudeAdapter, PerplexityAdapter, GeminiAdapter
+from gateway.adapters.beacon_source_search import (
+    SUPPORTED_SOURCE_SEARCH_DATA_SOURCE_IDS,
+    execute_source_search,
+)
 from jarvis_common.logging_config import get_logger
 from jarvis_common.secrets import get_secret
 
@@ -116,6 +120,12 @@ class InternetSearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=2000)
     count: int = Field(default=5, ge=1, le=10)
     provider: str = "auto"
+
+
+class InternetSourceSearchRequest(BaseModel):
+    data_source_id: str = Field(min_length=1, max_length=80)
+    query: str = Field(min_length=1, max_length=2000)
+    count: int = Field(default=5, ge=1, le=10)
 
 
 class InternetFetchRequest(BaseModel):
@@ -660,6 +670,42 @@ async def internet_search(
     if last_error is not None:
         raise last_error
     raise HTTPException(status_code=503, detail="Search provider key not configured")
+
+
+@router.post("/internet/source-search")
+async def internet_source_search(
+    req: InternetSourceSearchRequest,
+    authorization: str = Header(...),
+):
+    """Run a free/read-only registry source search through Gateway-owned egress."""
+    _authorize_gateway_call(authorization)
+    data_source_id = req.data_source_id.strip().lower()
+    if data_source_id not in SUPPORTED_SOURCE_SEARCH_DATA_SOURCE_IDS:
+        raise HTTPException(status_code=400, detail="unsupported Beacon data source")
+
+    count = min(max(req.count, 1), 10)
+    start = time.monotonic()
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        results = await execute_source_search(
+            client=client,
+            data_source_id=data_source_id,
+            query=req.query,
+            count=count,
+        )
+    latency_ms = int((time.monotonic() - start) * 1000)
+    logger.info(
+        "beacon_source_search_completed data_source_id=%s result_count=%d latency_ms=%d",
+        data_source_id,
+        len(results),
+        latency_ms,
+    )
+    return {
+        "provider": data_source_id,
+        "data_source_id": data_source_id,
+        "query_hash": _hash_text(req.query),
+        "fetched_at": datetime.now(UTC).isoformat(),
+        "results": results,
+    }
 
 
 @router.post("/internet/health")
