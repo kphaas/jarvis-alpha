@@ -13,6 +13,7 @@ from brain.registry.data_sources import (
 from brain.registry.models import AgentSpec, SkillManifestV1, SkillSpec
 from brain.routes.registry import _agent_from_row, _skill_from_row
 from brain.services.internet_scout.source_selection import (
+    BEACON_AI_VENDOR_WATCH_DATA_SOURCE_IDS,
     BEACON_ABILITY_DATA_SOURCE_IDS,
     BEACON_ON_HOLD_DATA_SOURCE_IDS,
 )
@@ -156,6 +157,8 @@ def test_active_external_data_skills_reference_vendored_data_sources():
     assert data_sources["openalex"].domain == "scholarly-reference"
     assert data_sources["google-workspace"].domain == "productivity-comms"
     assert data_sources["microsoft-graph"].domain == "productivity-comms"
+    for data_source_id in BEACON_AI_VENDOR_WATCH_DATA_SOURCE_IDS:
+        assert data_sources[data_source_id].domain == "news"
     assert data_sources["quiverquant"].domain == "financial-alt-data"
     assert data_sources["quiverquant"].pricing == "paid"
 

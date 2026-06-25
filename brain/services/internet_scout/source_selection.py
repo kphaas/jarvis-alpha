@@ -31,9 +31,19 @@ BEACON_APPROVED_SOURCE_DATA_SOURCE_IDS: tuple[str, ...] = (
     "microsoft-graph",
 )
 
+BEACON_AI_VENDOR_WATCH_DATA_SOURCE_IDS: tuple[str, ...] = (
+    "openai-news-rss",
+    "openai-api-changelog",
+    "aws-whats-new-ai",
+    "azure-ai-blog",
+    "github-copilot-changelog",
+    "ai-vendor-status-feeds",
+)
+
 BEACON_ABILITY_DATA_SOURCE_IDS: tuple[str, ...] = (
     *BEACON_EXECUTABLE_SEARCH_DATA_SOURCE_IDS,
     *BEACON_APPROVED_SOURCE_DATA_SOURCE_IDS,
+    *BEACON_AI_VENDOR_WATCH_DATA_SOURCE_IDS,
 )
 
 BEACON_ON_HOLD_DATA_SOURCE_IDS: tuple[str, ...] = ("quiverquant",)
@@ -136,6 +146,50 @@ _MICROSOFT_GRAPH_MARKERS = (
     "sharepoint",
     "teams",
 )
+_AI_VENDOR_WATCH_MARKERS = (
+    "ai news",
+    "ai vendor",
+    "ai vendors",
+    "artificial intelligence news",
+    "frontier model",
+    "llm news",
+    "model announcement",
+    "model release",
+)
+_AI_STATUS_MARKERS = (
+    "availability",
+    "degraded",
+    "downtime",
+    "errors",
+    "incident",
+    "outage",
+    "status",
+)
+_OPENAI_MARKERS = (
+    "chatgpt",
+    "gpt-",
+    "open ai",
+    "openai",
+)
+_AWS_AI_MARKERS = (
+    "agentcore",
+    "aws ai",
+    "aws bedrock",
+    "bedrock",
+    "nova",
+    "sagemaker",
+)
+_MICROSOFT_AI_MARKERS = (
+    "azure ai",
+    "copilot",
+    "github copilot",
+    "microsoft ai",
+    "msft",
+)
+_ANTHROPIC_MARKERS = (
+    "anthropic",
+    "claude",
+)
 
 
 def select_beacon_data_source_ids(
@@ -165,6 +219,7 @@ def select_beacon_data_source_ids(
         selected.append("google-workspace")
     if _contains_any(normalized, _MICROSOFT_GRAPH_MARKERS):
         selected.append("microsoft-graph")
+    selected.extend(_select_ai_vendor_watch_sources(normalized))
 
     return _allowed_unique(selected, allowed_data_source_ids)
 
@@ -197,6 +252,28 @@ def _allowed_unique(
 
 def _contains_any(value: str, markers: tuple[str, ...]) -> bool:
     return any(marker in value for marker in markers)
+
+
+def _select_ai_vendor_watch_sources(query: str) -> tuple[str, ...]:
+    if _contains_any(query, _AI_VENDOR_WATCH_MARKERS):
+        return BEACON_AI_VENDOR_WATCH_DATA_SOURCE_IDS
+
+    selected: list[str] = []
+    matched_vendor = False
+    if _contains_any(query, _OPENAI_MARKERS):
+        selected.extend(["openai-news-rss", "openai-api-changelog"])
+        matched_vendor = True
+    if _contains_any(query, _AWS_AI_MARKERS):
+        selected.append("aws-whats-new-ai")
+        matched_vendor = True
+    if _contains_any(query, _MICROSOFT_AI_MARKERS):
+        selected.extend(["azure-ai-blog", "github-copilot-changelog"])
+        matched_vendor = True
+    if _contains_any(query, _ANTHROPIC_MARKERS):
+        matched_vendor = True
+    if matched_vendor and _contains_any(query, _AI_STATUS_MARKERS):
+        selected.append("ai-vendor-status-feeds")
+    return tuple(selected)
 
 
 def _is_sec_filings_query(query: str) -> bool:
