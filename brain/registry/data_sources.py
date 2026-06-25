@@ -19,17 +19,31 @@ LOCAL_DATA_SOURCE_REGISTRY_ROOT = REPO_ROOT.parent / "jarvis-data-sources"
 ACTIVE_GATEWAY_EXTERNAL_DATA_DOMAINS = frozenset(
     {
         "financial",
+        "financial-market",
         "geo",
         "medical",
+        "medical-reference",
         "news",
+        "productivity-comms",
+        "scholarly-reference",
+        "security-intel",
         "utility",
         "weather",
         "web-search",
     }
 )
 
-EXTERNAL_DATA_DOMAIN_BY_SKILL_DOMAIN = {
-    "internet_scout": "web-search",
+EXTERNAL_DATA_DOMAINS_BY_SKILL_DOMAIN = {
+    "internet_scout": frozenset(
+        {
+            "financial-market",
+            "medical-reference",
+            "productivity-comms",
+            "scholarly-reference",
+            "security-intel",
+            "web-search",
+        }
+    ),
 }
 
 
@@ -121,8 +135,8 @@ def evaluate_skill_data_source_coverage(
 
     gaps: list[str] = []
     for skill in skills:
-        required_domain = _required_external_data_domain(skill)
-        if required_domain is None:
+        allowed_domains = _allowed_external_data_domains(skill)
+        if allowed_domains is None:
             continue
 
         manifest = SkillManifestV1.model_validate(skill.metadata["manifest"])
@@ -137,10 +151,11 @@ def evaluate_skill_data_source_coverage(
                 gaps.append(f"{skill.name}: unknown data source id {data_source_id!r}")
                 continue
 
-            if not _domains_match(required_domain, data_source.domain):
+            if not _domain_matches_allowed(data_source.domain, allowed_domains):
                 gaps.append(
                     f"{skill.name}: data source {data_source_id!r} has domain "
-                    f"{data_source.domain!r}, expected {required_domain!r}"
+                    f"{data_source.domain!r}, expected one of "
+                    f"{sorted(allowed_domains)!r}"
                 )
 
     return gaps
@@ -171,7 +186,7 @@ def _resolve_registry_root(root: Path | str | None) -> Path:
     return LOCAL_DATA_SOURCE_REGISTRY_ROOT
 
 
-def _required_external_data_domain(skill: SkillSpec) -> str | None:
+def _allowed_external_data_domains(skill: SkillSpec) -> frozenset[str] | None:
     if skill.status != "active":
         return None
 
@@ -183,10 +198,14 @@ def _required_external_data_domain(skill: SkillSpec) -> str | None:
         return None
 
     if skill.domain in ACTIVE_GATEWAY_EXTERNAL_DATA_DOMAINS:
-        return skill.domain
-    mapped_domain = EXTERNAL_DATA_DOMAIN_BY_SKILL_DOMAIN.get(skill.domain)
-    if mapped_domain in ACTIVE_GATEWAY_EXTERNAL_DATA_DOMAINS:
-        return mapped_domain
+        return frozenset({skill.domain})
+    mapped_domains = EXTERNAL_DATA_DOMAINS_BY_SKILL_DOMAIN.get(skill.domain)
+    if mapped_domains:
+        active_domains = mapped_domains.intersection(
+            ACTIVE_GATEWAY_EXTERNAL_DATA_DOMAINS
+        )
+        if active_domains:
+            return frozenset(active_domains)
     return None
 
 
@@ -198,8 +217,15 @@ def _skill_data_source_ids(manifest: SkillManifestV1) -> list[str]:
     return list(dict.fromkeys(data_source_ids))
 
 
-def _domains_match(skill_domain: str, source_domain: str) -> bool:
-    return source_domain == skill_domain or source_domain.startswith(f"{skill_domain}-")
+def _domain_matches_allowed(
+    source_domain: str,
+    allowed_domains: frozenset[str],
+) -> bool:
+    return any(
+        source_domain == allowed_domain
+        or source_domain.startswith(f"{allowed_domain}-")
+        for allowed_domain in allowed_domains
+    )
 
 
 def _required_str(entry: Mapping[str, Any], key: str) -> str:

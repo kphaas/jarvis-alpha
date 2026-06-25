@@ -1,0 +1,67 @@
+# Productivity and communications APIs.
+#
+# These sources expose private operator or organization context. They are not
+# PHI-safe by default and should only be reached through Gateway, OAuth scopes,
+# approval gates, and redaction/audit controls.
+
+- id: google-workspace
+  name: Google Workspace APIs
+  domain: productivity-comms
+  url: https://developers.google.com/workspace
+  api_base_url: https://www.googleapis.com/
+  auth:
+    type: oauth2
+    notes: |
+      OAuth2 user or service-account credentials depending on API and workspace
+      configuration. Use least-privilege scopes for Gmail, Calendar, Drive,
+      Tasks, and related APIs. Quotas are API-specific and surfaced through
+      Google Cloud Console.
+  pricing: freemium
+  free_tier: Workspace API quotas vary by API and Google account/project
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - gmail-context
+    - calendar-context
+    - drive-context
+    - task-context
+    - operator-personal-context
+  notes: |
+    High-value AT-0 context source for mail, calendar, drive, and tasks, but it
+    is private data. Beacon should only receive redacted summaries or approved
+    source excerpts. Do not use this as general web evidence, and do not expose
+    child/family context through operator Ask.
+  last_verified: 2026-06-19
+  review_cadence_days: 90
+
+- id: microsoft-graph
+  name: Microsoft Graph API
+  domain: productivity-comms
+  url: https://learn.microsoft.com/en-us/graph/use-the-api
+  api_base_url: https://graph.microsoft.com/v1.0/
+  auth:
+    type: oauth2
+    notes: |
+      OAuth2 via Microsoft identity platform. Permissions are resource-specific;
+      many mailbox, calendar, drive, and tenant operations require admin consent.
+      Microsoft Graph throttling returns HTTP 429 with Retry-After when limits
+      are exceeded.
+  pricing: freemium
+  free_tier: Included with applicable Microsoft 365/Azure tenant access; throttled
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - mailbox-context
+    - calendar-context
+    - drive-context
+    - tenant-directory-context
+    - operator-personal-context
+  notes: |
+    Already aligned with Alpha Gateway mailbox routes. Keep AT-0 use narrowly
+    scoped to approved mailboxes and read paths unless a reviewed approval flow
+    authorizes a write such as sending a reply. Prefer change notifications over
+    polling to avoid throttling.
+  last_verified: 2026-06-19
+  review_cadence_days: 90

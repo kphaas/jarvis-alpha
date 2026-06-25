@@ -10,6 +10,10 @@ from __future__ import annotations
 from typing import Any
 
 from brain.registry.models import AgentSpec, SkillSpec
+from brain.services.internet_scout.source_selection import (
+    BEACON_ABILITY_DATA_SOURCE_IDS,
+    BEACON_ON_HOLD_DATA_SOURCE_IDS,
+)
 
 
 def _skill_metadata(
@@ -1215,13 +1219,16 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             model_policy="gateway_search_provider_order",
             egress_mode="gateway",
             provider="beacon",
-            data_source_ids=["brave-search", "perplexity-search"],
+            data_source_ids=list(BEACON_ABILITY_DATA_SOURCE_IDS),
             test_ref="tests/test_internet_scout_chat_adapter.py",
             runbook_ref="docs/adr/ADR-0019-beacon-internet-scout.md",
             extra={
                 "owner_agent": "internet_scout",
                 "chat_mode": "web_search",
                 "execution_path": "fastapi_route",
+                "source_selection": "registry_backed",
+                "on_hold_data_source_ids": list(BEACON_ON_HOLD_DATA_SOURCE_IDS),
+                "spend_guard": "gateway_provider_allowlist_and_budget_limits",
             },
         ),
     ),
@@ -1244,7 +1251,7 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             model_policy="gateway_search_provider_order",
             egress_mode="gateway",
             provider="beacon",
-            data_source_ids=["brave-search", "perplexity-search"],
+            data_source_ids=list(BEACON_ABILITY_DATA_SOURCE_IDS),
             test_ref="tests/test_internet_scout_chat_adapter.py",
             runbook_ref="docs/adr/ADR-0019-beacon-internet-scout.md",
             extra={
@@ -1252,6 +1259,9 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
                 "chat_mode": "deep_research",
                 "browser_use": "approval_queue_only",
                 "execution_path": "fastapi_route",
+                "source_selection": "registry_backed",
+                "on_hold_data_source_ids": list(BEACON_ON_HOLD_DATA_SOURCE_IDS),
+                "spend_guard": "gateway_provider_allowlist_and_budget_limits",
             },
         ),
     ),

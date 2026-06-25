@@ -17,6 +17,9 @@ domains:
   - geo                      # Geocoding, mapping, places
   - weather                  # Weather + forecasts
   - web-search               # Web search, answer, and retrieval APIs
+  - scholarly-reference      # Public scholarly metadata and literature discovery
+  - security-intel           # Public vulnerability, exploit, and advisory intelligence
+  - productivity-comms       # Mail, calendar, and workspace APIs for private operator context
   - utility                  # FX, IP geolocation, open data
 
 auth_types:
