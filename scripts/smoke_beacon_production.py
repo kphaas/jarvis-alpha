@@ -21,7 +21,11 @@ SOURCE_CONNECTOR_SMOKE_SPECS = (
     {
         "data_source_id": "pubmed-eutils",
         "query": "Use PubMed E-utilities to find GLP-1 treatment outcome studies.",
-        "hosts": ("pubmed.ncbi.nlm.nih.gov",),
+        "hosts": (
+            "pubmed.ncbi.nlm.nih.gov",
+            "www.ncbi.nlm.nih.gov",
+            "pmc.ncbi.nlm.nih.gov",
+        ),
     },
     {
         "data_source_id": "sec-edgar",
