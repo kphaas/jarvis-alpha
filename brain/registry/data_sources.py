@@ -38,6 +38,7 @@ EXTERNAL_DATA_DOMAINS_BY_SKILL_DOMAIN = {
         {
             "financial-market",
             "medical-reference",
+            "news",
             "productivity-comms",
             "scholarly-reference",
             "security-intel",

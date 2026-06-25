@@ -104,3 +104,156 @@
     Not justified for personal-use Jarvis.
   last_verified: 2026-05-01
   review_cadence_days: 365
+
+- id: openai-news-rss
+  name: OpenAI News RSS
+  domain: news
+  url: https://openai.com/news/
+  api_base_url: https://openai.com/news/rss.xml
+  auth:
+    type: none
+    notes: No auth. Official OpenAI RSS feed for public news and announcements.
+  pricing: free
+  free_tier: unlimited (fair use)
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - ai-vendor-news
+    - model-release-monitoring
+    - official-announcement-tracking
+  notes: |
+    Official OpenAI news feed. Use for public OpenAI product, model, safety,
+    research, and company announcements. Feed content is vendor-controlled and
+    should be treated as first-party evidence, not independent analysis.
+  last_verified: 2026-06-25
+  review_cadence_days: 30
+
+- id: openai-api-changelog
+  name: OpenAI API Changelog
+  domain: news
+  url: https://developers.openai.com/api/docs/changelog
+  api_base_url: null
+  auth:
+    type: none
+    notes: No auth. Monitor the public changelog page; no stable RSS feed verified.
+  pricing: free
+  free_tier: unlimited public page access (fair use)
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - api-changelog-monitoring
+    - model-deprecation-tracking
+    - integration-risk-monitoring
+  notes: |
+    Current OpenAI platform changelog location. The older
+    platform.openai.com/docs/changelog URL redirects here. Use page monitoring
+    with change hashes rather than brittle HTML scraping, and keep API/model
+    deprecation items high priority for AT-0 operator review.
+  last_verified: 2026-06-25
+  review_cadence_days: 30
+
+- id: aws-whats-new-ai
+  name: AWS What's New AI Announcements
+  domain: news
+  url: https://aws.amazon.com/new/
+  api_base_url: https://aws.amazon.com/about-aws/whats-new/recent/feed/?awsf.filter-name=*all&awsf.filter-marketing-marchitecture=marketing-marchitecture%23artificial-intelligence
+  auth:
+    type: none
+    notes: No auth. Official AWS What's New RSS feed filtered to artificial intelligence architecture tags.
+  pricing: free
+  free_tier: unlimited (fair use)
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - ai-vendor-news
+    - aws-bedrock-monitoring
+    - cloud-ai-release-monitoring
+  notes: |
+    Official AWS launch feed filtered for artificial intelligence announcements.
+    AWS also publishes broader What's New and Machine Learning Blog RSS feeds;
+    keep this source focused on launch/update detection and route deeper
+    implementation analysis through cited web search or AWS docs.
+  last_verified: 2026-06-25
+  review_cadence_days: 30
+
+- id: azure-ai-blog
+  name: Azure AI Blog RSS
+  domain: news
+  url: https://azure.microsoft.com/en-us/blog/product/azure-ai/
+  api_base_url: https://azure.microsoft.com/en-us/blog/product/azure-ai/feed/
+  auth:
+    type: none
+    notes: No auth. Official Microsoft Azure AI blog RSS feed.
+  pricing: free
+  free_tier: unlimited (fair use)
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - ai-vendor-news
+    - azure-ai-monitoring
+    - microsoft-ai-release-monitoring
+  notes: |
+    Official Azure AI blog feed. Use for Azure AI, Foundry, model, agent, and
+    enterprise AI announcements. Pair with Microsoft Learn release notes before
+    making operational claims about tenant availability or rollout timing.
+  last_verified: 2026-06-25
+  review_cadence_days: 30
+
+- id: github-copilot-changelog
+  name: GitHub Copilot Changelog RSS
+  domain: news
+  url: https://github.blog/changelog/label/copilot/
+  api_base_url: https://github.blog/changelog/label/copilot/feed/
+  auth:
+    type: none
+    notes: No auth. Official GitHub changelog feed filtered to Copilot posts.
+  pricing: free
+  free_tier: unlimited (fair use)
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - ai-vendor-news
+    - developer-tooling-monitoring
+    - copilot-release-monitoring
+  notes: |
+    Official GitHub Copilot changelog feed. Good for IDE, agentic coding,
+    enterprise policy, model-routing, and feature rollout changes. Treat as a
+    vendor changelog and cross-check high-impact items against docs before
+    changing internal policy.
+  last_verified: 2026-06-25
+  review_cadence_days: 30
+
+- id: ai-vendor-status-feeds
+  name: AI Vendor Status Feeds
+  domain: news
+  url: https://status.openai.com/
+  api_base_url: null
+  auth:
+    type: none
+    notes: |
+      No auth for public status pages. Verified RSS endpoints:
+      https://status.openai.com/history.rss
+      https://status.claude.com/history.rss
+      https://azure.status.microsoft/en-us/status/feed/
+  pricing: free
+  free_tier: unlimited public status access (fair use)
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - ai-vendor-status-monitoring
+    - incident-awareness
+    - outage-correlation
+  notes: |
+    Aggregate source for AI vendor health signals. OpenAI, Claude, and Azure
+    status RSS feeds verified cleanly. AWS public status RSS currently returns
+    RSS content from legacy status.aws.amazon.com paths but reports HTTP 404;
+    for production AWS health ingest, prefer AWS Health/EventBridge or monitor
+    the AWS Health Dashboard page before relying on the legacy RSS endpoint.
+  last_verified: 2026-06-25
+  review_cadence_days: 30
