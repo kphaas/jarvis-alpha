@@ -245,7 +245,7 @@ class InternetScoutResearchPlan(BaseModel):
         default_factory=_default_search_providers,
         max_length=3,
     )
-    recommended_data_source_ids: list[str] = Field(default_factory=list, max_length=12)
+    recommended_data_source_ids: list[str] = Field(default_factory=list, max_length=20)
     max_extracts: int = Field(default=0, ge=0, le=5)
     stop_criteria: InternetScoutResearchStopCriteria = Field(
         default_factory=InternetScoutResearchStopCriteria

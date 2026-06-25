@@ -28,6 +28,22 @@ from brain.services.internet_scout.source_selection import (
             "Find scholarly citation metadata for a peer reviewed AI paper",
             {"openalex"},
         ),
+        (
+            "Track OpenAI API changelog and ChatGPT model release news",
+            {"openai-news-rss", "openai-api-changelog"},
+        ),
+        (
+            "Find AWS Bedrock AI launch updates from AWS What's New",
+            {"aws-whats-new-ai"},
+        ),
+        (
+            "Monitor Azure AI and GitHub Copilot changelog updates",
+            {"azure-ai-blog", "github-copilot-changelog"},
+        ),
+        (
+            "Check Claude and OpenAI status incidents and outage updates",
+            {"ai-vendor-status-feeds"},
+        ),
     ],
 )
 def test_beacon_source_selection_routes_domain_queries_to_registry_sources(
@@ -51,6 +67,24 @@ def test_beacon_source_selection_includes_productivity_sources_only_when_request
     assert {"google-workspace", "microsoft-graph"}.issubset(data_source_ids)
 
 
+def test_beacon_source_selection_includes_all_ai_vendor_watch_sources_for_ai_news():
+    data_source_ids = set(
+        select_beacon_data_source_ids(
+            "Keep me updated on AI vendor news from OpenAI, AWS, and Microsoft",
+            focus_mode="all",
+        )
+    )
+
+    assert {
+        "openai-news-rss",
+        "openai-api-changelog",
+        "aws-whats-new-ai",
+        "azure-ai-blog",
+        "github-copilot-changelog",
+        "ai-vendor-status-feeds",
+    }.issubset(data_source_ids)
+
+
 def test_beacon_source_selection_blocks_on_hold_paid_sources():
     with pytest.raises(ValueError, match="quiverquant"):
         assert_no_on_hold_data_sources(["brave-search", "quiverquant"])
@@ -72,5 +106,30 @@ def test_research_plan_carries_recommended_data_sources():
     assert "quiverquant" not in plan.recommended_data_source_ids
     assert any(
         note.startswith("data_sources:") and "pubmed-eutils" in note
+        for note in plan.notes
+    )
+
+
+def test_research_plan_carries_ai_vendor_watch_sources():
+    plan = plan_research(
+        InternetScoutRequest(
+            query="Keep me updated on AI vendor news from OpenAI, AWS, Microsoft, and Claude status",
+            focus_mode="all",
+            requester="alpha_chat.search",
+            max_pages=3,
+        ),
+        selected_tool=InternetTool.SEARCH,
+    )
+
+    assert {
+        "openai-news-rss",
+        "openai-api-changelog",
+        "aws-whats-new-ai",
+        "azure-ai-blog",
+        "github-copilot-changelog",
+        "ai-vendor-status-feeds",
+    }.issubset(set(plan.recommended_data_source_ids))
+    assert any(
+        note.startswith("data_sources:") and "openai-news-rss" in note
         for note in plan.notes
     )
