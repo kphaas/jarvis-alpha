@@ -415,7 +415,9 @@ def build_production_closeout(
             required="all required tables present, FORCE RLS enabled, app/writer grants present, public EXECUTE absent",
         ),
         "audit_log": _closeout_item(
-            status="pass" if approval_audit_rows >= 1 and graph_audit_rows >= 1 else "warn",
+            status="pass"
+            if approval_audit_rows >= 1 and graph_audit_rows >= 1
+            else "warn",
             evidence={
                 "approval_audit_rows": approval_audit_rows,
                 "graph_audit_rows": graph_audit_rows,

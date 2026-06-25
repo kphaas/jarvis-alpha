@@ -32,8 +32,12 @@ def summarize_temporal_graph_rows(
     node_rows = list(nodes)
     edge_rows = list(edges)
 
-    node_status = [_row_status(row, now=now, stale_before=stale_before) for row in node_rows]
-    edge_status = [_row_status(row, now=now, stale_before=stale_before) for row in edge_rows]
+    node_status = [
+        _row_status(row, now=now, stale_before=stale_before) for row in node_rows
+    ]
+    edge_status = [
+        _row_status(row, now=now, stale_before=stale_before) for row in edge_rows
+    ]
     recent_changes = sum(
         1
         for row in [*node_rows, *edge_rows]
@@ -77,7 +81,9 @@ def _superseded_node_candidates(rows: list[GraphRow]) -> int:
     groups: dict[tuple[str, str], list[GraphRow]] = defaultdict(list)
     for row in rows:
         node_type = str(row.get("node_type") or "other")
-        label_key = str(row.get("label_hash") or row.get("label_preview") or row.get("id") or "")
+        label_key = str(
+            row.get("label_hash") or row.get("label_preview") or row.get("id") or ""
+        )
         groups[(node_type, label_key.casefold())].append(row)
     return sum(max(0, len(group) - 1) for group in groups.values() if len(group) > 1)
 
@@ -105,7 +111,9 @@ def _activity_at(row: GraphRow) -> datetime | None:
 
 
 def _change_at(row: GraphRow) -> datetime | None:
-    return _parse_datetime(row.get("updated_at")) or _parse_datetime(row.get("created_at"))
+    return _parse_datetime(row.get("updated_at")) or _parse_datetime(
+        row.get("created_at")
+    )
 
 
 def _parse_datetime(value: object) -> datetime | None:
