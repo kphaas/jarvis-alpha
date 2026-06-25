@@ -1,6 +1,21 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 from scripts import smoke_memory_graph
+
+
+def test_memory_graph_smoke_script_runs_as_file() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/smoke_memory_graph.py", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "Authenticated live smoke" in result.stdout
 
 
 def test_memory_graph_smoke_checks_auth_graph_health_and_history(
