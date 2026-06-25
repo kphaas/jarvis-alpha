@@ -12,6 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from brain.db.rls import platform_admin_connection, rls_connection
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
+from brain.services.memory_graph_temporal_intelligence import (
+    classify_temporal_graph_row,
+)
 from jarvis_common.logging_config import get_logger
 
 
@@ -63,6 +66,10 @@ class MemoryGraphNode(BaseModel):
     confidence: float
     valid_from: str | None = None
     valid_to: str | None = None
+    temporal_state: str = "active"
+    retrieval_state: str = "current"
+    refresh_prompt: str | None = None
+    conflict_key: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -77,6 +84,10 @@ class MemoryGraphEdge(BaseModel):
     confidence: float
     valid_from: str | None = None
     valid_to: str | None = None
+    temporal_state: str = "active"
+    retrieval_state: str = "current"
+    refresh_prompt: str | None = None
+    conflict_key: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -432,6 +443,7 @@ def _proposals_response(payload: dict[str, Any]) -> MemoryGraphProposalsResponse
 
 def _normalize_node(row: object) -> dict[str, Any]:
     data = _dict(row)
+    temporal = classify_temporal_graph_row(data, object_type="node")
     return {
         "id": str(data.get("id") or ""),
         "node_type": str(data.get("node_type") or "other"),
@@ -444,6 +456,10 @@ def _normalize_node(row: object) -> dict[str, Any]:
         "confidence": float(data.get("confidence") or 0),
         "valid_from": _optional_str(data.get("valid_from")),
         "valid_to": _optional_str(data.get("valid_to")),
+        "temporal_state": temporal["temporal_state"],
+        "retrieval_state": temporal["retrieval_state"],
+        "refresh_prompt": temporal["refresh_prompt"],
+        "conflict_key": temporal["conflict_key"],
         "created_at": _optional_str(data.get("created_at")),
         "updated_at": _optional_str(data.get("updated_at")),
     }
@@ -451,6 +467,7 @@ def _normalize_node(row: object) -> dict[str, Any]:
 
 def _normalize_edge(row: object) -> dict[str, Any]:
     data = _dict(row)
+    temporal = classify_temporal_graph_row(data, object_type="edge")
     return {
         "id": str(data.get("id") or ""),
         "from_node_id": str(data.get("from_node_id") or ""),
@@ -461,6 +478,10 @@ def _normalize_edge(row: object) -> dict[str, Any]:
         "confidence": float(data.get("confidence") or 0),
         "valid_from": _optional_str(data.get("valid_from")),
         "valid_to": _optional_str(data.get("valid_to")),
+        "temporal_state": temporal["temporal_state"],
+        "retrieval_state": temporal["retrieval_state"],
+        "refresh_prompt": temporal["refresh_prompt"],
+        "conflict_key": temporal["conflict_key"],
         "created_at": _optional_str(data.get("created_at")),
         "updated_at": _optional_str(data.get("updated_at")),
     }

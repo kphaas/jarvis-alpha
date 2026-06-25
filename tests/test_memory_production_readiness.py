@@ -58,6 +58,7 @@ def test_memory_readiness_report_rag_states() -> None:
             "restore_drill_launchagent": True,
             "observability_monitor": True,
             "memory_core_smoke": True,
+            "memory_graph_smoke": True,
         },
     )
     warning = readiness.build_report(
@@ -84,6 +85,7 @@ def test_memory_readiness_report_rag_states() -> None:
             "restore_drill_launchagent": True,
             "observability_monitor": True,
             "memory_core_smoke": True,
+            "memory_graph_smoke": True,
         },
     )
     failing = readiness.build_report(
@@ -110,6 +112,7 @@ def test_memory_readiness_report_rag_states() -> None:
             "restore_drill_launchagent": True,
             "observability_monitor": True,
             "memory_core_smoke": True,
+            "memory_graph_smoke": True,
         },
     )
 
@@ -172,6 +175,7 @@ def test_memory_readiness_blocks_graph_access_drift() -> None:
             "restore_drill_launchagent": True,
             "observability_monitor": True,
             "memory_core_smoke": True,
+            "memory_graph_smoke": True,
         },
     )
 
@@ -218,6 +222,7 @@ def test_memory_readiness_local_files_check(tmp_path: Path) -> None:
     (tmp_path / "scripts" / "restore_drill_alpha.sh").touch()
     (tmp_path / "scripts" / "check_memory_observability.py").touch()
     (tmp_path / "scripts" / "smoke_memory_core.py").touch()
+    (tmp_path / "scripts" / "smoke_memory_graph.py").touch()
     (
         tmp_path / "launchagents" / "com.jarvis.alpha.restore_drill.template.plist"
     ).touch()

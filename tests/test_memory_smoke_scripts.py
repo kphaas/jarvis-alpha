@@ -8,6 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RUN_SMOKE = REPO_ROOT / "scripts" / "run_smoke.sh"
 MEMORY_SECDEF_SMOKE = REPO_ROOT / "scripts" / "smoke_memory_secdef.sh"
 DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "jarvisalpha_deploy.sh"
+MEMORY_GRAPH_SMOKE = REPO_ROOT / "scripts" / "smoke_memory_graph.py"
 PUBLIC_REVOKE_MIGRATION = (
     REPO_ROOT
     / "brain"
@@ -69,6 +70,26 @@ def test_deploy_runs_memory_core_smoke_as_post_deploy_gate() -> None:
     assert "JARVIS_ALPHA_SKIP_MEMORY_CORE_SMOKE" in source
     assert 'MEMORY_CORE_SMOKE_BASE_URL="$settings_base_url"' in source
     assert 'MEMORY_CORE_SMOKE_DB_SSH_TARGET="$BRAIN"' in source
+
+
+def test_deploy_runs_memory_graph_smoke_as_post_deploy_gate() -> None:
+    source = _script_text(DEPLOY_SCRIPT)
+
+    assert "smoke_memory_graph.py" in source
+    assert "JARVIS_ALPHA_SKIP_MEMORY_GRAPH_SMOKE" in source
+    assert 'MEMORY_GRAPH_SMOKE_BASE_URL="$settings_base_url"' in source
+    assert 'MEMORY_GRAPH_SMOKE_TOKEN_SSH_TARGET="$BRAIN"' in source
+
+
+def test_memory_graph_smoke_does_not_print_tokens_or_raw_payloads() -> None:
+    source = _script_text(MEMORY_GRAPH_SMOKE)
+
+    assert "token" not in " ".join(
+        line.strip() for line in source.splitlines() if line.strip().startswith('{"')
+    )
+    assert "payload_redacted" in source
+    assert "/v1/memory/admin/graph/health" in source
+    assert "/v1/memory/admin/graph/proposals?state=open&limit=5" in source
 
 
 def test_semantic_memory_public_execute_revoke_migration_is_guarded() -> None:

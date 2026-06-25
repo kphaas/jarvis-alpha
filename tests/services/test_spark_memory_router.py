@@ -72,9 +72,48 @@ def test_spark_learning_examples_route_to_reviewable_memory_lanes(
             "planning_trip",
             "project_collaboration",
         }
+        assert plan.temporal_kind in {"planned_event", "project_state"}
+        assert plan.currentness_policy == "candidate_current"
+        assert "operator_review_required" in plan.extraction_tags
+        assert "temporal_fact_changes_over_time" in plan.review_reasons
         assert plan.graph_payload["properties"]["source_note_hash"]
         assert plan.graph_payload["properties"]["source_note_hash"] != note
         assert plan.graph_payload["provenance"]["contains_raw_spark_body"] is False
+
+
+def test_spark_graph_trip_learning_sets_refresh_and_currentness_metadata() -> None:
+    plan = plan_spark_memory_route(
+        note="Sweta and Ken are planning a trip to Seattle.",
+        principal_id="ken",
+    )
+
+    assert plan.destination == "temporal_graph"
+    assert plan.graph_payload is not None
+    properties = plan.graph_payload["properties"]
+    assert properties["temporal_kind"] == "planned_event"
+    assert properties["currentness_policy"] == "candidate_current"
+    assert properties["refresh_prompt_after_days"] == 30
+    assert properties["extraction_tags"] == [
+        "temporal_graph",
+        "planning_trip",
+        "planned_event",
+        "operator_review_required",
+    ]
+
+
+def test_spark_graph_historical_learning_requires_confirmation() -> None:
+    plan = plan_spark_memory_route(
+        note="Sweta and Ken were collaborating on an old memory project.",
+        principal_id="ken",
+    )
+
+    assert plan.destination == "temporal_graph"
+    assert plan.currentness_policy == "historical_needs_confirmation"
+    assert plan.graph_payload is not None
+    assert (
+        plan.graph_payload["properties"]["currentness_policy"]
+        == "historical_needs_confirmation"
+    )
 
 
 def test_spark_learning_routes_selected_recipient_context_to_target_memory() -> None:

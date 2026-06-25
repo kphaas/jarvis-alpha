@@ -300,6 +300,11 @@ class SparkMemoryRoutePlanModel(BaseModel):
     target_kind: str | None = None
     graph_label_preview: str | None = None
     required_metadata: list[str] = Field(default_factory=list)
+    extraction_tags: list[str] = Field(default_factory=list)
+    extracted_entities: list[str] = Field(default_factory=list)
+    temporal_kind: str | None = None
+    currentness_policy: str | None = None
+    review_reasons: list[str] = Field(default_factory=list)
 
 
 class SparkMemoryRouteResultModel(BaseModel):
@@ -1136,6 +1141,11 @@ def _route_plan_model(plan: SparkMemoryRoutePlan) -> SparkMemoryRoutePlanModel:
         target_kind=plan.target_kind,
         graph_label_preview=graph_label or None,
         required_metadata=list(plan.required_metadata),
+        extraction_tags=list(plan.extraction_tags),
+        extracted_entities=list(plan.extracted_entities),
+        temporal_kind=plan.temporal_kind,
+        currentness_policy=plan.currentness_policy,
+        review_reasons=list(plan.review_reasons),
     )
 
 

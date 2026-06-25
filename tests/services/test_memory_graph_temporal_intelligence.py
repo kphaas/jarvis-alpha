@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from brain.services.memory_graph_temporal_intelligence import (
+    classify_temporal_graph_row,
     summarize_temporal_graph_rows,
 )
 
@@ -102,3 +103,54 @@ def test_summarize_temporal_graph_rows_flags_superseded_candidates() -> None:
 
     assert summary["superseded_node_candidates"] == 1
     assert summary["superseded_edge_candidates"] == 1
+    assert summary["conflict_candidates"] == 2
+
+
+def test_classify_temporal_graph_row_marks_retrieval_currentness() -> None:
+    now = datetime(2026, 6, 25, tzinfo=UTC)
+
+    active = classify_temporal_graph_row(
+        {
+            "id": "active",
+            "node_type": "project",
+            "label_hash": "active-hash",
+            "updated_at": "2026-06-24T00:00:00Z",
+        },
+        object_type="node",
+        now=now,
+    )
+    stale = classify_temporal_graph_row(
+        {
+            "id": "stale",
+            "node_type": "project",
+            "label_hash": "stale-hash",
+            "updated_at": "2025-12-01T00:00:00Z",
+            "properties": {"refresh_prompt_after_days": 30},
+        },
+        object_type="node",
+        now=now,
+    )
+    expired = classify_temporal_graph_row(
+        {
+            "id": "expired-edge",
+            "from_node_id": "a",
+            "to_node_id": "b",
+            "edge_type": "works_on",
+            "valid_to": "2026-06-01T00:00:00Z",
+        },
+        object_type="edge",
+        now=now,
+    )
+
+    assert active == {
+        "temporal_state": "active",
+        "retrieval_state": "current",
+        "refresh_prompt": None,
+        "conflict_key": "node:project:active-hash",
+    }
+    assert stale["temporal_state"] == "stale"
+    assert stale["retrieval_state"] == "needs_refresh"
+    assert stale["refresh_prompt"] == "confirm_still_current"
+    assert expired["retrieval_state"] == "historical"
+    assert expired["refresh_prompt"] == "expired_window"
+    assert expired["conflict_key"] == "edge:a:b:works_on"

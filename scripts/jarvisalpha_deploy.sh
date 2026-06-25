@@ -284,6 +284,42 @@ print(f"{len(passed)} checks passed")
     fi
   fi
 
+  if [[ "${JARVIS_SKIP_MEMORY_GRAPH_SMOKE:-0}" == "1" || "${JARVIS_ALPHA_SKIP_MEMORY_GRAPH_SMOKE:-0}" == "1" ]]; then
+    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "memory graph smoke" "SKIPPED (JARVIS_SKIP_MEMORY_GRAPH_SMOKE=1)" ""
+  else
+    local graph_start=$SECONDS
+    local graph_out
+    local graph_ec
+
+    graph_out=$(
+      MEMORY_GRAPH_SMOKE_BASE_URL="$settings_base_url" \
+      MEMORY_GRAPH_SMOKE_TOKEN_SSH_TARGET="$BRAIN" \
+        python3 "$REPO_DIR/scripts/smoke_memory_graph.py" 2>&1
+    )
+    graph_ec=$?
+    if [ $graph_ec -ne 0 ]; then
+      step_fail "memory graph smoke" "failed"
+      echo "$graph_out" >&2
+      smoke_failed=1
+    else
+      local graph_summary
+      graph_summary=$(printf '%s\n' "$graph_out" | tail -1 | python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+checks = payload.get("checks", {})
+passed = [
+    name
+    for name, check in checks.items()
+    if isinstance(check, dict) and check.get("status") == "passed"
+]
+print(f"{len(passed)} checks passed")
+' 2>/dev/null || true)
+      step_ok "memory graph smoke" "${graph_summary:-passed}" "$(fmt_s $((SECONDS - graph_start)))"
+    fi
+  fi
+
   if [[ "${JARVIS_SKIP_BEACON_SMOKE:-0}" == "1" || "${JARVIS_ALPHA_SKIP_BEACON_SMOKE:-0}" == "1" ]]; then
     printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "beacon smoke" "SKIPPED (JARVIS_SKIP_BEACON_SMOKE=1)" ""
   else

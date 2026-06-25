@@ -165,7 +165,15 @@ async def test_memory_graph_current_reads_current_user(
     assert response.status == "ok"
     assert response.principal_id == str(uuid5(NAMESPACE_DNS, "ken"))
     assert response.nodes[0].label_preview == "Temporal graph"
+    assert response.nodes[0].temporal_state == "active"
+    assert response.nodes[0].retrieval_state == "current"
+    assert response.nodes[0].conflict_key == f"node:project:{'a' * 64}"
     assert response.edges[0].edge_type == "related_to"
+    assert response.edges[0].temporal_state == "active"
+    assert response.edges[0].retrieval_state == "current"
+    assert response.edges[0].conflict_key == (
+        f"edge:{NODE_ID}:55555555-5555-4555-8555-555555555555:related_to"
+    )
     assert "list_memory_graph_current" in conn.fetchval_calls[0][0]
 
 

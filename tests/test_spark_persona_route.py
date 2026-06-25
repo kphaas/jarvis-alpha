@@ -450,6 +450,10 @@ async def test_spark_memory_route_queues_graph_reviewed_write(
     assert response.status == "routed"
     assert response.plan.destination == "temporal_graph"
     assert response.plan.review_lane == "memory_graph_reviewed_write"
+    assert response.plan.temporal_kind == "planned_event"
+    assert response.plan.currentness_policy == "candidate_current"
+    assert response.plan.extracted_entities == ["ken", "sweta"]
+    assert "operator_review_required" in response.plan.extraction_tags
     assert response.results[0].status == "queued"
     assert conn.args[0] == str(spark_persona._principal_uuid("ken"))
     assert conn.args[2] == "ken"

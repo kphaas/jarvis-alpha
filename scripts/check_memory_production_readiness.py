@@ -236,6 +236,7 @@ def local_readiness(repo_root: Path) -> dict[str, bool]:
         / "scripts"
         / "check_memory_observability.py",
         "memory_core_smoke": repo_root / "scripts" / "smoke_memory_core.py",
+        "memory_graph_smoke": repo_root / "scripts" / "smoke_memory_graph.py",
     }
     return {name: path.is_file() for name, path in paths.items()}
 

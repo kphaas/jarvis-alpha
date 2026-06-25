@@ -78,6 +78,11 @@ class SparkMemoryRoutePlan:
     target_kind: str | None = None
     graph_payload: dict[str, Any] | None = None
     required_metadata: tuple[str, ...] = field(default_factory=tuple)
+    extraction_tags: tuple[str, ...] = field(default_factory=tuple)
+    extracted_entities: tuple[str, ...] = field(default_factory=tuple)
+    temporal_kind: str | None = None
+    currentness_policy: str | None = None
+    review_reasons: tuple[str, ...] = field(default_factory=tuple)
 
 
 def plan_spark_memory_route(
@@ -105,6 +110,11 @@ def plan_spark_memory_route(
     lowered = clean.casefold()
     sensitive = bool(_HEALTH_OR_CHILD_TEXT.search(clean))
     if _should_route_graph(clean):
+        graph_payload = _graph_node_payload(
+            note=clean,
+            principal_id=principal_id,
+            target_label=target_label,
+        )
         return SparkMemoryRoutePlan(
             status="routable",
             destination="temporal_graph",
@@ -113,10 +123,14 @@ def plan_spark_memory_route(
             risk="reviewed_write",
             review_lane="memory_graph_reviewed_write",
             confidence=0.78,
-            graph_payload=_graph_node_payload(
-                note=clean,
-                principal_id=principal_id,
-                target_label=target_label,
+            graph_payload=graph_payload,
+            extraction_tags=tuple(graph_payload["properties"]["extraction_tags"]),
+            extracted_entities=tuple(graph_payload["properties"]["people"]),
+            temporal_kind=str(graph_payload["properties"]["temporal_kind"]),
+            currentness_policy=str(graph_payload["properties"]["currentness_policy"]),
+            review_reasons=(
+                "temporal_fact_changes_over_time",
+                "operator_review_required",
             ),
         )
     if (has_target_context or _has_named_target(clean)) and _TARGET_TEXT.search(clean):
@@ -131,8 +145,12 @@ def plan_spark_memory_route(
             confidence=0.76,
             target_kind=_target_kind(clean),
             required_metadata=missing,
+            extraction_tags=("target", _target_kind(clean)),
+            extracted_entities=tuple(_extract_people(clean)),
+            review_reasons=("selected_recipient_context_required",),
         )
     if _PERSONALITY_TEXT.search(clean) or _SELF_TRAIT_TEXT.search(clean):
+        personality_kind = _personality_kind(lowered)
         return SparkMemoryRoutePlan(
             status="routable",
             destination="spark_personality",
@@ -141,7 +159,10 @@ def plan_spark_memory_route(
             risk="high_visibility",
             review_lane="spark_personality_memory_review",
             confidence=0.74,
-            personality_kind=_personality_kind(lowered),
+            personality_kind=personality_kind,
+            extraction_tags=("personality", personality_kind),
+            extracted_entities=("self",),
+            review_reasons=("operator_review_required",),
         )
 
     category = infer_memory_category(clean)
@@ -155,6 +176,13 @@ def plan_spark_memory_route(
         review_lane=review_lane,
         confidence=0.7,
         semantic_category=category,
+        extraction_tags=("semantic", str(category)),
+        extracted_entities=tuple(_extract_people(clean)),
+        review_reasons=(
+            ("high_visibility_health_or_child_fact",)
+            if sensitive
+            else ("semantic_review_lane",)
+        ),
     )
 
 
@@ -177,8 +205,9 @@ def _graph_node_payload(
     principal_id: str,
     target_label: str | None,
 ) -> dict[str, Any]:
-    people = [name for name in _KNOWN_PEOPLE if name in note.casefold()]
+    people = _extract_people(note)
     graph_kind = _graph_relationship_kind(note)
+    temporal_kind = _graph_temporal_kind(note)
     node_type = (
         "project"
         if re.search(r"\b(plan|planning|trip|project)\b", note, re.I)
@@ -196,6 +225,10 @@ def _graph_node_payload(
             "route": "spark_memory_router",
             "people": people,
             "graph_kind": graph_kind,
+            "temporal_kind": temporal_kind,
+            "currentness_policy": _currentness_policy(note),
+            "refresh_prompt_after_days": _refresh_prompt_days(temporal_kind),
+            "extraction_tags": _graph_extraction_tags(graph_kind, temporal_kind),
             "candidate_relationship": graph_kind,
             "requires_operator_resolution": True,
             "temporal_memory": True,
@@ -259,6 +292,41 @@ def _graph_relationship_kind(note: str) -> str:
     if re.search(r"\b(married|dating|partner|relationship|custody)\b", note, re.I):
         return "relationship_state"
     return "people_relationship"
+
+
+def _extract_people(note: str) -> list[str]:
+    lowered = note.casefold()
+    return [name for name in _KNOWN_PEOPLE if name in lowered]
+
+
+def _graph_temporal_kind(note: str) -> str:
+    if re.search(r"\b(trip|travel|flight|hotel|vacation)\b", note, re.I):
+        return "planned_event"
+    if re.search(r"\b(project|working with|collaborating|collaboration)\b", note, re.I):
+        return "project_state"
+    if re.search(r"\b(married|dating|partner|relationship|custody)\b", note, re.I):
+        return "relationship_state"
+    return "people_state"
+
+
+def _currentness_policy(note: str) -> str:
+    if re.search(r"\b(used to|previously|formerly|was|were)\b", note, re.I):
+        return "historical_needs_confirmation"
+    if re.search(r"\b(planning|plans?|working|collaborating|dating)\b", note, re.I):
+        return "candidate_current"
+    return "confirm_current"
+
+
+def _refresh_prompt_days(temporal_kind: str) -> int:
+    if temporal_kind == "planned_event":
+        return 30
+    if temporal_kind == "project_state":
+        return 60
+    return 90
+
+
+def _graph_extraction_tags(graph_kind: str, temporal_kind: str) -> list[str]:
+    return ["temporal_graph", graph_kind, temporal_kind, "operator_review_required"]
 
 
 def _target_required_metadata() -> tuple[str, ...]:

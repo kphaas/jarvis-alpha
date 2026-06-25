@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""Authenticated live smoke for Memory temporal graph reads.
+
+Checks:
+- Bearer auth can read the current user's memory summary.
+- Current user graph endpoint returns sanitized node/edge arrays.
+- Admin graph health and proposal metadata endpoints are reachable.
+- Graph history endpoint is reachable when a node is available.
+"""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import asdict, dataclass
+import os
+from typing import Any
+
+from scripts.smoke_memory_core import (
+    DEFAULT_BASE_URL,
+    DEFAULT_PROFILE,
+    DEFAULT_SSH_TARGET,
+    _call_json,
+    _emit,
+    _optional_string,
+    _safe_error,
+    _smoke_token,
+)
+
+
+@dataclass(frozen=True)
+class SmokeResult:
+    status: str
+    detail: dict[str, Any]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--base-url",
+        default=os.getenv("MEMORY_GRAPH_SMOKE_BASE_URL", DEFAULT_BASE_URL),
+        help="Alpha Brain base URL to probe.",
+    )
+    parser.add_argument(
+        "--profile",
+        default=os.getenv("MEMORY_GRAPH_SMOKE_PROFILE", DEFAULT_PROFILE),
+        help="Profile passed to scripts/gen_test_token.py.",
+    )
+    parser.add_argument(
+        "--token",
+        default=(
+            os.getenv("MEMORY_GRAPH_SMOKE_TOKEN")
+            or os.getenv("MEMORY_CORE_SMOKE_TOKEN")
+            or os.getenv("HELM_ASK_SMOKE_TOKEN")
+            or os.getenv("BEACON_SMOKE_TOKEN")
+        ),
+        help="Optional pre-generated bearer token.",
+    )
+    parser.add_argument(
+        "--token-ssh-target",
+        default=os.getenv("MEMORY_GRAPH_SMOKE_TOKEN_SSH_TARGET", DEFAULT_SSH_TARGET),
+        help="SSH target used to generate a short-lived bearer token.",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=int(os.getenv("MEMORY_GRAPH_SMOKE_TIMEOUT", "45")),
+        help="HTTP timeout in seconds.",
+    )
+    args = parser.parse_args()
+
+    base_url = args.base_url.rstrip("/")
+    token = _smoke_token(
+        explicit_token=args.token,
+        profile=args.profile,
+        base_url=base_url,
+        token_ssh_target=args.token_ssh_target,
+    )
+    results = run_memory_graph_smoke(
+        base_url=base_url,
+        token=token,
+        timeout=args.timeout,
+    )
+    failures = [name for name, result in results.items() if result.status != "passed"]
+    status = "passed" if not failures else "failed"
+    _emit(
+        {
+            "status": status,
+            "checks": {name: asdict(result) for name, result in results.items()},
+        }
+    )
+    return 0 if status == "passed" else 2
+
+
+def run_memory_graph_smoke(
+    *,
+    base_url: str,
+    token: str,
+    timeout: int,
+) -> dict[str, SmokeResult]:
+    results: dict[str, SmokeResult] = {}
+    try:
+        summary = _call_json(
+            "GET",
+            base_url,
+            "/v1/memory/summary?semantic_limit=1&working_limit=1",
+            token,
+            None,
+            timeout=timeout,
+        )
+        user_id = _optional_string(summary.get("user_id"))
+        if not user_id:
+            raise RuntimeError("memory summary did not return user_id")
+        results["auth_summary"] = SmokeResult("passed", {"user_id": _short_id(user_id)})
+
+        graph = _call_json(
+            "GET",
+            base_url,
+            "/v1/memory/graph?limit=100",
+            token,
+            None,
+            timeout=timeout,
+        )
+        nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
+        edges = graph.get("edges") if isinstance(graph.get("edges"), list) else []
+        results["current_graph_read"] = SmokeResult(
+            "passed" if graph.get("status") == "ok" else "failed",
+            {
+                "node_count": len(nodes),
+                "edge_count": len(edges),
+                "temporal_fields": _has_temporal_fields(nodes, edges),
+            },
+        )
+
+        health = _call_json(
+            "GET",
+            base_url,
+            "/v1/memory/admin/graph/health",
+            token,
+            None,
+            timeout=timeout,
+        )
+        results["admin_graph_health"] = SmokeResult(
+            "passed" if health.get("status") == "ok" else "failed",
+            {
+                "node_count": _int_value(health.get("node_count")),
+                "edge_count": _int_value(health.get("edge_count")),
+                "open_proposals": _int_value(health.get("open_proposals")),
+            },
+        )
+
+        proposals = _call_json(
+            "GET",
+            base_url,
+            "/v1/memory/admin/graph/proposals?state=open&limit=5",
+            token,
+            None,
+            timeout=timeout,
+        )
+        proposal_rows = (
+            proposals.get("proposals")
+            if isinstance(proposals.get("proposals"), list)
+            else []
+        )
+        results["admin_graph_proposals"] = SmokeResult(
+            "passed"
+            if proposals.get("status") == "ok"
+            and all(
+                "payload" not in item
+                for item in proposal_rows
+                if isinstance(item, dict)
+            )
+            else "failed",
+            {"proposal_count": len(proposal_rows), "payload_redacted": True},
+        )
+
+        node_id = _first_graph_node_id(nodes)
+        if node_id:
+            history = _call_json(
+                "GET",
+                base_url,
+                f"/v1/memory/graph/history/{node_id}?limit=5",
+                token,
+                None,
+                timeout=timeout,
+            )
+            events = (
+                history.get("events") if isinstance(history.get("events"), list) else []
+            )
+            results["graph_history_read"] = SmokeResult(
+                "passed" if history.get("status") == "ok" else "failed",
+                {"event_count": len(events)},
+            )
+        else:
+            results["graph_history_read"] = SmokeResult(
+                "passed",
+                {"skipped": True, "reason": "no_active_nodes"},
+            )
+    except Exception as exc:
+        results.setdefault(
+            "runtime",
+            SmokeResult("failed", {"error": _safe_error(exc)}),
+        )
+    return results
+
+
+def _first_graph_node_id(nodes: list[object]) -> str | None:
+    for node in nodes:
+        if isinstance(node, dict):
+            node_id = _optional_string(node.get("id"))
+            if node_id:
+                return node_id
+    return None
+
+
+def _has_temporal_fields(nodes: list[object], edges: list[object]) -> bool:
+    rows = [*nodes, *edges]
+    if not rows:
+        return True
+    return all(
+        isinstance(row, dict) and "temporal_state" in row and "retrieval_state" in row
+        for row in rows
+    )
+
+
+def _int_value(value: object) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
+def _short_id(value: str) -> str:
+    return value[:8]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
