@@ -68,10 +68,28 @@ boundary.
 | `POST /v1/agents/{agent_id}/enable` | Enable an agent in the registry. | T5 admin control |
 | `POST /v1/agents/{agent_id}/disable` | Disable an agent in the registry. | T5 admin control |
 | `POST /v1/agents/{agent_id}/run` | Manually trigger an explicitly opted-in T1/T2 agent. | T5 admin control |
+| `GET /v1/agent-board` | Read the operator work queue grouped as board columns. | T2 security read |
+| `GET /v1/agent-board/registry` | Read board-friendly skills and agents for pickers and capability mapping. | T2 security read |
+| `GET /v1/agent-board/work-items/{work_item_id}` | Read one queued work item and its required skill policies. | T2 security read |
+| `POST /v1/agent-board/work-items` | Queue an operator-reviewed work item without executing an agent. | T2 security write |
+| `PATCH /v1/agent-board/work-items/{work_item_id}/status` | Update board status and handoff metadata. | T2 security write |
 | `POST /v1/chatops/mattermost/command` | Token-authenticated read-only Mattermost slash command endpoint. | T2 security read |
 
 The registry does not make Mattermost the internal coordination bus. Agents
 persist AgentEvents first, then optionally notify the operator surface.
+
+## Agent Board Work Queue
+
+The Agent Board is an operator work queue, not a second executor. Work items
+reference `alpha_agents` and `alpha_skill_registry` by ID/name, then store the
+computed approval tier, assignment warnings, acceptance criteria, handoff
+metadata, and status history.
+
+Helm can render the board and queue work from Companion mode, but Alpha remains
+the authority for skill policy, approval tier, agent assignment, and audit
+events. A queued board item does not run a skill or start a task graph until a
+future executor bridge consumes it through the existing approval and
+SkillRunner gates.
 
 ## First Seed Skills
 
@@ -80,6 +98,9 @@ The initial seed covers foundation and near-term waves:
 - `notify.send`
 - `notify.send_mattermost`
 - `notify.send_pushover`
+- `agent_board.read`
+- `agent_board.queue_item`
+- `agent_board.update_status`
 - `approval.canary_t4`
 - `chatops.command_read`
 - `unifi.wan_status`

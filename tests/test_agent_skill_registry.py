@@ -21,6 +21,9 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert "notify.send" in names
     assert "notify.send_mattermost" in names
     assert "notify.send_pushover" in names
+    assert "agent_board.read" in names
+    assert "agent_board.queue_item" in names
+    assert "agent_board.update_status" in names
     assert "approval.canary_t4" in names
     assert "secrets.rotate" in names
     assert "chatops.command_read" in names
@@ -44,6 +47,11 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert skills["notify.send_mattermost"].status == "active"
     assert skills["notify.send_mattermost"].metadata["delivery"] == "incoming_webhook"
     assert skills["notify.send_pushover"].status == "active"
+    assert skills["agent_board.read"].approval_tier == "T1"
+    assert skills["agent_board.queue_item"].approval_tier == "T2"
+    assert skills["agent_board.queue_item"].mutates_state is True
+    assert skills["agent_board.queue_item"].metadata["does_not_execute_agents"] is True
+    assert skills["agent_board.update_status"].metadata["operator_surface"] == "helm"
     assert skills["approval.canary_t4"].status == "active"
     assert skills["approval.canary_t4"].approval_tier == "T4"
     assert skills["approval.canary_t4"].metadata["approval_queue_bridge"] == "enabled"
