@@ -34,3 +34,66 @@ dev = [
 
 [tool.uv]
 package = false
+
+[tool.mypy]
+python_version = "3.12"
+namespace_packages = true
+explicit_package_bases = true
+ignore_missing_imports = true
+exclude = [
+    "^db/alembic/",
+    "^scripts/",
+    "^tests/",
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "brain.agents.buddy_agent",
+    "brain.agents.chatops_smoke",
+    "brain.agents.network_watchdog",
+    "brain.agents.porchlight",
+    "brain.agents.privacy_scrub.drafts",
+    "brain.agents.warden",
+    "brain.agents.watchdog_agent",
+    "brain.dream.briefing",
+    "brain.dream.worker",
+    "brain.dream.workflows",
+    "brain.dream.write_executor",
+    "brain.memory.memory",
+    "brain.memory_manager",
+    "brain.routes.at0_mail",
+    "brain.routes.chat",
+    "brain.routes.costs",
+    "brain.routes.dream",
+    "brain.routes.memory",
+    "brain.routes.mesh",
+    "brain.routes.patterns",
+    "brain.routes.privacy",
+    "brain.routes.security",
+    "brain.routes.spark_drafts",
+    "brain.routes.spark_persona",
+    "brain.services.at0_self_model",
+    "brain.services.bluebubbles_client",
+    "brain.services.internet_scout.answer_engine_evals",
+    "brain.services.internet_scout.browser_runner",
+    "brain.services.internet_scout.retention",
+    "brain.services.internet_scout.search_quality_evals",
+    "brain.services.memory_consolidation",
+    "brain.services.memory_graph_extraction",
+    "brain.services.spark_imessage_drafts",
+    "brain.services.spark_personality_memory",
+    "brain.services.spark_target_memory",
+    "brain.services.temporal_storage_monitor",
+    "brain.services.warden_posture",
+    "brain.skills.approval_bridge",
+    "brain.skills.policy_gate",
+    "brain.taskgraph",
+    "brain.thread_manager",
+    "common.jarvis_common.logging_config",
+    "gateway.adapters.gemini_adapter",
+    "gateway.dream.orchestrator",
+    "gateway.routes.notify",
+    "gateway.routes.unifi",
+    "gateway.routes.weather",
+]
+ignore_errors = true
