@@ -53,6 +53,29 @@ class InternetScoutGatewayClient:
             raise InternetScoutGatewayError(f"Beacon search failed: {exc}") from exc
         return GatewaySearchResponse.model_validate(payload)
 
+    async def source_search(
+        self,
+        *,
+        data_source_id: str,
+        query: str,
+        count: int = 5,
+    ) -> GatewaySearchResponse:
+        try:
+            payload = await call_gateway_proxy(
+                "internet/source-search",
+                {
+                    "data_source_id": data_source_id,
+                    "query": query,
+                    "count": count,
+                },
+                timeout_s=25,
+            )
+        except GatewayEgressError as exc:
+            raise InternetScoutGatewayError(
+                f"Beacon source search failed: {exc}"
+            ) from exc
+        return GatewaySearchResponse.model_validate(payload)
+
     async def fetch(
         self,
         *,
