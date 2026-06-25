@@ -5,8 +5,9 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import NAMESPACE_DNS, UUID, uuid5
 
+from asyncpg import PostgresError
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from brain.db.rls import platform_admin_connection, rls_connection
 from brain.middleware.jwt_auth import require_auth
@@ -16,6 +17,38 @@ from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
 router = APIRouter(prefix="/v1/memory", tags=["memory-graph"])
+
+_ALLOWED_NODE_TYPES = {
+    "person",
+    "project",
+    "place",
+    "organization",
+    "preference",
+    "fact",
+    "task",
+    "relationship",
+    "other",
+}
+_ALLOWED_EDGE_TYPES = {
+    "knows",
+    "works_on",
+    "belongs_to",
+    "prefers",
+    "related_to",
+    "parent_of",
+    "child_of",
+    "depends_on",
+    "owns",
+    "other",
+}
+_ALLOWED_GRAPH_SOURCES = {
+    "operator",
+    "explicit",
+    "dream",
+    "buddy",
+    "spark",
+    "import",
+}
 
 
 class MemoryGraphNode(BaseModel):
@@ -125,6 +158,15 @@ class MemoryGraphProposalRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     source_surface: str = Field(default="helm", min_length=2, max_length=80)
     reason: str | None = Field(default=None, max_length=300)
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> MemoryGraphProposalRequest:
+        _validate_graph_payload(
+            action=self.proposed_action,
+            object_type=self.object_type,
+            payload=self.payload,
+        )
+        return self
 
 
 class MemoryGraphProposalResponse(BaseModel):
@@ -316,14 +358,23 @@ async def execute_memory_graph_proposal(
     approval_queue_id = _uuid_header(x_approval_token, "X-Approval-Token")
     actor = _review_actor(request)
     async with rls_connection(request) as conn:
-        payload = _json_result(
-            await conn.fetchval(
-                "SELECT public.execute_memory_graph_proposal($1::uuid, $2::uuid, $3)",
-                str(proposal_id),
-                str(approval_queue_id),
-                actor,
+        try:
+            payload = _json_result(
+                await conn.fetchval(
+                    """
+                    SELECT public.execute_memory_graph_proposal(
+                        $1::uuid,
+                        $2::uuid,
+                        $3
+                    )
+                    """,
+                    str(proposal_id),
+                    str(approval_queue_id),
+                    actor,
+                )
             )
-        )
+        except PostgresError as exc:
+            _raise_graph_db_error(exc)
     status = str(payload.get("status") or "unknown")
     logger.info(
         "MEMORY_GRAPH_PROPOSAL_EXECUTED",
@@ -496,6 +547,108 @@ def _uuid_header(value: str, header_name: str) -> UUID:
             status_code=400,
             detail=f"{header_name} must be an approval queue UUID",
         ) from exc
+
+
+def _validate_graph_payload(
+    *,
+    action: str,
+    object_type: str,
+    payload: dict[str, Any],
+) -> None:
+    if object_type == "node" and action not in {"create_node", "archive_node"}:
+        raise ValueError("node proposals must use create_node or archive_node")
+    if object_type == "edge" and action not in {"create_edge", "archive_edge"}:
+        raise ValueError("edge proposals must use create_edge or archive_edge")
+    if action == "create_node":
+        _require_allowed_payload_value(
+            payload,
+            key="node_type",
+            allowed=_ALLOWED_NODE_TYPES,
+        )
+        _validate_optional_source(payload)
+        label_preview = str(payload.get("label_preview") or "").strip()
+        if not label_preview:
+            raise ValueError("payload.label_preview is required for create_node")
+        if len(label_preview) > 160:
+            raise ValueError("payload.label_preview must be 160 characters or fewer")
+        return
+    if action == "create_edge":
+        _require_allowed_payload_value(
+            payload,
+            key="edge_type",
+            allowed=_ALLOWED_EDGE_TYPES,
+        )
+        _validate_optional_source(payload)
+        _require_uuid_payload_value(payload, key="from_node_id")
+        _require_uuid_payload_value(payload, key="to_node_id")
+        return
+    if action in {"archive_node", "archive_edge"}:
+        _require_uuid_payload_value(payload, key="target_id")
+
+
+def _require_allowed_payload_value(
+    payload: dict[str, Any],
+    *,
+    key: str,
+    allowed: set[str],
+) -> None:
+    value = str(payload.get(key) or "").strip().lower()
+    if value not in allowed:
+        allowed_values = ", ".join(sorted(allowed))
+        raise ValueError(f"payload.{key} must be one of: {allowed_values}")
+
+
+def _validate_optional_source(payload: dict[str, Any]) -> None:
+    source = str(payload.get("source") or "operator").strip().lower()
+    if source not in _ALLOWED_GRAPH_SOURCES:
+        allowed_values = ", ".join(sorted(_ALLOWED_GRAPH_SOURCES))
+        raise ValueError(f"payload.source must be one of: {allowed_values}")
+
+
+def _require_uuid_payload_value(payload: dict[str, Any], *, key: str) -> None:
+    value = str(payload.get(key) or "").strip()
+    if not value:
+        raise ValueError(f"payload.{key} is required")
+    try:
+        UUID(value)
+    except ValueError as exc:
+        raise ValueError(f"payload.{key} must be a UUID") from exc
+
+
+def _raise_graph_db_error(exc: PostgresError) -> None:
+    sqlstate = str(getattr(exc, "sqlstate", "") or "")
+    status_by_state = {
+        "P0041": 404,
+        "P0042": 409,
+        "P0043": 409,
+        "P0044": 403,
+        "P0045": 404,
+        "P0046": 409,
+        "P0047": 400,
+        "P0048": 400,
+        "22007": 400,
+        "22P02": 400,
+        "23514": 400,
+    }
+    if sqlstate not in status_by_state:
+        raise exc
+    detail_by_state = {
+        "P0041": "memory graph proposal was not found",
+        "P0042": "memory graph proposal was already executed",
+        "P0043": "memory graph proposal is already terminal",
+        "P0044": "memory graph approval token does not match proposal",
+        "P0045": "memory graph approval was not found",
+        "P0046": "memory graph approval is not usable",
+        "P0047": "memory graph node label is required",
+        "P0048": "memory graph action is unsupported",
+        "22007": "memory graph payload contains an invalid timestamp",
+        "22P02": "memory graph payload contains an invalid UUID",
+        "23514": "memory graph payload violates schema constraints",
+    }
+    raise HTTPException(
+        status_code=status_by_state[sqlstate],
+        detail=detail_by_state[sqlstate],
+    ) from exc
 
 
 def _json_result(value: object) -> dict[str, Any]:
