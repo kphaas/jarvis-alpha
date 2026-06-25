@@ -290,6 +290,17 @@ def build_report(
             set(graph_app_execute_missing + graph_writer_execute_missing)
         ),
     )
+    production_closeout = build_production_closeout(
+        db=db,
+        local=local,
+        missing_tables=missing_tables,
+        force_rls_missing=force_rls_missing,
+        graph_functions_missing=graph_functions_missing,
+        graph_public_execute_grants=graph_public_execute_grants,
+        graph_execute_missing=sorted(
+            set(graph_app_execute_missing + graph_writer_execute_missing)
+        ),
+    )
 
     if failures:
         status = "fail"
@@ -324,6 +335,7 @@ def build_report(
         },
         "warnings": warnings,
         "failures": failures,
+        "production_closeout": production_closeout,
         "production_ready": not failures and not warnings,
         "next_actions": next_actions,
         "gap_summary": {
@@ -331,6 +343,108 @@ def build_report(
             "p1": sum(1 for action in next_actions if action["priority"] == "P1"),
             "p2": sum(1 for action in next_actions if action["priority"] == "P2"),
         },
+    }
+
+
+def build_production_closeout(
+    *,
+    db: dict[str, Any],
+    local: dict[str, bool],
+    missing_tables: list[str] | None = None,
+    force_rls_missing: list[str] | None = None,
+    graph_functions_missing: list[str] | None = None,
+    graph_public_execute_grants: list[str] | None = None,
+    graph_execute_missing: list[str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    audit = db.get("audit") if isinstance(db.get("audit"), dict) else {}
+    restore = db.get("restore") if isinstance(db.get("restore"), dict) else {}
+    missing_tables = missing_tables or _list(db.get("missing_tables"))
+    force_rls_missing = force_rls_missing or _list(db.get("force_rls_missing"))
+    access = db.get("access") if isinstance(db.get("access"), dict) else {}
+    graph_functions_missing = graph_functions_missing or _list(
+        access.get("graph_functions_missing")
+    )
+    graph_public_execute_grants = graph_public_execute_grants or _list(
+        access.get("graph_public_execute_grants")
+    )
+    graph_execute_missing = graph_execute_missing or sorted(
+        set(
+            _list(access.get("graph_app_execute_missing"))
+            + _list(access.get("graph_writer_execute_missing"))
+        )
+    )
+
+    backup_files_ok = bool(local.get("backup_script")) and bool(
+        local.get("restore_drill_script")
+    )
+    restore_events = int(restore.get("restore_drill_events_30d") or 0)
+    graph_open = int(audit.get("graph_open_proposals") or 0)
+    graph_stale = int(audit.get("graph_stale_proposals") or 0)
+    approval_audit_rows = int(audit.get("approval_audit_rows") or 0)
+    graph_audit_rows = int(audit.get("graph_audit_rows") or 0)
+
+    return {
+        "backup_restore": _closeout_item(
+            status="pass" if backup_files_ok and restore_events >= 1 else "warn",
+            evidence={
+                "backup_script": bool(local.get("backup_script")),
+                "restore_drill_script": bool(local.get("restore_drill_script")),
+                "restore_drill_events_30d": restore_events,
+            },
+            required="backup script, restore drill script, and one restore drill event in 30d",
+        ),
+        "access_review": _closeout_item(
+            status=(
+                "pass"
+                if not (
+                    missing_tables
+                    or force_rls_missing
+                    or graph_functions_missing
+                    or graph_public_execute_grants
+                    or graph_execute_missing
+                )
+                else "fail"
+            ),
+            evidence={
+                "missing_tables": missing_tables,
+                "force_rls_missing": force_rls_missing,
+                "graph_functions_missing": graph_functions_missing,
+                "graph_public_execute_grants": graph_public_execute_grants,
+                "graph_execute_missing": graph_execute_missing,
+            },
+            required="all required tables present, FORCE RLS enabled, app/writer grants present, public EXECUTE absent",
+        ),
+        "audit_log": _closeout_item(
+            status="pass" if approval_audit_rows >= 1 and graph_audit_rows >= 1 else "warn",
+            evidence={
+                "approval_audit_rows": approval_audit_rows,
+                "graph_audit_rows": graph_audit_rows,
+            },
+            required="approval and graph audit rows observed",
+        ),
+        "slo_thresholds": _closeout_item(
+            status="pass" if graph_stale == 0 and graph_open <= 50 else "warn",
+            evidence={
+                "graph_open_proposals": graph_open,
+                "graph_stale_proposals": graph_stale,
+                "max_graph_open_proposals": 50,
+                "max_graph_stale_proposals": 0,
+            },
+            required="no stale graph proposals and reviewed-write queue at or below SLO",
+        ),
+    }
+
+
+def _closeout_item(
+    *,
+    status: str,
+    evidence: dict[str, Any],
+    required: str,
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "evidence": evidence,
+        "required": required,
     }
 
 

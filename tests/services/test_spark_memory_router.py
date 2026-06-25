@@ -23,9 +23,9 @@ from brain.services.spark_memory_router import plan_spark_memory_route
         ),
         (
             "I am a kind person.",
-            "semantic",
-            "semantic_standard",
-            None,
+            "spark_personality",
+            "spark_personality_memory_review",
+            "value",
             "person",
         ),
         (
@@ -66,6 +66,12 @@ def test_spark_learning_examples_route_to_reviewable_memory_lanes(
         assert plan.graph_payload["node_type"] == expected_kind
         assert plan.graph_payload["source"] == "spark"
         assert plan.graph_payload["properties"]["people"] == ["ken", "sweta"]
+        assert plan.graph_payload["properties"]["temporal_memory"] is True
+        assert plan.graph_payload["properties"]["requires_operator_resolution"] is True
+        assert plan.graph_payload["properties"]["candidate_relationship"] in {
+            "planning_trip",
+            "project_collaboration",
+        }
         assert plan.graph_payload["properties"]["source_note_hash"]
         assert plan.graph_payload["properties"]["source_note_hash"] != note
         assert plan.graph_payload["provenance"]["contains_raw_spark_body"] is False
@@ -92,6 +98,20 @@ def test_spark_learning_routes_selected_recipient_context_to_target_memory() -> 
         "source_reference_hash",
         "chat_guid_hash",
     }
+
+
+def test_spark_learning_routes_named_open_loop_to_target_review_metadata_gate() -> None:
+    plan = plan_spark_memory_route(
+        note="Ask Sweta about flights for the trip.",
+        principal_id="ken",
+    )
+
+    assert plan.status == "routable"
+    assert plan.destination == "spark_target"
+    assert plan.review_lane == "spark_target_memory_review"
+    assert plan.risk == "high_visibility"
+    assert plan.target_kind == "open_loop"
+    assert "target_ref_hash" in plan.required_metadata
 
 
 def test_spark_learning_keeps_health_and_child_facts_in_semantic_review() -> None:
