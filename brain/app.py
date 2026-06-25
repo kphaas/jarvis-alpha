@@ -45,6 +45,7 @@ from brain.routes.school_email import router as school_email_router
 from brain.routes.internal_cost import router as internal_cost_router
 from brain.routes.review import router as review_router
 from brain.routes.registry import router as registry_router
+from brain.routes.agent_board import router as agent_board_router
 from brain.routes.chatops import router as chatops_router
 from brain.routes.spark_drafts import router as spark_drafts_router
 from brain.routes.spark_imessage import router as spark_imessage_router
@@ -136,6 +137,7 @@ app.include_router(school_email_router)
 app.include_router(internal_cost_router)
 app.include_router(review_router)
 app.include_router(registry_router)
+app.include_router(agent_board_router)
 app.include_router(chatops_router)
 app.include_router(spark_drafts_router)
 app.include_router(spark_imessage_router)
