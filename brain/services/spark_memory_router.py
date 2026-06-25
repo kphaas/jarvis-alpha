@@ -33,6 +33,11 @@ _PERSONALITY_TEXT = re.compile(
     r"kind of person|value|principle)\b",
     re.IGNORECASE,
 )
+_SELF_TRAIT_TEXT = re.compile(
+    r"\b(i am|i'm|im|i consider myself|people describe me as|my default is)\s+"
+    r"(a\s+|an\s+|the\s+)?[a-z][a-z -]{2,80}\b",
+    re.IGNORECASE,
+)
 _TARGET_TEXT = re.compile(
     r"\b(they|she|he|target|recipient|thread|follow up|ask|owes|needs|"
     r"prefers|likes|dislikes)\b",
@@ -114,7 +119,7 @@ def plan_spark_memory_route(
                 target_label=target_label,
             ),
         )
-    if has_target_context and _TARGET_TEXT.search(clean):
+    if (has_target_context or _has_named_target(clean)) and _TARGET_TEXT.search(clean):
         missing = _target_required_metadata()
         return SparkMemoryRoutePlan(
             status="routable",
@@ -127,7 +132,7 @@ def plan_spark_memory_route(
             target_kind=_target_kind(clean),
             required_metadata=missing,
         )
-    if _PERSONALITY_TEXT.search(clean):
+    if _PERSONALITY_TEXT.search(clean) or _SELF_TRAIT_TEXT.search(clean):
         return SparkMemoryRoutePlan(
             status="routable",
             destination="spark_personality",
@@ -161,6 +166,11 @@ def _should_route_graph(note: str) -> bool:
     return bool(_GRAPH_TEXT.search(note) and len(person_hits) >= 2)
 
 
+def _has_named_target(note: str) -> bool:
+    lowered = note.casefold()
+    return any(name in lowered for name in _KNOWN_PEOPLE)
+
+
 def _graph_node_payload(
     *,
     note: str,
@@ -168,6 +178,7 @@ def _graph_node_payload(
     target_label: str | None,
 ) -> dict[str, Any]:
     people = [name for name in _KNOWN_PEOPLE if name in note.casefold()]
+    graph_kind = _graph_relationship_kind(note)
     node_type = (
         "project"
         if re.search(r"\b(plan|planning|trip|project)\b", note, re.I)
@@ -184,6 +195,10 @@ def _graph_node_payload(
             "memory_router": True,
             "route": "spark_memory_router",
             "people": people,
+            "graph_kind": graph_kind,
+            "candidate_relationship": graph_kind,
+            "requires_operator_resolution": True,
+            "temporal_memory": True,
             "target_label": target_label,
             "source_note_hash": note_hash,
         },
@@ -228,11 +243,22 @@ def _personality_kind(lowered_note: str) -> str:
         "value" in lowered_note
         or "principle" in lowered_note
         or "kind of person" in lowered_note
+        or _SELF_TRAIT_TEXT.search(lowered_note)
     ):
         return "value"
     if "style" in lowered_note:
         return "style"
     return "preference"
+
+
+def _graph_relationship_kind(note: str) -> str:
+    if re.search(r"\b(trip|travel|flight|hotel|vacation)\b", note, re.I):
+        return "planning_trip"
+    if re.search(r"\b(project|working with|collaborating|collaboration)\b", note, re.I):
+        return "project_collaboration"
+    if re.search(r"\b(married|dating|partner|relationship|custody)\b", note, re.I):
+        return "relationship_state"
+    return "people_relationship"
 
 
 def _target_required_metadata() -> tuple[str, ...]:
