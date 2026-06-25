@@ -13,9 +13,32 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 
 DEFAULT_BASE_URL = "https://jarvis-brain.tail40ed36.ts.net:8186"
 DEFAULT_TOKEN_SSH_TARGET = "jarvisbrain@jarvis-brain.tail40ed36.ts.net"
+SOURCE_CONNECTOR_SMOKE_SPECS = (
+    {
+        "data_source_id": "pubmed-eutils",
+        "query": "Use PubMed E-utilities to find GLP-1 treatment outcome studies.",
+        "hosts": ("pubmed.ncbi.nlm.nih.gov",),
+    },
+    {
+        "data_source_id": "sec-edgar",
+        "query": "Use SEC EDGAR to find Apple 10-K filing evidence.",
+        "hosts": ("www.sec.gov", "sec.gov"),
+    },
+    {
+        "data_source_id": "osv-dev",
+        "query": "Use OSV to check CVE-2021-44228 vulnerability details.",
+        "hosts": ("osv.dev",),
+    },
+    {
+        "data_source_id": "cisa-kev",
+        "query": "Use CISA KEV to check whether CVE-2021-44228 is exploited.",
+        "hosts": ("www.cisa.gov", "cisa.gov"),
+    },
+)
 
 
 def main() -> int:
@@ -32,6 +55,11 @@ def main() -> int:
         "--skip-agent",
         action="store_true",
         default=os.getenv("BEACON_SMOKE_SKIP_AGENT", "0") == "1",
+    )
+    parser.add_argument(
+        "--skip-source-connectors",
+        action="store_true",
+        default=os.getenv("BEACON_SMOKE_SKIP_SOURCE_CONNECTORS", "0") == "1",
     )
     parser.add_argument(
         "--token-ssh-target",
@@ -133,6 +161,23 @@ def main() -> int:
             _emit({"results": results, "error": "agent trust boundary missing"})
             return 5
 
+        if not args.skip_source_connectors:
+            source_connector_results = _run_source_connector_smokes(base_url, token)
+            results["source_connectors"] = source_connector_results
+            failed_connectors = [
+                item
+                for item in source_connector_results
+                if item.get("status") != "completed" or not item.get("host_verified")
+            ]
+            if failed_connectors:
+                _emit(
+                    {
+                        "results": results,
+                        "error": "source connector smoke failed",
+                    }
+                )
+                return 9
+
     _emit({"results": results, "status": "passed"})
     return 0
 
@@ -228,6 +273,64 @@ def _call_json(
     if not isinstance(payload, dict):
         raise RuntimeError(f"{method} {path} returned non-object JSON")
     return payload
+
+
+def _run_source_connector_smokes(
+    base_url: str,
+    token: str,
+) -> list[dict[str, object]]:
+    results: list[dict[str, object]] = []
+    for spec in SOURCE_CONNECTOR_SMOKE_SPECS:
+        data_source_id = str(spec["data_source_id"])
+        expected_hosts = tuple(str(host) for host in spec["hosts"])
+        agent = _call_json(
+            "POST",
+            base_url,
+            "/v1/internet-scout/agent/run",
+            token,
+            {
+                "query": str(spec["query"]),
+                "requester": f"beacon_smoke.{data_source_id}",
+            },
+        )
+        citation_hosts = sorted(_citation_hosts(agent.get("citations")))
+        host_verified = any(host in citation_hosts for host in expected_hosts)
+        results.append(
+            {
+                "data_source_id": data_source_id,
+                "status": agent.get("status"),
+                "selected_tool": agent.get("selected_tool"),
+                "request_id": agent.get("request_id"),
+                "citation_count": len(citation_hosts),
+                "citation_hosts": citation_hosts,
+                "expected_hosts": list(expected_hosts),
+                "host_verified": host_verified,
+                "raw_web_content_is_untrusted": agent.get(
+                    "raw_web_content_is_untrusted"
+                ),
+            }
+        )
+    return results
+
+
+def _citation_hosts(citations_payload: object) -> set[str]:
+    if not isinstance(citations_payload, list):
+        return set()
+    hosts: set[str] = set()
+    for citation in citations_payload:
+        if not isinstance(citation, dict):
+            continue
+        host = citation.get("host")
+        if isinstance(host, str) and host.strip():
+            hosts.add(host.strip().lower())
+        for key in ("url", "source_url", "canonical_url"):
+            value = citation.get(key)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            parsed_host = urlparse(value).hostname
+            if parsed_host:
+                hosts.add(parsed_host.lower())
+    return hosts
 
 
 def _health_check_metadata(

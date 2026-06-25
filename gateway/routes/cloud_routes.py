@@ -235,6 +235,10 @@ _SEARCH_PROVIDER_ALLOWLIST_ENV = "BEACON_SEARCH_PROVIDER_ALLOWLIST"
 _SEARCH_CIRCUITS: dict[str, _SearchProviderCircuit] = {
     provider: _SearchProviderCircuit(failures=[]) for provider in _SEARCH_PROVIDERS
 }
+_SOURCE_SEARCH_CIRCUITS: dict[str, _SearchProviderCircuit] = {
+    data_source_id: _SearchProviderCircuit(failures=[])
+    for data_source_id in sorted(SUPPORTED_SOURCE_SEARCH_DATA_SOURCE_IDS)
+}
 
 
 def _accepted_gateway_tokens() -> list[str]:
@@ -682,23 +686,64 @@ async def internet_source_search(
     data_source_id = req.data_source_id.strip().lower()
     if data_source_id not in SUPPORTED_SOURCE_SEARCH_DATA_SOURCE_IDS:
         raise HTTPException(status_code=400, detail="unsupported Beacon data source")
+    if _is_source_search_circuit_open(data_source_id):
+        raise HTTPException(
+            status_code=503,
+            detail=f"{data_source_id} source-search circuit is open",
+        )
 
     count = min(max(req.count, 1), 10)
     start = time.monotonic()
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        results = await execute_source_search(
-            client=client,
-            data_source_id=data_source_id,
-            query=req.query,
-            count=count,
+    try:
+        _reserve_source_search_request(data_source_id)
+    except HTTPException as exc:
+        logger.warning(
+            "beacon_source_search_budget_blocked data_source_id=%s status_code=%s",
+            data_source_id,
+            exc.status_code,
         )
+        raise
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            results = await execute_source_search(
+                client=client,
+                data_source_id=data_source_id,
+                query=req.query,
+                count=count,
+            )
+    except HTTPException as exc:
+        _record_source_search_failure(data_source_id)
+        logger.warning(
+            "beacon_source_search_failed data_source_id=%s status_code=%s",
+            data_source_id,
+            exc.status_code,
+        )
+        raise
+    except httpx.HTTPError as exc:
+        _record_source_search_failure(data_source_id)
+        logger.warning(
+            "beacon_source_search_failed data_source_id=%s status_code=%s",
+            data_source_id,
+            502,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"{data_source_id} source-search request failed",
+        ) from exc
     latency_ms = int((time.monotonic() - start) * 1000)
+    _record_source_search_success(data_source_id)
     logger.info(
         "beacon_source_search_completed data_source_id=%s result_count=%d latency_ms=%d",
         data_source_id,
         len(results),
         latency_ms,
     )
+    if not results:
+        logger.warning(
+            "beacon_source_search_zero_results data_source_id=%s latency_ms=%d",
+            data_source_id,
+            latency_ms,
+        )
     return {
         "provider": data_source_id,
         "data_source_id": data_source_id,
@@ -713,6 +758,10 @@ async def internet_health(authorization: str = Header(...)):
     """Return Gateway-owned Beacon provider health without exposing secrets."""
     _authorize_gateway_call(authorization)
     providers = [_search_provider_health(provider) for provider in _SEARCH_PROVIDERS]
+    source_search_sources = [
+        _source_search_health(data_source_id)
+        for data_source_id in sorted(SUPPORTED_SOURCE_SEARCH_DATA_SOURCE_IDS)
+    ]
     configured = [provider for provider in providers if provider["configured"]]
     usable = [
         provider
@@ -760,8 +809,19 @@ async def internet_health(authorization: str = Header(...)):
         "status": status,
         "provider_order": provider_order,
         "providers": providers,
+        "source_search_sources": source_search_sources,
         "configured_provider_count": len(configured),
         "usable_provider_count": len(usable),
+        "source_search_source_count": len(source_search_sources),
+        "source_search_usable_count": len(
+            [
+                source
+                for source in source_search_sources
+                if source["configured"]
+                and not source["circuit_open"]
+                and not source["budget_exhausted"]
+            ]
+        ),
         **redundancy,
         "provider_redundancy_status": provider_redundancy_status,
         "provider_warning_status": "backup_budget_capped"
@@ -941,6 +1001,29 @@ def _search_provider_health(provider: str) -> dict[str, object]:
     }
 
 
+def _source_search_health(data_source_id: str) -> dict[str, object]:
+    circuit = _SOURCE_SEARCH_CIRCUITS[data_source_id]
+    cooldown_remaining_s = (
+        max(0, int(circuit.open_until - time.monotonic()))
+        if _is_source_search_circuit_open(data_source_id)
+        else None
+    )
+    budget = _search_provider_budget(data_source_id)
+    return {
+        "provider": data_source_id,
+        "data_source_id": data_source_id,
+        "configured": True,
+        "circuit_open": cooldown_remaining_s is not None,
+        "failure_count": len(circuit.failures),
+        "cooldown_remaining_seconds": cooldown_remaining_s,
+        "budget_exhausted": not budget["allowed"],
+        "daily_request_count": budget["daily_count"],
+        "daily_request_limit": budget["daily_limit"],
+        "monthly_request_count": budget["monthly_count"],
+        "monthly_request_limit": budget["monthly_limit"],
+    }
+
+
 def _configured_search_provider_names(
     providers: list[dict[str, object]],
 ) -> list[str]:
@@ -1014,7 +1097,8 @@ def _search_usage_path(provider: str) -> Path:
 
 
 def _provider_limit(provider: str, period: str) -> int | None:
-    name = f"BEACON_{provider.upper()}_{period.upper()}_SEARCH_LIMIT"
+    safe_provider = provider.upper().replace("-", "_")
+    name = f"BEACON_{safe_provider}_{period.upper()}_SEARCH_LIMIT"
     raw = os.getenv(name)
     if raw is None or not raw.strip():
         return None
@@ -1061,8 +1145,8 @@ def _search_provider_budget(provider: str) -> dict[str, object]:
     usage = _load_search_usage(provider)
     daily_limit = _provider_limit(provider, "daily")
     monthly_limit = _provider_limit(provider, "monthly")
-    daily_count = int(usage["daily_count"])
-    monthly_count = int(usage["monthly_count"])
+    daily_count = _usage_count(usage["daily_count"])
+    monthly_count = _usage_count(usage["monthly_count"])
     allowed = (daily_limit is None or daily_count < daily_limit) and (
         monthly_limit is None or monthly_count < monthly_limit
     )
@@ -1083,14 +1167,42 @@ def _reserve_search_provider_request(provider: str) -> None:
             status_code=429,
             detail=f"{provider.title()} Search budget exhausted",
         )
-    usage["daily_count"] = int(usage["daily_count"]) + 1
-    usage["monthly_count"] = int(usage["monthly_count"]) + 1
+    usage["daily_count"] = _usage_count(usage["daily_count"]) + 1
+    usage["monthly_count"] = _usage_count(usage["monthly_count"]) + 1
     _save_search_usage(provider, usage)
 
 
+def _reserve_source_search_request(data_source_id: str) -> None:
+    usage = _load_search_usage(data_source_id)
+    budget = _search_provider_budget(data_source_id)
+    if not budget["allowed"]:
+        raise HTTPException(
+            status_code=429,
+            detail=f"{data_source_id} source-search budget exhausted",
+        )
+    usage["daily_count"] = _usage_count(usage["daily_count"]) + 1
+    usage["monthly_count"] = _usage_count(usage["monthly_count"]) + 1
+    _save_search_usage(data_source_id, usage)
+
+
+def _usage_count(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    return 0
+
+
 def _record_search_provider_failure(provider: str) -> None:
+    _record_search_circuit_failure(_SEARCH_CIRCUITS[provider])
+
+
+def _record_source_search_failure(data_source_id: str) -> None:
+    _record_search_circuit_failure(_SOURCE_SEARCH_CIRCUITS[data_source_id])
+
+
+def _record_search_circuit_failure(circuit: _SearchProviderCircuit) -> None:
     now = time.monotonic()
-    circuit = _SEARCH_CIRCUITS[provider]
     window_s = _bounded_int_env(
         "BEACON_SEARCH_CIRCUIT_WINDOW_SECONDS",
         default=300,
@@ -1123,8 +1235,21 @@ def _record_search_provider_success(provider: str) -> None:
     circuit.open_until = 0.0
 
 
+def _record_source_search_success(data_source_id: str) -> None:
+    circuit = _SOURCE_SEARCH_CIRCUITS[data_source_id]
+    circuit.failures = []
+    circuit.open_until = 0.0
+
+
 def _is_search_provider_circuit_open(provider: str) -> bool:
-    circuit = _SEARCH_CIRCUITS[provider]
+    return _is_search_circuit_open(_SEARCH_CIRCUITS[provider])
+
+
+def _is_source_search_circuit_open(data_source_id: str) -> bool:
+    return _is_search_circuit_open(_SOURCE_SEARCH_CIRCUITS[data_source_id])
+
+
+def _is_search_circuit_open(circuit: _SearchProviderCircuit) -> bool:
     if not circuit.open_until:
         return False
     if time.monotonic() >= circuit.open_until:
