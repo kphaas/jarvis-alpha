@@ -13,7 +13,12 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, dataclass
 import os
+from pathlib import Path
+import sys
 from typing import Any
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.smoke_memory_core import (
     DEFAULT_BASE_URL,
