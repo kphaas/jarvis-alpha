@@ -24,6 +24,7 @@ from brain.services.internet_scout.orchestrator import InternetScoutOrchestrator
 class FakeGatewayClient(InternetScoutGatewayClient):
     def __init__(self) -> None:
         self.search_calls: list[dict[str, object]] = []
+        self.source_search_calls: list[dict[str, object]] = []
         self.extract_calls: list[dict[str, object]] = []
         self.crawl_calls: list[dict[str, object]] = []
 
@@ -49,6 +50,31 @@ class FakeGatewayClient(InternetScoutGatewayClient):
                     "url": f"https://{host}/result-{call_index}",
                     "host": host,
                     "description": f"Beacon search result {call_index}.",
+                    "risk_markers": [],
+                }
+            ],
+        )
+
+    async def source_search(
+        self,
+        *,
+        data_source_id: str,
+        query: str,
+        count: int = 5,
+    ) -> GatewaySearchResponse:
+        self.source_search_calls.append(
+            {"data_source_id": data_source_id, "query": query, "count": count}
+        )
+        return GatewaySearchResponse(
+            provider=data_source_id,
+            query_hash="f" * 64,
+            fetched_at=datetime(2026, 6, 6, 13, 0, tzinfo=UTC),
+            results=[
+                {
+                    "title": f"{data_source_id} result",
+                    "url": f"https://{data_source_id}.example.test/result",
+                    "host": f"{data_source_id}.example.test",
+                    "description": f"Beacon {data_source_id} source result.",
                     "risk_markers": [],
                 }
             ],
@@ -132,6 +158,20 @@ class FailingFanoutGatewayClient(FakeGatewayClient):
             )
             raise InternetScoutGatewayError(f"{provider} unavailable")
         return await super().search(query=query, count=count, provider=provider)
+
+
+class FailingSourceSearchGatewayClient(FakeGatewayClient):
+    async def source_search(
+        self,
+        *,
+        data_source_id: str,
+        query: str,
+        count: int = 5,
+    ) -> GatewaySearchResponse:
+        self.source_search_calls.append(
+            {"data_source_id": data_source_id, "query": query, "count": count}
+        )
+        raise InternetScoutGatewayError(f"{data_source_id} unavailable")
 
 
 async def fake_weather_client(params: dict[str, object]) -> dict[str, object]:
@@ -366,6 +406,71 @@ async def test_executor_falls_back_to_search_when_free_weather_fails():
         }
     ]
     assert packet.sources[0].host == "public.example.test"
+
+
+@pytest.mark.asyncio
+async def test_executor_runs_recommended_free_source_search_before_generic_search():
+    gateway = FakeGatewayClient()
+    executor = InternetScoutExecutor(gateway_client=gateway)
+    request = InternetScoutRequest(
+        query="Check CVE-2026-12345 package vulnerability against OSV and CISA KEV",
+        tool_hint=InternetTool.SEARCH,
+        max_pages=2,
+        focus_mode="official",
+    )
+    plan = InternetScoutOrchestrator().plan(request)
+
+    decision, packet = await executor.execute(request, plan=plan)
+
+    assert decision.tool == InternetTool.SEARCH
+    assert gateway.source_search_calls == [
+        {
+            "data_source_id": "osv-dev",
+            "query": request.query,
+            "count": 3,
+        },
+        {
+            "data_source_id": "cisa-kev",
+            "query": request.query,
+            "count": 3,
+        },
+    ]
+    assert gateway.search_calls
+    assert {"osv-dev.example.test", "cisa-kev.example.test"} <= {
+        source.host for source in packet.sources
+    }
+
+
+@pytest.mark.asyncio
+async def test_executor_falls_back_to_generic_search_when_source_search_fails():
+    gateway = FailingSourceSearchGatewayClient()
+    executor = InternetScoutExecutor(gateway_client=gateway)
+    request = InternetScoutRequest(
+        query="Find PubMed studies about GLP-1 treatment outcomes",
+        tool_hint=InternetTool.SEARCH,
+        focus_mode="academic",
+    )
+    plan = InternetScoutOrchestrator().plan(request)
+
+    decision, packet = await executor.execute(request, plan=plan)
+
+    assert decision.tool == InternetTool.SEARCH
+    assert gateway.source_search_calls == [
+        {
+            "data_source_id": "pubmed-eutils",
+            "query": request.query,
+            "count": 3,
+        }
+    ]
+    assert gateway.search_calls
+    assert "pubmed-eutils.example.test" not in {
+        source.host for source in packet.sources
+    }
+    assert {
+        "brave.example.test",
+        "searxng.example.test",
+        "perplexity.example.test",
+    }.intersection({source.host for source in packet.sources})
 
 
 @pytest.mark.asyncio

@@ -149,6 +149,21 @@ async def test_internet_scout_client_uses_gateway_search_fetch_extract_and_crawl
                     }
                 ],
             }
+        if path == "internet/source-search":
+            return {
+                "provider": "osv-dev",
+                "query_hash": "e" * 64,
+                "fetched_at": "2026-06-06T13:00:00Z",
+                "results": [
+                    {
+                        "title": "CVE",
+                        "url": "https://osv.dev/vulnerability/CVE-2026-12345",
+                        "host": "osv.dev",
+                        "description": "OSV source.",
+                        "risk_markers": [],
+                    }
+                ],
+            }
         if path == "internet/fetch":
             return {
                 "url": "https://public.example.test/report",
@@ -214,6 +229,10 @@ async def test_internet_scout_client_uses_gateway_search_fetch_extract_and_crawl
     client = InternetScoutGatewayClient()
 
     search = await client.search(query="beacon")
+    source_search = await client.source_search(
+        data_source_id="osv-dev",
+        query="CVE-2026-12345",
+    )
     fetch = await client.fetch(url="https://public.example.test/report", max_bytes=1000)
     extract = await client.extract(
         url="https://public.example.test/report",
@@ -227,11 +246,21 @@ async def test_internet_scout_client_uses_gateway_search_fetch_extract_and_crawl
     )
 
     assert search.results[0].title == "Beacon"
+    assert source_search.provider == "osv-dev"
+    assert source_search.results[0].host == "osv.dev"
     assert fetch.text == "Beacon source body."
     assert extract.extracted_text == "Beacon extracted body."
     assert crawl.pages[0].extracted_text == "Beacon crawled body."
     assert calls == [
         ("internet/search", {"query": "beacon", "count": 5, "provider": "auto"}),
+        (
+            "internet/source-search",
+            {
+                "data_source_id": "osv-dev",
+                "query": "CVE-2026-12345",
+                "count": 5,
+            },
+        ),
         (
             "internet/fetch",
             {"url": "https://public.example.test/report", "max_bytes": 1000},
