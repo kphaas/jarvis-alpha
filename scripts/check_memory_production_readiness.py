@@ -70,19 +70,21 @@ WITH required_tables(name) AS (
 required_force_rls(name) AS (
     VALUES {force_tables}
 ),
-graph_functions(signature) AS (
+graph_functions(signature, requires_app_writer) AS (
     VALUES
-        ('public.propose_memory_graph_write(uuid,text,text,jsonb,text,text,text)'),
-        ('public.execute_memory_graph_proposal(uuid,uuid,text)'),
-        ('public.list_memory_graph_current(uuid,timestamp with time zone,integer)'),
-        ('public.list_memory_graph_history(uuid,uuid,integer)'),
-        ('public.list_memory_graph_proposals(uuid,text,integer)'),
-        ('public.expire_stale_memory_graph_proposals()'),
-        ('public.memory_graph_health()')
+        ('public.propose_memory_graph_write(uuid,text,text,jsonb,text,text,text)', true),
+        ('public.execute_memory_graph_proposal(uuid,uuid,text)', true),
+        ('public.list_memory_graph_current(uuid,timestamp with time zone,integer)', true),
+        ('public.list_memory_graph_history(uuid,uuid,integer)', true),
+        ('public.list_memory_graph_proposals(uuid,text,integer)', true),
+        ('public.expire_stale_memory_graph_proposals()', true),
+        ('public.memory_graph_health()', true),
+        ('public.enforce_memory_graph_valid_window()', false)
 ),
 graph_function_oids AS (
     SELECT
         signature,
+        requires_app_writer,
         to_regprocedure(signature) AS func_oid
     FROM graph_functions
 ),
@@ -105,17 +107,20 @@ graph_function_status AS (
     SELECT
         f.signature,
         f.func_oid,
+        f.requires_app_writer,
         f.func_oid IS NOT NULL AS present,
         CASE
             WHEN f.func_oid IS NULL THEN false
             ELSE has_function_privilege('public', f.func_oid, 'EXECUTE')
         END AS public_execute,
         CASE
+            WHEN NOT f.requires_app_writer THEN true
             WHEN to_regrole('jarvis_alpha_app') IS NULL
               OR f.func_oid IS NULL THEN false
             ELSE has_function_privilege('jarvis_alpha_app', f.func_oid, 'EXECUTE')
         END AS app_execute,
         CASE
+            WHEN NOT f.requires_app_writer THEN true
             WHEN to_regrole('jarvis_alpha_writer') IS NULL
               OR f.func_oid IS NULL THEN false
             ELSE has_function_privilege('jarvis_alpha_writer', f.func_oid, 'EXECUTE')
