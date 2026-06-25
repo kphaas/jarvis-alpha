@@ -54,3 +54,35 @@
     for Search API calls. Do not send PHI or secrets in queries.
   last_verified: 2026-06-18
   review_cadence_days: 30
+
+- id: tavily-search
+  name: Tavily Search API
+  domain: web-search
+  url: https://www.tavily.com/
+  api_base_url: https://api.tavily.com/
+  auth:
+    type: bearer
+    notes: |
+      Uses an Authorization: Bearer tvly-* API key header. Search is POST /search.
+      Search depth controls credit cost: basic/fast/ultra-fast use 1 API credit;
+      advanced uses 2 API credits. Free plan currently includes 1000 API credits
+      per month with no credit card; pay-as-you-go is currently $0.008/credit.
+  pricing: freemium
+  free_tier: 1000 API credits/month, no credit card
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - public-web-search
+    - agent-grounding
+    - source-extraction
+    - time-filtered-search
+    - search-redundancy
+  notes: |
+    Best next Beacon search provider after Brave and Perplexity because it is
+    explicitly built for agent/RAG search and can return summarized result
+    content plus optional raw extracted content. Keep include_raw_content off
+    by default and pass all returned content through Beacon's untrusted web
+    sanitizer before prompt injection or memory promotion.
+  last_verified: 2026-06-19
+  review_cadence_days: 30

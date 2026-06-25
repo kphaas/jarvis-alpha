@@ -11,6 +11,7 @@ from gateway.routes import cloud_routes
 def reset_search_provider_circuits(monkeypatch, tmp_path):
     monkeypatch.delenv("BEACON_MIN_USABLE_SEARCH_PROVIDERS", raising=False)
     monkeypatch.delenv("BEACON_SEARCH_PROVIDER_ORDER", raising=False)
+    monkeypatch.delenv("BEACON_SEARCH_PROVIDER_ALLOWLIST", raising=False)
     monkeypatch.delenv("SEARXNG_BASE_URL", raising=False)
     monkeypatch.delenv("SEARXNG_API_KEY", raising=False)
     monkeypatch.delenv("BEACON_SEARXNG_DAILY_SEARCH_LIMIT", raising=False)
@@ -839,6 +840,29 @@ async def test_internet_search_blocks_provider_when_budget_is_exhausted(monkeypa
     assert exc.value.status_code == 429
     assert exc.value.detail == "Perplexity Search budget exhausted"
     assert seen["calls"] == 1
+
+
+@pytest.mark.asyncio
+async def test_internet_search_blocks_provider_when_not_allowlisted(monkeypatch):
+    monkeypatch.setenv("BEACON_SEARCH_PROVIDER_ALLOWLIST", "brave")
+
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "PERPLEXITY_API_KEY":
+            return "pplx-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+
+    with pytest.raises(HTTPException) as exc:
+        await cloud_routes.internet_search(
+            cloud_routes.InternetSearchRequest(query="beacon", provider="perplexity"),
+            authorization="Bearer gateway-token",
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "search provider not allowlisted"
 
 
 @pytest.mark.asyncio

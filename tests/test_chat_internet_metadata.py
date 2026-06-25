@@ -503,6 +503,26 @@ def test_suggest_web_for_current_or_official_source_requests() -> None:
     )
 
 
+def test_suggest_web_for_operator_web_phrases() -> None:
+    search = suggest_web_for_chat(
+        query="Search the internet for the latest OpenAI release notes.",
+        internet_mode="none",
+        sensitivity="normal",
+    )
+    turn_on_web = suggest_web_for_chat(
+        query="Turn on web and look up the current SEC EDGAR filing status.",
+        internet_mode="none",
+        sensitivity="normal",
+    )
+
+    assert search is not None
+    assert search.mode == "web_search"
+    assert search.reason == "current_information_likely"
+    assert turn_on_web is not None
+    assert turn_on_web.mode == "web_search"
+    assert turn_on_web.reason == "current_information_likely"
+
+
 class FakeConn:
     def __init__(self) -> None:
         self.execute_calls: list[tuple[str, tuple[object, ...]]] = []

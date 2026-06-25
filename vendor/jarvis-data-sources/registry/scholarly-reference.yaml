@@ -1,0 +1,35 @@
+# Scholarly reference APIs.
+#
+# Public scholarly metadata and discovery sources. These are not PHI-safe and
+# should not receive patient-identifying details.
+
+- id: openalex
+  name: OpenAlex API
+  domain: scholarly-reference
+  url: https://openalex.org/
+  api_base_url: https://api.openalex.org/
+  auth:
+    type: api-key
+    notes: |
+      Free OpenAlex account credential is required for scale. The current free
+      daily allowance is $1 of usage: examples include 1000 search calls or
+      10000 list+filter calls per day. Follow OpenAlex docs for the request
+      credential parameter.
+  pricing: freemium
+  free_tier: $1/day free API usage with key; bulk snapshot remains free
+  license: cc0
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - scholarly-search
+    - citation-graph
+    - research-metadata
+    - institution-lookup
+    - open-access-discovery
+  notes: |
+    Good complement to PubMed when Beacon needs broader scholarly metadata,
+    citation context, institutions, venues, concepts, or open-access signals.
+    Prefer PubMed for biomedical literature retrieval and OpenAlex for broader
+    citation/discovery questions.
+  last_verified: 2026-06-19
+  review_cadence_days: 90
