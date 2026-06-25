@@ -85,9 +85,7 @@ def test_memory_graph_smoke_does_not_print_tokens_or_raw_payloads() -> None:
     source = _script_text(MEMORY_GRAPH_SMOKE)
 
     assert "token" not in " ".join(
-        line.strip()
-        for line in source.splitlines()
-        if line.strip().startswith('{"')
+        line.strip() for line in source.splitlines() if line.strip().startswith('{"')
     )
     assert "payload_redacted" in source
     assert "/v1/memory/admin/graph/health" in source

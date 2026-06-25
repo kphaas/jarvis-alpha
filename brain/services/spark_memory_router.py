@@ -128,7 +128,10 @@ def plan_spark_memory_route(
             extracted_entities=tuple(graph_payload["properties"]["people"]),
             temporal_kind=str(graph_payload["properties"]["temporal_kind"]),
             currentness_policy=str(graph_payload["properties"]["currentness_policy"]),
-            review_reasons=("temporal_fact_changes_over_time", "operator_review_required"),
+            review_reasons=(
+                "temporal_fact_changes_over_time",
+                "operator_review_required",
+            ),
         )
     if (has_target_context or _has_named_target(clean)) and _TARGET_TEXT.search(clean):
         missing = _target_required_metadata()

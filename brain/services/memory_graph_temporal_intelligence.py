@@ -70,7 +70,9 @@ def classify_temporal_graph_row(
     """Return retrieval metadata for one sanitized graph node or edge row."""
 
     now = _normalize_now(now)
-    properties = row.get("properties") if isinstance(row.get("properties"), dict) else {}
+    properties = (
+        row.get("properties") if isinstance(row.get("properties"), dict) else {}
+    )
     row_stale_after_days = _positive_int(
         properties.get("refresh_prompt_after_days")
         if isinstance(properties, dict)
@@ -121,9 +123,11 @@ def _row_status(
 def _conflict_key(row: GraphRow, *, object_type: str) -> str | None:
     if object_type == "node":
         node_type = str(row.get("node_type") or "").strip().casefold()
-        label_key = str(
-            row.get("label_hash") or row.get("label_preview") or ""
-        ).strip().casefold()
+        label_key = (
+            str(row.get("label_hash") or row.get("label_preview") or "")
+            .strip()
+            .casefold()
+        )
         if node_type and label_key:
             return f"node:{node_type}:{label_key}"
         return None

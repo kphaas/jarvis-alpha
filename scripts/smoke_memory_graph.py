@@ -164,7 +164,11 @@ def run_memory_graph_smoke(
         results["admin_graph_proposals"] = SmokeResult(
             "passed"
             if proposals.get("status") == "ok"
-            and all("payload" not in item for item in proposal_rows if isinstance(item, dict))
+            and all(
+                "payload" not in item
+                for item in proposal_rows
+                if isinstance(item, dict)
+            )
             else "failed",
             {"proposal_count": len(proposal_rows), "payload_redacted": True},
         )
@@ -180,9 +184,7 @@ def run_memory_graph_smoke(
                 timeout=timeout,
             )
             events = (
-                history.get("events")
-                if isinstance(history.get("events"), list)
-                else []
+                history.get("events") if isinstance(history.get("events"), list) else []
             )
             results["graph_history_read"] = SmokeResult(
                 "passed" if history.get("status") == "ok" else "failed",
@@ -215,9 +217,7 @@ def _has_temporal_fields(nodes: list[object], edges: list[object]) -> bool:
     if not rows:
         return True
     return all(
-        isinstance(row, dict)
-        and "temporal_state" in row
-        and "retrieval_state" in row
+        isinstance(row, dict) and "temporal_state" in row and "retrieval_state" in row
         for row in rows
     )
 
