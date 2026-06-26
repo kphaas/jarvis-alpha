@@ -226,6 +226,7 @@ async def test_pending_approvals_include_beacon_browser_context(monkeypatch) -> 
                     "beacon_metadata": {
                         "browser_action_preview": {
                             "kind": "beacon_browser_use",
+                            "approval_contract_version": 2,
                             "selected_tool": "browser_use",
                             "risk_tier": "T4",
                             "sensitivity": "normal",
@@ -235,10 +236,27 @@ async def test_pending_approvals_include_beacon_browser_context(monkeypatch) -> 
                             "max_pages": 1,
                             "max_depth": 0,
                             "needs_interaction": True,
+                            "allowed_hosts": ["public.example.test"],
+                            "url_hashes": ["sha256:" + "b" * 64],
                             "same_host_required": True,
                             "screenshots_required": True,
+                            "screenshot_policy": {
+                                "before_navigation_required": False,
+                                "after_observation_required": True,
+                            },
                             "downloads_allowed": False,
                             "forms_allowed": False,
+                            "credential_entry_allowed": False,
+                            "risk_labels": [
+                                "human_approval_required",
+                                "same_host_only",
+                            ],
+                            "action_timeline": [
+                                {
+                                    "step": "review_request",
+                                    "status": "pending_operator_review",
+                                }
+                            ],
                             "raw_task_text_included": False,
                             "raw_web_content_is_untrusted": True,
                             "approval_hash_prefix": "abc123abc123",
@@ -263,6 +281,7 @@ async def test_pending_approvals_include_beacon_browser_context(monkeypatch) -> 
     assert response["pending"][0]["spark"] is None
     assert response["pending"][0]["beacon"] == {
         "kind": "beacon_browser_use",
+        "approval_contract_version": 2,
         "request_id": str(request_id),
         "selected_tool": "browser_use",
         "risk_tier": "T4",
@@ -273,10 +292,21 @@ async def test_pending_approvals_include_beacon_browser_context(monkeypatch) -> 
         "max_pages": 1,
         "max_depth": 0,
         "needs_interaction": True,
+        "allowed_hosts": ["public.example.test"],
+        "url_hashes": ["sha256:" + "b" * 64],
         "same_host_required": True,
         "screenshots_required": True,
+        "screenshot_policy": {
+            "before_navigation_required": False,
+            "after_observation_required": True,
+        },
         "downloads_allowed": False,
         "forms_allowed": False,
+        "credential_entry_allowed": False,
+        "risk_labels": ["human_approval_required", "same_host_only"],
+        "action_timeline": [
+            {"step": "review_request", "status": "pending_operator_review"}
+        ],
         "raw_task_text_included": False,
         "raw_web_content_is_untrusted": True,
         "approval_hash_prefix": "abc123abc123",

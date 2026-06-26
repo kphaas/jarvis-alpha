@@ -344,7 +344,7 @@ class InternetScoutBrowserApprovalPreview(BaseModel):
     """Redacted browser-use approval contract for operator review surfaces."""
 
     kind: Literal["beacon_browser_use"] = "beacon_browser_use"
-    approval_contract_version: int = 1
+    approval_contract_version: int = 2
     requires_human_approval: bool = True
     selected_tool: InternetTool = InternetTool.BROWSER_USE
     risk_tier: ApprovalTier
@@ -354,10 +354,18 @@ class InternetScoutBrowserApprovalPreview(BaseModel):
     max_pages: int = Field(ge=1, le=50)
     max_depth: int = Field(ge=0, le=5)
     needs_interaction: bool
+    allowed_hosts: list[str] = Field(default_factory=list, max_length=10)
+    url_hashes: list[str] = Field(default_factory=list, max_length=20)
     same_host_required: bool = True
     screenshots_required: bool = True
+    screenshot_policy: dict[str, object] = Field(default_factory=dict)
     downloads_allowed: bool = False
     forms_allowed: bool = False
+    credential_entry_allowed: bool = False
+    risk_labels: list[str] = Field(default_factory=list, max_length=16)
+    action_timeline: list[dict[str, object]] = Field(
+        default_factory=list, max_length=12
+    )
     raw_task_text_included: bool = False
     raw_web_content_is_untrusted: bool = True
     approval_hash_prefix: str = Field(min_length=12, max_length=12)

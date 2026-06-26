@@ -71,13 +71,12 @@ def classify_temporal_graph_row(
     """Return retrieval metadata for one sanitized graph node or edge row."""
 
     now = _normalize_now(now)
-    properties = (
-        row.get("properties") if isinstance(row.get("properties"), dict) else {}
+    raw_properties = row.get("properties")
+    properties: dict[Any, Any] = (
+        raw_properties if isinstance(raw_properties, dict) else {}
     )
     row_stale_after_days = _positive_int(
-        properties.get("refresh_prompt_after_days")
-        if isinstance(properties, dict)
-        else None,
+        properties.get("refresh_prompt_after_days"),
         fallback=stale_after_days,
     )
     stale_before = now - timedelta(days=max(1, row_stale_after_days))
