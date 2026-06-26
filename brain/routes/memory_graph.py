@@ -70,6 +70,11 @@ class MemoryGraphNode(BaseModel):
     retrieval_state: str = "current"
     refresh_prompt: str | None = None
     conflict_key: str | None = None
+    review_action: str = "none"
+    review_priority: str = "none"
+    review_reason: str | None = None
+    review_due_at: str | None = None
+    open_ended: bool = False
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -88,6 +93,11 @@ class MemoryGraphEdge(BaseModel):
     retrieval_state: str = "current"
     refresh_prompt: str | None = None
     conflict_key: str | None = None
+    review_action: str = "none"
+    review_priority: str = "none"
+    review_reason: str | None = None
+    review_due_at: str | None = None
+    open_ended: bool = False
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -460,6 +470,11 @@ def _normalize_node(row: object) -> dict[str, Any]:
         "retrieval_state": temporal["retrieval_state"],
         "refresh_prompt": temporal["refresh_prompt"],
         "conflict_key": temporal["conflict_key"],
+        "review_action": temporal["review_action"],
+        "review_priority": temporal["review_priority"],
+        "review_reason": temporal["review_reason"],
+        "review_due_at": temporal["review_due_at"],
+        "open_ended": temporal["open_ended"],
         "created_at": _optional_str(data.get("created_at")),
         "updated_at": _optional_str(data.get("updated_at")),
     }
@@ -482,6 +497,11 @@ def _normalize_edge(row: object) -> dict[str, Any]:
         "retrieval_state": temporal["retrieval_state"],
         "refresh_prompt": temporal["refresh_prompt"],
         "conflict_key": temporal["conflict_key"],
+        "review_action": temporal["review_action"],
+        "review_priority": temporal["review_priority"],
+        "review_reason": temporal["review_reason"],
+        "review_due_at": temporal["review_due_at"],
+        "open_ended": temporal["open_ended"],
         "created_at": _optional_str(data.get("created_at")),
         "updated_at": _optional_str(data.get("updated_at")),
     }

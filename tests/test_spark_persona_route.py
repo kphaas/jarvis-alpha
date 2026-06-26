@@ -418,6 +418,7 @@ async def test_spark_memory_route_proposes_personality_without_logging_note(
     assert response.plan.destination == "spark_personality"
     assert response.results[0].status == "proposed"
     assert response.results[0].result["proposal"]["proposal_id"] == "proposal-456"
+    assert response.plan.extracted_phrases == ["fair enough"]
     logs = json.dumps(fake_logger.infos)
     assert "fair enough" not in logs
     assert "Key phrase" not in logs
@@ -457,6 +458,9 @@ async def test_spark_memory_route_queues_graph_reviewed_write(
     assert response.results[0].status == "queued"
     assert conn.args[0] == str(spark_persona._principal_uuid("ken"))
     assert conn.args[2] == "ken"
+    graph_payload = json.loads(str(conn.args[1]))
+    assert graph_payload["properties"]["relationship_subjects"] == ["ken", "sweta"]
+    assert graph_payload["properties"]["extraction_summary"]["people_count"] == 2
     logs = json.dumps(fake_logger.infos)
     assert "planning a trip" not in logs
 

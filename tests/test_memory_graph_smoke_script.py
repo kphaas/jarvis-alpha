@@ -48,9 +48,31 @@ def test_memory_graph_smoke_checks_auth_graph_health_and_history(
                         "id": "22222222-2222-4222-8222-222222222222",
                         "temporal_state": "active",
                         "retrieval_state": "current",
+                        "review_action": "none",
+                        "review_priority": "none",
+                        "review_reason": None,
+                        "review_due_at": None,
+                        "open_ended": False,
                     }
                 ],
                 "edges": [],
+            }
+        if path == "/v1/memory/admin/users/ken/graph?limit=100":
+            return {
+                "status": "ok",
+                "nodes": [],
+                "edges": [
+                    {
+                        "id": "33333333-3333-4333-8333-333333333333",
+                        "temporal_state": "stale",
+                        "retrieval_state": "needs_refresh",
+                        "review_action": "refresh",
+                        "review_priority": "medium",
+                        "review_reason": "refresh_window_elapsed",
+                        "review_due_at": "2026-06-30T00:00:00Z",
+                        "open_ended": True,
+                    }
+                ],
             }
         if path == "/v1/memory/admin/graph/health":
             return {
@@ -76,12 +98,15 @@ def test_memory_graph_smoke_checks_auth_graph_health_and_history(
     assert list(results) == [
         "auth_summary",
         "current_graph_read",
+        "admin_user_graph_read",
         "admin_graph_health",
         "admin_graph_proposals",
         "graph_history_read",
     ]
     assert all(result.status == "passed" for result in results.values())
     assert results["current_graph_read"].detail["temporal_fields"] is True
+    assert results["current_graph_read"].detail["review_fields"] is True
+    assert results["admin_user_graph_read"].detail["review_fields"] is True
     assert calls[-1] == (
         "/v1/memory/graph/history/22222222-2222-4222-8222-222222222222?limit=5"
     )

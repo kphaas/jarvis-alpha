@@ -66,7 +66,7 @@ def classify_temporal_graph_row(
     object_type: str,
     now: datetime | None = None,
     stale_after_days: int = DEFAULT_STALE_AFTER_DAYS,
-) -> dict[str, str | None]:
+) -> dict[str, str | bool | None]:
     """Return retrieval metadata for one sanitized graph node or edge row."""
 
     now = _normalize_now(now)
@@ -94,11 +94,19 @@ def classify_temporal_graph_row(
         "stale": "confirm_still_current",
     }
     conflict_key = _conflict_key(row, object_type=object_type)
+    review = _review_workflow(
+        row=row,
+        properties=properties,
+        temporal_state=temporal_state,
+        now=now,
+        stale_after_days=row_stale_after_days,
+    )
     return {
         "temporal_state": temporal_state,
         "retrieval_state": retrieval_state_by_temporal_state[temporal_state],
         "refresh_prompt": refresh_prompt_by_temporal_state[temporal_state],
         "conflict_key": conflict_key,
+        **review,
     }
 
 
@@ -118,6 +126,107 @@ def _row_status(
     if activity_at and activity_at < stale_before:
         return "stale"
     return "active"
+
+
+def _review_workflow(
+    *,
+    row: GraphRow,
+    properties: dict[Any, Any],
+    temporal_state: str,
+    now: datetime,
+    stale_after_days: int,
+) -> dict[str, str | bool | None]:
+    currentness_policy = str(properties.get("currentness_policy") or "")
+    temporal_kind = str(properties.get("temporal_kind") or "")
+    requires_resolution = bool(properties.get("requires_operator_resolution"))
+    open_ended = _is_open_ended_current_fact(
+        row,
+        temporal_kind=temporal_kind,
+        currentness_policy=currentness_policy,
+    )
+
+    if requires_resolution:
+        return {
+            "review_action": "resolve_conflict",
+            "review_priority": "high",
+            "review_reason": "operator_resolution_required",
+            "review_due_at": _format_datetime(now),
+            "open_ended": open_ended,
+        }
+    if temporal_state == "future":
+        return {
+            "review_action": "hold_until_valid",
+            "review_priority": "low",
+            "review_reason": "valid_window_starts_later",
+            "review_due_at": _format_datetime(_parse_datetime(row.get("valid_from"))),
+            "open_ended": open_ended,
+        }
+    if temporal_state == "expired":
+        return {
+            "review_action": "keep_historical",
+            "review_priority": "low",
+            "review_reason": "valid_window_expired",
+            "review_due_at": None,
+            "open_ended": open_ended,
+        }
+    if temporal_state == "stale":
+        return {
+            "review_action": "refresh",
+            "review_priority": (
+                "high"
+                if currentness_policy in {"candidate_current", "confirm_current"}
+                else "medium"
+            ),
+            "review_reason": "refresh_window_elapsed",
+            "review_due_at": _review_due_at(row, days=stale_after_days),
+            "open_ended": open_ended,
+        }
+    if currentness_policy == "historical_needs_confirmation":
+        return {
+            "review_action": "confirm_currentness",
+            "review_priority": "medium",
+            "review_reason": "historical_fact_needs_confirmation",
+            "review_due_at": _format_datetime(now),
+            "open_ended": open_ended,
+        }
+    if open_ended:
+        return {
+            "review_action": "refresh",
+            "review_priority": "medium",
+            "review_reason": "open_ended_current_fact",
+            "review_due_at": _review_due_at(row, days=stale_after_days),
+            "open_ended": True,
+        }
+    return {
+        "review_action": "none",
+        "review_priority": "none",
+        "review_reason": None,
+        "review_due_at": None,
+        "open_ended": False,
+    }
+
+
+def _is_open_ended_current_fact(
+    row: GraphRow,
+    *,
+    temporal_kind: str,
+    currentness_policy: str,
+) -> bool:
+    if _parse_datetime(row.get("valid_to")) is not None:
+        return False
+    return temporal_kind in {
+        "relationship_state",
+        "project_state",
+        "planned_event",
+        "people_state",
+    } or currentness_policy in {"candidate_current", "confirm_current"}
+
+
+def _review_due_at(row: GraphRow, *, days: int) -> str | None:
+    activity_at = _activity_at(row)
+    if activity_at is None:
+        return None
+    return _format_datetime(activity_at + timedelta(days=max(1, days)))
 
 
 def _conflict_key(row: GraphRow, *, object_type: str) -> str | None:
@@ -200,6 +309,12 @@ def _normalize_now(value: datetime | None) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _format_datetime(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _positive_int(value: object, *, fallback: int) -> int:

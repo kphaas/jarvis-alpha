@@ -168,9 +168,13 @@ async def test_memory_graph_current_reads_current_user(
     assert response.nodes[0].temporal_state == "active"
     assert response.nodes[0].retrieval_state == "current"
     assert response.nodes[0].conflict_key == f"node:project:{'a' * 64}"
+    assert response.nodes[0].review_action == "none"
+    assert response.nodes[0].review_priority == "none"
+    assert response.nodes[0].open_ended is False
     assert response.edges[0].edge_type == "related_to"
     assert response.edges[0].temporal_state == "active"
     assert response.edges[0].retrieval_state == "current"
+    assert response.edges[0].review_action == "none"
     assert response.edges[0].conflict_key == (
         f"edge:{NODE_ID}:55555555-5555-4555-8555-555555555555:related_to"
     )
