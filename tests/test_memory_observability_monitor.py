@@ -224,6 +224,7 @@ def test_memory_observability_launchagent_registered_for_brain() -> None:
     from scripts.install_launchagents import SERVICE_NODE_MAP
 
     assert SERVICE_NODE_MAP["com.jarvis.alpha.memory-observability"] == "brain"
+    assert SERVICE_NODE_MAP["com.jarvis.alpha.ai-news-brief"] == "brain"
 
 
 def test_pull_script_refreshes_memory_observability_launchagent() -> None:
@@ -233,3 +234,7 @@ def test_pull_script_refreshes_memory_observability_launchagent() -> None:
     assert "check_memory_observability\\.py" in source
     assert "com.jarvis.alpha.memory-observability.plist" in source
     assert 'mark_service_checked "alpha-memory-observability"' in source
+    assert "needs_reload_ai_news_brief" in source
+    assert "run_ai_news_brief\\.py" in source
+    assert "com.jarvis.alpha.ai-news-brief.plist" in source
+    assert 'mark_service_checked "alpha-ai-news-brief"' in source

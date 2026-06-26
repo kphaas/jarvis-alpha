@@ -177,6 +177,10 @@ needs_reload_spark_send_readiness() {
   service_has_changes_matching "alpha-spark-send-readiness" '(^launchagents/com\.jarvis\.alpha\.spark-send-readiness\.template\.plist$|^scripts/start_alpha_spark_send_readiness\.sh$|^scripts/smoke_spark_send_readiness\.sh$|^scripts/install_launchagents\.py$)'
 }
 
+needs_reload_ai_news_brief() {
+  service_has_changes_matching "alpha-ai-news-brief" '(^brain/services/internet_scout/ai_news_brief\.py$|^brain/routes/helm\.py$|^launchagents/com\.jarvis\.alpha\.ai-news-brief\.template\.plist$|^scripts/(run_ai_news_brief\.py|start_alpha_ai_news_brief\.sh|install_launchagents\.py)$)'
+}
+
 needs_reload_sweep_cert() {
   service_has_changes_matching "alpha-sweep-cert-renewal" "(^launchagents/com\\.jarvis\\.alpha\\.sweep-cert-renewal\\.${NODE_SHORT}\\.template\\.plist$|^launchagents/com\\.jarvis\\.alpha\\.sweep-cert-renewal\\.template\\.plist$|^scripts/install_launchagents\\.py$)"
 }
@@ -599,6 +603,39 @@ if [ "$NODE_SHORT" = "brain" ] && needs_reload_spark_send_readiness; then
 elif [ "$NODE_SHORT" = "brain" ]; then
   emit skip restart node="$NODE_SHORT" service="alpha-spark-send-readiness" reason="no_launchagent_changes"
   mark_service_checked "alpha-spark-send-readiness"
+fi
+
+AI_NEWS_BRIEF_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.ai-news-brief.plist"
+if [ "$NODE_SHORT" = "brain" ] && needs_reload_ai_news_brief; then
+  echo ""
+  echo "Refreshing Alpha AI news brief LaunchAgent..."
+  AI_NEWS_START=$(time_ms)
+  INSTALL_LOG=$(mktemp)
+  if ! python3 "${REPO_DIR}/scripts/install_launchagents.py" --node brain >"$INSTALL_LOG" 2>&1; then
+    AI_NEWS_DUR=$(($(time_ms) - AI_NEWS_START))
+    INSTALL_ERR=$(tail -5 "$INSTALL_LOG" | tr '\n' ' ' | cut -c1-300)
+    rm -f "$INSTALL_LOG"
+    emit fail restart node="$NODE_SHORT" service="alpha-ai-news-brief" dur_ms="$AI_NEWS_DUR" error="$INSTALL_ERR"
+    echo "❌ AI news brief LaunchAgent install failed"
+    exit 1
+  fi
+  rm -f "$INSTALL_LOG"
+  if [ -f "$AI_NEWS_BRIEF_PLIST" ]; then
+    launchctl unload "$AI_NEWS_BRIEF_PLIST" 2>/dev/null || true
+    launchctl load "$AI_NEWS_BRIEF_PLIST"
+    AI_NEWS_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.ai-news-brief" {print $1}' | head -1)
+    [ "$AI_NEWS_PID" = "-" ] && AI_NEWS_PID=0
+    echo "✅ AI news brief LaunchAgent refreshed"
+    emit ok restart node="$NODE_SHORT" service="alpha-ai-news-brief" pid="${AI_NEWS_PID:-0}" dur_ms=$(($(time_ms) - AI_NEWS_START))
+  else
+    emit fail restart node="$NODE_SHORT" service="alpha-ai-news-brief" dur_ms=$(($(time_ms) - AI_NEWS_START)) error="plist missing after install"
+    echo "❌ AI news brief LaunchAgent plist missing after install"
+    exit 1
+  fi
+  mark_service_checked "alpha-ai-news-brief"
+elif [ "$NODE_SHORT" = "brain" ]; then
+  emit skip restart node="$NODE_SHORT" service="alpha-ai-news-brief" reason="no_launchagent_changes"
+  mark_service_checked "alpha-ai-news-brief"
 fi
 
 SWEEP_CERT_LABEL="com.jarvis.alpha.sweep-cert-renewal.${NODE_SHORT}"

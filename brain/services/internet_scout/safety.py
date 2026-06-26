@@ -23,6 +23,8 @@ BLOCKED_HOST_SUFFIXES = (
 ALLOWED_SCHEMES = {"http", "https"}
 ALLOWED_CONTENT_TYPES = {
     "application/json",
+    "application/atom+xml",
+    "application/rss+xml",
     "application/xhtml+xml",
     "application/xml",
     "text/html",
