@@ -26,7 +26,7 @@ from brain.services.internet_scout.source_selection import (
         ),
         (
             "Find scholarly citation metadata for a peer reviewed AI paper",
-            {"openalex"},
+            {"openalex", "arxiv-api", "semantic-scholar-api"},
         ),
         (
             "Track OpenAI API changelog and ChatGPT model release news",
@@ -42,7 +42,20 @@ from brain.services.internet_scout.source_selection import (
         ),
         (
             "Check Claude and OpenAI status incidents and outage updates",
-            {"ai-vendor-status-feeds"},
+            {
+                "anthropic-api-release-notes",
+                "openai-news-rss",
+                "openai-api-changelog",
+                "ai-vendor-status-feeds",
+            },
+        ),
+        (
+            "Track Gemini API changelog and Hugging Face open model releases",
+            {"google-gemini-api-changelog", "huggingface-hub-api"},
+        ),
+        (
+            "Track SDK release notes through GitHub release monitoring",
+            {"github-releases-api"},
         ),
     ],
 )
@@ -82,6 +95,10 @@ def test_beacon_source_selection_includes_all_ai_vendor_watch_sources_for_ai_new
         "azure-ai-blog",
         "github-copilot-changelog",
         "ai-vendor-status-feeds",
+        "anthropic-api-release-notes",
+        "google-gemini-api-changelog",
+        "huggingface-hub-api",
+        "github-releases-api",
     }.issubset(data_source_ids)
 
 
@@ -128,6 +145,10 @@ def test_research_plan_carries_ai_vendor_watch_sources():
         "azure-ai-blog",
         "github-copilot-changelog",
         "ai-vendor-status-feeds",
+        "anthropic-api-release-notes",
+        "google-gemini-api-changelog",
+        "huggingface-hub-api",
+        "github-releases-api",
     }.issubset(set(plan.recommended_data_source_ids))
     assert any(
         note.startswith("data_sources:") and "openai-news-rss" in note

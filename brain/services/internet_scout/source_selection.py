@@ -27,6 +27,8 @@ BEACON_APPROVED_SOURCE_DATA_SOURCE_IDS: tuple[str, ...] = (
     "tavily-search",
     *BEACON_EXECUTABLE_SOURCE_DATA_SOURCE_IDS,
     "openalex",
+    "arxiv-api",
+    "semantic-scholar-api",
     "google-workspace",
     "microsoft-graph",
 )
@@ -38,6 +40,10 @@ BEACON_AI_VENDOR_WATCH_DATA_SOURCE_IDS: tuple[str, ...] = (
     "azure-ai-blog",
     "github-copilot-changelog",
     "ai-vendor-status-feeds",
+    "anthropic-api-release-notes",
+    "google-gemini-api-changelog",
+    "huggingface-hub-api",
+    "github-releases-api",
 )
 
 BEACON_ABILITY_DATA_SOURCE_IDS: tuple[str, ...] = (
@@ -126,9 +132,11 @@ _SCHOLARLY_MARKERS = (
     "openalex",
     "paper",
     "peer reviewed",
+    "preprint",
     "publication",
     "research study",
     "scholarly",
+    "semantic scholar",
 )
 _GOOGLE_WORKSPACE_MARKERS = (
     "calendar",
@@ -190,6 +198,23 @@ _ANTHROPIC_MARKERS = (
     "anthropic",
     "claude",
 )
+_GOOGLE_AI_MARKERS = (
+    "gemini",
+    "google ai",
+    "vertex ai",
+)
+_HUGGINGFACE_MARKERS = (
+    "hugging face",
+    "huggingface",
+    "model card",
+    "open model",
+    "transformers",
+)
+_GITHUB_RELEASE_MARKERS = (
+    "github release",
+    "package release",
+    "sdk release",
+)
 
 
 def select_beacon_data_source_ids(
@@ -208,7 +233,7 @@ def select_beacon_data_source_ids(
     selected = list(_BASELINE_SOURCE_IDS)
 
     if focus_mode == "academic" or _contains_any(normalized, _SCHOLARLY_MARKERS):
-        selected.append("openalex")
+        selected.extend(["openalex", "arxiv-api", "semantic-scholar-api"])
     if _contains_any(normalized, _MEDICAL_MARKERS):
         selected.append("pubmed-eutils")
     if _is_sec_filings_query(normalized):
@@ -270,6 +295,16 @@ def _select_ai_vendor_watch_sources(query: str) -> tuple[str, ...]:
         selected.extend(["azure-ai-blog", "github-copilot-changelog"])
         matched_vendor = True
     if _contains_any(query, _ANTHROPIC_MARKERS):
+        selected.append("anthropic-api-release-notes")
+        matched_vendor = True
+    if _contains_any(query, _GOOGLE_AI_MARKERS):
+        selected.append("google-gemini-api-changelog")
+        matched_vendor = True
+    if _contains_any(query, _HUGGINGFACE_MARKERS):
+        selected.append("huggingface-hub-api")
+        matched_vendor = True
+    if _contains_any(query, _GITHUB_RELEASE_MARKERS):
+        selected.append("github-releases-api")
         matched_vendor = True
     if matched_vendor and _contains_any(query, _AI_STATUS_MARKERS):
         selected.append("ai-vendor-status-feeds")

@@ -33,3 +33,53 @@
     citation/discovery questions.
   last_verified: 2026-06-19
   review_cadence_days: 90
+
+- id: arxiv-api
+  name: arXiv API
+  domain: scholarly-reference
+  url: https://info.arxiv.org/help/api/user-manual.html
+  api_base_url: https://export.arxiv.org/api/
+  auth:
+    type: none
+    notes: No auth. Follow arXiv request pacing guidance; avoid bursty polling.
+  pricing: free
+  free_tier: free public API access under arXiv fair-use rules
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - scholarly-search
+    - ai-research-monitoring
+    - preprint-discovery
+    - research-metadata
+  notes: |
+    Good lightweight feed for AI and ML preprints. Results are preprints, not
+    peer-reviewed truth; Beacon should label them accordingly and cross-check
+    operational claims before surfacing recommendations.
+  last_verified: 2026-06-26
+  review_cadence_days: 180
+
+- id: semantic-scholar-api
+  name: Semantic Scholar API
+  domain: scholarly-reference
+  url: https://api.semanticscholar.org/api-docs/
+  api_base_url: https://api.semanticscholar.org/graph/v1/
+  auth:
+    type: api-key
+    notes: Public endpoints have limited unauthenticated access; request an API key for higher limits.
+  pricing: freemium
+  free_tier: limited public and API-key access
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - scholarly-search
+    - citation-graph
+    - ai-research-monitoring
+    - paper-recommendations
+  notes: |
+    Adds citation, author, and recommendation metadata that complements arXiv
+    and OpenAlex. Use it for research context and source ranking, not for
+    clinical, financial, or policy decisions without cited corroboration.
+  last_verified: 2026-06-26
+  review_cadence_days: 90

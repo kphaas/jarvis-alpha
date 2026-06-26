@@ -155,6 +155,8 @@ def test_active_external_data_skills_reference_vendored_data_sources():
     assert data_sources["osv-dev"].domain == "security-intel"
     assert data_sources["cisa-kev"].domain == "security-intel"
     assert data_sources["openalex"].domain == "scholarly-reference"
+    assert data_sources["arxiv-api"].domain == "scholarly-reference"
+    assert data_sources["semantic-scholar-api"].domain == "scholarly-reference"
     assert data_sources["google-workspace"].domain == "productivity-comms"
     assert data_sources["microsoft-graph"].domain == "productivity-comms"
     for data_source_id in BEACON_AI_VENDOR_WATCH_DATA_SOURCE_IDS:
