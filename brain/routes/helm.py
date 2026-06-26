@@ -130,6 +130,21 @@ class HelmBeaconWebSuggestionSummary(BaseModel):
     accepted_after_confirmation: int = 0
 
 
+class HelmBeaconWebCacheSummary(BaseModel):
+    status: str = "unknown"
+    mode: str = "durable_public_web_cache"
+    ttl_hours: int = 0
+    active_entry_count: int = 0
+    expired_entry_count: int = 0
+    total_hit_count: int = 0
+    last_hit_at: str | None = None
+    last_seen_at: str | None = None
+    raw_user_query_stored: bool = False
+    raw_web_content_is_untrusted: bool = True
+    index: str = "search_terms_gin"
+    rerank: str = "local_quality_term_rerank"
+
+
 class HelmBeaconProviderSummary(BaseModel):
     status: str
     provider_order: list[str] = Field(default_factory=list)
@@ -262,6 +277,9 @@ class HelmBeaconQualityCanaryHistoryItem(BaseModel):
     request_id: str | None = None
     last_run_at: str | None = None
     age_hours: int = 0
+    expected_interval_hours: int = 24
+    next_due_at: str | None = None
+    schedule_status: str = "unknown"
 
 
 class HelmBeaconQualityCanarySummary(HelmBeaconQualityCanaryHistoryItem):
@@ -282,6 +300,9 @@ class HelmBeaconSummary(BaseModel):
     cost: HelmBeaconCostSummary = Field(default_factory=HelmBeaconCostSummary)
     citation_quality: HelmBeaconCitationQualitySummary = Field(
         default_factory=HelmBeaconCitationQualitySummary
+    )
+    web_cache: HelmBeaconWebCacheSummary = Field(
+        default_factory=HelmBeaconWebCacheSummary
     )
     retention: HelmBeaconRetentionSummary
     approvals: HelmBeaconApprovalSummary
@@ -683,6 +704,33 @@ def _beacon_web_suggestion(
     )
 
 
+def _beacon_web_cache(
+    check_status: str,
+    metadata: Mapping[str, object],
+) -> HelmBeaconWebCacheSummary:
+    return HelmBeaconWebCacheSummary(
+        status=check_status,
+        mode=_metadata_str(metadata, "mode", "durable_public_web_cache")
+        or "durable_public_web_cache",
+        ttl_hours=_metadata_int(metadata, "ttl_hours"),
+        active_entry_count=_metadata_int(metadata, "active_entry_count"),
+        expired_entry_count=_metadata_int(metadata, "expired_entry_count"),
+        total_hit_count=_metadata_int(metadata, "total_hit_count"),
+        last_hit_at=_metadata_str(metadata, "last_hit_at"),
+        last_seen_at=_metadata_str(metadata, "last_seen_at"),
+        raw_user_query_stored=_metadata_bool(metadata, "raw_user_query_stored"),
+        raw_web_content_is_untrusted=(
+            _metadata_bool(metadata, "raw_web_content_is_untrusted")
+            if "raw_web_content_is_untrusted" in metadata
+            else True
+        ),
+        index=_metadata_str(metadata, "index", "search_terms_gin")
+        or "search_terms_gin",
+        rerank=_metadata_str(metadata, "rerank", "local_quality_term_rerank")
+        or "local_quality_term_rerank",
+    )
+
+
 def _beacon_quality_canary(
     metadata: Mapping[str, object],
 ) -> HelmBeaconQualityCanarySummary:
@@ -711,6 +759,14 @@ def _beacon_quality_canary(
         request_id=_metadata_str(quality_canary, "request_id"),
         last_run_at=_metadata_str(quality_canary, "last_run_at"),
         age_hours=_metadata_int(quality_canary, "age_hours"),
+        expected_interval_hours=_metadata_int(
+            quality_canary,
+            "expected_interval_hours",
+        )
+        or 24,
+        next_due_at=_metadata_str(quality_canary, "next_due_at"),
+        schedule_status=_metadata_str(quality_canary, "schedule_status", "unknown")
+        or "unknown",
         stale_after_hours=_metadata_int(quality_canary, "stale_after_hours"),
         alert=HelmBeaconQualityCanaryAlert(
             status=_metadata_str(alert, "status", "missing") or "missing",
@@ -738,6 +794,11 @@ def _beacon_quality_canary_history_item(
         request_id=_metadata_str(metadata, "request_id"),
         last_run_at=_metadata_str(metadata, "last_run_at"),
         age_hours=_metadata_int(metadata, "age_hours"),
+        expected_interval_hours=_metadata_int(metadata, "expected_interval_hours")
+        or 24,
+        next_due_at=_metadata_str(metadata, "next_due_at"),
+        schedule_status=_metadata_str(metadata, "schedule_status", "unknown")
+        or "unknown",
     )
 
 
@@ -835,6 +896,7 @@ def _unavailable_beacon_summary() -> HelmBeaconSummary:
         latency=HelmBeaconLatencySummary(),
         cost=HelmBeaconCostSummary(status="unknown"),
         citation_quality=HelmBeaconCitationQualitySummary(status="unknown"),
+        web_cache=HelmBeaconWebCacheSummary(status="unavailable"),
         retention=HelmBeaconRetentionSummary(
             mode="report_only",
             evidence_retention_days=0,
@@ -858,6 +920,7 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
     gateway_check = health.checks.get("gateway")
     browser_check = health.checks.get("browser_runtime")
     evidence_check = health.checks.get("recent_evidence")
+    web_cache_check = health.checks.get("web_cache")
 
     gateway_metadata = (
         _mapping_value(gateway_check.metadata) if gateway_check is not None else {}
@@ -867,6 +930,9 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
     )
     evidence_metadata = (
         _mapping_value(evidence_check.metadata) if evidence_check is not None else {}
+    )
+    web_cache_metadata = (
+        _mapping_value(web_cache_check.metadata) if web_cache_check is not None else {}
     )
     approvals = await _beacon_pending_browser_approvals(conn)
 
@@ -965,6 +1031,10 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
         latency=_beacon_latency(evidence_metadata),
         cost=_beacon_cost(gateway_metadata, evidence_metadata),
         citation_quality=_beacon_citation_quality(evidence_metadata),
+        web_cache=_beacon_web_cache(
+            web_cache_check.status if web_cache_check is not None else "unavailable",
+            web_cache_metadata,
+        ),
         retention=HelmBeaconRetentionSummary(
             mode=health.retention.mode,
             evidence_retention_days=health.retention.evidence_retention_days,

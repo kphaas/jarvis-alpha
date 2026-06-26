@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import json
 import os
 from typing import Protocol
@@ -24,6 +24,7 @@ _REQUIRED_TABLES = (
     "alpha_internet_evidence",
     "alpha_internet_tool_events",
     "alpha_internet_memory_promotions",
+    "alpha_internet_web_cache",
 )
 _REQUIRED_FUNCTIONS = ("public.save_beacon_semantic_memory(uuid,text,text,text,text)",)
 _READINESS_CHECKS = (
@@ -32,6 +33,7 @@ _READINESS_CHECKS = (
     "browser_runtime",
     "retention",
     "quality_canary",
+    "web_cache",
 )
 _QUALITY_CANARY_HISTORY_LIMIT = 7
 _QUALITY_CANARY_STALE_AFTER_HOURS = 26
@@ -53,6 +55,7 @@ async def build_beacon_health(
         "gateway": await _gateway_check(gateway_client or InternetScoutGatewayClient()),
         "browser_runtime": _browser_runtime_check(),
         "recent_evidence": await _recent_evidence_check(conn, checked_at=checked_at),
+        "web_cache": await _web_cache_check(conn),
     }
     checks["quality_canary"] = _quality_canary_check(
         checks["recent_evidence"].metadata,
@@ -77,6 +80,55 @@ async def build_beacon_health(
         retention=retention,
         checked_at=checked_at,
     )
+
+
+async def _web_cache_check(conn) -> InternetScoutHealthCheck:
+    if not await _table_exists(conn, "alpha_internet_web_cache"):
+        return InternetScoutHealthCheck(
+            ok=False,
+            status="unavailable",
+            detail="Beacon web cache table is missing.",
+            metadata={"table": "alpha_internet_web_cache"},
+        )
+    metadata = await _web_cache_metadata(conn)
+    active_entry_count = _int_mapping(metadata, "active_entry_count")
+    return InternetScoutHealthCheck(
+        ok=True,
+        status="ok" if active_entry_count else "warning",
+        detail="Beacon web cache is ready."
+        if active_entry_count
+        else "Beacon web cache is ready and waiting for warm evidence.",
+        metadata=metadata,
+    )
+
+
+async def _web_cache_metadata(conn) -> dict[str, object]:
+    row = await conn.fetchrow(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE expires_at > NOW())::INTEGER
+                AS active_entry_count,
+            COUNT(*) FILTER (WHERE expires_at <= NOW())::INTEGER
+                AS expired_entry_count,
+            COALESCE(SUM(access_count), 0)::INTEGER AS total_hit_count,
+            MAX(last_accessed_at) AS last_hit_at,
+            MAX(last_seen_at) AS last_seen_at
+        FROM public.alpha_internet_web_cache
+        """
+    )
+    return {
+        "mode": "durable_public_web_cache",
+        "ttl_hours": 168,
+        "active_entry_count": _int_row(row, "active_entry_count") if row else 0,
+        "expired_entry_count": _int_row(row, "expired_entry_count") if row else 0,
+        "total_hit_count": _int_row(row, "total_hit_count") if row else 0,
+        "last_hit_at": _datetime_or_none(row["last_hit_at"]) if row else None,
+        "last_seen_at": _datetime_or_none(row["last_seen_at"]) if row else None,
+        "raw_user_query_stored": False,
+        "raw_web_content_is_untrusted": True,
+        "index": "search_terms_gin",
+        "rerank": "local_quality_term_rerank",
+    }
 
 
 async def _database_check(conn) -> InternetScoutHealthCheck:
@@ -586,6 +638,12 @@ def _quality_canary_summary(
     metadata = _metadata_object(row["metadata"])
     created_at = row["created_at"]
     age_hours = _age_hours(created_at, checked_at=checked_at)
+    expected_interval_hours = _quality_canary_expected_interval_hours()
+    next_due_at = (
+        _datetime_metadata(created_at + timedelta(hours=expected_interval_hours))
+        if isinstance(created_at, datetime)
+        else None
+    )
     return {
         "request_id": str(metadata.get("request_id") or row["request_id"]),
         "status": str(metadata.get("status") or row["status"]),
@@ -598,6 +656,12 @@ def _quality_canary_summary(
         "case_groups": _quality_canary_case_groups(metadata.get("case_groups")),
         "last_run_at": _datetime_metadata(created_at),
         "age_hours": age_hours,
+        "expected_interval_hours": expected_interval_hours,
+        "next_due_at": next_due_at,
+        "schedule_status": _quality_canary_schedule_status(
+            age_hours=age_hours,
+            expected_interval_hours=expected_interval_hours,
+        ),
         "stale_after_hours": _quality_canary_stale_after_hours(),
     }
 
@@ -653,6 +717,27 @@ def _quality_canary_stale_after_hours() -> int:
     except ValueError:
         return _QUALITY_CANARY_STALE_AFTER_HOURS
     return max(1, min(value, 168))
+
+
+def _quality_canary_expected_interval_hours() -> int:
+    raw_value = os.getenv("BEACON_QUALITY_CANARY_EXPECTED_INTERVAL_HOURS", "24")
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return 24
+    return max(1, min(value, 168))
+
+
+def _quality_canary_schedule_status(
+    *,
+    age_hours: int,
+    expected_interval_hours: int,
+) -> str:
+    if age_hours > _quality_canary_stale_after_hours():
+        return "stale"
+    if age_hours >= expected_interval_hours:
+        return "due"
+    return "ok"
 
 
 def _metadata_object(value: object) -> dict[str, object]:
@@ -730,6 +815,12 @@ def _quality_canary_case_groups(value: object) -> dict[str, dict[str, object]]:
             "case_names": _str_list(raw_group.get("case_names")),
         }
     return groups
+
+
+def _datetime_or_none(value: object) -> str | None:
+    if value is None:
+        return None
+    return _datetime_metadata(value)
 
 
 def _datetime_metadata(value: object) -> str:

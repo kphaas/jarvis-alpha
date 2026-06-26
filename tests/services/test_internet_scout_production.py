@@ -25,6 +25,7 @@ class FakeConn:
         latency_row: dict[str, int] | None = None,
         suggestion_row: dict[str, int] | None = None,
         acceptance_row: dict[str, int] | None = None,
+        web_cache_row: dict[str, object] | None = None,
         quality_canary_row: dict[str, object] | None = None,
         quality_canary_rows: list[dict[str, object]] | None = None,
         expired_request_ids: list[object] | None = None,
@@ -73,6 +74,13 @@ class FakeConn:
             "accepted": 2,
             "accepted_matching_mode": 2,
             "accepted_after_confirmation": 2,
+        }
+        self.web_cache_row = web_cache_row or {
+            "active_entry_count": 4,
+            "expired_entry_count": 1,
+            "total_hit_count": 7,
+            "last_hit_at": now,
+            "last_seen_at": now,
         }
         self.quality_canary_row = quality_canary_row or {
             "request_id": uuid4(),
@@ -124,6 +132,8 @@ class FakeConn:
         return []
 
     async def fetchrow(self, query: str, *args):
+        if "FROM public.alpha_internet_web_cache" in query:
+            return self.web_cache_row
         if "quality_canary" in query:
             return self.quality_canary_row
         if "chat_web_suggestion_acceptance" in query:
@@ -336,6 +346,10 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
         response.checks["gateway"].metadata["provider_redundancy_status"] == "redundant"
     )
     assert response.checks["browser_runtime"].ok is True
+    assert response.checks["web_cache"].ok is True
+    assert response.checks["web_cache"].status == "ok"
+    assert response.checks["web_cache"].metadata["active_entry_count"] == 4
+    assert response.checks["web_cache"].metadata["raw_user_query_stored"] is False
     assert response.checks["recent_evidence"].metadata["blocked"] == 1
     source_quality = response.checks["recent_evidence"].metadata["source_quality"]
     assert source_quality == {
@@ -400,6 +414,9 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
         },
         "last_run_at": quality_canary["last_run_at"],
         "age_hours": quality_canary["age_hours"],
+        "expected_interval_hours": 24,
+        "next_due_at": quality_canary["next_due_at"],
+        "schedule_status": "ok",
         "stale_after_hours": 26,
         "alert": {
             "status": "ok",
@@ -487,6 +504,9 @@ async def test_health_parses_quality_canary_json_metadata(monkeypatch):
         },
         "last_run_at": checked_at.isoformat(),
         "age_hours": 0,
+        "expected_interval_hours": 24,
+        "next_due_at": (checked_at + timedelta(hours=24)).isoformat(),
+        "schedule_status": "ok",
         "stale_after_hours": 26,
         "alert": {
             "status": "ok",
@@ -581,6 +601,7 @@ async def test_health_degrades_when_quality_canary_is_stale(monkeypatch):
     quality_canary = response.checks["recent_evidence"].metadata["quality_canary"]
     assert quality_canary["alert"]["reason"] == "quality_canary_stale"
     assert quality_canary["age_hours"] >= 30
+    assert quality_canary["schedule_status"] == "stale"
     assert quality_canary["stale_after_hours"] == 24
 
 

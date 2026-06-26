@@ -19,6 +19,7 @@ class FakeConn:
     def __init__(self) -> None:
         self.request_id = uuid4()
         self.source_id = uuid4()
+        self.cache_entry_id = uuid4()
         self.fetchrow_calls: list[tuple[str, tuple[object, ...]]] = []
         self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
         self.fetch_calls: list[tuple[str, tuple[object, ...]]] = []
@@ -69,6 +70,21 @@ class FakeConn:
                     "claim": "Claim",
                     "citation_text": "Citation",
                     "confidence": "medium",
+                }
+            ]
+        if "FROM public.alpha_internet_web_cache" in query:
+            return [
+                {
+                    "id": self.cache_entry_id,
+                    "url": "https://platform.openai.com/docs/api-reference/responses",
+                    "host": "platform.openai.com",
+                    "title": "OpenAI Responses API",
+                    "content_hash": "b" * 64,
+                    "excerpt": "OpenAI Responses API reference documentation.",
+                    "search_terms": ["openai", "responses", "api", "reference"],
+                    "fetched_at": datetime.now(UTC),
+                    "expires_at": datetime.now(UTC),
+                    "access_count": 2,
                 }
             ]
         raise AssertionError(query)
@@ -179,6 +195,7 @@ async def test_repository_stores_packet_sources_claims_and_events():
     assert isinstance(conn.source_id, UUID)
     assert any("alpha_internet_evidence" in call[0] for call in conn.execute_calls)
     assert any("alpha_internet_tool_events" in call[0] for call in conn.execute_calls)
+    assert any("alpha_internet_web_cache" in call[0] for call in conn.execute_calls)
 
 
 @pytest.mark.asyncio
@@ -197,6 +214,59 @@ async def test_repository_counts_recent_browser_runs():
     count = await InternetScoutRepository(conn).count_recent_browser_runs("ken")
 
     assert count == 2
+
+
+@pytest.mark.asyncio
+async def test_repository_upserts_web_cache_without_raw_query_terms():
+    conn = FakeConn()
+    repo = InternetScoutRepository(conn)
+    packet = InternetEvidencePacket(
+        request=InternetScoutRequest(query="sensitive raw query", requester="test"),
+        sources=[
+            SourceReference(
+                url="https://platform.openai.com/docs/api-reference/responses",
+                host="platform.openai.com",
+                title="OpenAI Responses API",
+                content_hash="b" * 64,
+            )
+        ],
+        claims=[
+            EvidenceClaim(
+                claim="OpenAI Responses API reference documentation.",
+                source_url="https://platform.openai.com/docs/api-reference/responses",
+                citation_text="OpenAI Responses API reference documentation.",
+            )
+        ],
+    )
+
+    stored = await repo.upsert_web_cache_entries(
+        request_id=conn.request_id,
+        packet=packet,
+    )
+
+    assert stored == 1
+    cache_call = [
+        call for call in conn.execute_calls if "alpha_internet_web_cache" in call[0]
+    ][0]
+    assert "sensitive" not in str(cache_call[1])
+    assert "raw query" not in str(cache_call[1])
+    assert {"openai", "responses", "api", "reference"}.issubset(set(cache_call[1][6]))
+
+
+@pytest.mark.asyncio
+async def test_repository_loads_ranked_web_cache_and_records_hits():
+    conn = FakeConn()
+    ranked = await InternetScoutRepository(conn).load_ranked_web_cache(
+        query="OpenAI Responses API",
+        max_results=1,
+    )
+
+    assert ranked[0].entry.id == conn.cache_entry_id
+    assert ranked[0].source_quality == "official"
+    assert ranked[0].matched_terms == ("api", "openai", "responses")
+    assert any(
+        "access_count = access_count + 1" in call[0] for call in conn.execute_calls
+    )
 
 
 @pytest.mark.asyncio

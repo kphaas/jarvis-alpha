@@ -342,6 +342,10 @@ def _beacon_context_out(row) -> dict[str, object] | None:
 
     return {
         "kind": "beacon_browser_use",
+        "approval_contract_version": _safe_int(
+            preview.get("approval_contract_version"),
+            1,
+        ),
         "request_id": str(request_id) if request_id else None,
         "selected_tool": _safe_str(
             preview.get("selected_tool"),
@@ -372,10 +376,19 @@ def _beacon_context_out(row) -> dict[str, object] | None:
             preview.get("needs_interaction"),
             request_shape.get("needs_interaction"),
         ),
+        "allowed_hosts": _safe_str_list(preview.get("allowed_hosts")),
+        "url_hashes": _safe_str_list(preview.get("url_hashes")),
         "same_host_required": _safe_bool(preview.get("same_host_required"), True),
         "screenshots_required": _safe_bool(preview.get("screenshots_required"), True),
+        "screenshot_policy": _json_object(preview.get("screenshot_policy")),
         "downloads_allowed": _safe_bool(preview.get("downloads_allowed"), False),
         "forms_allowed": _safe_bool(preview.get("forms_allowed"), False),
+        "credential_entry_allowed": _safe_bool(
+            preview.get("credential_entry_allowed"),
+            False,
+        ),
+        "risk_labels": _safe_str_list(preview.get("risk_labels")),
+        "action_timeline": _safe_mapping_list(preview.get("action_timeline")),
         "raw_task_text_included": False,
         "raw_web_content_is_untrusted": True,
         "approval_hash_prefix": approval_hash_prefix[:12],
@@ -428,6 +441,18 @@ def _safe_bool(value: object, fallback: object = False) -> bool:
     if isinstance(fallback, bool):
         return fallback
     return False
+
+
+def _safe_str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value[:20] if str(item)]
+
+
+def _safe_mapping_list(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value[:20] if isinstance(item, dict)]
 
 
 def _hash_prefix(parameters_hash: str) -> str:
