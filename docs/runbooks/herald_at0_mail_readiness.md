@@ -1,6 +1,6 @@
 # Herald AT-0 Mail Runbook
 
-Updated: 2026-06-18
+Updated: 2026-06-26
 
 ## Scope
 
@@ -12,8 +12,8 @@ Herald MVP is the AT-0 mail-intake and approved-reply production slice:
 - Send only drafts that were explicitly approved in Alpha.
 - Record append-only send audit events and Graph/send monitor health.
 
-The social-presence Herald module is specified in `docs/specs/jarvis-herald-spec.md`
-but is not implemented as a runtime connector yet.
+The social-presence Herald module now has a draft-only approval outbox. It does
+not publish to social platforms yet.
 
 ## Runtime
 
@@ -97,13 +97,18 @@ reply text, Graph tokens, or secrets.
 
 ## Social Media Track
 
-Herald cannot manage social media accounts yet. Current repo state has:
+Herald can draft and review social posts locally, but cannot publish or ingest
+social inboxes yet. Current repo state has:
 
 - Product spec: `docs/specs/jarvis-herald-spec.md`
 - Gap memory: `docs/runbooks/herald_social_gap_memory.md`
+- Draft-only API: `/v1/herald/social/*`
+- UI surface: `/herald` → Social approval outbox
+- Smoke: `bash ~/jarvis-alpha/scripts/smoke_herald_social_outbox.sh`
 - Marketing/social drafting docs and brand assets
-- No deployed social account connector, scheduler, approval queue, or publisher
-  route for X, LinkedIn, Instagram, Threads, TikTok, Bluesky, or Mastodon
+- Per-platform voice profiles for X and LinkedIn
+- No deployed social account connector, scheduler, publisher route, or social
+  inbox reader for X, LinkedIn, Instagram, Threads, TikTok, Bluesky, or Mastodon
 
-Recommended next slice: draft-only social cockpit first, then Buffer-backed
-approved publishing after account policy, audit, and rollback rules are locked.
+Recommended next slice: Postiz/Buffer connector design, behind explicit account
+policy, connector health, rate caps, and approval-bound publish audit.

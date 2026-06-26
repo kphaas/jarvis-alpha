@@ -7,6 +7,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "smoke_at0_herald_mail.sh"
 RESTORE_DRILL_SCRIPT = REPO_ROOT / "scripts" / "smoke_at0_herald_restore_drill.sh"
+SOCIAL_OUTBOX_SCRIPT = REPO_ROOT / "scripts" / "smoke_herald_social_outbox.sh"
 
 
 def test_at0_herald_smoke_script_has_valid_bash_syntax() -> None:
@@ -23,6 +24,17 @@ def test_at0_herald_smoke_script_has_valid_bash_syntax() -> None:
 def test_at0_herald_restore_drill_script_has_valid_bash_syntax() -> None:
     result = subprocess.run(
         ["bash", "-n", str(RESTORE_DRILL_SCRIPT)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_herald_social_outbox_smoke_script_has_valid_bash_syntax() -> None:
+    result = subprocess.run(
+        ["bash", "-n", str(SOCIAL_OUTBOX_SCRIPT)],
         capture_output=True,
         text=True,
         check=False,
@@ -68,13 +80,33 @@ def test_at0_herald_restore_drill_covers_mail_audit_and_monitor_tables() -> None
         "public.alpha_at0_mail_draft_proposals",
         "public.alpha_at0_mail_send_events",
         "public.alpha_at0_mail_graph_health",
+        "public.alpha_herald_social_platform_profiles",
+        "public.alpha_herald_social_draft_requests",
+        "public.alpha_herald_social_draft_variants",
+        "public.alpha_herald_social_draft_events",
     ):
         assert table in text
     assert "pg_dump" in text
     assert "pg_restore" in text
     assert "DROP DATABASE IF EXISTS" in text
     assert "alpha_at0_mail_send_events_immutable" in text
+    assert "alpha_herald_social_draft_events_immutable" in text
     assert "POSTGRES_PASSWORD" in text
     assert "body_preview" not in text
     assert "proposed_body" not in text
     assert "access_token" not in text
+
+
+def test_herald_social_outbox_smoke_covers_draft_only_flow() -> None:
+    text = SOCIAL_OUTBOX_SCRIPT.read_text(encoding="utf-8")
+
+    for path in (
+        "/v1/herald/social/platforms",
+        "/v1/herald/social/drafts",
+        "/v1/herald/social/drafts/${SMOKE_DRAFT_ID}/status",
+    ):
+        assert path in text
+    assert "draft_only_no_publish" in text
+    assert "herald.read,herald.write" in text
+    assert "Postiz" not in text
+    assert "Buffer" not in text

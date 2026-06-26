@@ -14,10 +14,10 @@ code, tests or smoke coverage, and a runbook/update that proves the behavior.
 |---|---|---|---|
 | HSG-001 | Unified interaction ledger across email and social | Open | Email messages, social mentions, drafts, approvals, sends, and failures share one typed interaction model or adapter contract, with append-only outbound audit. |
 | HSG-002 | Social connector layer | Open | At least one approved connector path exists for read + draft/schedule/publish handoff, with token scope docs, health check, and policy limits. Prefer Postiz/Buffer before direct browser automation. |
-| HSG-003 | Social approval outbox | Open | Herald can create platform-specific social drafts, queue them for approve/reject, preserve versions, and block every outbound action until explicit approval. |
+| HSG-003 | Social approval outbox | Done | Herald can create platform-specific social drafts, queue them for approve/reject, preserve versions, and block every outbound action until explicit approval. |
 | HSG-004 | Social inbox UI | Open | `/herald` separates email from social channels and lets Ken triage account/platform streams without autonomous replies, likes, follows, or DMs. |
 | HSG-005 | Analytics feedback loop | Open | Herald stores per-account/per-post metric snapshots, shows trend context, and emits a weekly digest that feeds future drafting recommendations. |
-| HSG-006 | Brand and voice memory per platform | Open | AT-0 Spark has platform-specific voice rules, audience notes, safety lint, and repeat-post prevention that are visible in the draft workflow. |
+| HSG-006 | Brand and voice memory per platform | Done | AT0 Spark has platform-specific voice rules, audience notes, safety lint, and repeat-post prevention that are visible in the draft workflow. |
 
 ## Council 4-Lens Review
 
@@ -30,16 +30,16 @@ code, tests or smoke coverage, and a runbook/update that proves the behavior.
 
 ## Next Recommended Slice
 
-Build a draft-only social cockpit:
+Connect the approved publishing path only after the draft/review/audit loop is
+deployed and smoke-tested:
 
-1. Store social draft requests, variants, review state, and append-only events.
-2. Generate per-platform drafts using AT-0 Spark voice memory.
-3. Add `/herald` UI sections for Social Drafts and platform/account filters.
-4. Add approve/reject/archive controls, but no publishing connector yet.
-5. Add a smoke script that proves drafts can be created, reviewed, and audited.
+1. Keep Postiz/Buffer behind an explicit connector layer.
+2. Require a fresh approval before any platform publish.
+3. Add connector health, token-scope docs, and rate caps before enabling send.
 
 ## Completion Log
 
 | Date | Gap | Evidence |
 |---|---|---|
-| TBD | TBD | TBD |
+| 2026-06-26 | HSG-003 | Added `alpha_herald_social_draft_requests`, `alpha_herald_social_draft_variants`, append-only `alpha_herald_social_draft_events`, `/v1/herald/social/drafts`, approve/reject/archive, Herald UI outbox, and `scripts/smoke_herald_social_outbox.sh`. |
+| 2026-06-26 | HSG-006 | Added per-platform social voice profiles for X and LinkedIn, profile snapshots on each draft, safety flags, voice score, repeat detection, and visible rules in `/herald`. |
