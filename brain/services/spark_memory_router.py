@@ -393,7 +393,9 @@ def _conflict_group_key(
     temporal_kind: str,
     entity_keys: list[str],
 ) -> str:
-    subject_key = "|".join(sorted(_entity_group_key(key) for key in entity_keys)) or "unresolved"
+    subject_key = (
+        "|".join(sorted(_entity_group_key(key) for key in entity_keys)) or "unresolved"
+    )
     return f"{node_type}:{graph_kind}:{temporal_kind}:{subject_key}"
 
 

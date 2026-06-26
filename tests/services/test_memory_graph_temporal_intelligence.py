@@ -140,9 +140,7 @@ def test_temporal_graph_groups_relationship_conflicts_by_entity_keys() -> None:
     summary = summarize_temporal_graph_rows(nodes=nodes, edges=[], now=now)
 
     assert first["conflict_key"] == second["conflict_key"]
-    assert str(first["conflict_key"]).startswith(
-        "node:planning_trip:planned_event:"
-    )
+    assert str(first["conflict_key"]).startswith("node:planning_trip:planned_event:")
     assert summary["superseded_node_candidates"] == 1
     assert summary["conflict_candidates"] == 1
 

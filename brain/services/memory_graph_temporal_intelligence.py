@@ -267,16 +267,25 @@ def _superseded_edge_candidates(rows: list[GraphRow]) -> int:
 
 
 def _semantic_conflict_key(row: GraphRow, *, object_type: str) -> str | None:
-    properties = row.get("properties") if isinstance(row.get("properties"), dict) else {}
+    properties = (
+        row.get("properties") if isinstance(row.get("properties"), dict) else {}
+    )
     explicit_key = _clean_key_part(properties.get("conflict_group_key"))
     if explicit_key:
         return f"{object_type}:{explicit_key}"
     entity_keys = _string_list(properties.get("entity_keys"))
     if not entity_keys:
-        entity_keys = [_entity_key(value) for value in _string_list(properties.get("relationship_subjects"))]
+        entity_keys = [
+            _entity_key(value)
+            for value in _string_list(properties.get("relationship_subjects"))
+        ]
     if not entity_keys:
         return None
-    graph_kind = _clean_key_part(properties.get("graph_kind")) or _clean_key_part(row.get("edge_type")) or "related"
+    graph_kind = (
+        _clean_key_part(properties.get("graph_kind"))
+        or _clean_key_part(row.get("edge_type"))
+        or "related"
+    )
     temporal_kind = _clean_key_part(properties.get("temporal_kind")) or "state"
     subject_key = "|".join(sorted(_canonical_entity_key(key) for key in entity_keys))
     return f"{object_type}:{graph_kind}:{temporal_kind}:{subject_key}"
@@ -287,7 +296,9 @@ def _node_group_key(row: GraphRow) -> str:
     if semantic_key:
         return semantic_key
     node_type = str(row.get("node_type") or "other").casefold()
-    label_key = str(row.get("label_hash") or row.get("label_preview") or row.get("id") or "")
+    label_key = str(
+        row.get("label_hash") or row.get("label_preview") or row.get("id") or ""
+    )
     return f"node:{node_type}:{label_key.casefold()}"
 
 

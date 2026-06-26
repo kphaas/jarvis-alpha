@@ -75,10 +75,9 @@ def test_spark_learning_examples_route_to_reviewable_memory_lanes(
             "sweta",
         ]
         assert len(plan.graph_payload["properties"]["entity_keys"]) == 2
-        assert (
-            plan.graph_payload["properties"]["entity_resolution"]["known_people"]
-            == ["ken", "sweta"]
-        )
+        assert plan.graph_payload["properties"]["entity_resolution"][
+            "known_people"
+        ] == ["ken", "sweta"]
         assert (
             plan.graph_payload["properties"]["needs_operator_entity_resolution"]
             is False
@@ -156,7 +155,9 @@ def test_spark_graph_project_learning_extracts_project_metadata() -> None:
     }
 
 
-def test_spark_graph_learning_routes_unknown_people_to_entity_resolution_review() -> None:
+def test_spark_graph_learning_routes_unknown_people_to_entity_resolution_review() -> (
+    None
+):
     plan = plan_spark_memory_route(
         note="Alex and Ken are planning a trip to Austin.",
         principal_id="ken",
