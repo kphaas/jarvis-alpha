@@ -6,6 +6,7 @@ return aggregate metadata only. They do not inspect raw memories or write rows.
 
 from __future__ import annotations
 
+import hashlib
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any, Iterable
@@ -230,6 +231,9 @@ def _review_due_at(row: GraphRow, *, days: int) -> str | None:
 
 
 def _conflict_key(row: GraphRow, *, object_type: str) -> str | None:
+    semantic_key = _semantic_conflict_key(row, object_type=object_type)
+    if semantic_key:
+        return semantic_key
     if object_type == "node":
         node_type = str(row.get("node_type") or "").strip().casefold()
         label_key = (
@@ -250,27 +254,83 @@ def _conflict_key(row: GraphRow, *, object_type: str) -> str | None:
 
 
 def _superseded_node_candidates(rows: list[GraphRow]) -> int:
-    groups: dict[tuple[str, str], list[GraphRow]] = defaultdict(list)
+    groups: dict[str, list[GraphRow]] = defaultdict(list)
     for row in rows:
-        node_type = str(row.get("node_type") or "other")
-        label_key = str(
-            row.get("label_hash") or row.get("label_preview") or row.get("id") or ""
-        )
-        groups[(node_type, label_key.casefold())].append(row)
+        groups[_node_group_key(row)].append(row)
     return sum(max(0, len(group) - 1) for group in groups.values() if len(group) > 1)
 
 
 def _superseded_edge_candidates(rows: list[GraphRow]) -> int:
-    groups: dict[tuple[str, str, str], list[GraphRow]] = defaultdict(list)
+    groups: dict[str, list[GraphRow]] = defaultdict(list)
     for row in rows:
-        groups[
-            (
-                str(row.get("from_node_id") or ""),
-                str(row.get("to_node_id") or ""),
-                str(row.get("edge_type") or "related_to"),
-            )
-        ].append(row)
+        groups[_edge_group_key(row)].append(row)
     return sum(max(0, len(group) - 1) for group in groups.values() if len(group) > 1)
+
+
+def _semantic_conflict_key(row: GraphRow, *, object_type: str) -> str | None:
+    properties = row.get("properties") if isinstance(row.get("properties"), dict) else {}
+    explicit_key = _clean_key_part(properties.get("conflict_group_key"))
+    if explicit_key:
+        return f"{object_type}:{explicit_key}"
+    entity_keys = _string_list(properties.get("entity_keys"))
+    if not entity_keys:
+        entity_keys = [_entity_key(value) for value in _string_list(properties.get("relationship_subjects"))]
+    if not entity_keys:
+        return None
+    graph_kind = _clean_key_part(properties.get("graph_kind")) or _clean_key_part(row.get("edge_type")) or "related"
+    temporal_kind = _clean_key_part(properties.get("temporal_kind")) or "state"
+    subject_key = "|".join(sorted(_canonical_entity_key(key) for key in entity_keys))
+    return f"{object_type}:{graph_kind}:{temporal_kind}:{subject_key}"
+
+
+def _node_group_key(row: GraphRow) -> str:
+    semantic_key = _semantic_conflict_key(row, object_type="node")
+    if semantic_key:
+        return semantic_key
+    node_type = str(row.get("node_type") or "other").casefold()
+    label_key = str(row.get("label_hash") or row.get("label_preview") or row.get("id") or "")
+    return f"node:{node_type}:{label_key.casefold()}"
+
+
+def _edge_group_key(row: GraphRow) -> str:
+    semantic_key = _semantic_conflict_key(row, object_type="edge")
+    if semantic_key:
+        return semantic_key
+    from_id = str(row.get("from_node_id") or "")
+    to_id = str(row.get("to_node_id") or "")
+    edge_type = str(row.get("edge_type") or "related_to")
+    return f"edge:{from_id}:{to_id}:{edge_type.casefold()}"
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list | tuple):
+        return []
+    items: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip():
+            items.append(item.strip())
+    return items
+
+
+def _entity_key(value: str) -> str:
+    normalized = _clean_key_part(value)
+    if not normalized:
+        return ""
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"person:{normalized}:{digest}"
+
+
+def _canonical_entity_key(value: str) -> str:
+    parts = value.split(":")
+    if len(parts) >= 2 and parts[0] == "person" and parts[1]:
+        return f"person:{parts[1]}"
+    return value
+
+
+def _clean_key_part(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return "_".join(value.strip().casefold().split())
 
 
 def _activity_at(row: GraphRow) -> datetime | None:

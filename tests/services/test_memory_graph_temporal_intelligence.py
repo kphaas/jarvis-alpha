@@ -106,6 +106,47 @@ def test_summarize_temporal_graph_rows_flags_superseded_candidates() -> None:
     assert summary["conflict_candidates"] == 2
 
 
+def test_temporal_graph_groups_relationship_conflicts_by_entity_keys() -> None:
+    now = datetime(2026, 6, 25, tzinfo=UTC)
+    nodes = [
+        {
+            "id": "trip-1",
+            "node_type": "project",
+            "label_hash": "hash-a",
+            "label_preview": "Ken and Sweta are planning Seattle",
+            "properties": {
+                "entity_keys": ["person:ken:1", "person:sweta:2"],
+                "graph_kind": "planning_trip",
+                "temporal_kind": "planned_event",
+            },
+            "updated_at": "2026-06-20T00:00:00Z",
+        },
+        {
+            "id": "trip-2",
+            "node_type": "project",
+            "label_hash": "hash-b",
+            "label_preview": "Sweta and Ken changed the trip",
+            "properties": {
+                "relationship_subjects": ["sweta", "ken"],
+                "graph_kind": "planning_trip",
+                "temporal_kind": "planned_event",
+            },
+            "updated_at": "2026-06-24T00:00:00Z",
+        },
+    ]
+
+    first = classify_temporal_graph_row(nodes[0], object_type="node", now=now)
+    second = classify_temporal_graph_row(nodes[1], object_type="node", now=now)
+    summary = summarize_temporal_graph_rows(nodes=nodes, edges=[], now=now)
+
+    assert first["conflict_key"] == second["conflict_key"]
+    assert str(first["conflict_key"]).startswith(
+        "node:planning_trip:planned_event:"
+    )
+    assert summary["superseded_node_candidates"] == 1
+    assert summary["conflict_candidates"] == 1
+
+
 def test_classify_temporal_graph_row_marks_retrieval_currentness() -> None:
     now = datetime(2026, 6, 25, tzinfo=UTC)
 
