@@ -126,7 +126,10 @@ def test_spark_graph_trip_learning_sets_refresh_and_currentness_metadata() -> No
     [
         ("I often say fair enough.", "fair enough"),
         ("My key phrase is sounds good to me.", "sounds good to me"),
-        ("A phrase I use is ship it when the smoke passes.", "ship it when the smoke passes"),
+        (
+            "A phrase I use is ship it when the smoke passes.",
+            "ship it when the smoke passes",
+        ),
     ],
 )
 def test_spark_learning_extracts_natural_signature_phrases(
