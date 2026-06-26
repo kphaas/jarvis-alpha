@@ -267,8 +267,9 @@ def _superseded_edge_candidates(rows: list[GraphRow]) -> int:
 
 
 def _semantic_conflict_key(row: GraphRow, *, object_type: str) -> str | None:
-    properties = (
-        row.get("properties") if isinstance(row.get("properties"), dict) else {}
+    raw_properties = row.get("properties")
+    properties: dict[Any, Any] = (
+        raw_properties if isinstance(raw_properties, dict) else {}
     )
     explicit_key = _clean_key_part(properties.get("conflict_group_key"))
     if explicit_key:

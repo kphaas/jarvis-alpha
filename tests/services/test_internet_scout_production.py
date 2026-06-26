@@ -119,6 +119,8 @@ class FakeConn:
             return args[0]
         if "to_regprocedure" in query:
             return args[0]
+        if "alpha_internet_web_cache" in query and "expires_at <= NOW()" in query:
+            return self.counts.get("alpha_internet_web_cache", 0)
         for table, count in self.counts.items():
             if f"public.{table}" in query:
                 return count
@@ -250,6 +252,7 @@ async def test_retention_report_counts_old_rows_and_screenshots(
                 "alpha_internet_evidence": 6,
                 "alpha_internet_tool_events": 7,
                 "alpha_internet_memory_promotions": 8,
+                "alpha_internet_web_cache": 9,
             }
         )
     )
@@ -259,6 +262,7 @@ async def test_retention_report_counts_old_rows_and_screenshots(
     assert report.old_request_count == 4
     assert report.old_event_count == 7
     assert report.old_memory_promotion_count == 8
+    assert report.expired_web_cache_entry_count == 9
     assert report.screenshot_file_count == 1
     assert report.screenshot_bytes == 3
 
@@ -296,7 +300,9 @@ async def test_retention_delete_removes_expired_rows_when_enabled(monkeypatch):
             "alpha_internet_sources": 3,
             "alpha_internet_tool_events": 4,
             "alpha_internet_requests": 1,
+            "alpha_internet_web_cache": 5,
         },
+        counts={"alpha_internet_web_cache": 5},
     )
 
     response = await delete_expired_evidence(
@@ -315,6 +321,8 @@ async def test_retention_delete_removes_expired_rows_when_enabled(monkeypatch):
     assert response.deleted_source_count == 3
     assert response.deleted_event_count == 4
     assert response.deleted_request_count == 1
+    assert response.candidate_web_cache_entry_count == 5
+    assert response.deleted_web_cache_entry_count == 5
     assert "app.beacon_retention_cleanup" in conn.executed[0][0]
 
 

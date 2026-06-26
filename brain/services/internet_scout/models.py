@@ -603,6 +603,7 @@ class InternetScoutRetentionReport(BaseModel):
     old_evidence_count: int = 0
     old_event_count: int = 0
     old_memory_promotion_count: int = 0
+    expired_web_cache_entry_count: int = 0
     screenshot_file_count: int = 0
     screenshot_bytes: int = 0
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -627,6 +628,8 @@ class InternetScoutRetentionDeleteResponse(BaseModel):
     deleted_evidence_count: int = 0
     deleted_event_count: int = 0
     deleted_memory_promotion_count: int = 0
+    candidate_web_cache_entry_count: int = 0
+    deleted_web_cache_entry_count: int = 0
     candidate_screenshot_file_count: int = 0
     candidate_screenshot_bytes: int = 0
     deleted_screenshot_file_count: int = 0

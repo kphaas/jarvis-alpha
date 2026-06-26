@@ -18,6 +18,14 @@ MEMORY_PROMOTION_MIGRATION_PATH = (
     / "20260606_120000_beacon_memory_promotion.sql"
 )
 MEMORY_PROMOTION_SQL = MEMORY_PROMOTION_MIGRATION_PATH.read_text(encoding="utf-8")
+WEB_CACHE_RETENTION_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260626_160000_beacon_web_cache_retention_cleanup.sql"
+)
+WEB_CACHE_RETENTION_SQL = WEB_CACHE_RETENTION_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def test_beacon_migration_creates_expected_tables():
@@ -89,3 +97,13 @@ def test_beacon_memory_promotion_function_is_secdef_and_bounded():
     )
     assert "char_length(p_fact) > 500" in MEMORY_PROMOTION_SQL
     assert "source_content_hash" in MEMORY_PROMOTION_SQL
+
+
+def test_beacon_web_cache_retention_migration_grants_delete_only_for_cleanup():
+    assert "GRANT DELETE ON public.alpha_internet_web_cache" in (
+        WEB_CACHE_RETENTION_SQL
+    )
+    assert "REVOKE DELETE ON public.alpha_internet_web_cache" in (
+        WEB_CACHE_RETENTION_SQL
+    )
+    assert "pg_advisory_xact_lock(20260626160000)" in WEB_CACHE_RETENTION_SQL
