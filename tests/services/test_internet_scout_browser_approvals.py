@@ -56,17 +56,28 @@ def test_browser_task_preview_is_redacted_and_reviewable():
     payload = preview.model_dump(mode="json")
 
     assert payload["kind"] == "beacon_browser_use"
+    assert payload["approval_contract_version"] == 2
     assert payload["requires_human_approval"] is True
     assert payload["has_query"] is True
     assert payload["url_count"] == 1
     assert payload["max_pages"] == 2
+    assert payload["allowed_hosts"] == ["public.example.test"]
+    assert payload["url_hashes"][0].startswith("sha256:")
     assert payload["same_host_required"] is True
     assert payload["screenshots_required"] is True
+    assert payload["screenshot_policy"] == {
+        "before_navigation_required": False,
+        "after_observation_required": True,
+        "screenshots_available_after_run": True,
+        "screenshot_refs_redacted_until_execution": True,
+    }
+    assert "no_credentials" in payload["risk_labels"]
+    assert payload["action_timeline"][0]["step"] == "review_request"
     assert payload["raw_task_text_included"] is False
     assert payload["raw_web_content_is_untrusted"] is True
     assert len(payload["approval_hash_prefix"]) == 12
     assert "7pm" not in str(payload)
-    assert "public.example.test" not in str(payload)
+    assert "https://public.example.test/reserve" not in str(payload)
 
 
 @pytest.mark.asyncio

@@ -610,6 +610,11 @@
           "title": "Case Groups",
           "type": "object"
         },
+        "expected_interval_hours": {
+          "default": 24,
+          "title": "Expected Interval Hours",
+          "type": "integer"
+        },
         "failed": {
           "default": 0,
           "title": "Failed",
@@ -634,6 +639,18 @@
           "default": null,
           "title": "Last Run At"
         },
+        "next_due_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Due At"
+        },
         "passed": {
           "default": 0,
           "title": "Passed",
@@ -650,6 +667,11 @@
           ],
           "default": null,
           "title": "Request Id"
+        },
+        "schedule_status": {
+          "default": "unknown",
+          "title": "Schedule Status",
+          "type": "string"
         },
         "status": {
           "default": "unknown",
@@ -692,6 +714,11 @@
           "title": "Case Groups",
           "type": "object"
         },
+        "expected_interval_hours": {
+          "default": 24,
+          "title": "Expected Interval Hours",
+          "type": "integer"
+        },
         "failed": {
           "default": 0,
           "title": "Failed",
@@ -723,6 +750,18 @@
           "default": null,
           "title": "Last Run At"
         },
+        "next_due_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Due At"
+        },
         "passed": {
           "default": 0,
           "title": "Passed",
@@ -739,6 +778,11 @@
           ],
           "default": null,
           "title": "Request Id"
+        },
+        "schedule_status": {
+          "default": "unknown",
+          "title": "Schedule Status",
+          "type": "string"
         },
         "stale_after_hours": {
           "default": 0,
@@ -838,6 +882,86 @@
       "title": "HelmBeaconSourceQualitySummary",
       "type": "object"
     },
+    "HelmBeaconWebCacheSummary": {
+      "properties": {
+        "active_entry_count": {
+          "default": 0,
+          "title": "Active Entry Count",
+          "type": "integer"
+        },
+        "expired_entry_count": {
+          "default": 0,
+          "title": "Expired Entry Count",
+          "type": "integer"
+        },
+        "index": {
+          "default": "search_terms_gin",
+          "title": "Index",
+          "type": "string"
+        },
+        "last_hit_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Hit At"
+        },
+        "last_seen_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Seen At"
+        },
+        "mode": {
+          "default": "durable_public_web_cache",
+          "title": "Mode",
+          "type": "string"
+        },
+        "raw_user_query_stored": {
+          "default": false,
+          "title": "Raw User Query Stored",
+          "type": "boolean"
+        },
+        "raw_web_content_is_untrusted": {
+          "default": true,
+          "title": "Raw Web Content Is Untrusted",
+          "type": "boolean"
+        },
+        "rerank": {
+          "default": "local_quality_term_rerank",
+          "title": "Rerank",
+          "type": "string"
+        },
+        "status": {
+          "default": "unknown",
+          "title": "Status",
+          "type": "string"
+        },
+        "total_hit_count": {
+          "default": 0,
+          "title": "Total Hit Count",
+          "type": "integer"
+        },
+        "ttl_hours": {
+          "default": 0,
+          "title": "Ttl Hours",
+          "type": "integer"
+        }
+      },
+      "title": "HelmBeaconWebCacheSummary",
+      "type": "object"
+    },
     "HelmBeaconWebSuggestionSummary": {
       "properties": {
         "acceptance_rate_percent": {
@@ -920,6 +1044,9 @@
     "status": {
       "title": "Status",
       "type": "string"
+    },
+    "web_cache": {
+      "$ref": "#/$defs/HelmBeaconWebCacheSummary"
     }
   },
   "required": [

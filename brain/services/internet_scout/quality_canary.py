@@ -15,6 +15,7 @@ from brain.services.internet_scout.search_quality_evals import (
 
 BEACON_QUALITY_CANARY_REQUESTER = "alpha_beacon.quality_canary"
 BEACON_QUALITY_CANARY_QUERY = "Beacon deterministic search quality canary"
+BEACON_QUALITY_CANARY_EXPECTED_INTERVAL_HOURS = 24
 
 
 async def run_quality_canary_once(conn) -> dict[str, object]:
@@ -63,6 +64,12 @@ def _quality_canary_metadata(
         "failed": len(failed),
         "failure_names": [result.name for result in failed[:20]],
         "case_groups": _group_summary(results),
+        "scheduled_eval": {
+            "runner": "scripts/run_beacon_quality_canary.py",
+            "launch_script": "scripts/start_alpha_beacon_quality_canary.sh",
+            "expected_interval_hours": BEACON_QUALITY_CANARY_EXPECTED_INTERVAL_HOURS,
+            "alert_status_surface": "/v1/internet-scout/health",
+        },
         "failures": [
             {
                 "name": result.name,

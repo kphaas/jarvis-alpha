@@ -85,6 +85,25 @@ Retention inventory:
 - `BEACON_EVIDENCE_RETENTION_DAYS`, default 90
 - `BEACON_BROWSER_SCREENSHOT_RETENTION_DAYS`, default 30
 
+Scheduled quality canary:
+
+- Launch script: `scripts/start_alpha_beacon_quality_canary.sh`
+- Runner: `scripts/run_beacon_quality_canary.py`
+- Expected cadence: `BEACON_QUALITY_CANARY_EXPECTED_INTERVAL_HOURS`, default 24
+- Stale threshold: `BEACON_QUALITY_CANARY_STALE_AFTER_HOURS`, default 26
+- Status surface: `checks.quality_canary` and
+  `checks.recent_evidence.metadata.quality_canary`
+
+Durable web cache:
+
+- Table: `public.alpha_internet_web_cache`
+- TTL: 168 hours for cached public citation excerpts
+- Index: GIN on `search_terms`
+- Rerank: local quality/term rerank before exposing cache hits
+- Stored content: public citation excerpts, URL key, host, title, content hash,
+  indexed terms, timestamps, and hit counts
+- Not stored: raw user query text, credentials, tokens, or browser task text
+
 Retention deletion:
 
 - Default is safe inventory only.
@@ -122,6 +141,8 @@ Expected:
 - `checks.gateway.metadata.usable_provider_count` is greater than or equal to
   `checks.gateway.metadata.required_provider_count`.
 - `checks.browser_runtime.ok` is true when browser execution is expected.
+- `checks.web_cache.ok` is true. `checks.web_cache.status` may be `warning`
+  when the cache is cold; that is not a readiness blocker.
 - `retention.mode` is `report_only`.
 - `checks.recent_evidence` is diagnostic. A recent failed request should be
   investigated, but it does not block readiness when the core dependency checks
@@ -131,7 +152,10 @@ Expected:
   citation and prompt-injection counts. These are diagnostics; repeated
   `insufficient` events indicate provider ranking or source-quality issues.
 - `checks.recent_evidence.metadata.quality_canary` reports the last scheduled
-  deterministic canary result when available.
+  deterministic canary result, `next_due_at`, `schedule_status`, and alert
+  reason when available.
+- `checks.web_cache.metadata` reports active/expired cache rows, hit count,
+  last hit/seen timestamps, TTL, index mode, and rerank mode.
 
 Dry-run retention cleanup:
 

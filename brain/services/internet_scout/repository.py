@@ -9,6 +9,7 @@ from uuid import UUID
 
 from brain.services.internet_scout.models import (
     EvidenceClaim,
+    GatewayExtractResponse,
     InternetEvidencePacket,
     InternetScoutMemoryPromotion,
     InternetScoutMemoryPromotionCandidate,
@@ -21,6 +22,16 @@ from brain.services.internet_scout.memory_promotions import (
     validate_memory_promotion_candidate,
 )
 from brain.services.internet_scout.sanitizer import sanitize_untrusted_text
+from brain.services.internet_scout.web_cache import (
+    DEFAULT_WEB_CACHE_TTL_HOURS,
+    MAX_CACHE_LOOKUP_CANDIDATES,
+    RankedWebCacheEntry,
+    WebCacheEntry,
+    cache_excerpt,
+    cache_search_terms,
+    cache_url_key,
+    rank_web_cache_entries,
+)
 
 JsonObject = dict[str, object]
 
@@ -77,6 +88,7 @@ class InternetScoutRepository:
             if source_id is None:
                 continue
             await self._insert_evidence(request_id, source_id, claim)
+        await self.upsert_web_cache_entries(request_id=request_id, packet=packet)
 
     async def record_tool_event(
         self,
@@ -143,6 +155,138 @@ class InternetScoutRepository:
             user_id,
         )
         return int(value or 0)
+
+    async def upsert_web_cache_entries(
+        self,
+        *,
+        request_id: UUID,
+        packet: InternetEvidencePacket,
+    ) -> int:
+        """Persist reusable public-web snippets without storing raw user queries."""
+
+        claims_by_source_url: dict[str, EvidenceClaim] = {}
+        for claim in packet.claims:
+            claims_by_source_url.setdefault(claim.source_url, claim)
+
+        stored = 0
+        for source in packet.sources:
+            source_claim = claims_by_source_url.get(source.url)
+            excerpt = cache_excerpt(
+                source_claim.citation_text if source_claim else source.title or ""
+            )
+            if not excerpt:
+                continue
+            search_terms = cache_search_terms(source.host, source.title or "", excerpt)
+            if not search_terms:
+                continue
+            await self.conn.execute(
+                """
+                INSERT INTO public.alpha_internet_web_cache (
+                    url_key, url, host, title, content_hash, excerpt,
+                    search_terms, fetched_at, expires_at, source_request_id
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5, $6, $7::text[], $8,
+                    NOW() + ($9::integer * INTERVAL '1 hour'), $10
+                )
+                ON CONFLICT (url_key) DO UPDATE
+                   SET url = EXCLUDED.url,
+                       host = EXCLUDED.host,
+                       title = EXCLUDED.title,
+                       content_hash = EXCLUDED.content_hash,
+                       excerpt = EXCLUDED.excerpt,
+                       search_terms = EXCLUDED.search_terms,
+                       fetched_at = EXCLUDED.fetched_at,
+                       expires_at = EXCLUDED.expires_at,
+                       source_request_id = EXCLUDED.source_request_id,
+                       last_seen_at = NOW(),
+                       updated_at = NOW()
+                """,
+                cache_url_key(source.url),
+                source.url,
+                source.host,
+                source.title,
+                source.content_hash,
+                excerpt,
+                list(search_terms),
+                source.fetched_at,
+                DEFAULT_WEB_CACHE_TTL_HOURS,
+                request_id,
+            )
+            stored += 1
+        return stored
+
+    async def load_ranked_web_cache(
+        self,
+        *,
+        query: str | None,
+        max_results: int = 5,
+    ) -> list[RankedWebCacheEntry]:
+        query_terms = cache_search_terms(query or "")
+        if not query_terms or max_results <= 0:
+            return []
+        rows = await self.conn.fetch(
+            """
+            SELECT id, url, host, title, content_hash, excerpt, search_terms,
+                   fetched_at, expires_at, access_count
+            FROM public.alpha_internet_web_cache
+            WHERE expires_at > NOW()
+              AND search_terms && $1::text[]
+            ORDER BY fetched_at DESC, last_seen_at DESC
+            LIMIT $2
+            """,
+            list(query_terms),
+            min(MAX_CACHE_LOOKUP_CANDIDATES, max(max_results * 5, max_results)),
+        )
+        entries = [_web_cache_entry_from_row(row) for row in rows]
+        ranked = rank_web_cache_entries(
+            query=query,
+            entries=entries,
+            max_results=max_results,
+        )
+        await self.record_web_cache_hits([item.entry.id for item in ranked])
+        return ranked
+
+    async def record_web_cache_hits(self, entry_ids: list[UUID]) -> None:
+        if not entry_ids:
+            return
+        await self.conn.execute(
+            """
+            UPDATE public.alpha_internet_web_cache
+               SET access_count = access_count + 1,
+                   last_accessed_at = NOW(),
+                   updated_at = NOW()
+             WHERE id = ANY($1::uuid[])
+            """,
+            entry_ids,
+        )
+
+    async def web_cache_extract_response(
+        self,
+        *,
+        url: str,
+        query: str | None,
+    ) -> GatewayExtractResponse | None:
+        ranked = await self.load_ranked_web_cache(query=query, max_results=10)
+        url_key = cache_url_key(url)
+        for item in ranked:
+            if cache_url_key(item.entry.url) != url_key:
+                continue
+            return GatewayExtractResponse(
+                url=item.entry.url,
+                host=item.entry.host,
+                status_code=200,
+                content_type="text/plain",
+                content_hash=item.entry.content_hash,
+                fetched_at=item.entry.fetched_at,
+                extracted_text=item.entry.excerpt,
+                extractor="beacon_web_cache",
+                extraction_fallback=False,
+                truncated=True,
+                risk_markers=["web_cache_hit", "raw_web_content_is_untrusted"],
+                redirect_chain=[item.entry.url],
+            )
+        return None
 
     async def load_packet(self, request_id: UUID) -> InternetEvidencePacket | None:
         request_row = await self.conn.fetchrow(
@@ -432,6 +576,22 @@ def _sensitivity_json(value: object) -> Sensitivity:
     if value in {"normal", "privacy", "legal", "financial", "minor"}:
         return cast(Sensitivity, value)
     return "normal"
+
+
+def _web_cache_entry_from_row(row: Any) -> WebCacheEntry:
+    search_terms = row["search_terms"]
+    return WebCacheEntry(
+        id=row["id"],
+        url=row["url"],
+        host=row["host"],
+        title=row["title"],
+        content_hash=row["content_hash"],
+        excerpt=row["excerpt"],
+        search_terms=tuple(str(item) for item in search_terms or []),
+        fetched_at=row["fetched_at"],
+        expires_at=row["expires_at"],
+        access_count=_int_json(row["access_count"], default=0),
+    )
 
 
 def _promotion_from_row(row: Any) -> InternetScoutMemoryPromotion:

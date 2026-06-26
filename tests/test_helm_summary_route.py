@@ -225,6 +225,15 @@ def _fake_beacon_summary() -> helm.HelmBeaconSummary:
             rejected_citation_count=2,
             prompt_injection_rejection_count=1,
         ),
+        web_cache=helm.HelmBeaconWebCacheSummary(
+            status="ok",
+            ttl_hours=168,
+            active_entry_count=4,
+            expired_entry_count=1,
+            total_hit_count=7,
+            last_hit_at=datetime(2026, 6, 12, 18, 55, tzinfo=UTC).isoformat(),
+            last_seen_at=datetime(2026, 6, 12, 18, 58, tzinfo=UTC).isoformat(),
+        ),
         retention=helm.HelmBeaconRetentionSummary(
             mode="report_only",
             evidence_retention_days=30,
@@ -251,6 +260,9 @@ def _fake_beacon_summary() -> helm.HelmBeaconSummary:
             case_groups=_quality_canary_case_groups(),
             last_run_at=datetime(2026, 6, 12, 19, 0, tzinfo=UTC).isoformat(),
             age_hours=0,
+            expected_interval_hours=24,
+            next_due_at=datetime(2026, 6, 13, 19, 0, tzinfo=UTC).isoformat(),
+            schedule_status="ok",
             stale_after_hours=26,
             alert=helm.HelmBeaconQualityCanaryAlert(
                 status="ok",
@@ -340,6 +352,7 @@ async def test_helm_summary_returns_redacted_counts(monkeypatch) -> None:
         "accepted_after_confirmation": 2,
     }
     assert payload["beacon"]["quality_canary"]["case_count"] == 34
+    assert payload["beacon"]["quality_canary"]["schedule_status"] == "ok"
     assert payload["beacon"]["quality_canary"]["case_groups"]["daily_use"] == {
         "case_count": 4,
         "passed": 4,
@@ -348,6 +361,8 @@ async def test_helm_summary_returns_redacted_counts(monkeypatch) -> None:
         "case_names": [],
     }
     assert payload["beacon"]["quality_canary"]["failed"] == 0
+    assert payload["beacon"]["web_cache"]["active_entry_count"] == 4
+    assert payload["beacon"]["web_cache"]["raw_user_query_stored"] is False
     assert payload["beacon"]["raw_web_content_is_untrusted"] is True
     assert "description" not in str(payload)
     assert "actor_sub" not in str(payload)
@@ -474,6 +489,11 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
                             "case_groups": _quality_canary_case_groups(),
                             "last_run_at": checked_at.isoformat(),
                             "age_hours": 0,
+                            "expected_interval_hours": 24,
+                            "next_due_at": (
+                                checked_at + timedelta(hours=24)
+                            ).isoformat(),
+                            "schedule_status": "ok",
                             "stale_after_hours": 26,
                             "alert": {
                                 "status": "ok",
@@ -494,8 +514,31 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
                                 "case_groups": _quality_canary_case_groups(),
                                 "last_run_at": checked_at.isoformat(),
                                 "age_hours": 0,
+                                "expected_interval_hours": 24,
+                                "next_due_at": (
+                                    checked_at + timedelta(hours=24)
+                                ).isoformat(),
+                                "schedule_status": "ok",
                             }
                         ],
+                    },
+                ),
+                "web_cache": InternetScoutHealthCheck(
+                    ok=True,
+                    status="ok",
+                    detail="Beacon web cache is ready.",
+                    metadata={
+                        "mode": "durable_public_web_cache",
+                        "ttl_hours": 168,
+                        "active_entry_count": 4,
+                        "expired_entry_count": 1,
+                        "total_hit_count": 7,
+                        "last_hit_at": checked_at.isoformat(),
+                        "last_seen_at": checked_at.isoformat(),
+                        "raw_user_query_stored": False,
+                        "raw_web_content_is_untrusted": True,
+                        "index": "search_terms_gin",
+                        "rerank": "local_quality_term_rerank",
                     },
                 ),
             },
@@ -584,6 +627,20 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
         "rejected_citation_count": 3,
         "prompt_injection_rejection_count": 1,
     }
+    assert payload["web_cache"] == {
+        "status": "ok",
+        "mode": "durable_public_web_cache",
+        "ttl_hours": 168,
+        "active_entry_count": 4,
+        "expired_entry_count": 1,
+        "total_hit_count": 7,
+        "last_hit_at": checked_at.isoformat(),
+        "last_seen_at": checked_at.isoformat(),
+        "raw_user_query_stored": False,
+        "raw_web_content_is_untrusted": True,
+        "index": "search_terms_gin",
+        "rerank": "local_quality_term_rerank",
+    }
     assert payload["approvals"] == {
         "pending_browser_approvals": 2,
         "next_expires_at": expires_at.isoformat(),
@@ -606,6 +663,9 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
         "request_id": "request-canary",
         "last_run_at": checked_at.isoformat(),
         "age_hours": 0,
+        "expected_interval_hours": 24,
+        "next_due_at": (checked_at + timedelta(hours=24)).isoformat(),
+        "schedule_status": "ok",
         "stale_after_hours": 26,
         "alert": {
             "status": "ok",
@@ -625,6 +685,9 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
                 "request_id": "request-canary",
                 "last_run_at": checked_at.isoformat(),
                 "age_hours": 0,
+                "expected_interval_hours": 24,
+                "next_due_at": (checked_at + timedelta(hours=24)).isoformat(),
+                "schedule_status": "ok",
             }
         ],
     }
