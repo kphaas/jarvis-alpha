@@ -103,6 +103,8 @@ Durable web cache:
 - Stored content: public citation excerpts, URL key, host, title, content hash,
   indexed terms, timestamps, and hit counts
 - Not stored: raw user query text, credentials, tokens, or browser task text
+- Expired rows are counted in the retention report and pruned by the reviewed
+  retention cleanup path when deletion is enabled.
 
 Retention deletion:
 
@@ -113,6 +115,8 @@ Retention deletion:
   - `dry_run: false`
   - `BEACON_RETENTION_DELETE_ENABLED=true`
 - Screenshot deletion only runs when `include_screenshots: true`.
+- Expired web-cache deletion runs with the same admin, confirm, dry-run, and env
+  gates as evidence deletion.
 - Do not enable deletion until the operator has reviewed the dry-run counts.
 
 ## Health Checks

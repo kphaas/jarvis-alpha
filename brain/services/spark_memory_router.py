@@ -236,6 +236,18 @@ def _graph_node_payload(
 ) -> dict[str, Any]:
     people = _extract_people(note)
     entity_resolution = _entity_resolution_metadata(note, people)
+    raw_entity_keys = entity_resolution.get("entity_keys")
+    entity_keys = (
+        [key for key in raw_entity_keys if isinstance(key, str)]
+        if isinstance(raw_entity_keys, list)
+        else []
+    )
+    raw_unresolved_people = entity_resolution.get("unresolved_people")
+    unresolved_people = (
+        [person for person in raw_unresolved_people if isinstance(person, str)]
+        if isinstance(raw_unresolved_people, list)
+        else []
+    )
     projects = _extract_projects(note)
     locations = _extract_locations(note)
     graph_kind = _graph_relationship_kind(note)
@@ -258,16 +270,14 @@ def _graph_node_payload(
             "people": people,
             "relationship_subjects": people,
             "entity_resolution": entity_resolution,
-            "entity_keys": entity_resolution["entity_keys"],
-            "unresolved_entities": entity_resolution["unresolved_people"],
-            "needs_operator_entity_resolution": bool(
-                entity_resolution["unresolved_people"]
-            ),
+            "entity_keys": entity_keys,
+            "unresolved_entities": unresolved_people,
+            "needs_operator_entity_resolution": bool(unresolved_people),
             "conflict_group_key": _conflict_group_key(
                 node_type=node_type,
                 graph_kind=graph_kind,
                 temporal_kind=temporal_kind,
-                entity_keys=entity_resolution["entity_keys"],
+                entity_keys=entity_keys,
             ),
             "projects": projects,
             "locations": locations,

@@ -68,6 +68,7 @@ async def build_retention_report(conn) -> InternetScoutRetentionReport:
             created_column="created_at",
             retention_days=evidence_days,
         ),
+        expired_web_cache_entry_count=await _expired_web_cache_count(conn),
         screenshot_file_count=screenshot_count,
         screenshot_bytes=screenshot_bytes,
     )
@@ -98,6 +99,7 @@ async def delete_expired_evidence(
         retention_days=evidence_days,
         max_rows=request.max_request_rows,
     )
+    web_cache_count = await _expired_web_cache_count(conn)
     enabled = _retention_delete_enabled()
     dry_run = request.dry_run or not enabled
     mode = (
@@ -110,6 +112,7 @@ async def delete_expired_evidence(
         evidence_retention_days=evidence_days,
         screenshot_retention_days=screenshot_days,
         candidate_request_count=len(request_ids),
+        candidate_web_cache_entry_count=web_cache_count,
         candidate_screenshot_file_count=screenshot_count
         if request.include_screenshots
         else 0,
@@ -117,33 +120,38 @@ async def delete_expired_evidence(
         if request.include_screenshots
         else 0,
     )
-    if dry_run or not request_ids:
+    has_screenshot_candidates = request.include_screenshots and screenshot_count > 0
+    if dry_run or (
+        not request_ids and web_cache_count == 0 and not has_screenshot_candidates
+    ):
         return response
 
     await conn.execute(
         "SELECT set_config('app.beacon_retention_cleanup', 'true', true)"
     )
-    response.deleted_memory_promotion_count = await _delete_request_children(
-        conn,
-        table="alpha_internet_memory_promotions",
-        request_ids=request_ids,
-    )
-    response.deleted_evidence_count = await _delete_request_children(
-        conn,
-        table="alpha_internet_evidence",
-        request_ids=request_ids,
-    )
-    response.deleted_source_count = await _delete_request_children(
-        conn,
-        table="alpha_internet_sources",
-        request_ids=request_ids,
-    )
-    response.deleted_event_count = await _delete_request_children(
-        conn,
-        table="alpha_internet_tool_events",
-        request_ids=request_ids,
-    )
-    response.deleted_request_count = await _delete_requests(conn, request_ids)
+    if request_ids:
+        response.deleted_memory_promotion_count = await _delete_request_children(
+            conn,
+            table="alpha_internet_memory_promotions",
+            request_ids=request_ids,
+        )
+        response.deleted_evidence_count = await _delete_request_children(
+            conn,
+            table="alpha_internet_evidence",
+            request_ids=request_ids,
+        )
+        response.deleted_source_count = await _delete_request_children(
+            conn,
+            table="alpha_internet_sources",
+            request_ids=request_ids,
+        )
+        response.deleted_event_count = await _delete_request_children(
+            conn,
+            table="alpha_internet_tool_events",
+            request_ids=request_ids,
+        )
+        response.deleted_request_count = await _delete_requests(conn, request_ids)
+    response.deleted_web_cache_entry_count = await _delete_expired_web_cache(conn)
     if request.include_screenshots:
         deleted_screenshots, deleted_bytes = _delete_expired_screenshots(
             retention_days=screenshot_days
@@ -173,6 +181,31 @@ async def _expired_request_ids(
         max_rows,
     )
     return [row["id"] for row in rows]
+
+
+async def _expired_web_cache_count(conn) -> int:
+    if not await _table_exists(conn, "alpha_internet_web_cache"):
+        return 0
+    value = await conn.fetchval(
+        """
+        SELECT COUNT(*)
+        FROM public.alpha_internet_web_cache
+        WHERE expires_at <= NOW()
+        """
+    )
+    return int(value or 0)
+
+
+async def _delete_expired_web_cache(conn) -> int:
+    if not await _table_exists(conn, "alpha_internet_web_cache"):
+        return 0
+    result = await conn.execute(
+        """
+        DELETE FROM public.alpha_internet_web_cache
+        WHERE expires_at <= NOW()
+        """
+    )
+    return _command_count(result)
 
 
 async def _delete_request_children(
