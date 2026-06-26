@@ -74,6 +74,15 @@ def test_spark_learning_examples_route_to_reviewable_memory_lanes(
             "ken",
             "sweta",
         ]
+        assert len(plan.graph_payload["properties"]["entity_keys"]) == 2
+        assert plan.graph_payload["properties"]["entity_resolution"][
+            "known_people"
+        ] == ["ken", "sweta"]
+        assert (
+            plan.graph_payload["properties"]["needs_operator_entity_resolution"]
+            is False
+        )
+        assert plan.graph_payload["properties"]["conflict_group_key"]
         assert plan.graph_payload["properties"]["temporal_memory"] is True
         assert plan.graph_payload["properties"]["requires_operator_resolution"] is True
         assert plan.graph_payload["properties"]["candidate_relationship"] in {
@@ -102,6 +111,7 @@ def test_spark_graph_trip_learning_sets_refresh_and_currentness_metadata() -> No
     assert properties["currentness_policy"] == "candidate_current"
     assert properties["refresh_prompt_after_days"] == 30
     assert properties["locations"] == ["Seattle"]
+    assert properties["people"] == ["ken", "sweta"]
     assert plan.extracted_locations == ("Seattle",)
     assert properties["extraction_tags"] == [
         "temporal_graph",
@@ -143,6 +153,27 @@ def test_spark_graph_project_learning_extracts_project_metadata() -> None:
         "location_count": 0,
         "temporal_kind": "project_state",
     }
+
+
+def test_spark_graph_learning_routes_unknown_people_to_entity_resolution_review() -> (
+    None
+):
+    plan = plan_spark_memory_route(
+        note="Alex and Ken are planning a trip to Austin.",
+        principal_id="ken",
+    )
+
+    assert plan.destination == "temporal_graph"
+    assert plan.extracted_entities == ("ken", "alex")
+    assert plan.graph_payload is not None
+    properties = plan.graph_payload["properties"]
+    assert properties["locations"] == ["Austin"]
+    assert properties["entity_resolution"]["known_people"] == ["ken"]
+    assert properties["entity_resolution"]["unresolved_people"] == ["alex"]
+    assert properties["needs_operator_entity_resolution"] is True
+    assert properties["conflict_group_key"].startswith(
+        "project:planning_trip:planned_event:"
+    )
 
 
 def test_spark_learning_routes_selected_recipient_context_to_target_memory() -> None:

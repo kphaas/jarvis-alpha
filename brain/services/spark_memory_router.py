@@ -53,7 +53,28 @@ _HEALTH_OR_CHILD_TEXT = re.compile(
     r"ryleigh|sloane|child|daughter|school|teacher|custody)\b",
     re.IGNORECASE,
 )
-_KNOWN_PEOPLE = ("ken", "sweta", "ryleigh", "sloane", "meagan")
+_KNOWN_PEOPLE_BY_ALIAS = {
+    "ken": "ken",
+    "kenneth": "ken",
+    "sweta": "sweta",
+    "ryleigh": "ryleigh",
+    "sloane": "sloane",
+    "meagan": "meagan",
+}
+_KNOWN_PEOPLE = tuple(sorted(set(_KNOWN_PEOPLE_BY_ALIAS.values())))
+_PROPER_NOUN_STOPWORDS = {
+    "ask",
+    "at",
+    "alpha",
+    "memory",
+    "project",
+    "trip",
+    "key",
+    "spark",
+    "helm",
+    "dream",
+    "buddy",
+}
 _OPEN_LOOP_TEXT = re.compile(
     r"\b(follow up|ask|todo|to do|needs?|owes|waiting|open loop|remind)\b",
     re.IGNORECASE,
@@ -199,14 +220,12 @@ def plan_spark_memory_route(
 def _should_route_graph(note: str) -> bool:
     if _HEALTH_OR_CHILD_TEXT.search(note):
         return False
-    lowered = note.casefold()
-    person_hits = [name for name in _KNOWN_PEOPLE if name in lowered]
+    person_hits = _extract_people(note)
     return bool(_GRAPH_TEXT.search(note) and len(person_hits) >= 2)
 
 
 def _has_named_target(note: str) -> bool:
-    lowered = note.casefold()
-    return any(name in lowered for name in _KNOWN_PEOPLE)
+    return bool(_extract_people(note))
 
 
 def _graph_node_payload(
@@ -216,6 +235,7 @@ def _graph_node_payload(
     target_label: str | None,
 ) -> dict[str, Any]:
     people = _extract_people(note)
+    entity_resolution = _entity_resolution_metadata(note, people)
     projects = _extract_projects(note)
     locations = _extract_locations(note)
     graph_kind = _graph_relationship_kind(note)
@@ -237,6 +257,18 @@ def _graph_node_payload(
             "route": "spark_memory_router",
             "people": people,
             "relationship_subjects": people,
+            "entity_resolution": entity_resolution,
+            "entity_keys": entity_resolution["entity_keys"],
+            "unresolved_entities": entity_resolution["unresolved_people"],
+            "needs_operator_entity_resolution": bool(
+                entity_resolution["unresolved_people"]
+            ),
+            "conflict_group_key": _conflict_group_key(
+                node_type=node_type,
+                graph_kind=graph_kind,
+                temporal_kind=temporal_kind,
+                entity_keys=entity_resolution["entity_keys"],
+            ),
             "projects": projects,
             "locations": locations,
             "graph_kind": graph_kind,
@@ -318,7 +350,60 @@ def _graph_relationship_kind(note: str) -> str:
 
 def _extract_people(note: str) -> list[str]:
     lowered = note.casefold()
-    return [name for name in _KNOWN_PEOPLE if name in lowered]
+    non_people = {
+        item.casefold()
+        for item in [*_extract_locations(note), *_extract_projects(note)]
+    }
+    people: list[str] = []
+    for alias, canonical in _KNOWN_PEOPLE_BY_ALIAS.items():
+        if re.search(rf"\b{re.escape(alias)}\b", lowered):
+            people.append(canonical)
+    for proper_name in re.findall(r"\b([A-Z][a-z]{1,32})\b", note):
+        normalized = proper_name.casefold()
+        if normalized in _PROPER_NOUN_STOPWORDS or normalized in non_people:
+            continue
+        people.append(_KNOWN_PEOPLE_BY_ALIAS.get(normalized, normalized))
+    return _dedupe_fragments(people, max_length=48)
+
+
+def _entity_resolution_metadata(note: str, people: list[str]) -> dict[str, object]:
+    known = [person for person in people if person in _KNOWN_PEOPLE]
+    unresolved = [person for person in people if person not in _KNOWN_PEOPLE]
+    return {
+        "strategy": "known_aliases_plus_name_candidates",
+        "known_people": known,
+        "unresolved_people": unresolved,
+        "entity_keys": [_entity_key(person) for person in people],
+        "candidate_count": len(people),
+        "needs_operator_resolution": bool(unresolved),
+        "source_note_hash": hashlib.sha256(note.encode("utf-8")).hexdigest(),
+    }
+
+
+def _entity_key(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"person:{normalized}:{digest}" if normalized else f"person:unknown:{digest}"
+
+
+def _conflict_group_key(
+    *,
+    node_type: str,
+    graph_kind: str,
+    temporal_kind: str,
+    entity_keys: list[str],
+) -> str:
+    subject_key = (
+        "|".join(sorted(_entity_group_key(key) for key in entity_keys)) or "unresolved"
+    )
+    return f"{node_type}:{graph_kind}:{temporal_kind}:{subject_key}"
+
+
+def _entity_group_key(entity_key: str) -> str:
+    parts = entity_key.split(":")
+    if len(parts) >= 2 and parts[0] == "person" and parts[1]:
+        return f"person:{parts[1]}"
+    return entity_key
 
 
 def _extract_phrases(note: str) -> list[str]:

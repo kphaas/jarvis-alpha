@@ -461,6 +461,15 @@ async def test_spark_memory_route_queues_graph_reviewed_write(
     graph_payload = json.loads(str(conn.args[1]))
     assert graph_payload["properties"]["relationship_subjects"] == ["ken", "sweta"]
     assert graph_payload["properties"]["extraction_summary"]["people_count"] == 2
+    assert len(graph_payload["properties"]["entity_keys"]) == 2
+    assert graph_payload["properties"]["entity_resolution"]["known_people"] == [
+        "ken",
+        "sweta",
+    ]
+    assert graph_payload["properties"]["needs_operator_entity_resolution"] is False
+    assert graph_payload["properties"]["conflict_group_key"].startswith(
+        "project:planning_trip:planned_event:"
+    )
     logs = json.dumps(fake_logger.infos)
     assert "planning a trip" not in logs
 
