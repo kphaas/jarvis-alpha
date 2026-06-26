@@ -58,6 +58,10 @@ def test_spark_learning_examples_route_to_reviewable_memory_lanes(
     assert plan.review_lane == expected_lane
     if expected_destination == "spark_personality":
         assert plan.personality_kind == expected_kind
+        if note.startswith("Key phrase"):
+            assert plan.extracted_phrases == ("fair enough",)
+        if note.startswith("I am"):
+            assert plan.extracted_traits == ("kind person",)
     if expected_destination == "semantic":
         assert plan.semantic_category == expected_category
     if expected_destination == "temporal_graph":
@@ -66,6 +70,10 @@ def test_spark_learning_examples_route_to_reviewable_memory_lanes(
         assert plan.graph_payload["node_type"] == expected_kind
         assert plan.graph_payload["source"] == "spark"
         assert plan.graph_payload["properties"]["people"] == ["ken", "sweta"]
+        assert plan.graph_payload["properties"]["relationship_subjects"] == [
+            "ken",
+            "sweta",
+        ]
         assert plan.graph_payload["properties"]["temporal_memory"] is True
         assert plan.graph_payload["properties"]["requires_operator_resolution"] is True
         assert plan.graph_payload["properties"]["candidate_relationship"] in {
@@ -93,6 +101,8 @@ def test_spark_graph_trip_learning_sets_refresh_and_currentness_metadata() -> No
     assert properties["temporal_kind"] == "planned_event"
     assert properties["currentness_policy"] == "candidate_current"
     assert properties["refresh_prompt_after_days"] == 30
+    assert properties["locations"] == ["Seattle"]
+    assert plan.extracted_locations == ("Seattle",)
     assert properties["extraction_tags"] == [
         "temporal_graph",
         "planning_trip",
@@ -114,6 +124,25 @@ def test_spark_graph_historical_learning_requires_confirmation() -> None:
         plan.graph_payload["properties"]["currentness_policy"]
         == "historical_needs_confirmation"
     )
+
+
+def test_spark_graph_project_learning_extracts_project_metadata() -> None:
+    plan = plan_spark_memory_route(
+        note="Ken and Sweta are collaborating on the AT-0 memory project.",
+        principal_id="ken",
+    )
+
+    assert plan.destination == "temporal_graph"
+    assert plan.extracted_projects == ("AT-0 memory project",)
+    assert plan.graph_payload is not None
+    properties = plan.graph_payload["properties"]
+    assert properties["projects"] == ["AT-0 memory project"]
+    assert properties["extraction_summary"] == {
+        "people_count": 2,
+        "project_count": 1,
+        "location_count": 0,
+        "temporal_kind": "project_state",
+    }
 
 
 def test_spark_learning_routes_selected_recipient_context_to_target_memory() -> None:

@@ -4,6 +4,7 @@
 Checks:
 - Bearer auth can read the current user's memory summary.
 - Current user graph endpoint returns sanitized node/edge arrays.
+- Admin per-user graph endpoint returns the same sanitized graph contract.
 - Admin graph health and proposal metadata endpoints are reachable.
 - Graph history endpoint is reachable when a node is available.
 """
@@ -71,6 +72,11 @@ def main() -> int:
         default=int(os.getenv("MEMORY_GRAPH_SMOKE_TIMEOUT", "45")),
         help="HTTP timeout in seconds.",
     )
+    parser.add_argument(
+        "--principal-id",
+        default=os.getenv("MEMORY_GRAPH_SMOKE_PRINCIPAL", "ken"),
+        help="Admin graph principal to validate without browser PIN flow.",
+    )
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
@@ -84,6 +90,7 @@ def main() -> int:
         base_url=base_url,
         token=token,
         timeout=args.timeout,
+        principal_id=args.principal_id,
     )
     failures = [name for name, result in results.items() if result.status != "passed"]
     status = "passed" if not failures else "failed"
@@ -101,6 +108,7 @@ def run_memory_graph_smoke(
     base_url: str,
     token: str,
     timeout: int,
+    principal_id: str = "ken",
 ) -> dict[str, SmokeResult]:
     results: dict[str, SmokeResult] = {}
     try:
@@ -128,11 +136,49 @@ def run_memory_graph_smoke(
         nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
         edges = graph.get("edges") if isinstance(graph.get("edges"), list) else []
         results["current_graph_read"] = SmokeResult(
-            "passed" if graph.get("status") == "ok" else "failed",
+            "passed"
+            if graph.get("status") == "ok"
+            and _has_temporal_fields(nodes, edges)
+            and _has_review_fields(nodes, edges)
+            else "failed",
             {
                 "node_count": len(nodes),
                 "edge_count": len(edges),
                 "temporal_fields": _has_temporal_fields(nodes, edges),
+                "review_fields": _has_review_fields(nodes, edges),
+            },
+        )
+
+        admin_graph = _call_json(
+            "GET",
+            base_url,
+            f"/v1/memory/admin/users/{principal_id}/graph?limit=100",
+            token,
+            None,
+            timeout=timeout,
+        )
+        admin_nodes = (
+            admin_graph.get("nodes")
+            if isinstance(admin_graph.get("nodes"), list)
+            else []
+        )
+        admin_edges = (
+            admin_graph.get("edges")
+            if isinstance(admin_graph.get("edges"), list)
+            else []
+        )
+        results["admin_user_graph_read"] = SmokeResult(
+            "passed"
+            if admin_graph.get("status") == "ok"
+            and _has_temporal_fields(admin_nodes, admin_edges)
+            and _has_review_fields(admin_nodes, admin_edges)
+            else "failed",
+            {
+                "principal_id": principal_id,
+                "node_count": len(admin_nodes),
+                "edge_count": len(admin_edges),
+                "temporal_fields": _has_temporal_fields(admin_nodes, admin_edges),
+                "review_fields": _has_review_fields(admin_nodes, admin_edges),
             },
         )
 
@@ -225,6 +271,20 @@ def _has_temporal_fields(nodes: list[object], edges: list[object]) -> bool:
         isinstance(row, dict) and "temporal_state" in row and "retrieval_state" in row
         for row in rows
     )
+
+
+def _has_review_fields(nodes: list[object], edges: list[object]) -> bool:
+    rows = [*nodes, *edges]
+    if not rows:
+        return True
+    required = {
+        "review_action",
+        "review_priority",
+        "review_reason",
+        "review_due_at",
+        "open_ended",
+    }
+    return all(isinstance(row, dict) and required.issubset(row) for row in rows)
 
 
 def _int_value(value: object) -> int:

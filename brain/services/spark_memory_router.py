@@ -80,6 +80,10 @@ class SparkMemoryRoutePlan:
     required_metadata: tuple[str, ...] = field(default_factory=tuple)
     extraction_tags: tuple[str, ...] = field(default_factory=tuple)
     extracted_entities: tuple[str, ...] = field(default_factory=tuple)
+    extracted_phrases: tuple[str, ...] = field(default_factory=tuple)
+    extracted_traits: tuple[str, ...] = field(default_factory=tuple)
+    extracted_projects: tuple[str, ...] = field(default_factory=tuple)
+    extracted_locations: tuple[str, ...] = field(default_factory=tuple)
     temporal_kind: str | None = None
     currentness_policy: str | None = None
     review_reasons: tuple[str, ...] = field(default_factory=tuple)
@@ -126,6 +130,8 @@ def plan_spark_memory_route(
             graph_payload=graph_payload,
             extraction_tags=tuple(graph_payload["properties"]["extraction_tags"]),
             extracted_entities=tuple(graph_payload["properties"]["people"]),
+            extracted_projects=tuple(graph_payload["properties"]["projects"]),
+            extracted_locations=tuple(graph_payload["properties"]["locations"]),
             temporal_kind=str(graph_payload["properties"]["temporal_kind"]),
             currentness_policy=str(graph_payload["properties"]["currentness_policy"]),
             review_reasons=(
@@ -147,6 +153,7 @@ def plan_spark_memory_route(
             required_metadata=missing,
             extraction_tags=("target", _target_kind(clean)),
             extracted_entities=tuple(_extract_people(clean)),
+            extracted_locations=tuple(_extract_locations(clean)),
             review_reasons=("selected_recipient_context_required",),
         )
     if _PERSONALITY_TEXT.search(clean) or _SELF_TRAIT_TEXT.search(clean):
@@ -162,6 +169,8 @@ def plan_spark_memory_route(
             personality_kind=personality_kind,
             extraction_tags=("personality", personality_kind),
             extracted_entities=("self",),
+            extracted_phrases=tuple(_extract_phrases(clean)),
+            extracted_traits=tuple(_extract_self_traits(clean)),
             review_reasons=("operator_review_required",),
         )
 
@@ -178,6 +187,7 @@ def plan_spark_memory_route(
         semantic_category=category,
         extraction_tags=("semantic", str(category)),
         extracted_entities=tuple(_extract_people(clean)),
+        extracted_locations=tuple(_extract_locations(clean)),
         review_reasons=(
             ("high_visibility_health_or_child_fact",)
             if sensitive
@@ -206,6 +216,8 @@ def _graph_node_payload(
     target_label: str | None,
 ) -> dict[str, Any]:
     people = _extract_people(note)
+    projects = _extract_projects(note)
+    locations = _extract_locations(note)
     graph_kind = _graph_relationship_kind(note)
     temporal_kind = _graph_temporal_kind(note)
     node_type = (
@@ -224,6 +236,9 @@ def _graph_node_payload(
             "memory_router": True,
             "route": "spark_memory_router",
             "people": people,
+            "relationship_subjects": people,
+            "projects": projects,
+            "locations": locations,
             "graph_kind": graph_kind,
             "temporal_kind": temporal_kind,
             "currentness_policy": _currentness_policy(note),
@@ -234,6 +249,13 @@ def _graph_node_payload(
             "temporal_memory": True,
             "target_label": target_label,
             "source_note_hash": note_hash,
+            "extraction_summary": _graph_extraction_summary(
+                people=people,
+                projects=projects,
+                locations=locations,
+                temporal_kind=temporal_kind,
+            ),
+            "review_prompt": "Confirm this temporal fact is current before execution.",
         },
         "provenance": {
             "source_surface": "spark_memory_router",
@@ -299,6 +321,52 @@ def _extract_people(note: str) -> list[str]:
     return [name for name in _KNOWN_PEOPLE if name in lowered]
 
 
+def _extract_phrases(note: str) -> list[str]:
+    phrase_match = re.search(
+        r"\b(?:key\s+)?(?:phrase|phrasing|say)\s+(?:i\s+use\s*)?:\s*([^.;!?]{2,80})",
+        note,
+        re.IGNORECASE,
+    )
+    if not phrase_match:
+        return []
+    phrase = _clean_fragment(phrase_match.group(1), max_length=80)
+    return [phrase] if phrase else []
+
+
+def _extract_self_traits(note: str) -> list[str]:
+    trait_match = re.search(
+        r"\b(?:i am|i'm|im|i consider myself|people describe me as|my default is)\s+"
+        r"(?:a\s+|an\s+|the\s+)?([a-z][a-z -]{2,80})",
+        note,
+        re.IGNORECASE,
+    )
+    if not trait_match:
+        return []
+    trait = _clean_fragment(trait_match.group(1), max_length=80)
+    return [trait] if trait else []
+
+
+def _extract_projects(note: str) -> list[str]:
+    project_matches = re.findall(
+        r"\b(?:on|for|the)\s+([A-Za-z0-9][A-Za-z0-9 -]{1,72}\s+project)\b",
+        note,
+        re.IGNORECASE,
+    )
+    project_matches = [
+        match[4:] if match.casefold().startswith("the ") else match
+        for match in project_matches
+    ]
+    return _dedupe_fragments(project_matches, max_length=80)
+
+
+def _extract_locations(note: str) -> list[str]:
+    location_matches = re.findall(
+        r"\b(?:trip|travel|flight|vacation)\s+(?:to|in|for)\s+([A-Z][A-Za-z .'-]{1,60})",
+        note,
+    )
+    return _dedupe_fragments(location_matches, max_length=64)
+
+
 def _graph_temporal_kind(note: str) -> str:
     if re.search(r"\b(trip|travel|flight|hotel|vacation)\b", note, re.I):
         return "planned_event"
@@ -327,6 +395,40 @@ def _refresh_prompt_days(temporal_kind: str) -> int:
 
 def _graph_extraction_tags(graph_kind: str, temporal_kind: str) -> list[str]:
     return ["temporal_graph", graph_kind, temporal_kind, "operator_review_required"]
+
+
+def _graph_extraction_summary(
+    *,
+    people: list[str],
+    projects: list[str],
+    locations: list[str],
+    temporal_kind: str,
+) -> dict[str, object]:
+    return {
+        "people_count": len(people),
+        "project_count": len(projects),
+        "location_count": len(locations),
+        "temporal_kind": temporal_kind,
+    }
+
+
+def _dedupe_fragments(values: list[str], *, max_length: int) -> list[str]:
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for value in values:
+        fragment = _clean_fragment(value, max_length=max_length)
+        key = fragment.casefold()
+        if fragment and key not in seen:
+            cleaned.append(fragment)
+            seen.add(key)
+    return cleaned
+
+
+def _clean_fragment(value: str, *, max_length: int) -> str:
+    cleaned = re.sub(r"\s+", " ", value.strip().strip("\"'.,;:!?"))
+    if len(cleaned) > max_length:
+        cleaned = cleaned[: max_length - 3].rstrip() + "..."
+    return cleaned
 
 
 def _target_required_metadata() -> tuple[str, ...]:

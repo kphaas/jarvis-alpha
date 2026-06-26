@@ -302,6 +302,10 @@ class SparkMemoryRoutePlanModel(BaseModel):
     required_metadata: list[str] = Field(default_factory=list)
     extraction_tags: list[str] = Field(default_factory=list)
     extracted_entities: list[str] = Field(default_factory=list)
+    extracted_phrases: list[str] = Field(default_factory=list)
+    extracted_traits: list[str] = Field(default_factory=list)
+    extracted_projects: list[str] = Field(default_factory=list)
+    extracted_locations: list[str] = Field(default_factory=list)
     temporal_kind: str | None = None
     currentness_policy: str | None = None
     review_reasons: list[str] = Field(default_factory=list)
@@ -1143,6 +1147,10 @@ def _route_plan_model(plan: SparkMemoryRoutePlan) -> SparkMemoryRoutePlanModel:
         required_metadata=list(plan.required_metadata),
         extraction_tags=list(plan.extraction_tags),
         extracted_entities=list(plan.extracted_entities),
+        extracted_phrases=list(plan.extracted_phrases),
+        extracted_traits=list(plan.extracted_traits),
+        extracted_projects=list(plan.extracted_projects),
+        extracted_locations=list(plan.extracted_locations),
         temporal_kind=plan.temporal_kind,
         currentness_policy=plan.currentness_policy,
         review_reasons=list(plan.review_reasons),

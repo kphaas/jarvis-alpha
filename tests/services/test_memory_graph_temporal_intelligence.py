@@ -147,10 +147,75 @@ def test_classify_temporal_graph_row_marks_retrieval_currentness() -> None:
         "retrieval_state": "current",
         "refresh_prompt": None,
         "conflict_key": "node:project:active-hash",
+        "review_action": "none",
+        "review_priority": "none",
+        "review_reason": None,
+        "review_due_at": None,
+        "open_ended": False,
     }
     assert stale["temporal_state"] == "stale"
     assert stale["retrieval_state"] == "needs_refresh"
     assert stale["refresh_prompt"] == "confirm_still_current"
+    assert stale["review_action"] == "refresh"
+    assert stale["review_priority"] == "medium"
+    assert stale["review_reason"] == "refresh_window_elapsed"
+    assert stale["review_due_at"] == "2025-12-31T00:00:00Z"
     assert expired["retrieval_state"] == "historical"
     assert expired["refresh_prompt"] == "expired_window"
+    assert expired["review_action"] == "keep_historical"
     assert expired["conflict_key"] == "edge:a:b:works_on"
+
+
+def test_classify_temporal_graph_row_flags_conflict_and_open_ended_workflow() -> None:
+    now = datetime(2026, 6, 25, tzinfo=UTC)
+
+    row = classify_temporal_graph_row(
+        {
+            "id": "relationship",
+            "node_type": "relationship",
+            "label_hash": "relationship-hash",
+            "updated_at": "2026-06-20T00:00:00Z",
+            "properties": {
+                "temporal_kind": "relationship_state",
+                "currentness_policy": "candidate_current",
+                "requires_operator_resolution": True,
+                "refresh_prompt_after_days": 90,
+            },
+        },
+        object_type="node",
+        now=now,
+    )
+
+    assert row["temporal_state"] == "active"
+    assert row["retrieval_state"] == "current"
+    assert row["review_action"] == "resolve_conflict"
+    assert row["review_priority"] == "high"
+    assert row["review_reason"] == "operator_resolution_required"
+    assert row["review_due_at"] == "2026-06-25T00:00:00Z"
+    assert row["open_ended"] is True
+
+
+def test_classify_temporal_graph_row_prompts_open_ended_refresh() -> None:
+    now = datetime(2026, 6, 25, tzinfo=UTC)
+
+    row = classify_temporal_graph_row(
+        {
+            "id": "project",
+            "node_type": "project",
+            "label_hash": "project-hash",
+            "updated_at": "2026-06-20T00:00:00Z",
+            "properties": {
+                "temporal_kind": "project_state",
+                "currentness_policy": "candidate_current",
+                "refresh_prompt_after_days": 60,
+            },
+        },
+        object_type="node",
+        now=now,
+    )
+
+    assert row["review_action"] == "refresh"
+    assert row["review_priority"] == "medium"
+    assert row["review_reason"] == "open_ended_current_fact"
+    assert row["review_due_at"] == "2026-08-19T00:00:00Z"
+    assert row["open_ended"] is True
