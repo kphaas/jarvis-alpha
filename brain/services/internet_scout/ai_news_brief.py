@@ -52,7 +52,11 @@ _RSS_SOURCE_IDS = (
     "azure-ai-blog",
     "github-copilot-changelog",
 )
-_PAGE_SOURCE_IDS = ("openai-api-changelog",)
+_PAGE_SOURCE_IDS = (
+    "openai-api-changelog",
+    "anthropic-api-release-notes",
+    "google-gemini-api-changelog",
+)
 
 
 @dataclass(frozen=True)
@@ -426,7 +430,7 @@ def parse_page_monitor_items(
     if not links:
         return []
     first_url = links[0]
-    title = "OpenAI API changelog monitor"
+    title = f"{endpoint.name} monitor"
     return [
         AiNewsBriefItem(
             title=title,
@@ -473,8 +477,16 @@ def _vendor_for_source(source_id: str) -> str:
         return "OpenAI"
     if source_id.startswith("aws"):
         return "AWS"
-    if source_id.startswith("azure") or source_id.startswith("github"):
+    if source_id.startswith("azure") or source_id == "github-copilot-changelog":
         return "Microsoft"
+    if source_id.startswith("anthropic"):
+        return "Anthropic"
+    if source_id.startswith("google"):
+        return "Google"
+    if source_id.startswith("github"):
+        return "GitHub"
+    if source_id.startswith("huggingface"):
+        return "Hugging Face"
     return "AI vendor"
 
 
@@ -491,7 +503,13 @@ def _vendor_for_url(url: str) -> str:
 
 
 def _vendor_priority(vendor: str) -> int:
-    return {"OpenAI": 5, "Anthropic": 4, "Microsoft": 3, "AWS": 2}.get(vendor, 1)
+    return {
+        "OpenAI": 6,
+        "Anthropic": 5,
+        "Google": 4,
+        "Microsoft": 3,
+        "AWS": 2,
+    }.get(vendor, 1)
 
 
 def _status_feed_urls(entry: DataSourceEntry) -> list[str]:

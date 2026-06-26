@@ -257,3 +257,104 @@
     the AWS Health Dashboard page before relying on the legacy RSS endpoint.
   last_verified: 2026-06-25
   review_cadence_days: 30
+
+- id: anthropic-api-release-notes
+  name: Anthropic API Release Notes
+  domain: news
+  url: https://platform.claude.com/docs/en/release-notes/overview
+  api_base_url: null
+  auth:
+    type: none
+    notes: No auth. Monitor the public Anthropic / Claude platform release notes pages.
+  pricing: free
+  free_tier: unlimited public docs access (fair use)
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - ai-vendor-news
+    - claude-release-monitoring
+    - api-changelog-monitoring
+    - integration-risk-monitoring
+  notes: |
+    Official Anthropic release-note source for Claude API and platform changes.
+    Use change hashes and cited snippets rather than brittle HTML scraping.
+    High-impact model, API, or deprecation changes should be cross-checked
+    before changing AT-0 policy or production routing.
+  last_verified: 2026-06-26
+  review_cadence_days: 30
+
+- id: google-gemini-api-changelog
+  name: Google Gemini API Changelog
+  domain: news
+  url: https://ai.google.dev/gemini-api/docs/changelog
+  api_base_url: null
+  auth:
+    type: none
+    notes: No auth. Monitor the public Gemini API changelog page.
+  pricing: free
+  free_tier: unlimited public docs access (fair use)
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - ai-vendor-news
+    - gemini-release-monitoring
+    - api-changelog-monitoring
+    - model-release-monitoring
+  notes: |
+    Official Google Gemini API changelog. Use for model, API, SDK, and
+    deprecation awareness. Pair operational claims with Google AI or Vertex AI
+    docs before changing internal routing or operator guidance.
+  last_verified: 2026-06-26
+  review_cadence_days: 30
+
+- id: huggingface-hub-api
+  name: Hugging Face Hub API
+  domain: news
+  url: https://huggingface.co/docs/hub/en/api
+  api_base_url: https://huggingface.co/api/
+  auth:
+    type: none
+    notes: Public Hub endpoints work without auth; gated/private resources require a bearer token.
+  pricing: freemium
+  free_tier: free public Hub API access under Hugging Face rate limits
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - open-model-monitoring
+    - dataset-release-monitoring
+    - ai-community-signal
+    - model-risk-context
+  notes: |
+    Useful for open-model, dataset, and Space release awareness. Treat model
+    cards and repository metadata as community/vendor evidence, not a safety
+    endorsement. Do not send private prompts, PHI, or secrets to Hub endpoints.
+  last_verified: 2026-06-26
+  review_cadence_days: 30
+
+- id: github-releases-api
+  name: GitHub Releases API
+  domain: news
+  url: https://docs.github.com/en/rest/releases/releases
+  api_base_url: https://api.github.com/
+  auth:
+    type: bearer
+    notes: Public unauthenticated calls work at low limits; use a GitHub token for higher authenticated limits.
+  pricing: freemium
+  free_tier: public REST API access with GitHub rate limits
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - sdk-release-monitoring
+    - developer-tooling-monitoring
+    - integration-risk-monitoring
+    - security-evidence
+  notes: |
+    Track releases for key AI infrastructure repos such as SDKs, model-serving
+    projects, agent frameworks, and client libraries. Scope allowlists tightly;
+    the API is broad enough to become noise if Beacon tracks arbitrary repos.
+  last_verified: 2026-06-26
+  review_cadence_days: 90

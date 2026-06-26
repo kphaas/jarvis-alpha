@@ -73,6 +73,18 @@ def _registry() -> dict[str, DataSourceEntry]:
             url="https://developers.openai.com/api/docs/changelog",
             api_base_url=None,
         ),
+        "anthropic-api-release-notes": _entry(
+            "anthropic-api-release-notes",
+            name="Anthropic API Release Notes",
+            url="https://platform.claude.com/docs/en/release-notes/overview",
+            api_base_url=None,
+        ),
+        "google-gemini-api-changelog": _entry(
+            "google-gemini-api-changelog",
+            name="Google Gemini API Changelog",
+            url="https://ai.google.dev/gemini-api/docs/changelog",
+            api_base_url=None,
+        ),
         "ai-vendor-status-feeds": DataSourceEntry(
             id="ai-vendor-status-feeds",
             name="AI Vendor Status Feeds",
@@ -224,6 +236,12 @@ async def test_build_ai_news_brief_fetches_gateway_sources_and_degrades_per_sour
         "https://developers.openai.com/api/docs/changelog": (
             '<a href="/api/docs/changelog">Changelog</a>'
         ),
+        "https://platform.claude.com/docs/en/release-notes/overview": (
+            '<a href="/docs/en/release-notes/overview">Claude release notes</a>'
+        ),
+        "https://ai.google.dev/gemini-api/docs/changelog": (
+            '<a href="/gemini-api/docs/changelog">Gemini changelog</a>'
+        ),
         "https://status.openai.com/history.rss": _rss(),
         "https://status.claude.com/history.rss": _rss(),
         "https://azure.status.microsoft/en-us/status/feed/": _rss(),
@@ -239,9 +257,13 @@ async def test_build_ai_news_brief_fetches_gateway_sources_and_degrades_per_sour
     assert brief.status == "degraded"
     assert brief.failed_source_count == 1
     assert [item.title for item in brief.top_items][:2] == [
-        "OpenAI API changelog monitor",
-        "ChatGPT update",
+        "OpenAI API Changelog monitor",
+        "Anthropic API Release Notes monitor",
     ]
+    assert "Google Gemini API Changelog monitor" in [
+        item.title for item in brief.top_items
+    ]
+    assert "ChatGPT update" in [item.title for item in brief.top_items]
     assert "official AI vendor item" in brief.overall_summary
     assert all(call["max_bytes"] > 0 for call in gateway.calls)
     assert "feed unavailable" not in str(brief.model_dump())
@@ -263,6 +285,12 @@ async def test_run_ai_news_brief_once_persists_redacted_metadata() -> None:
             "https://github.test/feed.xml": _rss(),
             "https://developers.openai.com/api/docs/changelog": (
                 '<a href="/api/docs/changelog">Changelog</a>'
+            ),
+            "https://platform.claude.com/docs/en/release-notes/overview": (
+                '<a href="/docs/en/release-notes/overview">Claude release notes</a>'
+            ),
+            "https://ai.google.dev/gemini-api/docs/changelog": (
+                '<a href="/gemini-api/docs/changelog">Gemini changelog</a>'
             ),
             "https://status.openai.com/history.rss": _rss(),
             "https://status.claude.com/history.rss": _rss(),
