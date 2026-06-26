@@ -205,6 +205,31 @@ def test_classify_temporal_graph_row_marks_retrieval_currentness() -> None:
     assert expired["conflict_key"] == "edge:a:b:works_on"
 
 
+def test_classify_temporal_graph_row_routes_historical_currentness_to_refresh() -> None:
+    now = datetime(2026, 6, 25, tzinfo=UTC)
+
+    row = classify_temporal_graph_row(
+        {
+            "id": "old-trip",
+            "node_type": "project",
+            "label_hash": "old-trip-hash",
+            "updated_at": "2026-06-24T00:00:00Z",
+            "properties": {
+                "temporal_kind": "planned_event",
+                "currentness_policy": "historical_needs_confirmation",
+            },
+        },
+        object_type="node",
+        now=now,
+    )
+
+    assert row["temporal_state"] == "active"
+    assert row["retrieval_state"] == "needs_refresh"
+    assert row["refresh_prompt"] == "confirm_currentness"
+    assert row["review_action"] == "confirm_currentness"
+    assert row["review_reason"] == "historical_fact_needs_confirmation"
+
+
 def test_classify_temporal_graph_row_flags_conflict_and_open_ended_workflow() -> None:
     now = datetime(2026, 6, 25, tzinfo=UTC)
 

@@ -417,15 +417,19 @@ def _entity_group_key(entity_key: str) -> str:
 
 
 def _extract_phrases(note: str) -> list[str]:
-    phrase_match = re.search(
+    patterns = (
         r"\b(?:key\s+)?(?:phrase|phrasing|say)\s+(?:i\s+use\s*)?:\s*([^.;!?]{2,80})",
-        note,
-        re.IGNORECASE,
+        r"\b(?:a\s+)?(?:key\s+)?phrase\s+i\s+use\s+is\s+([^.;!?]{2,80})",
+        r"\bmy\s+(?:key\s+)?phrase\s+is\s+([^.;!?]{2,80})",
+        r"\bi\s+(?:often\s+|usually\s+)?say\s+([^.;!?]{2,80})",
     )
-    if not phrase_match:
-        return []
-    phrase = _clean_fragment(phrase_match.group(1), max_length=80)
-    return [phrase] if phrase else []
+    for pattern in patterns:
+        phrase_match = re.search(pattern, note, re.IGNORECASE)
+        if not phrase_match:
+            continue
+        phrase = _clean_fragment(phrase_match.group(1), max_length=80)
+        return [phrase] if phrase else []
+    return []
 
 
 def _extract_self_traits(note: str) -> list[str]:
