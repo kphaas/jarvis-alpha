@@ -46,3 +46,4 @@ manual receipt workflow are deployed and smoke-tested:
 | 2026-06-26 | HSG-006 | Added per-platform social voice profiles for X and LinkedIn, profile snapshots on each draft, safety flags, voice score, repeat detection, and visible rules in `/herald`. |
 | 2026-06-27 | HSG-002 | Partial: added LinkedIn weekly draft endpoint, approved-draft schedule date, manual publish receipt URL, cadence readout, route classification, and smoke coverage. No LinkedIn API connector yet. |
 | 2026-06-27 | HSG-004 | Partial: added `/herald` LinkedIn engagement reply drafting from operator-provided source/context. No autonomous social inbox read/like/reply/DM actions. |
+| 2026-06-27 | HSG-002 | Partial: added approved LinkedIn publish connector through Gateway, Spark-informed draft audit hashes, and `docs/runbooks/herald_linkedin_connector.md`. Still missing LinkedIn read/engagement ingestion and connector health monitor. |

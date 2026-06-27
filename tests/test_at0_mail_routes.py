@@ -75,3 +75,9 @@ def test_herald_social_routes_are_classified() -> None:
         "write",
         "security_write",
     ]
+    assert classify_route("POST", "/v1/herald/social/drafts/abc/publish/linkedin") == [
+        "write",
+        "security_write",
+        "external_call",
+        "social_post",
+    ]
