@@ -240,27 +240,33 @@ async def test_temporal_graph_history_prompts_opt_into_historical_rows() -> None
 
 
 def test_graph_context_line_labels_currentness() -> None:
-    assert MemoryService._graph_context_line(
-        {
-            "item_type": "node",
-            "kind": "project",
-            "label_preview": "Seattle trip",
-            "source": "spark",
-            "confidence": 0.88,
-            "retrieval_state": "needs_refresh",
-        }
-    ) == "- [needs refresh] Project: Seattle trip (confidence 0.88, source spark)"
+    assert (
+        MemoryService._graph_context_line(
+            {
+                "item_type": "node",
+                "kind": "project",
+                "label_preview": "Seattle trip",
+                "source": "spark",
+                "confidence": 0.88,
+                "retrieval_state": "needs_refresh",
+            }
+        )
+        == "- [needs refresh] Project: Seattle trip (confidence 0.88, source spark)"
+    )
 
-    assert MemoryService._graph_context_line(
-        {
-            "item_type": "edge",
-            "kind": "planned_with",
-            "label_preview": "Ken planned with Sweta",
-            "source": "dream",
-            "confidence": 0.74,
-            "retrieval_state": "historical",
-        }
-    ) == "- [historical] Relation: Ken planned with Sweta (planned with, confidence 0.74, source dream)"
+    assert (
+        MemoryService._graph_context_line(
+            {
+                "item_type": "edge",
+                "kind": "planned_with",
+                "label_preview": "Ken planned with Sweta",
+                "source": "dream",
+                "confidence": 0.74,
+                "retrieval_state": "historical",
+            }
+        )
+        == "- [historical] Relation: Ken planned with Sweta (planned with, confidence 0.74, source dream)"
+    )
 
 
 def _async_rows(rows: list[dict[str, object]]):
