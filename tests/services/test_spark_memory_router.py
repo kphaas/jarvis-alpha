@@ -121,6 +121,38 @@ def test_spark_graph_trip_learning_sets_refresh_and_currentness_metadata() -> No
     ]
 
 
+@pytest.mark.parametrize(
+    ("note", "expected_phrase"),
+    [
+        ("I often say fair enough.", "fair enough"),
+        ("My key phrase is sounds good to me.", "sounds good to me"),
+        (
+            "A phrase I use is ship it when the smoke passes.",
+            "ship it when the smoke passes",
+        ),
+    ],
+)
+def test_spark_learning_extracts_natural_signature_phrases(
+    note: str,
+    expected_phrase: str,
+) -> None:
+    plan = plan_spark_memory_route(note=note, principal_id="ken")
+
+    assert plan.destination == "spark_personality"
+    assert plan.review_lane == "spark_personality_memory_review"
+    assert plan.personality_kind == "phrase"
+    assert plan.extracted_phrases == (expected_phrase,)
+
+
+def test_spark_learning_extracts_short_self_trait() -> None:
+    plan = plan_spark_memory_route(note="I am kind.", principal_id="ken")
+
+    assert plan.destination == "spark_personality"
+    assert plan.review_lane == "spark_personality_memory_review"
+    assert plan.personality_kind == "value"
+    assert plan.extracted_traits == ("kind",)
+
+
 def test_spark_graph_historical_learning_requires_confirmation() -> None:
     plan = plan_spark_memory_route(
         note="Sweta and Ken were collaborating on an old memory project.",

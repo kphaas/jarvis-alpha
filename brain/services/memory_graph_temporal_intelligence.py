@@ -94,6 +94,16 @@ def classify_temporal_graph_row(
         "stale": "confirm_still_current",
     }
     conflict_key = _conflict_key(row, object_type=object_type)
+    retrieval_state = retrieval_state_by_temporal_state[temporal_state]
+    refresh_prompt = refresh_prompt_by_temporal_state[temporal_state]
+    if (
+        temporal_state == "active"
+        and str(properties.get("currentness_policy") or "")
+        == "historical_needs_confirmation"
+    ):
+        retrieval_state = "needs_refresh"
+        refresh_prompt = "confirm_currentness"
+
     review = _review_workflow(
         row=row,
         properties=properties,
@@ -103,8 +113,8 @@ def classify_temporal_graph_row(
     )
     return {
         "temporal_state": temporal_state,
-        "retrieval_state": retrieval_state_by_temporal_state[temporal_state],
-        "refresh_prompt": refresh_prompt_by_temporal_state[temporal_state],
+        "retrieval_state": retrieval_state,
+        "refresh_prompt": refresh_prompt,
         "conflict_key": conflict_key,
         **review,
     }
