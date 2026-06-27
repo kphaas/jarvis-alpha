@@ -27,6 +27,13 @@ LINKEDIN_WEEKLY_MIGRATION = (
     / "migrations"
     / "20260627_010000_herald_linkedin_weekly.sql"
 )
+LINKEDIN_PUBLISH_MIGRATION = (
+    REPO_ROOT
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260627_120000_herald_linkedin_publish.sql"
+)
 
 
 def test_social_draft_is_draft_only_and_brand_linted() -> None:
@@ -69,6 +76,21 @@ def test_linkedin_reply_draft_is_reviewed_engagement_only() -> None:
         assert "reply_drafts_linkedin_only" in str(exc)
     else:
         raise AssertionError("reply drafts should be LinkedIn-only for this slice")
+
+
+def test_linkedin_draft_uses_spark_context_without_leaking_raw_context() -> None:
+    draft = create_social_draft(
+        topic="Explain why approval gates matter.",
+        platform="linkedin",
+        max_chars=3000,
+        spark_context="[WHO YOU'RE TALKING TO]\n- Voice: concise and low-hype",
+    )
+
+    assert "spark_context_used" in draft.safety_flags
+    assert draft.spark_context_hash
+    assert "WHO YOU'RE TALKING TO" not in draft.draft_text
+    assert "low-hype" not in draft.draft_text
+    assert "public bar practical" in draft.draft_text
 
 
 def test_linkedin_weekly_topic_rotates_without_external_inputs() -> None:
@@ -129,7 +151,23 @@ def test_linkedin_weekly_migration_adds_schedule_and_receipt_state() -> None:
     assert "Buffer" not in source
 
 
-def test_social_routes_do_not_publish_to_platforms() -> None:
+def test_linkedin_publish_migration_adds_approved_publish_state() -> None:
+    source = LINKEDIN_PUBLISH_MIGRATION.read_text(encoding="utf-8")
+
+    for value in (
+        "sending",
+        "linkedin_published",
+        "publish_failed",
+        "variant_linkedin_publish_started",
+        "variant_linkedin_published",
+        "variant_linkedin_publish_failed",
+        "provider_post_urn",
+    ):
+        assert value in source
+    assert "access_token" not in source
+
+
+def test_social_routes_publish_only_through_linkedin_connector() -> None:
     source = ROUTE.read_text(encoding="utf-8")
 
     assert "/v1/herald/social" in source
@@ -137,10 +175,13 @@ def test_social_routes_do_not_publish_to_platforms() -> None:
     assert "/linkedin/cadence" in source
     assert "/schedule" in source
     assert "/publish/manual" in source
+    assert "/publish/linkedin" in source
     assert "create_social_draft" in source
+    assert "publish_linkedin_text" in source
     assert "alpha_herald_social_draft_events" in source
     assert "send_at0_mail_reply" not in source
     assert "requests.post" not in source
     assert "aiohttp" not in source
+    assert "browser" not in source.lower()
     assert "postiz" not in source.lower()
     assert "buffer" not in source.lower()

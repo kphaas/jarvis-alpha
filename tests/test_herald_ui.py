@@ -60,11 +60,14 @@ def test_herald_ui_exposes_social_approval_outbox() -> None:
     assert "/v1/herald/social/drafts/${draftId}/status" in source
     assert "/v1/herald/social/drafts/${draftId}/schedule" in source
     assert "/v1/herald/social/drafts/${draftId}/publish/manual" in source
+    assert "/v1/herald/social/drafts/${draftId}/publish/linkedin" in source
     assert "Social approval outbox" in source
     assert "Draft weekly LinkedIn" in source
     assert "LinkedIn engagement" in source
     assert "Draft LinkedIn reply" in source
+    assert "Post to LinkedIn" in source
     assert "Mark published" in source
+    assert "publish_failed" in source
     assert 'type="date"' in source
     assert "publish_status" in source
     assert "draft_kind" in source

@@ -10,7 +10,14 @@ from pydantic import BaseModel, ConfigDict, Field
 SocialPlatform = Literal["x", "linkedin"]
 SocialDraftStatus = Literal["needs_review", "approved", "rejected", "archived"]
 SocialDraftKind = Literal["post", "reply"]
-SocialPublishStatus = Literal["not_scheduled", "scheduled", "manual_published"]
+SocialPublishStatus = Literal[
+    "not_scheduled",
+    "scheduled",
+    "manual_published",
+    "sending",
+    "linkedin_published",
+    "publish_failed",
+]
 
 
 def _default_social_platforms() -> list[SocialPlatform]:
@@ -82,6 +89,11 @@ class HeraldSocialDraftVariantOut(BaseModel):
     scheduled_for: date | None
     published_at: datetime | None
     published_url: str | None
+    publish_attempt_count: int
+    last_publish_attempt_at: datetime | None
+    publish_error_type: str | None
+    publish_error_message: str | None
+    provider_post_urn: str | None
     variant_version: int
     profile_version: int
     audience_notes: str
