@@ -116,6 +116,11 @@ def test_herald_social_outbox_smoke_covers_draft_only_flow() -> None:
     assert "WEEKLY_DRAFT_ID" in text
     assert "REPLY_DRAFT_ID" in text
     assert "reply draft" in text
+    assert (
+        'REPLY_DRAFT_ID="$(cat "${TMP_DIR}/reply.id")"\n'
+        'printf \'{"status":"archived","reviewer_notes":"smoke cleanup"}\\n\' >"${ARCHIVE_BODY}"\n'
+        'request_json "POST" "archive"'
+    ) in text
     assert "herald.read,herald.write" in text
     assert "Postiz" not in text
     assert "Buffer" not in text
