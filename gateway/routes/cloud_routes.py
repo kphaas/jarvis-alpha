@@ -107,6 +107,13 @@ class MicrosoftGraphMailboxReplyRequest(BaseModel):
     reply_body: str = Field(min_length=1, max_length=20000)
 
 
+class LinkedInMemberPostRequest(BaseModel):
+    access_token: str = Field(min_length=20, max_length=5000)
+    author_urn: str = Field(pattern=r"^urn:li:person:[A-Za-z0-9_-]+$")
+    linkedin_version: str = Field(default="202606", pattern=r"^[0-9]{6}$")
+    text: str = Field(min_length=1, max_length=3000)
+
+
 class AnthropicAdminRequest(BaseModel):
     path: str
     params: dict[str, str]
@@ -503,6 +510,50 @@ async def msgraph_mailbox_reply(
     except Exception:
         payload = {"raw": response.text}
     return {"status_code": response.status_code, "payload": payload}
+
+
+@router.post("/linkedin/member_post")
+async def linkedin_member_post(
+    req: LinkedInMemberPostRequest,
+    authorization: str = Header(...),
+):
+    _authorize_gateway_call(authorization)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            "https://api.linkedin.com/rest/posts",
+            headers={
+                "Authorization": f"Bearer {req.access_token}",
+                "Content-Type": "application/json",
+                "Linkedin-Version": req.linkedin_version,
+                "X-Restli-Protocol-Version": "2.0.0",
+            },
+            json={
+                "author": req.author_urn,
+                "commentary": req.text,
+                "visibility": "PUBLIC",
+                "distribution": {
+                    "feedDistribution": "MAIN_FEED",
+                    "targetEntities": [],
+                    "thirdPartyDistributionChannels": [],
+                },
+                "lifecycleState": "PUBLISHED",
+                "isReshareDisabledByAuthor": False,
+            },
+        )
+    payload: Any
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {"raw": response.text}
+    post_urn = response.headers.get("x-restli-id")
+    return {
+        "status_code": response.status_code,
+        "payload": payload,
+        "post_urn": post_urn,
+        "post_url": f"https://www.linkedin.com/feed/update/{post_urn}"
+        if post_urn
+        else None,
+    }
 
 
 @router.post("/anthropic_admin")

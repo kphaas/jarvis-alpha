@@ -19,6 +19,7 @@ logger = get_logger("alpha_memory")
 SEMANTIC_CAP = 50
 GRAPH_NODE_LIMIT = 8
 GRAPH_EDGE_LIMIT = 8
+GRAPH_STALE_AFTER_DAYS = 90
 EPISODIC_LIMIT = 5
 WORKING_LIMIT = 10
 
@@ -44,6 +45,10 @@ class MemoryService:
     )
     NOISE_PATTERN = re.compile(
         r"^(ok|okay|thanks|thank you|got it|sure|yes|no|yep|nope|k|cool|nice|good|great|alright|sounds good|perfect|fine|hmm|hm|ah|oh|lol|haha)[\.\!\?]?$",
+        re.IGNORECASE,
+    )
+    HISTORICAL_GRAPH_QUERY = re.compile(
+        r"\b(old|older|previous|prior|past|history|historical|changed|change|formerly|before|used to|no longer|expired|stale)\b",
         re.IGNORECASE,
     )
 
@@ -139,10 +144,15 @@ class MemoryService:
         kind = str(row.get("kind") or "related").replace("_", " ")
         source = str(row.get("source") or "unknown")
         confidence = float(row.get("confidence") or 0)
+        retrieval_state = str(row.get("retrieval_state") or "current").replace("_", " ")
         if item_type == "edge":
-            return f"- Relation: {label} ({kind}, confidence {confidence:.2f}, source {source})"
+            return (
+                f"- [{retrieval_state}] Relation: {label} "
+                f"({kind}, confidence {confidence:.2f}, source {source})"
+            )
         return (
-            f"- {kind.title()}: {label} (confidence {confidence:.2f}, source {source})"
+            f"- [{retrieval_state}] {kind.title()}: {label} "
+            f"(confidence {confidence:.2f}, source {source})"
         )
 
     async def _get_spark_grounding(
@@ -259,9 +269,10 @@ class MemoryService:
         query = (prompt or "").strip()
         try:
             if query:
+                include_history = bool(self.HISTORICAL_GRAPH_QUERY.search(query))
                 rows = await conn.fetch(
                     """
-                    WITH active_nodes AS (
+                    WITH candidate_nodes AS (
                         SELECT
                             n.id,
                             n.node_type,
@@ -283,7 +294,15 @@ class MemoryService:
                         WHERE n.principal_id = $1
                           AND n.review_status = 'active'
                           AND n.valid_from <= NOW()
-                          AND (n.valid_to IS NULL OR n.valid_to > NOW())
+                          AND (
+                            n.valid_to IS NULL
+                            OR n.valid_to > NOW()
+                            OR (
+                                $5::boolean
+                                AND n.valid_to IS NOT NULL
+                                AND n.valid_to <= NOW()
+                            )
+                          )
                         GROUP BY n.id
                     ),
                     ranked_nodes AS (
@@ -295,6 +314,13 @@ class MemoryService:
                             n.confidence,
                             n.valid_from,
                             n.valid_to,
+                            CASE
+                                WHEN n.valid_to IS NOT NULL AND n.valid_to <= NOW()
+                                    THEN 'historical'
+                                WHEN n.updated_at < NOW() - ($6::integer * INTERVAL '1 day')
+                                    THEN 'needs_refresh'
+                                ELSE 'current'
+                            END AS retrieval_state,
                             ts_rank_cd(
                                 to_tsvector(
                                     'simple',
@@ -325,10 +351,17 @@ class MemoryService:
                                         EXTRACT(EPOCH FROM (NOW() - n.updated_at)) / 3600.0
                                     )
                                   )
+                                - CASE
+                                    WHEN n.valid_to IS NOT NULL AND n.valid_to <= NOW()
+                                        THEN 0.18
+                                    WHEN n.updated_at < NOW() - ($6::integer * INTERVAL '1 day')
+                                        THEN 0.08
+                                    ELSE 0.0
+                                  END
                             ) AS retrieval_score
-                        FROM active_nodes n
+                        FROM candidate_nodes n
                     ),
-                    active_edges AS (
+                    candidate_edges AS (
                         SELECT
                             e.edge_type,
                             from_node.label_preview
@@ -341,7 +374,9 @@ class MemoryService:
                             e.confidence,
                             e.valid_from,
                             e.valid_to,
-                            e.updated_at
+                            e.updated_at,
+                            from_node.valid_to AS from_node_valid_to,
+                            to_node.valid_to AS to_node_valid_to
                         FROM public.alpha_memory_graph_edges e
                         JOIN public.alpha_memory_graph_nodes from_node
                           ON from_node.id = e.from_node_id
@@ -352,13 +387,37 @@ class MemoryService:
                         WHERE e.principal_id = $1
                           AND e.review_status = 'active'
                           AND e.valid_from <= NOW()
-                          AND (e.valid_to IS NULL OR e.valid_to > NOW())
+                          AND (
+                            e.valid_to IS NULL
+                            OR e.valid_to > NOW()
+                            OR (
+                                $5::boolean
+                                AND e.valid_to IS NOT NULL
+                                AND e.valid_to <= NOW()
+                            )
+                          )
                           AND from_node.review_status = 'active'
                           AND to_node.review_status = 'active'
                           AND from_node.valid_from <= NOW()
                           AND to_node.valid_from <= NOW()
-                          AND (from_node.valid_to IS NULL OR from_node.valid_to > NOW())
-                          AND (to_node.valid_to IS NULL OR to_node.valid_to > NOW())
+                          AND (
+                            from_node.valid_to IS NULL
+                            OR from_node.valid_to > NOW()
+                            OR (
+                                $5::boolean
+                                AND from_node.valid_to IS NOT NULL
+                                AND from_node.valid_to <= NOW()
+                            )
+                          )
+                          AND (
+                            to_node.valid_to IS NULL
+                            OR to_node.valid_to > NOW()
+                            OR (
+                                $5::boolean
+                                AND to_node.valid_to IS NOT NULL
+                                AND to_node.valid_to <= NOW()
+                            )
+                          )
                     ),
                     ranked_edges AS (
                         SELECT
@@ -369,6 +428,17 @@ class MemoryService:
                             e.confidence,
                             e.valid_from,
                             e.valid_to,
+                            CASE
+                                WHEN e.valid_to IS NOT NULL AND e.valid_to <= NOW()
+                                    THEN 'historical'
+                                WHEN e.from_node_valid_to IS NOT NULL AND e.from_node_valid_to <= NOW()
+                                    THEN 'historical'
+                                WHEN e.to_node_valid_to IS NOT NULL AND e.to_node_valid_to <= NOW()
+                                    THEN 'historical'
+                                WHEN e.updated_at < NOW() - ($6::integer * INTERVAL '1 day')
+                                    THEN 'needs_refresh'
+                                ELSE 'current'
+                            END AS retrieval_state,
                             ts_rank_cd(
                                 to_tsvector(
                                     'simple',
@@ -398,8 +468,19 @@ class MemoryService:
                                         EXTRACT(EPOCH FROM (NOW() - e.updated_at)) / 3600.0
                                     )
                                   )
+                                - CASE
+                                    WHEN e.valid_to IS NOT NULL AND e.valid_to <= NOW()
+                                        THEN 0.18
+                                    WHEN e.from_node_valid_to IS NOT NULL AND e.from_node_valid_to <= NOW()
+                                        THEN 0.18
+                                    WHEN e.to_node_valid_to IS NOT NULL AND e.to_node_valid_to <= NOW()
+                                        THEN 0.18
+                                    WHEN e.updated_at < NOW() - ($6::integer * INTERVAL '1 day')
+                                        THEN 0.08
+                                    ELSE 0.0
+                                  END
                             ) AS retrieval_score
-                        FROM active_edges e
+                        FROM candidate_edges e
                     ),
                     node_hits AS (
                         SELECT *
@@ -429,6 +510,8 @@ class MemoryService:
                     query,
                     GRAPH_NODE_LIMIT,
                     GRAPH_EDGE_LIMIT,
+                    include_history,
+                    GRAPH_STALE_AFTER_DAYS,
                 )
             else:
                 rows = await conn.fetch(
@@ -442,6 +525,7 @@ class MemoryService:
                             n.confidence,
                             n.valid_from,
                             n.valid_to,
+                            'current' AS retrieval_state,
                             (0.10 * n.confidence) AS retrieval_score
                         FROM public.alpha_memory_graph_nodes n
                         WHERE n.principal_id = $1
@@ -464,6 +548,7 @@ class MemoryService:
                             e.confidence,
                             e.valid_from,
                             e.valid_to,
+                            'current' AS retrieval_state,
                             (0.10 * e.confidence) AS retrieval_score
                         FROM public.alpha_memory_graph_edges e
                         JOIN public.alpha_memory_graph_nodes from_node

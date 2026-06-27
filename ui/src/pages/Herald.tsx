@@ -169,10 +169,15 @@ interface SocialDraft {
   account_label: string
   draft_text: string
   status: 'needs_review' | 'approved' | 'rejected' | 'archived'
-  publish_status: 'not_scheduled' | 'scheduled' | 'manual_published'
+  publish_status: 'not_scheduled' | 'scheduled' | 'manual_published' | 'sending' | 'linkedin_published' | 'publish_failed'
   scheduled_for: string | null
   published_at: string | null
   published_url: string | null
+  publish_attempt_count: number
+  last_publish_attempt_at: string | null
+  publish_error_type: string | null
+  publish_error_message: string | null
+  provider_post_urn: string | null
   variant_version: number
   profile_version: number
   audience_notes: string
@@ -562,6 +567,23 @@ export default function Herald() {
     }
   }
 
+  const publishLinkedinDraft = async (draftId: string) => {
+    setActingSocialDraftId(draftId)
+    setNotice(null)
+    try {
+      await apiJson(`/v1/herald/social/drafts/${draftId}/publish/linkedin`, {
+        method: 'POST',
+      })
+      setNotice('LinkedIn post published')
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'LinkedIn publish failed')
+      await load()
+    } finally {
+      setActingSocialDraftId(null)
+    }
+  }
+
   return (
     <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="max-w-6xl space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -866,8 +888,22 @@ export default function Herald() {
                     </span>
                   )}
                 </div>
-                {draft.platform === 'linkedin' && draft.status === 'approved' && draft.publish_status !== 'manual_published' && (
+                {draft.publish_status === 'publish_failed' && (
+                  <div className="mt-3 rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                    {draft.publish_error_message ?? draft.publish_error_type ?? 'LinkedIn publish failed'}
+                  </div>
+                )}
+                {draft.platform === 'linkedin' && draft.status === 'approved' && !['manual_published', 'linkedin_published'].includes(draft.publish_status) && (
                   <div className={`mt-3 grid gap-2 rounded-lg border p-3 ${border} ${panel}`}>
+                    <button
+                      type="button"
+                      onClick={() => publishLinkedinDraft(draft.id)}
+                      disabled={actingSocialDraftId === draft.id || draft.publish_status === 'sending'}
+                      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[#0a66c2] px-3 text-sm font-bold text-white transition hover:bg-[#0957a5] disabled:opacity-45"
+                    >
+                      {draft.publish_status === 'sending' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      Post to LinkedIn
+                    </button>
                     <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                       <input
                         type="date"

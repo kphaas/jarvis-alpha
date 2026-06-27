@@ -512,6 +512,57 @@ async def test_msgraph_mailbox_reply_allows_only_herald_mailboxes(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_linkedin_member_post_uses_rest_posts_endpoint(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 201
+        text = ""
+        headers = {"x-restli-id": "urn:li:share:abc123"}
+
+        def json(self):
+            return {"id": "urn:li:share:abc123"}
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            seen["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, headers, json):
+            seen["url"] = url
+            seen["headers"] = headers
+            seen["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.linkedin_member_post(
+        cloud_routes.LinkedInMemberPostRequest(
+            access_token="token-" + ("x" * 40),
+            author_urn="urn:li:person:abc123",
+            linkedin_version="202606",
+            text="Approved post",
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert seen["url"] == "https://api.linkedin.com/rest/posts"
+    assert seen["headers"]["Linkedin-Version"] == "202606"
+    assert seen["headers"]["X-Restli-Protocol-Version"] == "2.0.0"
+    assert seen["json"]["author"] == "urn:li:person:abc123"
+    assert seen["json"]["commentary"] == "Approved post"
+    assert seen["json"]["lifecycleState"] == "PUBLISHED"
+    assert result["post_urn"] == "urn:li:share:abc123"
+    assert "access_token" not in result
+
+
+@pytest.mark.asyncio
 async def test_anthropic_admin_rejects_unsupported_path(monkeypatch):
     monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
 
