@@ -283,8 +283,18 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Herald social — draft-only local outbox, no platform publish connector ---
     "GET /v1/herald/social/platforms": ["read", "security_read"],
     "GET /v1/herald/social/drafts": ["read", "security_read"],
+    "GET /v1/herald/social/linkedin/cadence": ["read", "security_read"],
     "POST /v1/herald/social/drafts": ["write", "security_write"],
+    "POST /v1/herald/social/linkedin/weekly": ["write", "security_write"],
     "POST /v1/herald/social/drafts/{variant_id}/status": [
+        "write",
+        "security_write",
+    ],
+    "POST /v1/herald/social/drafts/{variant_id}/schedule": [
+        "write",
+        "security_write",
+    ],
+    "POST /v1/herald/social/drafts/{variant_id}/publish/manual": [
         "write",
         "security_write",
     ],

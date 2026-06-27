@@ -102,11 +102,14 @@ def test_herald_social_outbox_smoke_covers_draft_only_flow() -> None:
 
     for path in (
         "/v1/herald/social/platforms",
+        "/v1/herald/social/linkedin/cadence",
+        "/v1/herald/social/linkedin/weekly",
         "/v1/herald/social/drafts",
         "/v1/herald/social/drafts/${SMOKE_DRAFT_ID}/status",
     ):
         assert path in text
     assert "draft_only_no_publish" in text
+    assert "WEEKLY_DRAFT_ID" in text
     assert "herald.read,herald.write" in text
     assert "Postiz" not in text
     assert "Buffer" not in text

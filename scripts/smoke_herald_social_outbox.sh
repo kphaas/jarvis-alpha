@@ -106,17 +106,28 @@ if label == "platforms":
     if not {"x", "linkedin"}.issubset(names):
         raise SystemExit(f"FAIL platforms: missing expected profiles {names}")
     print(f"PASS platforms: count={len(platforms)}")
-elif label == "create":
+elif label == "cadence":
+    for key in ("today", "next_due_date", "approved_ready_count"):
+        if key not in payload:
+            raise SystemExit(f"FAIL cadence: missing {key}")
+    print(
+        "PASS cadence: "
+        f"next_due={payload.get('next_due_date')} "
+        f"ready={payload.get('approved_ready_count')}"
+    )
+elif label in {"create", "weekly"}:
     drafts = payload.get("drafts")
     if not isinstance(drafts, list) or not drafts:
-        raise SystemExit("FAIL create: no drafts returned")
+        raise SystemExit(f"FAIL {label}: no drafts returned")
     for draft in drafts:
         if draft.get("status") != "needs_review":
-            raise SystemExit(f"FAIL create: status={draft.get('status')}")
+            raise SystemExit(f"FAIL {label}: status={draft.get('status')}")
         if "draft_only_no_publish" not in draft.get("safety_flags", []):
-            raise SystemExit("FAIL create: draft-only flag missing")
+            raise SystemExit(f"FAIL {label}: draft-only flag missing")
+        if label == "weekly" and draft.get("platform") != "linkedin":
+            raise SystemExit(f"FAIL weekly: platform={draft.get('platform')}")
     Path(sys.argv[2]).with_suffix(".id").write_text(drafts[0]["id"], encoding="utf-8")
-    print(f"PASS create: drafts={len(drafts)}")
+    print(f"PASS {label}: drafts={len(drafts)}")
 elif label == "archive":
     if payload.get("status") != "archived":
         raise SystemExit(f"FAIL archive: status={payload.get('status')}")
@@ -131,6 +142,13 @@ PY
 }
 
 request_json "GET" "platforms" "/v1/herald/social/platforms"
+request_json "GET" "cadence" "/v1/herald/social/linkedin/cadence"
+request_json "POST" "weekly" "/v1/herald/social/linkedin/weekly"
+
+WEEKLY_DRAFT_ID="$(cat "${TMP_DIR}/weekly.id")"
+ARCHIVE_BODY="${TMP_DIR}/archive.json"
+printf '{"status":"archived","reviewer_notes":"smoke cleanup"}\n' >"${ARCHIVE_BODY}"
+request_json "POST" "archive" "/v1/herald/social/drafts/${WEEKLY_DRAFT_ID}/status" "${ARCHIVE_BODY}"
 
 CREATE_BODY="${TMP_DIR}/create.json"
 "${PYTHON_BIN}" - "${TOPIC}" >"${CREATE_BODY}" <<'PY'
@@ -147,9 +165,8 @@ PY
 request_json "POST" "create" "/v1/herald/social/drafts" "${CREATE_BODY}"
 SMOKE_DRAFT_ID="$(cat "${TMP_DIR}/create.id")"
 
-ARCHIVE_BODY="${TMP_DIR}/archive.json"
 printf '{"status":"archived","reviewer_notes":"smoke cleanup"}\n' >"${ARCHIVE_BODY}"
 request_json "POST" "archive" "/v1/herald/social/drafts/${SMOKE_DRAFT_ID}/status" "${ARCHIVE_BODY}"
 request_json "GET" "drafts" "/v1/herald/social/drafts?status=all&limit=1"
 
-echo "PASS herald-social-outbox smoke: platforms, create, archive, drafts reachable"
+echo "PASS herald-social-outbox smoke: platforms, cadence, weekly, create, archive, drafts reachable"

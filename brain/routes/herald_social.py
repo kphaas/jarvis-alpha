@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from typing import Literal
 from uuid import UUID
 
@@ -10,15 +11,22 @@ from brain.db.pool import get_pool
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
 from brain.models.herald_social import (
+    HeraldLinkedInCadenceOut,
     HeraldSocialDraftCreate,
     HeraldSocialDraftCreateResponse,
     HeraldSocialDraftList,
+    HeraldSocialDraftScheduleUpdate,
     HeraldSocialDraftStatusUpdate,
     HeraldSocialDraftVariantOut,
+    HeraldSocialManualPublishUpdate,
     HeraldSocialPlatformProfileList,
     HeraldSocialPlatformProfileOut,
 )
-from brain.services.herald_social import create_social_draft, normalize_platforms
+from brain.services.herald_social import (
+    create_social_draft,
+    linkedin_weekly_topic,
+    normalize_platforms,
+)
 
 router = APIRouter(prefix="/v1/herald/social", tags=["herald-social"])
 
@@ -94,7 +102,9 @@ async def list_social_drafts(
         rows = await conn.fetch(
             f"""
             SELECT v.id, v.request_id, r.topic, r.source_url, r.campaign,
+                   r.draft_kind, r.engagement_author,
                    v.platform, v.account_label, v.draft_text, v.status,
+                   v.publish_status, v.scheduled_for, v.published_at, v.published_url,
                    v.variant_version, v.profile_version, v.audience_notes,
                    v.voice_rules, v.safety_rules, v.voice_score::float AS voice_score,
                    v.safety_flags, v.repeat_of_variant_id, v.reviewer_notes,
@@ -117,11 +127,81 @@ async def create_social_drafts(
     request: Request,
     _: str = Depends(require_auth),
 ) -> HeraldSocialDraftCreateResponse:
+    return await _create_social_drafts(body=body, request=request)
+
+
+@router.get("/linkedin/cadence", response_model=HeraldLinkedInCadenceOut)
+async def get_linkedin_cadence(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldLinkedInCadenceOut:
+    _check_read_scope(request)
+    async with get_pool().acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT current_date AS today,
+                   max(v.published_at) FILTER (
+                       WHERE v.platform = 'linkedin'
+                         AND v.publish_status = 'manual_published'
+                   ) AS last_published_at,
+                   min(v.scheduled_for) FILTER (
+                       WHERE v.platform = 'linkedin'
+                         AND v.publish_status = 'scheduled'
+                         AND v.scheduled_for >= current_date
+                   ) AS next_scheduled_for,
+                   count(*) FILTER (
+                       WHERE v.platform = 'linkedin'
+                         AND v.status = 'approved'
+                         AND v.publish_status IN ('not_scheduled', 'scheduled')
+                   )::int AS approved_ready_count
+            FROM public.alpha_herald_social_draft_variants v
+            """
+        )
+    today = row["today"]
+    last_published_at = row["last_published_at"]
+    next_due_date = (
+        last_published_at.date() + timedelta(days=7)
+        if last_published_at is not None
+        else today
+    )
+    return HeraldLinkedInCadenceOut(
+        today=today,
+        next_due_date=next_due_date,
+        last_published_at=last_published_at,
+        next_scheduled_for=row["next_scheduled_for"],
+        approved_ready_count=int(row["approved_ready_count"] or 0),
+    )
+
+
+@router.post("/linkedin/weekly", response_model=HeraldSocialDraftCreateResponse)
+async def create_linkedin_weekly_draft(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldSocialDraftCreateResponse:
+    _check_write_scope(request)
+    async with get_pool().acquire() as conn:
+        today = await conn.fetchval("SELECT current_date")
+    body = HeraldSocialDraftCreate(
+        topic=linkedin_weekly_topic(today),
+        platforms=["linkedin"],
+        account_label="AT0",
+        campaign="linkedin-weekly-brand",
+    )
+    return await _create_social_drafts(body=body, request=request)
+
+
+async def _create_social_drafts(
+    *,
+    body: HeraldSocialDraftCreate,
+    request: Request,
+) -> HeraldSocialDraftCreateResponse:
     _check_write_scope(request)
     try:
         platforms = normalize_platforms([str(platform) for platform in body.platforms])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if body.draft_kind == "reply" and platforms != ("linkedin",):
+        raise HTTPException(status_code=400, detail="reply_drafts_linkedin_only")
 
     actor_sub = _actor_sub(request)
     actor_type = _actor_type(request)
@@ -148,9 +228,10 @@ async def create_social_drafts(
             request_id = await conn.fetchval(
                 """
                 INSERT INTO public.alpha_herald_social_draft_requests (
-                    topic, source_url, campaign, account_label, requested_by
+                    topic, source_url, campaign, account_label, requested_by,
+                    draft_kind, engagement_author
                 )
-                VALUES ($1, $2, $3, $4, $5)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 RETURNING id
                 """,
                 body.topic.strip(),
@@ -158,6 +239,8 @@ async def create_social_drafts(
                 body.campaign.strip() if body.campaign else None,
                 body.account_label.strip(),
                 actor_sub,
+                body.draft_kind,
+                body.engagement_author.strip() if body.engagement_author else None,
             )
             await _record_event(
                 conn,
@@ -166,7 +249,7 @@ async def create_social_drafts(
                 event_type="request_created",
                 actor_sub=actor_sub,
                 actor_type=actor_type,
-                payload={"platforms": list(platforms)},
+                payload={"draft_kind": body.draft_kind, "platforms": list(platforms)},
             )
 
             draft_rows = []
@@ -176,6 +259,8 @@ async def create_social_drafts(
                     topic=body.topic,
                     platform=platform,
                     max_chars=int(profile["max_chars"]),
+                    draft_kind=body.draft_kind,
+                    engagement_author=body.engagement_author,
                 )
                 repeat_of = await conn.fetchval(
                     """
@@ -229,6 +314,7 @@ async def create_social_drafts(
                     actor_type=actor_type,
                     payload={
                         "platform": platform,
+                        "draft_kind": body.draft_kind,
                         "profile_version": int(profile["profile_version"]),
                         "repeat": repeat_of is not None,
                     },
@@ -311,11 +397,129 @@ async def update_social_draft_status(
     return _draft_out(row)
 
 
+@router.post(
+    "/drafts/{variant_id}/schedule", response_model=HeraldSocialDraftVariantOut
+)
+async def schedule_linkedin_draft(
+    variant_id: UUID,
+    body: HeraldSocialDraftScheduleUpdate,
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldSocialDraftVariantOut:
+    _check_write_scope(request)
+    actor_sub = _actor_sub(request)
+    actor_type = _actor_type(request)
+    async with get_pool().acquire() as conn:
+        async with conn.transaction():
+            today = await conn.fetchval("SELECT current_date")
+            if body.scheduled_for < today:
+                raise HTTPException(status_code=400, detail="scheduled_for_past")
+            current = await conn.fetchrow(
+                """
+                SELECT request_id, platform, status
+                FROM public.alpha_herald_social_draft_variants
+                WHERE id = $1
+                FOR UPDATE
+                """,
+                variant_id,
+            )
+            if current is None:
+                raise HTTPException(status_code=404, detail="Social draft not found")
+            if current["platform"] != "linkedin":
+                raise HTTPException(status_code=400, detail="linkedin_only")
+            if current["status"] != "approved":
+                raise HTTPException(status_code=409, detail="draft_not_approved")
+
+            await conn.execute(
+                """
+                UPDATE public.alpha_herald_social_draft_variants
+                SET scheduled_for = $2,
+                    publish_status = 'scheduled',
+                    updated_at = now()
+                WHERE id = $1
+                """,
+                variant_id,
+                body.scheduled_for,
+            )
+            await _record_event(
+                conn,
+                request_id=current["request_id"],
+                variant_id=variant_id,
+                event_type="variant_scheduled",
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+                payload={"scheduled_for": body.scheduled_for.isoformat()},
+            )
+            row = await _fetch_variant(conn, variant_id)
+    return _draft_out(row)
+
+
+@router.post(
+    "/drafts/{variant_id}/publish/manual",
+    response_model=HeraldSocialDraftVariantOut,
+)
+async def mark_linkedin_draft_manually_published(
+    variant_id: UUID,
+    body: HeraldSocialManualPublishUpdate,
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldSocialDraftVariantOut:
+    _check_write_scope(request)
+    actor_sub = _actor_sub(request)
+    actor_type = _actor_type(request)
+    async with get_pool().acquire() as conn:
+        async with conn.transaction():
+            current = await conn.fetchrow(
+                """
+                SELECT request_id, platform, status, publish_status
+                FROM public.alpha_herald_social_draft_variants
+                WHERE id = $1
+                FOR UPDATE
+                """,
+                variant_id,
+            )
+            if current is None:
+                raise HTTPException(status_code=404, detail="Social draft not found")
+            if current["platform"] != "linkedin":
+                raise HTTPException(status_code=400, detail="linkedin_only")
+            if current["status"] != "approved":
+                raise HTTPException(status_code=409, detail="draft_not_approved")
+
+            await conn.execute(
+                """
+                UPDATE public.alpha_herald_social_draft_variants
+                SET publish_status = 'manual_published',
+                    published_at = now(),
+                    published_url = $2,
+                    updated_at = now()
+                WHERE id = $1
+                """,
+                variant_id,
+                body.published_url.strip(),
+            )
+            await _record_event(
+                conn,
+                request_id=current["request_id"],
+                variant_id=variant_id,
+                event_type="variant_manual_published",
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+                payload={
+                    "from_publish_status": current["publish_status"],
+                    "published_url": body.published_url.strip(),
+                },
+            )
+            row = await _fetch_variant(conn, variant_id)
+    return _draft_out(row)
+
+
 async def _fetch_variant(conn, variant_id: UUID):
     row = await conn.fetchrow(
         """
         SELECT v.id, v.request_id, r.topic, r.source_url, r.campaign,
+               r.draft_kind, r.engagement_author,
                v.platform, v.account_label, v.draft_text, v.status,
+               v.publish_status, v.scheduled_for, v.published_at, v.published_url,
                v.variant_version, v.profile_version, v.audience_notes,
                v.voice_rules, v.safety_rules, v.voice_score::float AS voice_score,
                v.safety_flags, v.repeat_of_variant_id, v.reviewer_notes,
