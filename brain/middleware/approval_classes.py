@@ -286,8 +286,19 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /v1/herald/social/platforms": ["read", "security_read"],
     "GET /v1/herald/social/drafts": ["read", "security_read"],
     "GET /v1/herald/social/linkedin/cadence": ["read", "security_read"],
+    "GET /v1/herald/social/linkedin/read-plan": ["read", "security_read"],
+    "GET /v1/herald/social/linkedin/engagements": ["read", "security_read"],
     "POST /v1/herald/social/drafts": ["write", "security_write"],
     "POST /v1/herald/social/linkedin/weekly": ["write", "security_write"],
+    "POST /v1/herald/social/linkedin/engagements": ["write", "security_write"],
+    "POST /v1/herald/social/linkedin/engagements/{item_id}/draft-reply": [
+        "write",
+        "security_write",
+    ],
+    "POST /v1/herald/social/linkedin/engagements/{item_id}/status": [
+        "write",
+        "security_write",
+    ],
     "POST /v1/herald/social/drafts/{variant_id}/status": [
         "write",
         "security_write",

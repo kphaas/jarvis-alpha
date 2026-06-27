@@ -4,7 +4,8 @@
 
 - LinkedIn developer app with member posting access.
 - OAuth token for Ken with `w_member_social`.
-- Optional future read access requires `r_member_social`; this PR does not read LinkedIn.
+- Optional read/comment discovery requires LinkedIn-approved `r_member_social`.
+  Until approved, Herald supports manual LinkedIn engagement inbox items only.
 - Reference: https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/posts-api?view=li-lms-2026-06
 
 ## Alpha Secrets
@@ -47,8 +48,20 @@ warning window closes, then restart Alpha.
 3. `POST /v1/herald/social/drafts/{variant_id}/publish/linkedin` sends through Gateway to LinkedIn.
 4. Herald records append-only start/success/failure events and marks the draft `linkedin_published` or `publish_failed`.
 
+## Engagement Inbox
+
+- `GET /v1/herald/social/linkedin/read-plan` reports the read-access plan:
+  `w_member_social` can publish approved content, but feed/comment discovery
+  needs `r_member_social`.
+- `POST /v1/herald/social/linkedin/engagements` creates a local `needs_reply`
+  item from a public LinkedIn URL/comment Ken provides.
+- `POST /v1/herald/social/linkedin/engagements/{item_id}/draft-reply` creates a
+  Spark-informed LinkedIn reply draft and links it back to the engagement item.
+- The generated reply lands in the normal social approval outbox. It cannot be
+  posted until Ken approves the draft and then calls the publish route.
+
 ## Boundary
 
 - No autonomous posting.
-- No LinkedIn read/comment/like/DM path.
+- No automated LinkedIn read/comment/like/DM path until `r_member_social` is approved.
 - No token values in audit events, logs, UI, or test fixtures.

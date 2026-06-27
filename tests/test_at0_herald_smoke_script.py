@@ -84,6 +84,7 @@ def test_at0_herald_restore_drill_covers_mail_audit_and_monitor_tables() -> None
         "public.alpha_herald_social_draft_requests",
         "public.alpha_herald_social_draft_variants",
         "public.alpha_herald_social_draft_events",
+        "public.alpha_herald_social_engagement_items",
     ):
         assert table in text
     assert "pg_dump" in text
@@ -104,12 +105,17 @@ def test_herald_social_outbox_smoke_covers_draft_only_flow() -> None:
         "/v1/herald/social/platforms",
         "/v1/herald/social/linkedin/cadence",
         "/v1/herald/social/linkedin/weekly",
+        "/v1/herald/social/linkedin/engagements",
+        "/v1/herald/social/linkedin/engagements/${ENGAGEMENT_ID}/draft-reply",
+        "/v1/herald/social/linkedin/engagements/${ENGAGEMENT_ID}/status",
         "/v1/herald/social/drafts",
         "/v1/herald/social/drafts/${SMOKE_DRAFT_ID}/status",
     ):
         assert path in text
     assert "draft_only_no_publish" in text
     assert "WEEKLY_DRAFT_ID" in text
+    assert "REPLY_DRAFT_ID" in text
+    assert "reply draft" in text
     assert "herald.read,herald.write" in text
     assert "Postiz" not in text
     assert "Buffer" not in text
