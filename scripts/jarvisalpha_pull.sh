@@ -181,6 +181,10 @@ needs_reload_ai_news_brief() {
   service_has_changes_matching "alpha-ai-news-brief" '(^brain/services/internet_scout/ai_news_brief\.py$|^brain/routes/helm\.py$|^launchagents/com\.jarvis\.alpha\.ai-news-brief\.template\.plist$|^scripts/(run_ai_news_brief\.py|start_alpha_ai_news_brief\.sh|install_launchagents\.py)$)'
 }
 
+needs_reload_market_brief() {
+  service_has_changes_matching "alpha-market-brief" '(^brain/services/internet_scout/market_brief\.py$|^brain/routes/helm\.py$|^launchagents/com\.jarvis\.alpha\.market-brief\.template\.plist$|^scripts/(run_market_brief\.py|start_alpha_market_brief\.sh|install_launchagents\.py)$)'
+}
+
 needs_reload_sweep_cert() {
   service_has_changes_matching "alpha-sweep-cert-renewal" "(^launchagents/com\\.jarvis\\.alpha\\.sweep-cert-renewal\\.${NODE_SHORT}\\.template\\.plist$|^launchagents/com\\.jarvis\\.alpha\\.sweep-cert-renewal\\.template\\.plist$|^scripts/install_launchagents\\.py$)"
 }
@@ -636,6 +640,39 @@ if [ "$NODE_SHORT" = "brain" ] && needs_reload_ai_news_brief; then
 elif [ "$NODE_SHORT" = "brain" ]; then
   emit skip restart node="$NODE_SHORT" service="alpha-ai-news-brief" reason="no_launchagent_changes"
   mark_service_checked "alpha-ai-news-brief"
+fi
+
+MARKET_BRIEF_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.market-brief.plist"
+if [ "$NODE_SHORT" = "brain" ] && needs_reload_market_brief; then
+  echo ""
+  echo "Refreshing Alpha market brief LaunchAgent..."
+  MARKET_START=$(time_ms)
+  INSTALL_LOG=$(mktemp)
+  if ! python3 "${REPO_DIR}/scripts/install_launchagents.py" --node brain >"$INSTALL_LOG" 2>&1; then
+    MARKET_DUR=$(($(time_ms) - MARKET_START))
+    INSTALL_ERR=$(tail -5 "$INSTALL_LOG" | tr '\n' ' ' | cut -c1-300)
+    rm -f "$INSTALL_LOG"
+    emit fail restart node="$NODE_SHORT" service="alpha-market-brief" dur_ms="$MARKET_DUR" error="$INSTALL_ERR"
+    echo "❌ Market brief LaunchAgent install failed"
+    exit 1
+  fi
+  rm -f "$INSTALL_LOG"
+  if [ -f "$MARKET_BRIEF_PLIST" ]; then
+    launchctl unload "$MARKET_BRIEF_PLIST" 2>/dev/null || true
+    launchctl load "$MARKET_BRIEF_PLIST"
+    MARKET_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.market-brief" {print $1}' | head -1)
+    [ "$MARKET_PID" = "-" ] && MARKET_PID=0
+    echo "✅ Market brief LaunchAgent refreshed"
+    emit ok restart node="$NODE_SHORT" service="alpha-market-brief" pid="${MARKET_PID:-0}" dur_ms=$(($(time_ms) - MARKET_START))
+  else
+    emit fail restart node="$NODE_SHORT" service="alpha-market-brief" dur_ms=$(($(time_ms) - MARKET_START)) error="plist missing after install"
+    echo "❌ Market brief LaunchAgent plist missing after install"
+    exit 1
+  fi
+  mark_service_checked "alpha-market-brief"
+elif [ "$NODE_SHORT" = "brain" ]; then
+  emit skip restart node="$NODE_SHORT" service="alpha-market-brief" reason="no_launchagent_changes"
+  mark_service_checked "alpha-market-brief"
 fi
 
 SWEEP_CERT_LABEL="com.jarvis.alpha.sweep-cert-renewal.${NODE_SHORT}"

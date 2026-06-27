@@ -719,6 +719,10 @@ def test_helm_summary_route_is_read_classified() -> None:
         "read",
         "security_read",
     ]
+    assert classify_route("GET", "/v1/helm/markets/brief") == [
+        "read",
+        "security_read",
+    ]
     assert classify_route("GET", "/v1/helm/self") == ["read", "security_read"]
 
 
@@ -765,6 +769,50 @@ async def test_helm_ai_news_brief_returns_latest_auto_summary(monkeypatch) -> No
     assert response.controls.generated_by == "alpha_auto"
     assert response.controls.egress_owner == "gateway"
     assert seen["audit_actor"] == "helm_ai_news_brief:ken"
+
+
+@pytest.mark.asyncio
+async def test_helm_market_brief_requires_helm_read_scope() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await helm.helm_market_brief(_request(), _user_id="ken")
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_helm_market_brief_returns_latest_auto_summary(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    @asynccontextmanager
+    async def fake_platform_admin_connection(**kwargs):
+        seen.update(kwargs)
+        yield object()
+
+    async def fake_latest_market_brief(_conn):
+        from brain.services.internet_scout.market_brief import MarketBrief
+
+        return MarketBrief(
+            status="ok",
+            generated_at=datetime(2026, 6, 26, 12, 35, tzinfo=UTC),
+            overall_summary="Global market snapshot: 1 up.",
+            index_count=1,
+            source_count=1,
+        )
+
+    monkeypatch.setattr(
+        helm, "platform_admin_connection", fake_platform_admin_connection
+    )
+    monkeypatch.setattr(helm, "latest_market_brief", fake_latest_market_brief)
+
+    response = await helm.helm_market_brief(
+        _request(scopes=["helm.read"]),
+        _user_id="ken",
+    )
+
+    assert response.status == "ok"
+    assert response.controls.execution_mode == "no_orders"
+    assert response.controls.egress_owner == "gateway"
+    assert seen["audit_actor"] == "helm_market_brief:ken"
 
 
 @pytest.mark.asyncio
