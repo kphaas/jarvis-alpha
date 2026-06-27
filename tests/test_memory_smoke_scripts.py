@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import importlib.util
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -27,6 +29,19 @@ OWNER_GRANT_MIGRATION = (
 
 def _script_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _load_memory_graph_smoke():
+    spec = importlib.util.spec_from_file_location(
+        "smoke_memory_graph_test_module",
+        MEMORY_GRAPH_SMOKE,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_memory_smoke_scripts_have_clean_bash_syntax() -> None:
@@ -90,6 +105,31 @@ def test_memory_graph_smoke_does_not_print_tokens_or_raw_payloads() -> None:
     assert "payload_redacted" in source
     assert "/v1/memory/admin/graph/health" in source
     assert "/v1/memory/admin/graph/proposals?state=open&limit=5" in source
+
+
+def test_memory_graph_smoke_validates_temporal_contract_values() -> None:
+    smoke = _load_memory_graph_smoke()
+
+    valid = smoke._temporal_contract(
+        [{"temporal_state": "active", "retrieval_state": "current"}],
+        [{"temporal_state": "stale", "retrieval_state": "needs_refresh"}],
+    )
+    assert valid["has_fields"] is True
+    assert valid["valid_retrieval_states"] is True
+    assert valid["retrieval_states"] == ["current", "needs_refresh"]
+
+    invalid_state = smoke._temporal_contract(
+        [{"temporal_state": "active", "retrieval_state": "unknown"}],
+        [],
+    )
+    assert invalid_state["has_fields"] is True
+    assert invalid_state["valid_retrieval_states"] is False
+
+    missing_field = smoke._temporal_contract(
+        [{"temporal_state": "active"}],
+        [],
+    )
+    assert missing_field["has_fields"] is False
 
 
 def test_semantic_memory_public_execute_revoke_migration_is_guarded() -> None:

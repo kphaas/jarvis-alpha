@@ -48,9 +48,14 @@ class MemoryService:
         re.IGNORECASE,
     )
     HISTORICAL_GRAPH_QUERY = re.compile(
-        r"\b(old|older|previous|prior|past|history|historical|changed|change|formerly|before|used to|no longer|expired|stale)\b",
+        r"\b(old|older|previous|prior|past|history|historical|changed|change|formerly|before|used?\s+to|no longer|expired|stale)\b",
         re.IGNORECASE,
     )
+
+    @classmethod
+    def _include_historical_graph(cls, prompt: str) -> bool:
+        query = (prompt or "").strip()
+        return bool(cls.HISTORICAL_GRAPH_QUERY.search(query))
 
     def _score_importance(self, text: str) -> float:
         """
@@ -269,7 +274,7 @@ class MemoryService:
         query = (prompt or "").strip()
         try:
             if query:
-                include_history = bool(self.HISTORICAL_GRAPH_QUERY.search(query))
+                include_history = self._include_historical_graph(query)
                 rows = await conn.fetch(
                     """
                     WITH candidate_nodes AS (
