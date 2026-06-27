@@ -15,10 +15,30 @@ Set on Brain, never in code:
 AT0_LINKEDIN_ACCESS_TOKEN=...
 AT0_LINKEDIN_AUTHOR_URN=urn:li:person:...
 AT0_LINKEDIN_API_VERSION=202606
+AT0_LINKEDIN_CLIENT_ID=...
+AT0_LINKEDIN_CLIENT_SECRET=...
 ```
 
 `202606` is the current default for this connector. Do not fall back to `202506`;
 LinkedIn has marked that Marketing API version sunset.
+
+## Token Health Monitor
+
+`com.jarvis.alpha.herald-linkedin-health` runs on Brain every 6 hours. It calls
+LinkedIn OAuth token introspection, verifies the token is active, checks
+`w_member_social`, and exits non-zero when the token is inactive or inside the
+renewal warning window.
+
+Optional knobs:
+
+```bash
+AT0_LINKEDIN_REQUIRED_SCOPES=w_member_social
+AT0_LINKEDIN_TOKEN_WARN_DAYS=14
+AT0_LINKEDIN_HEALTH_FAIL_ON_DEGRADED=true
+```
+
+Renewal is still human-in-the-loop OAuth: regenerate the member token before the
+warning window closes, then restart Alpha.
 
 ## Flow
 
