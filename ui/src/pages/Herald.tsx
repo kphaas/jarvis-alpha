@@ -3,10 +3,13 @@ import { motion } from 'framer-motion'
 import {
   CheckCircle2,
   Archive,
+  CalendarClock,
+  ExternalLink,
   Inbox,
   LoaderCircle,
   MailCheck,
   Megaphone,
+  MessageCircle,
   RefreshCw,
   Send,
   ShieldCheck,
@@ -160,10 +163,16 @@ interface SocialDraft {
   topic: string
   source_url: string | null
   campaign: string | null
+  draft_kind: 'post' | 'reply'
+  engagement_author: string | null
   platform: SocialPlatformKey
   account_label: string
   draft_text: string
   status: 'needs_review' | 'approved' | 'rejected' | 'archived'
+  publish_status: 'not_scheduled' | 'scheduled' | 'manual_published'
+  scheduled_for: string | null
+  published_at: string | null
+  published_url: string | null
   variant_version: number
   profile_version: number
   audience_notes: string
@@ -187,6 +196,14 @@ interface SocialDraftCreateResponse {
   drafts: SocialDraft[]
 }
 
+interface LinkedInCadence {
+  today: string
+  next_due_date: string
+  last_published_at: string | null
+  next_scheduled_for: string | null
+  approved_ready_count: number
+}
+
 const ALL_MAILBOXES = 'all'
 
 function timeText(value: string | null) {
@@ -198,6 +215,17 @@ function timeText(value: string | null) {
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+  })
+}
+
+function dateText(value: string | null) {
+  if (!value) return 'TBD'
+  const date = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
   })
 }
 
@@ -244,12 +272,20 @@ export default function Herald() {
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [socialProfiles, setSocialProfiles] = useState<SocialPlatformProfile[]>([])
   const [socialDrafts, setSocialDrafts] = useState<SocialDraft[]>([])
+  const [linkedinCadence, setLinkedinCadence] = useState<LinkedInCadence | null>(null)
   const [socialTopic, setSocialTopic] = useState('')
   const [socialSelectedPlatforms, setSocialSelectedPlatforms] = useState<SocialPlatformKey[]>(['x', 'linkedin'])
+  const [engagementAuthor, setEngagementAuthor] = useState('')
+  const [engagementUrl, setEngagementUrl] = useState('')
+  const [engagementContext, setEngagementContext] = useState('')
+  const [scheduleDates, setScheduleDates] = useState<Record<string, string>>({})
+  const [publishedUrls, setPublishedUrls] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
   const [actingDraftId, setActingDraftId] = useState<string | null>(null)
   const [creatingSocialDraft, setCreatingSocialDraft] = useState(false)
+  const [creatingLinkedinWeekly, setCreatingLinkedinWeekly] = useState(false)
+  const [creatingEngagementDraft, setCreatingEngagementDraft] = useState(false)
   const [actingSocialDraftId, setActingSocialDraftId] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -257,7 +293,16 @@ export default function Herald() {
   const load = useCallback(async () => {
     try {
       const mailboxQuery = selectedMailbox === ALL_MAILBOXES ? '' : `&mailbox=${encodeURIComponent(selectedMailbox)}`
-      const [mailboxRes, dashboardRes, messageRes, draftRes, healthRes, socialProfileRes, socialDraftRes] = await Promise.all([
+      const [
+        mailboxRes,
+        dashboardRes,
+        messageRes,
+        draftRes,
+        healthRes,
+        socialProfileRes,
+        socialDraftRes,
+        linkedinCadenceRes,
+      ] = await Promise.all([
         apiJson<MailboxList>('/v1/at0-mail/mailboxes'),
         apiJson<Dashboard>('/v1/at0-mail/dashboard'),
         apiJson<MessageList>(`/v1/at0-mail/messages?limit=12${mailboxQuery}`),
@@ -265,6 +310,7 @@ export default function Herald() {
         apiJson<HealthResponse>('/v1/at0-mail/health'),
         apiJson<SocialPlatformList>('/v1/herald/social/platforms'),
         apiJson<SocialDraftList>('/v1/herald/social/drafts?status=all&limit=12'),
+        apiJson<LinkedInCadence>('/v1/herald/social/linkedin/cadence'),
       ])
       setMailboxes(mailboxRes.mailboxes)
       if (selectedMailbox !== ALL_MAILBOXES && !mailboxRes.mailboxes.includes(selectedMailbox)) {
@@ -276,6 +322,7 @@ export default function Herald() {
       setHealth(healthRes)
       setSocialProfiles(socialProfileRes.platforms)
       setSocialDrafts(socialDraftRes.drafts)
+      setLinkedinCadence(linkedinCadenceRes)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load Herald')
@@ -405,6 +452,55 @@ export default function Herald() {
     }
   }
 
+  const createLinkedinWeeklyDraft = async () => {
+    setCreatingLinkedinWeekly(true)
+    setNotice(null)
+    try {
+      const result = await apiJson<SocialDraftCreateResponse>('/v1/herald/social/linkedin/weekly', {
+        method: 'POST',
+      })
+      setNotice(`LinkedIn weekly draft created: ${result.drafts.length}`)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'LinkedIn weekly draft failed')
+    } finally {
+      setCreatingLinkedinWeekly(false)
+    }
+  }
+
+  const createLinkedinEngagementDraft = async () => {
+    const topic = engagementContext.trim()
+    if (!topic) {
+      setError('Engagement context required')
+      return
+    }
+    setCreatingEngagementDraft(true)
+    setNotice(null)
+    try {
+      const result = await apiJson<SocialDraftCreateResponse>('/v1/herald/social/drafts', {
+        method: 'POST',
+        body: JSON.stringify({
+          topic,
+          platforms: ['linkedin'],
+          account_label: 'AT0',
+          source_url: engagementUrl.trim() || undefined,
+          campaign: 'linkedin-engagement',
+          draft_kind: 'reply',
+          engagement_author: engagementAuthor.trim() || undefined,
+        }),
+      })
+      setEngagementAuthor('')
+      setEngagementUrl('')
+      setEngagementContext('')
+      setNotice(`LinkedIn reply draft created: ${result.drafts.length}`)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'LinkedIn reply draft failed')
+    } finally {
+      setCreatingEngagementDraft(false)
+    }
+  }
+
   const setSocialDraftStatus = async (draftId: string, status: 'approved' | 'rejected' | 'archived') => {
     setActingSocialDraftId(draftId)
     setNotice(null)
@@ -417,6 +513,50 @@ export default function Herald() {
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Social draft update failed')
+    } finally {
+      setActingSocialDraftId(null)
+    }
+  }
+
+  const scheduleSocialDraft = async (draftId: string) => {
+    const scheduledFor = scheduleDates[draftId]
+    if (!scheduledFor) {
+      setError('Schedule date required')
+      return
+    }
+    setActingSocialDraftId(draftId)
+    setNotice(null)
+    try {
+      await apiJson(`/v1/herald/social/drafts/${draftId}/schedule`, {
+        method: 'POST',
+        body: JSON.stringify({ scheduled_for: scheduledFor }),
+      })
+      setNotice('LinkedIn draft scheduled')
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'LinkedIn schedule failed')
+    } finally {
+      setActingSocialDraftId(null)
+    }
+  }
+
+  const markSocialDraftPublished = async (draftId: string) => {
+    const publishedUrl = publishedUrls[draftId]?.trim()
+    if (!publishedUrl) {
+      setError('Published URL required')
+      return
+    }
+    setActingSocialDraftId(draftId)
+    setNotice(null)
+    try {
+      await apiJson(`/v1/herald/social/drafts/${draftId}/publish/manual`, {
+        method: 'POST',
+        body: JSON.stringify({ published_url: publishedUrl }),
+      })
+      setNotice('LinkedIn manual publish recorded')
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'LinkedIn publish receipt failed')
     } finally {
       setActingSocialDraftId(null)
     }
@@ -570,7 +710,30 @@ export default function Herald() {
 
         <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
           <div className={`rounded-lg border p-4 ${border} ${strongPanel}`}>
-            <label className={`text-[10px] font-mono uppercase tracking-widest ${muted}`} htmlFor="social-topic">
+            <div className={`rounded-lg border p-3 ${border} ${panel}`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <Pill label="LinkedIn weekly" />
+                <span className={`text-[10px] font-mono uppercase ${muted}`}>
+                  next due {dateText(linkedinCadence?.next_due_date ?? null)}
+                </span>
+              </div>
+              <div className={`mt-2 grid gap-2 text-xs ${muted}`}>
+                <span>Last published <span className={strong}>{timeText(linkedinCadence?.last_published_at ?? null)}</span></span>
+                <span>Next scheduled <span className={strong}>{dateText(linkedinCadence?.next_scheduled_for ?? null)}</span></span>
+                <span>Approved ready <span className={strong}>{linkedinCadence?.approved_ready_count ?? 0}</span></span>
+              </div>
+              <button
+                type="button"
+                onClick={createLinkedinWeeklyDraft}
+                disabled={creatingLinkedinWeekly}
+                className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#0a66c2] px-4 text-sm font-bold text-white transition hover:bg-[#0957a5] disabled:opacity-45"
+              >
+                {creatingLinkedinWeekly ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CalendarClock className="h-4 w-4" />}
+                Draft weekly LinkedIn
+              </button>
+            </div>
+
+            <label className={`mt-5 block text-[10px] font-mono uppercase tracking-widest ${muted}`} htmlFor="social-topic">
               Topic
             </label>
             <textarea
@@ -590,6 +753,45 @@ export default function Herald() {
               {creatingSocialDraft ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Megaphone className="h-4 w-4" />}
               Draft social
             </button>
+
+            <div className={`mt-5 rounded-lg border p-3 ${border} ${panel}`}>
+              <div className="flex items-center gap-2">
+                <MessageCircle className="h-4 w-4 text-sky-400" />
+                <span className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+                  LinkedIn engagement
+                </span>
+              </div>
+              <div className="mt-3 grid gap-2">
+                <input
+                  value={engagementAuthor}
+                  onChange={(event) => setEngagementAuthor(event.target.value)}
+                  className={`min-h-10 rounded-lg border px-3 text-sm outline-none ${border} ${strongPanel} ${strong}`}
+                  placeholder="Author name"
+                />
+                <input
+                  value={engagementUrl}
+                  onChange={(event) => setEngagementUrl(event.target.value)}
+                  className={`min-h-10 rounded-lg border px-3 text-sm outline-none ${border} ${strongPanel} ${strong}`}
+                  placeholder="LinkedIn URL"
+                />
+                <textarea
+                  value={engagementContext}
+                  onChange={(event) => setEngagementContext(event.target.value)}
+                  rows={4}
+                  className={`w-full resize-none rounded-lg border px-3 py-2 text-sm outline-none ${border} ${strongPanel} ${strong}`}
+                  placeholder="What should Herald respond to?"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={createLinkedinEngagementDraft}
+                disabled={creatingEngagementDraft}
+                className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-lg bg-sky-600 px-4 text-sm font-bold text-white transition hover:bg-sky-500 disabled:opacity-45"
+              >
+                {creatingEngagementDraft ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
+                Draft LinkedIn reply
+              </button>
+            </div>
 
             <div className="mt-5 space-y-3">
               {socialProfiles.map((profile) => (
@@ -616,12 +818,39 @@ export default function Herald() {
               <article key={draft.id} className={`rounded-lg border p-4 ${border} ${strongPanel}`}>
                 <div className="flex flex-wrap items-center gap-2">
                   <Pill label={draft.platform === 'x' ? 'X' : 'LinkedIn'} />
+                  <Pill label={draft.draft_kind} />
                   <Pill label={draft.status} />
+                  <Pill label={draft.publish_status} />
                   <span className={`ml-auto text-[10px] font-mono uppercase ${muted}`}>
                     Voice {Math.round(draft.voice_score * 100)}%
                   </span>
                 </div>
                 <h3 className="mt-3 line-clamp-2 text-sm font-bold">{draft.topic}</h3>
+                <div className={`mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs ${muted}`}>
+                  {draft.engagement_author && <span>Reply to <span className={strong}>{draft.engagement_author}</span></span>}
+                  {draft.scheduled_for && <span>Scheduled <span className={strong}>{dateText(draft.scheduled_for)}</span></span>}
+                  {draft.published_at && <span>Published <span className={strong}>{timeText(draft.published_at)}</span></span>}
+                  {draft.published_url && (
+                    <a
+                      href={draft.published_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-sky-300"
+                    >
+                      Published URL <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                  {draft.source_url && (
+                    <a
+                      href={draft.source_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-sky-300"
+                    >
+                      Source <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </div>
                 <pre className={`mt-3 max-h-52 overflow-auto whitespace-pre-wrap rounded-lg border p-3 text-xs leading-relaxed ${border} ${panel}`}>
                   {draft.draft_text}
                 </pre>
@@ -637,6 +866,50 @@ export default function Herald() {
                     </span>
                   )}
                 </div>
+                {draft.platform === 'linkedin' && draft.status === 'approved' && draft.publish_status !== 'manual_published' && (
+                  <div className={`mt-3 grid gap-2 rounded-lg border p-3 ${border} ${panel}`}>
+                    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                      <input
+                        type="date"
+                        value={scheduleDates[draft.id] ?? draft.scheduled_for ?? ''}
+                        onChange={(event) => setScheduleDates((current) => ({
+                          ...current,
+                          [draft.id]: event.target.value,
+                        }))}
+                        className={`min-h-10 rounded-lg border px-3 text-sm outline-none ${border} ${strongPanel} ${strong}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => scheduleSocialDraft(draft.id)}
+                        disabled={actingSocialDraftId === draft.id}
+                        className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-bold transition ${border} ${strongPanel} disabled:opacity-45`}
+                      >
+                        <CalendarClock className="h-4 w-4" />
+                        Schedule
+                      </button>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                      <input
+                        value={publishedUrls[draft.id] ?? draft.published_url ?? ''}
+                        onChange={(event) => setPublishedUrls((current) => ({
+                          ...current,
+                          [draft.id]: event.target.value,
+                        }))}
+                        className={`min-h-10 rounded-lg border px-3 text-sm outline-none ${border} ${strongPanel} ${strong}`}
+                        placeholder="LinkedIn published URL"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => markSocialDraftPublished(draft.id)}
+                        disabled={actingSocialDraftId === draft.id}
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[#0a66c2] px-3 text-sm font-bold text-white transition hover:bg-[#0957a5] disabled:opacity-45"
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        Mark published
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {draft.status === 'needs_review' && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button

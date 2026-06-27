@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 SocialPlatform = Literal["x", "linkedin"]
 SocialDraftStatus = Literal["needs_review", "approved", "rejected", "archived"]
+SocialDraftKind = Literal["post", "reply"]
+SocialPublishStatus = Literal["not_scheduled", "scheduled", "manual_published"]
 
 
 def _default_social_platforms() -> list[SocialPlatform]:
@@ -39,6 +41,8 @@ class HeraldSocialDraftCreate(BaseModel):
     account_label: str = Field(default="AT0", min_length=1, max_length=80)
     source_url: str | None = Field(default=None, min_length=8, max_length=500)
     campaign: str | None = Field(default=None, min_length=2, max_length=120)
+    draft_kind: SocialDraftKind = "post"
+    engagement_author: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class HeraldSocialDraftStatusUpdate(BaseModel):
@@ -46,6 +50,18 @@ class HeraldSocialDraftStatusUpdate(BaseModel):
 
     status: Literal["approved", "rejected", "archived"]
     reviewer_notes: str | None = Field(default=None, max_length=500)
+
+
+class HeraldSocialDraftScheduleUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scheduled_for: date
+
+
+class HeraldSocialManualPublishUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    published_url: str = Field(min_length=8, max_length=500)
 
 
 class HeraldSocialDraftVariantOut(BaseModel):
@@ -56,10 +72,16 @@ class HeraldSocialDraftVariantOut(BaseModel):
     topic: str
     source_url: str | None
     campaign: str | None
+    draft_kind: SocialDraftKind
+    engagement_author: str | None
     platform: SocialPlatform
     account_label: str
     draft_text: str
     status: SocialDraftStatus
+    publish_status: SocialPublishStatus
+    scheduled_for: date | None
+    published_at: datetime | None
+    published_url: str | None
     variant_version: int
     profile_version: int
     audience_notes: str
@@ -81,3 +103,11 @@ class HeraldSocialDraftList(BaseModel):
 class HeraldSocialDraftCreateResponse(BaseModel):
     request_id: UUID
     drafts: list[HeraldSocialDraftVariantOut]
+
+
+class HeraldLinkedInCadenceOut(BaseModel):
+    today: date
+    next_due_date: date
+    last_published_at: datetime | None
+    next_scheduled_for: date | None
+    approved_ready_count: int
