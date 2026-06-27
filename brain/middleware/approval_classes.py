@@ -169,6 +169,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Health agents — T1 read ---
     "GET /v1/health/agents": ["read"],
     "GET /v1/health/temporal-storage": ["read", "security_read"],
+    "GET /v1/health/maintainer": ["read", "security_read"],
     # --- Helm read-only workspace summary ---
     "GET /v1/helm/summary": ["read", "security_read"],
     "GET /v1/helm/ai-news/brief": ["read", "security_read"],

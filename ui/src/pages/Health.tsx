@@ -107,6 +107,22 @@ interface At0MailHealthPayload {
   latest_graph_health: At0MailGraphHealth | null;
 }
 
+interface MaintainerHealthPayload {
+  status: "ok" | "missing" | "invalid";
+  source: string;
+  authority: "none";
+  candidate_count: number;
+  candidate_count_by_tier: Record<string, number>;
+  drift_count: number;
+  inventory_count: number;
+  inventory_rows_recorded: number;
+  new_or_existing_candidate_ids: string[];
+  node: string | null;
+  last_scan_at: string | null;
+  checked_at: string;
+  error?: string;
+}
+
 interface PendingApprovalItem {
   id: string;
   action_class: string[];
@@ -199,6 +215,12 @@ function at0MailStatusColor(status: string, requiresAttention?: boolean): string
   if (requiresAttention) return "#ef4444";
   if (status === "ok") return "#22c55e";
   if (status === "running") return "#f59e0b";
+  return "#ef4444";
+}
+
+function maintainerStatusColor(status: string): string {
+  if (status === "ok") return "#22c55e";
+  if (status === "missing") return "#f59e0b";
   return "#ef4444";
 }
 
@@ -313,6 +335,9 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
   const [at0MailHealth, setAt0MailHealth] = useState<At0MailHealthPayload | null>(null);
   const [at0MailLoading, setAt0MailLoading] = useState(true);
   const [at0MailErr, setAt0MailErr] = useState(false);
+  const [maintainerHealth, setMaintainerHealth] = useState<MaintainerHealthPayload | null>(null);
+  const [maintainerLoading, setMaintainerLoading] = useState(true);
+  const [maintainerErr, setMaintainerErr] = useState(false);
 
   const fetchSummary = useCallback(async () => {
     try {
@@ -411,21 +436,37 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
     }
   }, []);
 
+  const fetchMaintainer = useCallback(async () => {
+    setMaintainerLoading(true);
+    setMaintainerErr(false);
+    try {
+      const health = await apiJson<MaintainerHealthPayload>("/v1/health/maintainer");
+      setMaintainerHealth(health);
+    } catch {
+      setMaintainerHealth(null);
+      setMaintainerErr(true);
+    } finally {
+      setMaintainerLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchSummary();
     fetchAgents();
     fetchTemporalStorage();
     fetchBeacon();
     fetchAt0Mail();
+    fetchMaintainer();
     const t = setInterval(() => {
       fetchSummary();
       fetchAgents();
       fetchTemporalStorage();
       fetchBeacon();
       fetchAt0Mail();
+      fetchMaintainer();
     }, REFRESH_MS);
     return () => clearInterval(t);
-  }, [fetchSummary, fetchAgents, fetchTemporalStorage, fetchBeacon, fetchAt0Mail]);
+  }, [fetchSummary, fetchAgents, fetchTemporalStorage, fetchBeacon, fetchAt0Mail, fetchMaintainer]);
 
   const sectionStyle = {
     background: card,
@@ -477,6 +518,7 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
               fetchTemporalStorage();
               fetchBeacon();
               fetchAt0Mail();
+              fetchMaintainer();
             }}
             style={{ fontSize: 12, padding: "6px 12px", borderRadius: 6, border: `1px solid ${border}`, background: "transparent", color: text, cursor: "pointer" }}
           >
@@ -729,6 +771,70 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
               </>
             );
           })()}
+        </div>
+      </div>
+
+      {/* JARVIS Maintainer */}
+      <div style={sectionStyle}>
+        <div style={sectionHeader}>
+          <span style={labelStyle}>JARVIS Maintainer</span>
+          {maintainerHealth && (
+            <span style={{ fontSize: 11, color: maintainerStatusColor(maintainerHealth.status), fontWeight: 700, textTransform: "uppercase" }}>
+              {maintainerHealth.status}
+            </span>
+          )}
+        </div>
+        <div style={{ padding: "14px 16px" }}>
+          {maintainerLoading && (
+            <span style={{ fontSize: 12, color: muted }}>Loading…</span>
+          )}
+          {!maintainerLoading && maintainerErr && (
+            <span style={{ fontSize: 12, color: "#f59e0b" }}>Maintainer status unavailable</span>
+          )}
+          {!maintainerLoading && !maintainerErr && maintainerHealth && (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 12 }}>
+                <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                  <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Candidates</div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{maintainerHealth.candidate_count}</div>
+                  <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
+                    {Object.entries(maintainerHealth.candidate_count_by_tier).map(([tier, count]) => `${tier}: ${count}`).join(" · ") || "No candidates"}
+                  </div>
+                </div>
+                <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                  <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Inventory</div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{maintainerHealth.inventory_count}</div>
+                  <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
+                    {maintainerHealth.drift_count} drift · {maintainerHealth.inventory_rows_recorded} rows this scan
+                  </div>
+                </div>
+                <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                  <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Authority</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#22c55e" }}>{maintainerHealth.authority}</div>
+                  <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
+                    Read-only display
+                  </div>
+                </div>
+                <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${border}` }}>
+                  <div style={{ fontSize: 11, color: muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Last Scan</div>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>
+                    {maintainerHealth.last_scan_at ?? "missing"}
+                  </div>
+                  <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
+                    Node {maintainerHealth.node ?? "—"}
+                  </div>
+                </div>
+              </div>
+              {maintainerHealth.error && (
+                <div style={{ fontSize: 11, color: "#ef4444", marginBottom: 8 }}>
+                  {maintainerHealth.error}
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: muted }}>
+                Checked {new Date(maintainerHealth.checked_at).toLocaleTimeString()} · proposals stay local-only review artifacts
+              </div>
+            </>
+          )}
         </div>
       </div>
 
