@@ -26,6 +26,7 @@ TABLES=(
   public.alpha_herald_social_draft_requests
   public.alpha_herald_social_draft_variants
   public.alpha_herald_social_draft_events
+  public.alpha_herald_social_engagement_items
 )
 
 PSQL="${PSQL:-/opt/homebrew/Cellar/postgresql@16/16.13/bin/psql}"

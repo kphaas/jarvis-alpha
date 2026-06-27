@@ -34,6 +34,13 @@ LINKEDIN_PUBLISH_MIGRATION = (
     / "migrations"
     / "20260627_120000_herald_linkedin_publish.sql"
 )
+LINKEDIN_ENGAGEMENT_MIGRATION = (
+    REPO_ROOT
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260627_160000_herald_linkedin_engagement_inbox.sql"
+)
 
 
 def test_social_draft_is_draft_only_and_brand_linted() -> None:
@@ -167,18 +174,37 @@ def test_linkedin_publish_migration_adds_approved_publish_state() -> None:
     assert "access_token" not in source
 
 
+def test_linkedin_engagement_migration_adds_needs_reply_inbox() -> None:
+    source = LINKEDIN_ENGAGEMENT_MIGRATION.read_text(encoding="utf-8")
+
+    assert "public.alpha_herald_social_engagement_items" in source
+    assert "needs_reply" in source
+    assert "draft_created" in source
+    assert "reply_variant_id" in source
+    assert "r_member_social" in source
+    assert "FORCE ROW LEVEL SECURITY" in source
+    assert "access_token" not in source
+    assert "client_secret" not in source
+
+
 def test_social_routes_publish_only_through_linkedin_connector() -> None:
     source = ROUTE.read_text(encoding="utf-8")
 
     assert "/v1/herald/social" in source
     assert "/linkedin/weekly" in source
     assert "/linkedin/cadence" in source
+    assert "/linkedin/read-plan" in source
+    assert "/linkedin/engagements" in source
+    assert "/draft-reply" in source
     assert "/schedule" in source
     assert "/publish/manual" in source
     assert "/publish/linkedin" in source
     assert "create_social_draft" in source
     assert "publish_linkedin_text" in source
     assert "alpha_herald_social_draft_events" in source
+    assert "alpha_herald_social_engagement_items" in source
+    assert "planned_pending_linkedin_approval" in source
+    assert "r_member_social" in source
     assert "send_at0_mail_reply" not in source
     assert "requests.post" not in source
     assert "aiohttp" not in source

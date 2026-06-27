@@ -128,6 +128,35 @@ elif label in {"create", "weekly"}:
             raise SystemExit(f"FAIL weekly: platform={draft.get('platform')}")
     Path(sys.argv[2]).with_suffix(".id").write_text(drafts[0]["id"], encoding="utf-8")
     print(f"PASS {label}: drafts={len(drafts)}")
+elif label == "engagement":
+    if payload.get("status") != "needs_reply":
+        raise SystemExit(f"FAIL engagement: status={payload.get('status')}")
+    if payload.get("platform") != "linkedin":
+        raise SystemExit(f"FAIL engagement: platform={payload.get('platform')}")
+    Path(sys.argv[2]).with_suffix(".id").write_text(payload["id"], encoding="utf-8")
+    print("PASS engagement: needs_reply item created")
+elif label == "engagements":
+    items = payload.get("items")
+    if not isinstance(items, list):
+        raise SystemExit("FAIL engagements: items missing")
+    print(f"PASS engagements: count={len(items)}")
+elif label == "reply":
+    drafts = payload.get("drafts")
+    if not isinstance(drafts, list) or len(drafts) != 1:
+        raise SystemExit("FAIL reply: expected one draft")
+    draft = drafts[0]
+    if draft.get("draft_kind") != "reply":
+        raise SystemExit(f"FAIL reply: kind={draft.get('draft_kind')}")
+    if draft.get("platform") != "linkedin":
+        raise SystemExit(f"FAIL reply: platform={draft.get('platform')}")
+    if draft.get("status") != "needs_review":
+        raise SystemExit(f"FAIL reply: status={draft.get('status')}")
+    Path(sys.argv[2]).with_suffix(".id").write_text(draft["id"], encoding="utf-8")
+    print("PASS reply: LinkedIn reply draft created")
+elif label == "engagement_status":
+    if payload.get("status") != "archived":
+        raise SystemExit(f"FAIL engagement_status: status={payload.get('status')}")
+    print("PASS engagement_status: archived")
 elif label == "archive":
     if payload.get("status") != "archived":
         raise SystemExit(f"FAIL archive: status={payload.get('status')}")
@@ -167,6 +196,28 @@ SMOKE_DRAFT_ID="$(cat "${TMP_DIR}/create.id")"
 
 printf '{"status":"archived","reviewer_notes":"smoke cleanup"}\n' >"${ARCHIVE_BODY}"
 request_json "POST" "archive" "/v1/herald/social/drafts/${SMOKE_DRAFT_ID}/status" "${ARCHIVE_BODY}"
+
+ENGAGEMENT_BODY="${TMP_DIR}/engagement.json"
+"${PYTHON_BIN}" >"${ENGAGEMENT_BODY}" <<'PY'
+import json
+
+print(json.dumps({
+    "author_name": "Smoke Reviewer",
+    "item_text": "Can AT0 draft LinkedIn replies without posting automatically?",
+    "item_url": "https://www.linkedin.com/feed/update/urn:li:share:smoke",
+    "account_label": "AT0",
+}))
+PY
+
+request_json "POST" "engagement" "/v1/herald/social/linkedin/engagements" "${ENGAGEMENT_BODY}"
+ENGAGEMENT_ID="$(cat "${TMP_DIR}/engagement.id")"
+request_json "GET" "engagements" "/v1/herald/social/linkedin/engagements?status=needs_reply&limit=5"
+request_json "POST" "reply" "/v1/herald/social/linkedin/engagements/${ENGAGEMENT_ID}/draft-reply"
+REPLY_DRAFT_ID="$(cat "${TMP_DIR}/reply.id")"
+request_json "POST" "archive" "/v1/herald/social/drafts/${REPLY_DRAFT_ID}/status" "${ARCHIVE_BODY}"
+ENGAGEMENT_STATUS_BODY="${TMP_DIR}/engagement_status.json"
+printf '{"status":"archived"}\n' >"${ENGAGEMENT_STATUS_BODY}"
+request_json "POST" "engagement_status" "/v1/herald/social/linkedin/engagements/${ENGAGEMENT_ID}/status" "${ENGAGEMENT_STATUS_BODY}"
 request_json "GET" "drafts" "/v1/herald/social/drafts?status=all&limit=1"
 
-echo "PASS herald-social-outbox smoke: platforms, cadence, weekly, create, archive, drafts reachable"
+echo "PASS herald-social-outbox smoke: platforms, cadence, weekly, create, engagement, reply draft, archive, drafts reachable"

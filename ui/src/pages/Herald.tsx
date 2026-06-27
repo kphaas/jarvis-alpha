@@ -209,6 +209,35 @@ interface LinkedInCadence {
   approved_ready_count: number
 }
 
+interface LinkedInReadPlan {
+  status: 'planned_pending_linkedin_approval'
+  write_scope: string
+  required_read_scopes: string[]
+  discovery_targets: string[]
+  boundary: string[]
+}
+
+interface SocialEngagement {
+  id: string
+  platform: 'linkedin'
+  source: 'manual' | 'linkedin_api'
+  account_label: string
+  provider_item_urn: string | null
+  provider_post_urn: string | null
+  item_url: string | null
+  author_name: string
+  item_text: string
+  status: 'needs_reply' | 'draft_created' | 'ignored' | 'replied' | 'archived'
+  reply_variant_id: string | null
+  discovered_at: string
+  created_at: string
+  updated_at: string
+}
+
+interface SocialEngagementList {
+  items: SocialEngagement[]
+}
+
 const ALL_MAILBOXES = 'all'
 
 function timeText(value: string | null) {
@@ -278,6 +307,8 @@ export default function Herald() {
   const [socialProfiles, setSocialProfiles] = useState<SocialPlatformProfile[]>([])
   const [socialDrafts, setSocialDrafts] = useState<SocialDraft[]>([])
   const [linkedinCadence, setLinkedinCadence] = useState<LinkedInCadence | null>(null)
+  const [linkedinReadPlan, setLinkedinReadPlan] = useState<LinkedInReadPlan | null>(null)
+  const [engagementItems, setEngagementItems] = useState<SocialEngagement[]>([])
   const [socialTopic, setSocialTopic] = useState('')
   const [socialSelectedPlatforms, setSocialSelectedPlatforms] = useState<SocialPlatformKey[]>(['x', 'linkedin'])
   const [engagementAuthor, setEngagementAuthor] = useState('')
@@ -292,6 +323,7 @@ export default function Herald() {
   const [creatingLinkedinWeekly, setCreatingLinkedinWeekly] = useState(false)
   const [creatingEngagementDraft, setCreatingEngagementDraft] = useState(false)
   const [actingSocialDraftId, setActingSocialDraftId] = useState<string | null>(null)
+  const [actingEngagementId, setActingEngagementId] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -307,6 +339,8 @@ export default function Herald() {
         socialProfileRes,
         socialDraftRes,
         linkedinCadenceRes,
+        linkedinReadPlanRes,
+        engagementRes,
       ] = await Promise.all([
         apiJson<MailboxList>('/v1/at0-mail/mailboxes'),
         apiJson<Dashboard>('/v1/at0-mail/dashboard'),
@@ -316,6 +350,8 @@ export default function Herald() {
         apiJson<SocialPlatformList>('/v1/herald/social/platforms'),
         apiJson<SocialDraftList>('/v1/herald/social/drafts?status=all&limit=12'),
         apiJson<LinkedInCadence>('/v1/herald/social/linkedin/cadence'),
+        apiJson<LinkedInReadPlan>('/v1/herald/social/linkedin/read-plan'),
+        apiJson<SocialEngagementList>('/v1/herald/social/linkedin/engagements?status=needs_reply&limit=12'),
       ])
       setMailboxes(mailboxRes.mailboxes)
       if (selectedMailbox !== ALL_MAILBOXES && !mailboxRes.mailboxes.includes(selectedMailbox)) {
@@ -328,6 +364,8 @@ export default function Herald() {
       setSocialProfiles(socialProfileRes.platforms)
       setSocialDrafts(socialDraftRes.drafts)
       setLinkedinCadence(linkedinCadenceRes)
+      setLinkedinReadPlan(linkedinReadPlanRes)
+      setEngagementItems(engagementRes.items)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load Herald')
@@ -474,35 +512,65 @@ export default function Herald() {
   }
 
   const createLinkedinEngagementDraft = async () => {
-    const topic = engagementContext.trim()
-    if (!topic) {
+    const itemText = engagementContext.trim()
+    if (!itemText) {
       setError('Engagement context required')
       return
     }
     setCreatingEngagementDraft(true)
     setNotice(null)
     try {
-      const result = await apiJson<SocialDraftCreateResponse>('/v1/herald/social/drafts', {
+      await apiJson<SocialEngagement>('/v1/herald/social/linkedin/engagements', {
         method: 'POST',
         body: JSON.stringify({
-          topic,
-          platforms: ['linkedin'],
+          item_text: itemText,
+          author_name: engagementAuthor.trim() || 'LinkedIn member',
+          item_url: engagementUrl.trim() || undefined,
           account_label: 'AT0',
-          source_url: engagementUrl.trim() || undefined,
-          campaign: 'linkedin-engagement',
-          draft_kind: 'reply',
-          engagement_author: engagementAuthor.trim() || undefined,
         }),
       })
       setEngagementAuthor('')
       setEngagementUrl('')
       setEngagementContext('')
+      setNotice('LinkedIn engagement added')
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'LinkedIn engagement add failed')
+    } finally {
+      setCreatingEngagementDraft(false)
+    }
+  }
+
+  const draftLinkedinEngagementReply = async (itemId: string) => {
+    setActingEngagementId(itemId)
+    setNotice(null)
+    try {
+      const result = await apiJson<SocialDraftCreateResponse>(`/v1/herald/social/linkedin/engagements/${itemId}/draft-reply`, {
+        method: 'POST',
+      })
       setNotice(`LinkedIn reply draft created: ${result.drafts.length}`)
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'LinkedIn reply draft failed')
     } finally {
-      setCreatingEngagementDraft(false)
+      setActingEngagementId(null)
+    }
+  }
+
+  const setEngagementStatus = async (itemId: string, status: 'ignored' | 'replied' | 'archived') => {
+    setActingEngagementId(itemId)
+    setNotice(null)
+    try {
+      await apiJson(`/v1/herald/social/linkedin/engagements/${itemId}/status`, {
+        method: 'POST',
+        body: JSON.stringify({ status }),
+      })
+      setNotice(`LinkedIn engagement ${status}`)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'LinkedIn engagement update failed')
+    } finally {
+      setActingEngagementId(null)
     }
   }
 
@@ -780,8 +848,13 @@ export default function Herald() {
               <div className="flex items-center gap-2">
                 <MessageCircle className="h-4 w-4 text-sky-400" />
                 <span className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
-                  LinkedIn engagement
+                  LinkedIn engagement inbox
                 </span>
+              </div>
+              <div className={`mt-2 flex flex-wrap gap-2 text-[10px] font-mono uppercase ${muted}`}>
+                <Pill label={`write ${linkedinReadPlan?.write_scope ?? 'w_member_social'}`} />
+                <Pill label={`read ${linkedinReadPlan?.required_read_scopes.join(', ') ?? 'r_member_social'} pending`} />
+                <Pill label={`${engagementItems.length} needs reply`} />
               </div>
               <div className="mt-3 grid gap-2">
                 <input
@@ -811,8 +884,51 @@ export default function Herald() {
                 className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-lg bg-sky-600 px-4 text-sm font-bold text-white transition hover:bg-sky-500 disabled:opacity-45"
               >
                 {creatingEngagementDraft ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
-                Draft LinkedIn reply
+                Add to inbox
               </button>
+
+              <div className="mt-4 space-y-2">
+                {engagementItems.map((item) => (
+                  <article key={item.id} className={`rounded-lg border p-3 ${border} ${strongPanel}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Pill label={item.source === 'linkedin_api' ? 'LinkedIn API' : 'Manual'} />
+                      <Pill label={item.status} />
+                      <span className={`ml-auto text-[10px] font-mono uppercase ${muted}`}>
+                        {timeText(item.discovered_at)}
+                      </span>
+                    </div>
+                    <div className="mt-2 text-sm font-bold">{item.author_name}</div>
+                    <p className={`mt-1 line-clamp-3 text-xs ${muted}`}>{item.item_text}</p>
+                    {item.item_url && (
+                      <a href={item.item_url} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs text-sky-300">
+                        Source <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => draftLinkedinEngagementReply(item.id)}
+                        disabled={actingEngagementId === item.id}
+                        className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-sky-600 px-3 text-sm font-bold text-white transition hover:bg-sky-500 disabled:opacity-45"
+                      >
+                        {actingEngagementId === item.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
+                        Draft reply
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEngagementStatus(item.id, 'ignored')}
+                        disabled={actingEngagementId === item.id}
+                        className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-bold transition ${border} ${strongPanel} disabled:opacity-45`}
+                      >
+                        Ignore
+                      </button>
+                    </div>
+                  </article>
+                ))}
+                {!loading && engagementItems.length === 0 && (
+                  <div className={`rounded-lg border p-3 text-xs ${border} ${muted}`}>No LinkedIn items need reply.</div>
+                )}
+              </div>
             </div>
 
             <div className="mt-5 space-y-3">

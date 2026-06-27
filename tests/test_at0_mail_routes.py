@@ -55,11 +55,37 @@ def test_herald_social_routes_are_classified() -> None:
         "read",
         "security_read",
     ]
+    assert classify_route("GET", "/v1/herald/social/linkedin/read-plan") == [
+        "read",
+        "security_read",
+    ]
+    assert classify_route("GET", "/v1/herald/social/linkedin/engagements") == [
+        "read",
+        "security_read",
+    ]
     assert classify_route("POST", "/v1/herald/social/drafts") == [
         "write",
         "security_write",
     ]
     assert classify_route("POST", "/v1/herald/social/linkedin/weekly") == [
+        "write",
+        "security_write",
+    ]
+    assert classify_route("POST", "/v1/herald/social/linkedin/engagements") == [
+        "write",
+        "security_write",
+    ]
+    assert classify_route(
+        "POST",
+        "/v1/herald/social/linkedin/engagements/abc/draft-reply",
+    ) == [
+        "write",
+        "security_write",
+    ]
+    assert classify_route(
+        "POST",
+        "/v1/herald/social/linkedin/engagements/abc/status",
+    ) == [
         "write",
         "security_write",
     ]
