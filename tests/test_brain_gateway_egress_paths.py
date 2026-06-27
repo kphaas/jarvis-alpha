@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import pytest
+from jarvis_common import secrets
 
 from brain.routes import costs, dev
+from brain.services import gateway_egress
 from brain.services.gmail_client import GmailClient
 from brain.services.internet_scout.gateway_client import InternetScoutGatewayClient
 
@@ -77,6 +79,18 @@ async def test_gmail_client_uses_gateway_proxy_for_oauth_list_and_message(monkey
         "google_oauth/refresh",
         "gmail/message",
     ]
+
+
+def test_gateway_egress_token_falls_back_to_secrets_file(monkeypatch, tmp_path):
+    secrets_file = tmp_path / ".secrets"
+    secrets_file.write_text("GATEWAY_TOKEN=gateway-token\n", encoding="utf-8")
+    monkeypatch.delenv("GATEWAY_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHA_BRAIN_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHA_SERVICE_TOKEN", raising=False)
+    monkeypatch.setattr(secrets, "SECRETS_FILE", str(secrets_file))
+    secrets.clear_cache()
+
+    assert gateway_egress._service_token() == "gateway-token"
 
 
 def test_anthropic_costs_use_gateway_admin_proxy(monkeypatch):
