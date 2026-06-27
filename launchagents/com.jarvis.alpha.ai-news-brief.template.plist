@@ -23,6 +23,8 @@
     <string>{{HOME}}/jarvis/.secrets</string>
     <key>GIT_TERMINAL_PROMPT</key>
     <string>0</string>
+    <key>AI_NEWS_BRIEF_LLM_SUMMARY_ENABLED</key>
+    <string>1</string>
   </dict>
 
   <key>StartCalendarInterval</key>
