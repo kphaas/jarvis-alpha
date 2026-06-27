@@ -563,6 +563,60 @@ async def test_linkedin_member_post_uses_rest_posts_endpoint(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_linkedin_token_introspection_uses_oauth_endpoint(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {
+                "active": True,
+                "scope": "openid,profile,w_member_social",
+                "expires_in": 123,
+            }
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            seen["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, headers, data):
+            seen["url"] = url
+            seen["headers"] = headers
+            seen["data"] = data
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.linkedin_token_introspection(
+        cloud_routes.LinkedInTokenIntrospectionRequest(
+            token="token-" + ("x" * 40),
+            client_id="client-id",
+            client_secret="client-secret",
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert seen["url"] == "https://www.linkedin.com/oauth/v2/introspectToken"
+    assert seen["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
+    assert seen["data"] == {
+        "token": "token-" + ("x" * 40),
+        "client_id": "client-id",
+        "client_secret": "client-secret",
+    }
+    assert result["status_code"] == 200
+    assert result["payload"]["active"] is True
+
+
+@pytest.mark.asyncio
 async def test_anthropic_admin_rejects_unsupported_path(monkeypatch):
     monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
 
