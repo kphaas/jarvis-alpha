@@ -298,6 +298,12 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "write",
         "security_write",
     ],
+    "POST /v1/herald/social/drafts/{variant_id}/publish/linkedin": [
+        "write",
+        "security_write",
+        "external_call",
+        "social_post",
+    ],
     # --- Spark iMessage — metadata-only BlueBubbles read surface ---
     "GET /v1/spark/imessage/health": ["read", "security_read"],
     "GET /v1/spark/imessage/counts": ["read", "security_read"],

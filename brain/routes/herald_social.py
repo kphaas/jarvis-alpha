@@ -22,9 +22,15 @@ from brain.models.herald_social import (
     HeraldSocialPlatformProfileList,
     HeraldSocialPlatformProfileOut,
 )
+from brain.services.herald_linkedin import (
+    HeraldLinkedInConfigError,
+    HeraldLinkedInPublishError,
+    publish_linkedin_text,
+)
 from brain.services.herald_social import (
     create_social_draft,
     linkedin_weekly_topic,
+    load_herald_spark_context,
     normalize_platforms,
 )
 
@@ -105,6 +111,8 @@ async def list_social_drafts(
                    r.draft_kind, r.engagement_author,
                    v.platform, v.account_label, v.draft_text, v.status,
                    v.publish_status, v.scheduled_for, v.published_at, v.published_url,
+                   v.publish_attempt_count, v.last_publish_attempt_at,
+                   v.publish_error_type, v.publish_error_message, v.provider_post_urn,
                    v.variant_version, v.profile_version, v.audience_notes,
                    v.voice_rules, v.safety_rules, v.voice_score::float AS voice_score,
                    v.safety_flags, v.repeat_of_variant_id, v.reviewer_notes,
@@ -224,6 +232,7 @@ async def _create_social_drafts(
                     status_code=400,
                     detail=f"Social platform profile missing: {', '.join(missing)}",
                 )
+            spark_context, spark_meta = await load_herald_spark_context(conn)
 
             request_id = await conn.fetchval(
                 """
@@ -249,7 +258,15 @@ async def _create_social_drafts(
                 event_type="request_created",
                 actor_sub=actor_sub,
                 actor_type=actor_type,
-                payload={"draft_kind": body.draft_kind, "platforms": list(platforms)},
+                payload={
+                    "draft_kind": body.draft_kind,
+                    "platforms": list(platforms),
+                    "spark_input": {
+                        "topic": body.topic.strip(),
+                        "context_hash": spark_meta.get("context_hash"),
+                        "context_available": spark_meta.get("context_available"),
+                    },
+                },
             )
 
             draft_rows = []
@@ -261,6 +278,7 @@ async def _create_social_drafts(
                     max_chars=int(profile["max_chars"]),
                     draft_kind=body.draft_kind,
                     engagement_author=body.engagement_author,
+                    spark_context=spark_context,
                 )
                 repeat_of = await conn.fetchval(
                     """
@@ -317,6 +335,14 @@ async def _create_social_drafts(
                         "draft_kind": body.draft_kind,
                         "profile_version": int(profile["profile_version"]),
                         "repeat": repeat_of is not None,
+                        "spark_input": {
+                            "context_hash": draft.spark_context_hash,
+                            "context_available": bool(draft.spark_context_hash),
+                        },
+                        "spark_output": {
+                            "content_hash": draft.content_hash,
+                            "draft_engine": "herald_social_spark_v1",
+                        },
                     },
                 )
                 draft_rows.append(await _fetch_variant(conn, variant_id))
@@ -392,6 +418,114 @@ async def update_social_draft_status(
                 actor_sub=actor_sub,
                 actor_type=actor_type,
                 payload={"from_status": current["status"]},
+            )
+            row = await _fetch_variant(conn, variant_id)
+    return _draft_out(row)
+
+
+@router.post(
+    "/drafts/{variant_id}/publish/linkedin",
+    response_model=HeraldSocialDraftVariantOut,
+)
+async def publish_linkedin_draft(
+    variant_id: UUID,
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldSocialDraftVariantOut:
+    _check_write_scope(request)
+    actor_sub = _actor_sub(request)
+    actor_type = _actor_type(request)
+    async with get_pool().acquire() as conn:
+        async with conn.transaction():
+            current = await conn.fetchrow(
+                """
+                SELECT request_id, platform, status, publish_status, draft_text,
+                       content_hash
+                FROM public.alpha_herald_social_draft_variants
+                WHERE id = $1
+                FOR UPDATE
+                """,
+                variant_id,
+            )
+            if current is None:
+                raise HTTPException(status_code=404, detail="Social draft not found")
+            if current["platform"] != "linkedin":
+                raise HTTPException(status_code=400, detail="linkedin_only")
+            if current["status"] != "approved":
+                raise HTTPException(status_code=409, detail="draft_not_approved")
+            if current["publish_status"] in {"manual_published", "linkedin_published"}:
+                raise HTTPException(status_code=409, detail="draft_already_published")
+            if current["publish_status"] == "sending":
+                raise HTTPException(status_code=409, detail="draft_publish_in_progress")
+
+            await conn.execute(
+                """
+                UPDATE public.alpha_herald_social_draft_variants
+                SET publish_status = 'sending',
+                    publish_attempt_count = publish_attempt_count + 1,
+                    last_publish_attempt_at = now(),
+                    publish_error_type = NULL,
+                    publish_error_message = NULL,
+                    updated_at = now()
+                WHERE id = $1
+                """,
+                variant_id,
+            )
+            await _record_event(
+                conn,
+                request_id=current["request_id"],
+                variant_id=variant_id,
+                event_type="variant_linkedin_publish_started",
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+                payload={"content_hash": current["content_hash"]},
+            )
+            draft_text = str(current["draft_text"])
+
+    try:
+        result = await publish_linkedin_text(draft_text)
+    except (HeraldLinkedInConfigError, HeraldLinkedInPublishError) as exc:
+        async with get_pool().acquire() as conn:
+            async with conn.transaction():
+                await _record_linkedin_publish_failure(
+                    conn,
+                    variant_id=variant_id,
+                    request_id=current["request_id"],
+                    actor_sub=actor_sub,
+                    actor_type=actor_type,
+                    exc=exc,
+                )
+        raise HTTPException(status_code=502, detail="linkedin_publish_failed") from exc
+
+    async with get_pool().acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                UPDATE public.alpha_herald_social_draft_variants
+                SET publish_status = 'linkedin_published',
+                    published_at = now(),
+                    published_url = $2,
+                    provider_post_urn = $3,
+                    publish_error_type = NULL,
+                    publish_error_message = NULL,
+                    updated_at = now()
+                WHERE id = $1
+                """,
+                variant_id,
+                result.published_url,
+                result.provider_post_urn,
+            )
+            await _record_event(
+                conn,
+                request_id=current["request_id"],
+                variant_id=variant_id,
+                event_type="variant_linkedin_published",
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+                payload={
+                    "linkedin_status_code": result.status_code,
+                    "provider_post_urn": result.provider_post_urn,
+                },
             )
             row = await _fetch_variant(conn, variant_id)
     return _draft_out(row)
@@ -520,6 +654,8 @@ async def _fetch_variant(conn, variant_id: UUID):
                r.draft_kind, r.engagement_author,
                v.platform, v.account_label, v.draft_text, v.status,
                v.publish_status, v.scheduled_for, v.published_at, v.published_url,
+               v.publish_attempt_count, v.last_publish_attempt_at,
+               v.publish_error_type, v.publish_error_message, v.provider_post_urn,
                v.variant_version, v.profile_version, v.audience_notes,
                v.voice_rules, v.safety_rules, v.voice_score::float AS voice_score,
                v.safety_flags, v.repeat_of_variant_id, v.reviewer_notes,
@@ -534,6 +670,39 @@ async def _fetch_variant(conn, variant_id: UUID):
     if row is None:
         raise HTTPException(status_code=404, detail="Social draft not found")
     return row
+
+
+async def _record_linkedin_publish_failure(
+    conn,
+    *,
+    variant_id: UUID,
+    request_id,
+    actor_sub: str,
+    actor_type: str,
+    exc: Exception,
+) -> None:
+    error_type = exc.__class__.__name__
+    await conn.execute(
+        """
+        UPDATE public.alpha_herald_social_draft_variants
+        SET publish_status = 'publish_failed',
+            publish_error_type = $2,
+            publish_error_message = 'linkedin_publish_failed',
+            updated_at = now()
+        WHERE id = $1
+        """,
+        variant_id,
+        error_type,
+    )
+    await _record_event(
+        conn,
+        request_id=request_id,
+        variant_id=variant_id,
+        event_type="variant_linkedin_publish_failed",
+        actor_sub=actor_sub,
+        actor_type=actor_type,
+        payload={"error_type": error_type},
+    )
 
 
 async def _record_event(
