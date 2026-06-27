@@ -97,6 +97,10 @@ def test_spark_imessage_draft_route_is_classified_t2_write() -> None:
         "POST",
         "/v1/spark/drafts/imessage/outbox/22222222-2222-4222-8222-222222222222/send",
     )
+    cancel_classes = classify_route(
+        "POST",
+        "/v1/spark/drafts/imessage/outbox/22222222-2222-4222-8222-222222222222/cancel",
+    )
     assert approval_classes == ["write", "security_write"]
     assert determine_risk_tier(approval_classes) == "T2"
     assert send_classes == [
@@ -106,6 +110,8 @@ def test_spark_imessage_draft_route_is_classified_t2_write() -> None:
         "imessage_send",
     ]
     assert determine_risk_tier(send_classes) == "T4"
+    assert cancel_classes == ["write", "security_write"]
+    assert determine_risk_tier(cancel_classes) == "T2"
     assert feedback_classes == ["write", "security_write"]
     assert determine_risk_tier(feedback_classes) == "T2"
 
@@ -145,6 +151,21 @@ async def test_spark_imessage_send_approved_outbox_requires_send_scope() -> None
     for scopes in (["spark.draft"], ["imessage.send"]):
         with pytest.raises(HTTPException) as exc_info:
             await spark_drafts.spark_imessage_send_approved_outbox(
+                _request(scopes),
+                outbox_id,
+                "user",
+            )
+
+        assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_cancel_outbox_requires_send_scope() -> None:
+    outbox_id = UUID("22222222-2222-4222-8222-222222222222")
+
+    for scopes in (["spark.draft"], ["imessage.send"]):
+        with pytest.raises(HTTPException) as exc_info:
+            await spark_drafts.spark_imessage_cancel_outbox_item(
                 _request(scopes),
                 outbox_id,
                 "user",
@@ -866,6 +887,52 @@ async def test_spark_imessage_outbox_lists_metadata_only(
     assert "spark_imessage_outbox_listed" in logs
     assert "body_access" in logs
     assert "private inbound body" not in logs
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_cancel_outbox_records_metadata_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    fake_conn = object()
+    outbox_id = UUID("22222222-2222-4222-8222-222222222222")
+    event_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+    monkeypatch.setattr(
+        spark_drafts,
+        "rls_connection",
+        lambda request: _AsyncContext(fake_conn),
+    )
+
+    async def fake_record(conn, **kwargs):
+        assert conn is fake_conn
+        event_calls.append(kwargs)
+        return "cancelled"
+
+    monkeypatch.setattr(spark_drafts, "record_spark_outbox_event", fake_record)
+
+    response = await spark_drafts.spark_imessage_cancel_outbox_item(
+        _request(["spark.draft", "imessage.send"]),
+        outbox_id,
+        "user",
+    )
+
+    assert response.outbox_id == str(outbox_id)
+    assert response.outbox_status == "cancelled"
+    assert event_calls == [
+        {
+            "outbox_id": outbox_id,
+            "event_type": "cancelled",
+            "actor_sub": "spark-service",
+            "actor_type": "service",
+            "metadata": {"reason": "operator_cancelled_stale_outbox"},
+        }
+    ]
+    logs = json.dumps(fake_logger.infos).lower()
+    assert "spark_imessage_outbox_cancelled" in logs
+    assert "imessage.send" in logs
+    assert "private inbound body" not in logs
+    assert "draft_text" not in logs
 
 
 @pytest.mark.asyncio
