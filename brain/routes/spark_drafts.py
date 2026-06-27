@@ -34,6 +34,7 @@ from brain.services.spark_outbox import (
     create_spark_outbox_item,
     list_spark_outbox_items,
     load_spark_outbox_crypto,
+    record_spark_outbox_event,
 )
 from brain.services.spark_outbox_send import (
     PreparedSparkOutboxSend,
@@ -246,6 +247,11 @@ class SparkIMessageApprovedSendOut(BaseModel):
     approval_status: str
     message_ref_hash: str | None = None
     send_attempt_count: int
+
+
+class SparkIMessageOutboxCancelOut(BaseModel):
+    outbox_id: str
+    outbox_status: str
 
 
 class SparkIMessageOutboxItemOut(BaseModel):
@@ -1096,6 +1102,60 @@ async def spark_imessage_outbox_items(
             )
             for item in items
         ],
+    )
+
+
+@router.post(
+    "/imessage/outbox/{outbox_id}/cancel",
+    response_model=SparkIMessageOutboxCancelOut,
+)
+async def spark_imessage_cancel_outbox_item(
+    request: Request,
+    outbox_id: UUID,
+    _: str = Depends(require_auth),
+) -> SparkIMessageOutboxCancelOut:
+    _check_send_scopes(request)
+    actor_sub = str(getattr(request.state, "user_id", "unknown"))
+    actor_type = str(getattr(request.state, "actor_type", "unknown"))
+    try:
+        async with rls_connection(request) as conn:
+            status = await record_spark_outbox_event(
+                conn,
+                outbox_id=outbox_id,
+                event_type="cancelled",
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+                metadata={"reason": "operator_cancelled_stale_outbox"},
+            )
+    except Exception as exc:
+        route_error = _send_route_error(exc)
+        _log_send_failure(
+            request,
+            outbox_id=outbox_id,
+            exc=exc,
+            status_code=route_error.status_code,
+        )
+        raise route_error from exc
+
+    logger.info(
+        "spark_imessage_outbox_cancelled",
+        extra={
+            "event": "spark_imessage_outbox_cancelled",
+            "component": "spark_drafts",
+            "action": "imessage_outbox_cancel",
+            "body_access": False,
+            "outbox_id": str(outbox_id),
+            "outbox_status": status,
+            **_safe_actor_fields(
+                request,
+                scopes_used=[SPARK_DRAFT_SCOPE, SPARK_SEND_SCOPE],
+                risk_tier="T2",
+            ),
+        },
+    )
+    return SparkIMessageOutboxCancelOut(
+        outbox_id=str(outbox_id),
+        outbox_status=status,
     )
 
 

@@ -341,6 +341,10 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "external_call",
         "imessage_send",
     ],
+    "POST /v1/spark/drafts/imessage/outbox/{outbox_id}/cancel": [
+        "write",
+        "security_write",
+    ],
     "POST /v1/spark/drafts/imessage/feedback": ["write", "security_write"],
     # --- MCP registry — T1 read, write T2 ---
     "GET /v1/mcp/registry": ["read"],
