@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+import brain.services.internet_scout.ai_news_brief as ai_news_brief_module
 from brain.registry.data_sources import DataSourceEntry
 from brain.services.internet_scout.ai_news_brief import (
     AiNewsEndpoint,
@@ -129,6 +130,33 @@ def _rss_item(
 
 def _rss(*items: str) -> str:
     return f"<?xml version='1.0'?><rss><channel>{''.join(items)}</channel></rss>"
+
+
+def _complete_payloads() -> dict[str, str]:
+    return {
+        "https://openai.test/rss.xml": _rss(
+            _rss_item(
+                "ChatGPT update",
+                url="https://openai.test/news/chatgpt-update",
+                published=RECENT,
+            )
+        ),
+        "https://aws.test/feed.xml": _rss(),
+        "https://azure.test/feed.xml": _rss(),
+        "https://github.test/feed.xml": _rss(),
+        "https://developers.openai.com/api/docs/changelog": (
+            '<a href="/api/docs/changelog">Changelog</a>'
+        ),
+        "https://platform.claude.com/docs/en/release-notes/overview": (
+            '<a href="/docs/en/release-notes/overview">Claude release notes</a>'
+        ),
+        "https://ai.google.dev/gemini-api/docs/changelog": (
+            '<a href="/gemini-api/docs/changelog">Gemini changelog</a>'
+        ),
+        "https://status.openai.com/history.rss": _rss(),
+        "https://status.claude.com/history.rss": _rss(),
+        "https://azure.status.microsoft/en-us/status/feed/": _rss(),
+    }
 
 
 class FakeGateway:
@@ -287,6 +315,48 @@ async def test_build_ai_news_brief_fetches_gateway_sources_and_degrades_per_sour
     assert "official AI vendor item" in brief.overall_summary
     assert all(call["max_bytes"] > 0 for call in gateway.calls)
     assert "feed unavailable" not in str(brief.model_dump())
+
+
+@pytest.mark.asyncio
+async def test_build_ai_news_brief_uses_local_llm_summary_when_enabled(monkeypatch):
+    calls: list[dict[str, object]] = []
+
+    async def fake_generate(**kwargs):
+        calls.append(kwargs)
+        return {"response": "- Key vendor changes landed.\nWatch: Codex status."}
+
+    monkeypatch.setenv(ai_news_brief_module.AI_NEWS_BRIEF_LLM_SUMMARY_ENABLED_ENV, "1")
+    monkeypatch.setattr(ai_news_brief_module, "_generate_local_llm", fake_generate)
+
+    brief = await build_ai_news_brief(
+        gateway=FakeGateway(_complete_payloads()),
+        registry=_registry(),
+        generated_at=NOW,
+    )
+
+    assert brief.controls.summary_mode == "local_llm"
+    assert brief.controls.llm_summary_used is True
+    assert brief.overall_summary.startswith("- Key vendor changes")
+    assert "untrusted evidence" in str(calls[0]["prompt"])
+
+
+@pytest.mark.asyncio
+async def test_build_ai_news_brief_falls_back_when_local_llm_fails(monkeypatch):
+    async def fake_generate(**kwargs):
+        raise RuntimeError("ollama down")
+
+    monkeypatch.setenv(ai_news_brief_module.AI_NEWS_BRIEF_LLM_SUMMARY_ENABLED_ENV, "1")
+    monkeypatch.setattr(ai_news_brief_module, "_generate_local_llm", fake_generate)
+
+    brief = await build_ai_news_brief(
+        gateway=FakeGateway(_complete_payloads()),
+        registry=_registry(),
+        generated_at=NOW,
+    )
+
+    assert brief.controls.summary_mode == "deterministic"
+    assert brief.controls.llm_summary_used is False
+    assert "official AI vendor item" in brief.overall_summary
 
 
 @pytest.mark.asyncio
