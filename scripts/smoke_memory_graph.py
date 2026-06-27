@@ -150,6 +150,7 @@ def run_memory_graph_smoke(
             {
                 "node_count": len(nodes),
                 "edge_count": len(edges),
+                "temporal_fields": temporal_contract["has_fields"],
                 **temporal_contract,
                 "review_fields": _has_review_fields(nodes, edges),
             },
@@ -185,6 +186,7 @@ def run_memory_graph_smoke(
                 "principal_id": principal_id,
                 "node_count": len(admin_nodes),
                 "edge_count": len(admin_edges),
+                "temporal_fields": admin_temporal_contract["has_fields"],
                 **admin_temporal_contract,
                 "review_fields": _has_review_fields(admin_nodes, admin_edges),
             },
