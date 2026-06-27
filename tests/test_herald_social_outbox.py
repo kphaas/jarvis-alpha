@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 from brain.services.herald_social import (
     create_social_draft,
     hash_social_draft,
+    linkedin_weekly_topic,
     normalize_platforms,
 )
 
@@ -18,6 +20,13 @@ MIGRATION = (
     / "20260626_120000_herald_social_outbox.sql"
 )
 ROUTE = REPO_ROOT / "brain" / "routes" / "herald_social.py"
+LINKEDIN_WEEKLY_MIGRATION = (
+    REPO_ROOT
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260627_010000_herald_linkedin_weekly.sql"
+)
 
 
 def test_social_draft_is_draft_only_and_brand_linted() -> None:
@@ -33,6 +42,43 @@ def test_social_draft_is_draft_only_and_brand_linted() -> None:
     assert "draft_only_no_publish" in draft.safety_flags
     assert "human_review_required" in draft.safety_flags
     assert draft.content_hash == hash_social_draft(draft.draft_text)
+
+
+def test_linkedin_reply_draft_is_reviewed_engagement_only() -> None:
+    draft = create_social_draft(
+        topic="Agree on the need for human review before agents speak for a brand.",
+        platform="linkedin",
+        max_chars=3000,
+        draft_kind="reply",
+        engagement_author="Sam",
+    )
+
+    assert "Thanks Sam" in draft.draft_text
+    assert "clear trail" in draft.draft_text
+    assert "draft_only_no_publish" in draft.safety_flags
+    assert "human_review_required" in draft.safety_flags
+
+    try:
+        create_social_draft(
+            topic="Reply somewhere else.",
+            platform="x",
+            max_chars=280,
+            draft_kind="reply",
+        )
+    except ValueError as exc:
+        assert "reply_drafts_linkedin_only" in str(exc)
+    else:
+        raise AssertionError("reply drafts should be LinkedIn-only for this slice")
+
+
+def test_linkedin_weekly_topic_rotates_without_external_inputs() -> None:
+    first = linkedin_weekly_topic(date(2026, 6, 27))
+    second = linkedin_weekly_topic(date(2026, 7, 4))
+
+    assert first
+    assert second
+    assert first != second
+    assert "http" not in first.lower()
 
 
 def test_platform_normalization_deduplicates_and_rejects_unknowns() -> None:
@@ -64,12 +110,37 @@ def test_social_outbox_migration_is_local_only_and_append_only() -> None:
     assert "Buffer" not in source
 
 
+def test_linkedin_weekly_migration_adds_schedule_and_receipt_state() -> None:
+    source = LINKEDIN_WEEKLY_MIGRATION.read_text(encoding="utf-8")
+
+    for column in (
+        "draft_kind",
+        "engagement_author",
+        "scheduled_for",
+        "publish_status",
+        "published_at",
+        "published_url",
+    ):
+        assert column in source
+    assert "variant_scheduled" in source
+    assert "variant_manual_published" in source
+    assert "No platform connector is invoked" in source
+    assert "Postiz" not in source
+    assert "Buffer" not in source
+
+
 def test_social_routes_do_not_publish_to_platforms() -> None:
     source = ROUTE.read_text(encoding="utf-8")
 
     assert "/v1/herald/social" in source
+    assert "/linkedin/weekly" in source
+    assert "/linkedin/cadence" in source
+    assert "/schedule" in source
+    assert "/publish/manual" in source
     assert "create_social_draft" in source
     assert "alpha_herald_social_draft_events" in source
     assert "send_at0_mail_reply" not in source
+    assert "requests.post" not in source
+    assert "aiohttp" not in source
     assert "postiz" not in source.lower()
     assert "buffer" not in source.lower()

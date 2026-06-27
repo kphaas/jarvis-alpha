@@ -51,9 +51,23 @@ def test_herald_ui_exposes_social_approval_outbox() -> None:
         "apiJson<SocialDraftList>('/v1/herald/social/drafts?status=all&limit=12')"
         in source
     )
+    assert "apiJson<LinkedInCadence>('/v1/herald/social/linkedin/cadence')" in source
     assert "apiJson<SocialDraftCreateResponse>('/v1/herald/social/drafts'" in source
+    assert (
+        "apiJson<SocialDraftCreateResponse>('/v1/herald/social/linkedin/weekly'"
+        in source
+    )
     assert "/v1/herald/social/drafts/${draftId}/status" in source
+    assert "/v1/herald/social/drafts/${draftId}/schedule" in source
+    assert "/v1/herald/social/drafts/${draftId}/publish/manual" in source
     assert "Social approval outbox" in source
+    assert "Draft weekly LinkedIn" in source
+    assert "LinkedIn engagement" in source
+    assert "Draft LinkedIn reply" in source
+    assert "Mark published" in source
+    assert 'type="date"' in source
+    assert "publish_status" in source
+    assert "draft_kind" in source
     assert "safety_flags.map" in source
     assert "toggleSocialPlatform" in source
     assert "Draft social" in source
