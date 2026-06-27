@@ -14,6 +14,7 @@ repo's route/handler-unit-test convention) and the primitive patches
 
 from __future__ import annotations
 
+import importlib
 import os
 from typing import Any
 
@@ -108,6 +109,20 @@ async def test_call_llm_agent_honors_config_model(
 
 
 # ── ollama_client.generate ─────────────────────────────────────────
+
+
+def test_ollama_client_import_does_not_require_db_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ALPHA_DB_DSN", raising=False)
+    monkeypatch.delenv("ALPHA_DB_DSN_WRITER", raising=False)
+    monkeypatch.delenv("ALPHA_DB_DSN_BUDDY", raising=False)
+    monkeypatch.delenv("ALPHA_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("ALPHA_OLLAMA_URL", raising=False)
+
+    reloaded = importlib.reload(ollama_client)
+
+    assert reloaded._ollama_url() == "http://127.0.0.1:11434"
 
 
 class _FakeResponse:

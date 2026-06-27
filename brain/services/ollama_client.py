@@ -12,14 +12,18 @@ exceptions — callers decide how to surface them (e.g. 503).
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
 
-from brain.core.config import OLLAMA_URL
-
 _GENERATE_PATH = "/api/generate"
 _DEFAULT_TIMEOUT_S = 60.0
+_DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
+
+
+def _ollama_url() -> str:
+    return os.environ.get("ALPHA_OLLAMA_URL", _DEFAULT_OLLAMA_URL).rstrip("/")
 
 
 async def generate(
@@ -53,7 +57,7 @@ async def generate(
         payload["options"] = options
 
     async with httpx.AsyncClient(timeout=timeout_s) as client:
-        resp = await client.post(f"{OLLAMA_URL}{_GENERATE_PATH}", json=payload)
+        resp = await client.post(f"{_ollama_url()}{_GENERATE_PATH}", json=payload)
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
         return data
