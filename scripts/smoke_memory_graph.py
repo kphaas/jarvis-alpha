@@ -32,6 +32,10 @@ from scripts.smoke_memory_core import (
     _smoke_token,
 )
 
+VALID_GRAPH_RETRIEVAL_STATES = frozenset(
+    {"current", "future", "historical", "needs_refresh"}
+)
+
 
 @dataclass(frozen=True)
 class SmokeResult:
@@ -135,16 +139,18 @@ def run_memory_graph_smoke(
         )
         nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
         edges = graph.get("edges") if isinstance(graph.get("edges"), list) else []
+        temporal_contract = _temporal_contract(nodes, edges)
         results["current_graph_read"] = SmokeResult(
             "passed"
             if graph.get("status") == "ok"
-            and _has_temporal_fields(nodes, edges)
+            and bool(temporal_contract["has_fields"])
+            and bool(temporal_contract["valid_retrieval_states"])
             and _has_review_fields(nodes, edges)
             else "failed",
             {
                 "node_count": len(nodes),
                 "edge_count": len(edges),
-                "temporal_fields": _has_temporal_fields(nodes, edges),
+                **temporal_contract,
                 "review_fields": _has_review_fields(nodes, edges),
             },
         )
@@ -167,17 +173,19 @@ def run_memory_graph_smoke(
             if isinstance(admin_graph.get("edges"), list)
             else []
         )
+        admin_temporal_contract = _temporal_contract(admin_nodes, admin_edges)
         results["admin_user_graph_read"] = SmokeResult(
             "passed"
             if admin_graph.get("status") == "ok"
-            and _has_temporal_fields(admin_nodes, admin_edges)
+            and bool(admin_temporal_contract["has_fields"])
+            and bool(admin_temporal_contract["valid_retrieval_states"])
             and _has_review_fields(admin_nodes, admin_edges)
             else "failed",
             {
                 "principal_id": principal_id,
                 "node_count": len(admin_nodes),
                 "edge_count": len(admin_edges),
-                "temporal_fields": _has_temporal_fields(admin_nodes, admin_edges),
+                **admin_temporal_contract,
                 "review_fields": _has_review_fields(admin_nodes, admin_edges),
             },
         )
@@ -264,13 +272,38 @@ def _first_graph_node_id(nodes: list[object]) -> str | None:
 
 
 def _has_temporal_fields(nodes: list[object], edges: list[object]) -> bool:
+    return bool(_temporal_contract(nodes, edges)["has_fields"])
+
+
+def _temporal_contract(nodes: list[object], edges: list[object]) -> dict[str, object]:
     rows = [*nodes, *edges]
     if not rows:
-        return True
-    return all(
-        isinstance(row, dict) and "temporal_state" in row and "retrieval_state" in row
-        for row in rows
-    )
+        return {
+            "has_fields": True,
+            "valid_retrieval_states": True,
+            "retrieval_states": [],
+        }
+
+    retrieval_states: list[str] = []
+    has_fields = True
+    valid_retrieval_states = True
+    for row in rows:
+        if not isinstance(row, dict):
+            has_fields = False
+            continue
+        if "temporal_state" not in row or "retrieval_state" not in row:
+            has_fields = False
+            continue
+        retrieval_state = str(row.get("retrieval_state") or "")
+        retrieval_states.append(retrieval_state)
+        if retrieval_state not in VALID_GRAPH_RETRIEVAL_STATES:
+            valid_retrieval_states = False
+
+    return {
+        "has_fields": has_fields,
+        "valid_retrieval_states": valid_retrieval_states,
+        "retrieval_states": sorted(set(retrieval_states)),
+    }
 
 
 def _has_review_fields(nodes: list[object], edges: list[object]) -> bool:
