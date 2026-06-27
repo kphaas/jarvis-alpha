@@ -54,6 +54,7 @@ SERVICE_NODE_MAP = {
     "com.jarvis.alpha.executor": "brain",
     "com.jarvis.alpha.fluentbit": "brain",
     "com.jarvis.alpha.gmail-health": "brain",
+    "com.jarvis.alpha.herald-linkedin-health": "brain",
     "com.jarvis.alpha.loki": "brain",
     "com.jarvis.alpha.memory-observability": "brain",
     "com.jarvis.alpha.pg_backup": "brain",

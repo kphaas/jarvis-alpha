@@ -269,6 +269,24 @@ def test_graph_context_line_labels_currentness() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("prompt", "include_history"),
+    [
+        ("What is the current trip plan?", False),
+        ("What is the latest project state?", False),
+        ("What are my priorities for memory?", False),
+        ("What changed in the old trip plan?", True),
+        ("What did this use to be?", True),
+        ("Show stale relationship history.", True),
+    ],
+)
+def test_temporal_graph_history_classifier_separates_current_from_old(
+    prompt: str,
+    include_history: bool,
+) -> None:
+    assert MemoryService._include_historical_graph(prompt) is include_history
+
+
 def _async_rows(rows: list[dict[str, object]]):
     async def inner(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
         return rows
