@@ -30,6 +30,7 @@ from brain.services.internet_scout.models import (
 )
 from brain.services.internet_scout.orchestrator import InternetScoutOrchestrator
 from brain.services.internet_scout.repository import InternetScoutRepository
+from brain.services.internet_scout.safety import DEFAULT_MAX_CONTENT_BYTES
 from brain.services.internet_scout.sanitizer import sanitize_untrusted_text
 from jarvis_common.logging_config import get_logger
 
@@ -43,7 +44,7 @@ AI_NEWS_BRIEF_SCHEMA_VERSION: Literal["ai_news_daily_brief.v1"] = (
 )
 DEFAULT_AI_NEWS_WINDOW_HOURS = 24
 DEFAULT_AI_NEWS_MAX_ITEMS = 12
-RSS_MAX_BYTES = 350_000
+RSS_MAX_BYTES = DEFAULT_MAX_CONTENT_BYTES
 PAGE_MAX_BYTES = 500_000
 
 _RSS_SOURCE_IDS = (
@@ -427,9 +428,6 @@ def parse_page_monitor_items(
     if endpoint.source_id != "openai-api-changelog":
         links = links[:5]
     sanitized = sanitize_untrusted_text(text, max_chars=2_000)
-    if not links:
-        return []
-    first_url = links[0]
     title = f"{endpoint.name} monitor"
     return [
         AiNewsBriefItem(
@@ -437,7 +435,7 @@ def parse_page_monitor_items(
             vendor=endpoint.vendor,
             source_id=endpoint.source_id,
             source_name=endpoint.name,
-            url=first_url,
+            url=endpoint.url,
             published_at=None,
             summary="Official page fetched for daily change monitoring.",
             content_hash=_hash_parts(content_hash, *links),

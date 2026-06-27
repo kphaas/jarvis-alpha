@@ -261,7 +261,7 @@
 - id: anthropic-api-release-notes
   name: Anthropic API Release Notes
   domain: news
-  url: https://platform.claude.com/docs/en/release-notes/overview
+  url: https://platform.claude.com/docs/en/release-notes/overview.md
   api_base_url: null
   auth:
     type: none

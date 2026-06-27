@@ -1570,6 +1570,56 @@ async def test_internet_fetch_returns_sanitized_text(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_internet_fetch_preserves_text_to_requested_byte_cap(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    body = ("<item>source body</item>" * 700).encode()
+
+    class FakeResponse:
+        status_code = 200
+        headers = {
+            "content-type": "application/rss+xml",
+            "content-length": str(len(body)),
+        }
+        history = []
+        url = "https://public.example.test/feed.xml"
+
+        async def aiter_bytes(self):
+            yield body
+
+    class FakeStream:
+        async def __aenter__(self):
+            return FakeResponse()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    class FakeClient:
+        def __init__(self, *, timeout: float, follow_redirects: bool):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        def stream(self, method, url):
+            return FakeStream()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.internet_fetch(
+        cloud_routes.InternetFetchRequest(
+            url="https://public.example.test/feed.xml",
+            max_bytes=len(body),
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert result["text"] == body.decode()
+
+
+@pytest.mark.asyncio
 async def test_internet_extract_returns_main_text(monkeypatch):
     monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
     monkeypatch.setattr(

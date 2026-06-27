@@ -11,6 +11,7 @@ from brain.services.internet_scout.ai_news_brief import (
     build_ai_news_brief,
     latest_ai_news_brief,
     parse_feed_items,
+    parse_page_monitor_items,
     run_ai_news_brief_once,
 )
 from brain.services.internet_scout.models import GatewayFetchResponse
@@ -208,6 +209,25 @@ def test_parse_feed_items_sanitizes_untrusted_summary() -> None:
     assert items[0].vendor == "OpenAI"
     assert items[0].raw_web_content_is_untrusted is True
     assert "ignore_prior_instructions" in items[0].risk_markers
+
+
+def test_parse_page_monitor_items_uses_source_url_without_links() -> None:
+    endpoint = AiNewsEndpoint(
+        source_id="anthropic-api-release-notes",
+        name="Anthropic API Release Notes",
+        vendor="Anthropic",
+        url="https://platform.claude.com/docs/en/release-notes/overview.md",
+        kind="page",
+    )
+
+    items = parse_page_monitor_items(
+        "# Claude Platform\n\nLatest official release notes.",
+        endpoint=endpoint,
+        content_hash="b" * 64,
+    )
+
+    assert items[0].url == endpoint.url
+    assert items[0].title == "Anthropic API Release Notes monitor"
 
 
 @pytest.mark.asyncio

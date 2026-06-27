@@ -11,6 +11,10 @@ SocialPlatform = Literal["x", "linkedin"]
 SocialDraftStatus = Literal["needs_review", "approved", "rejected", "archived"]
 
 
+def _default_social_platforms() -> list[SocialPlatform]:
+    return ["x", "linkedin"]
+
+
 class HeraldSocialPlatformProfileOut(BaseModel):
     platform: SocialPlatform
     display_name: str
@@ -31,7 +35,7 @@ class HeraldSocialDraftCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     topic: str = Field(min_length=3, max_length=500)
-    platforms: list[SocialPlatform] = Field(default_factory=lambda: ["x", "linkedin"])
+    platforms: list[SocialPlatform] = Field(default_factory=_default_social_platforms)
     account_label: str = Field(default="AT0", min_length=1, max_length=80)
     source_url: str | None = Field(default=None, min_length=8, max_length=500)
     campaign: str | None = Field(default=None, min_length=2, max_length=120)
