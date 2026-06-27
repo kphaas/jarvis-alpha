@@ -143,6 +143,7 @@ async def test_build_context_injects_temporal_graph_before_episodic(
                     "label_preview": "Temporal graph memory",
                     "source": "operator",
                     "confidence": 0.93,
+                    "retrieval_state": "current",
                 },
                 {
                     "item_type": "edge",
@@ -150,6 +151,7 @@ async def test_build_context_injects_temporal_graph_before_episodic(
                     "label_preview": "Ken works on Memory",
                     "source": "dream",
                     "confidence": 0.81,
+                    "retrieval_state": "historical",
                 },
             ]
         ),
@@ -171,8 +173,8 @@ async def test_build_context_injects_temporal_graph_before_episodic(
     )
 
     assert "[TEMPORAL GRAPH]" in context
-    assert "- Project: Temporal graph memory" in context
-    assert "- Relation: Ken works on Memory" in context
+    assert "- [current] Project: Temporal graph memory" in context
+    assert "- [historical] Relation: Ken works on Memory" in context
     assert context.index("[ALWAYS KNOWN]") < context.index("[TEMPORAL GRAPH]")
     assert context.index("[TEMPORAL GRAPH]") < context.index("[RELEVANT PAST]")
 
@@ -218,7 +220,53 @@ async def test_temporal_graph_memory_uses_prompt_relevance_and_bounds() -> None:
     assert "alpha_memory_graph_edges" in conn.sql
     assert "plainto_tsquery" in conn.sql
     assert "retrieval_score" in conn.sql
-    assert conn.args == (user_id, "Memory graph projects", 8, 8)
+    assert "retrieval_state" in conn.sql
+    assert "$5::boolean" in conn.sql
+    assert conn.args == (user_id, "Memory graph projects", 8, 8, False, 90)
+
+
+@pytest.mark.asyncio
+async def test_temporal_graph_history_prompts_opt_into_historical_rows() -> None:
+    conn = _GraphCapturingConn()
+    user_id = uuid4()
+
+    await MemoryService()._get_graph(
+        conn,
+        user_id,
+        prompt="What changed in the old trip plan?",
+    )
+
+    assert conn.args == (user_id, "What changed in the old trip plan?", 8, 8, True, 90)
+
+
+def test_graph_context_line_labels_currentness() -> None:
+    assert (
+        MemoryService._graph_context_line(
+            {
+                "item_type": "node",
+                "kind": "project",
+                "label_preview": "Seattle trip",
+                "source": "spark",
+                "confidence": 0.88,
+                "retrieval_state": "needs_refresh",
+            }
+        )
+        == "- [needs refresh] Project: Seattle trip (confidence 0.88, source spark)"
+    )
+
+    assert (
+        MemoryService._graph_context_line(
+            {
+                "item_type": "edge",
+                "kind": "planned_with",
+                "label_preview": "Ken planned with Sweta",
+                "source": "dream",
+                "confidence": 0.74,
+                "retrieval_state": "historical",
+            }
+        )
+        == "- [historical] Relation: Ken planned with Sweta (planned with, confidence 0.74, source dream)"
+    )
 
 
 def _async_rows(rows: list[dict[str, object]]):
