@@ -43,6 +43,25 @@ def test_herald_ui_splits_view_by_configured_mailbox() -> None:
     assert "XMLHttpRequest" not in source
 
 
+def test_herald_ui_exposes_social_approval_outbox() -> None:
+    source = HERALD_PAGE.read_text(encoding="utf-8")
+
+    assert "apiJson<SocialPlatformList>('/v1/herald/social/platforms')" in source
+    assert (
+        "apiJson<SocialDraftList>('/v1/herald/social/drafts?status=all&limit=12')"
+        in source
+    )
+    assert "apiJson<SocialDraftCreateResponse>('/v1/herald/social/drafts'" in source
+    assert "/v1/herald/social/drafts/${draftId}/status" in source
+    assert "Social approval outbox" in source
+    assert "safety_flags.map" in source
+    assert "toggleSocialPlatform" in source
+    assert "Draft social" in source
+    assert "Archive" in source
+    assert "Postiz" not in source
+    assert "Buffer" not in source
+
+
 def test_health_ui_surfaces_herald_graph_send_monitor() -> None:
     source = HEALTH_PAGE.read_text(encoding="utf-8")
 

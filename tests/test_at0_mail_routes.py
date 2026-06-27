@@ -40,3 +40,22 @@ def test_at0_mail_routes_are_classified() -> None:
         "external_call",
         "email_send",
     ]
+
+
+def test_herald_social_routes_are_classified() -> None:
+    assert classify_route("GET", "/v1/herald/social/platforms") == [
+        "read",
+        "security_read",
+    ]
+    assert classify_route("GET", "/v1/herald/social/drafts") == [
+        "read",
+        "security_read",
+    ]
+    assert classify_route("POST", "/v1/herald/social/drafts") == [
+        "write",
+        "security_write",
+    ]
+    assert classify_route("POST", "/v1/herald/social/drafts/abc/status") == [
+        "write",
+        "security_write",
+    ]
