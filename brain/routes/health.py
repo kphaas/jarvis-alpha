@@ -3,9 +3,12 @@ health.py — Health and LaunchAgent status endpoints for jarvis-alpha Brain.
 """
 
 import asyncio
+import json
+import os
 import subprocess
 from datetime import datetime, timezone
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
@@ -41,6 +44,8 @@ BRAIN_AGENTS = [
     # Infrastructure
     "com.jarvis.ollama",
 ]
+
+MAINTAINER_REPORT_ENV = "JARVIS_MAINTAINER_REPORT_PATH"
 
 
 def _safe_int(val: str) -> Optional[int]:
@@ -142,6 +147,70 @@ def _parse_launchctl() -> list:
         return []
 
 
+def _maintainer_report_path() -> Path:
+    configured = os.getenv(MAINTAINER_REPORT_ENV)
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / "jarvis-maintainer" / "var" / "maintainer_report.json"
+
+
+def _maintainer_missing(path: Path) -> dict[str, Any]:
+    return {
+        "status": "missing",
+        "source": "jarvis-maintainer",
+        "authority": "none",
+        "path": str(path),
+        "candidate_count": 0,
+        "candidate_count_by_tier": {},
+        "drift_count": 0,
+        "inventory_count": 0,
+        "inventory_rows_recorded": 0,
+        "new_or_existing_candidate_ids": [],
+        "node": None,
+        "last_scan_at": None,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _maintainer_invalid(path: Path, error: str) -> dict[str, Any]:
+    payload = _maintainer_missing(path)
+    payload["status"] = "invalid"
+    payload["error"] = error[:200]
+    return payload
+
+
+def _maintainer_int(raw: Any) -> int:
+    return raw if isinstance(raw, int) else 0
+
+
+def _maintainer_report_payload(report: dict[str, Any], path: Path) -> dict[str, Any]:
+    tiers = report.get("candidate_count_by_tier")
+    candidate_ids = report.get("new_or_existing_candidate_ids")
+    return {
+        "status": "ok",
+        "source": "jarvis-maintainer",
+        "authority": report.get("authority")
+        if report.get("authority") == "none"
+        else "none",
+        "path": str(path),
+        "candidate_count": _maintainer_int(report.get("candidate_count")),
+        "candidate_count_by_tier": tiers if isinstance(tiers, dict) else {},
+        "drift_count": _maintainer_int(report.get("drift_count")),
+        "inventory_count": _maintainer_int(report.get("inventory_count")),
+        "inventory_rows_recorded": _maintainer_int(
+            report.get("inventory_rows_recorded")
+        ),
+        "new_or_existing_candidate_ids": candidate_ids
+        if isinstance(candidate_ids, list)
+        else [],
+        "node": report.get("node") if isinstance(report.get("node"), str) else None,
+        "last_scan_at": report.get("last_scan_at")
+        if isinstance(report.get("last_scan_at"), str)
+        else None,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.get("/health")
 async def health():
     return {"status": "ok", "node": "brain", "service": "jarvis-alpha"}
@@ -206,3 +275,22 @@ async def health_agents():
 async def health_temporal_storage():
     """Return Temporal persistence size, row counts, and disk alert state."""
     return await collect_temporal_storage_snapshot()
+
+
+@router.get("/v1/health/maintainer")
+async def health_maintainer():
+    """Return the latest local-only JARVIS Maintainer report."""
+    path = _maintainer_report_path()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return _maintainer_missing(path)
+    except json.JSONDecodeError as exc:
+        log.warning("maintainer report invalid json: %s", exc)
+        return _maintainer_invalid(path, f"invalid json: {exc}")
+    except OSError as exc:
+        log.warning("maintainer report unreadable: %s", exc)
+        return _maintainer_invalid(path, f"unreadable: {exc}")
+    if not isinstance(raw, dict):
+        return _maintainer_invalid(path, "report root must be an object")
+    return _maintainer_report_payload(raw, path)
