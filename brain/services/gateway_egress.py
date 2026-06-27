@@ -13,6 +13,8 @@ import os
 import subprocess
 from typing import Any
 
+from jarvis_common.secrets import get_secret
+
 
 class GatewayEgressError(RuntimeError):
     pass
@@ -30,6 +32,10 @@ def _service_token() -> str:
         token = os.environ.get(name, "").strip()
         if token:
             return token
+        try:
+            return get_secret(name)
+        except KeyError:
+            pass
     raise GatewayEgressError("Gateway service token is not configured")
 
 

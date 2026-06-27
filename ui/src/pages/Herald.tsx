@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   CheckCircle2,
+  Archive,
   Inbox,
   LoaderCircle,
   MailCheck,
+  Megaphone,
   RefreshCw,
   Send,
   ShieldCheck,
@@ -134,6 +136,57 @@ interface HealthResponse {
   latest_graph_health: GraphHealth | null
 }
 
+type SocialPlatformKey = 'x' | 'linkedin'
+
+interface SocialPlatformProfile {
+  platform: SocialPlatformKey
+  display_name: string
+  account_label: string
+  audience_notes: string
+  voice_rules: string[]
+  safety_rules: string[]
+  max_chars: number
+  profile_version: number
+  active: boolean
+}
+
+interface SocialPlatformList {
+  platforms: SocialPlatformProfile[]
+}
+
+interface SocialDraft {
+  id: string
+  request_id: string
+  topic: string
+  source_url: string | null
+  campaign: string | null
+  platform: SocialPlatformKey
+  account_label: string
+  draft_text: string
+  status: 'needs_review' | 'approved' | 'rejected' | 'archived'
+  variant_version: number
+  profile_version: number
+  audience_notes: string
+  voice_rules: string[]
+  safety_rules: string[]
+  voice_score: number
+  safety_flags: string[]
+  repeat_of_variant_id: string | null
+  reviewer_notes: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  created_at: string
+}
+
+interface SocialDraftList {
+  drafts: SocialDraft[]
+}
+
+interface SocialDraftCreateResponse {
+  request_id: string
+  drafts: SocialDraft[]
+}
+
 const ALL_MAILBOXES = 'all'
 
 function timeText(value: string | null) {
@@ -189,21 +242,29 @@ export default function Herald() {
   const [selectedMailbox, setSelectedMailbox] = useState(ALL_MAILBOXES)
   const [messages, setMessages] = useState<MailMessage[]>([])
   const [drafts, setDrafts] = useState<Draft[]>([])
+  const [socialProfiles, setSocialProfiles] = useState<SocialPlatformProfile[]>([])
+  const [socialDrafts, setSocialDrafts] = useState<SocialDraft[]>([])
+  const [socialTopic, setSocialTopic] = useState('')
+  const [socialSelectedPlatforms, setSocialSelectedPlatforms] = useState<SocialPlatformKey[]>(['x', 'linkedin'])
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
   const [actingDraftId, setActingDraftId] = useState<string | null>(null)
+  const [creatingSocialDraft, setCreatingSocialDraft] = useState(false)
+  const [actingSocialDraftId, setActingSocialDraftId] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
       const mailboxQuery = selectedMailbox === ALL_MAILBOXES ? '' : `&mailbox=${encodeURIComponent(selectedMailbox)}`
-      const [mailboxRes, dashboardRes, messageRes, draftRes, healthRes] = await Promise.all([
+      const [mailboxRes, dashboardRes, messageRes, draftRes, healthRes, socialProfileRes, socialDraftRes] = await Promise.all([
         apiJson<MailboxList>('/v1/at0-mail/mailboxes'),
         apiJson<Dashboard>('/v1/at0-mail/dashboard'),
         apiJson<MessageList>(`/v1/at0-mail/messages?limit=12${mailboxQuery}`),
         apiJson<DraftList>(`/v1/at0-mail/drafts?status=all&limit=12${mailboxQuery}`),
         apiJson<HealthResponse>('/v1/at0-mail/health'),
+        apiJson<SocialPlatformList>('/v1/herald/social/platforms'),
+        apiJson<SocialDraftList>('/v1/herald/social/drafts?status=all&limit=12'),
       ])
       setMailboxes(mailboxRes.mailboxes)
       if (selectedMailbox !== ALL_MAILBOXES && !mailboxRes.mailboxes.includes(selectedMailbox)) {
@@ -213,6 +274,8 @@ export default function Herald() {
       setMessages(messageRes.messages)
       setDrafts(draftRes.drafts)
       setHealth(healthRes)
+      setSocialProfiles(socialProfileRes.platforms)
+      setSocialDrafts(socialDraftRes.drafts)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load Herald')
@@ -300,6 +363,62 @@ export default function Herald() {
       await load()
     } finally {
       setActingDraftId(null)
+    }
+  }
+
+  const toggleSocialPlatform = (platform: SocialPlatformKey) => {
+    setSocialSelectedPlatforms((current) => (
+      current.includes(platform)
+        ? current.filter((item) => item !== platform)
+        : [...current, platform]
+    ))
+  }
+
+  const createSocialDraft = async () => {
+    const topic = socialTopic.trim()
+    if (!topic) {
+      setError('Social draft topic required')
+      return
+    }
+    if (socialSelectedPlatforms.length === 0) {
+      setError('Select at least one social platform')
+      return
+    }
+    setCreatingSocialDraft(true)
+    setNotice(null)
+    try {
+      const result = await apiJson<SocialDraftCreateResponse>('/v1/herald/social/drafts', {
+        method: 'POST',
+        body: JSON.stringify({
+          topic,
+          platforms: socialSelectedPlatforms,
+          account_label: 'AT0',
+        }),
+      })
+      setSocialTopic('')
+      setNotice(`Social drafts created: ${result.drafts.length}`)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Social draft failed')
+    } finally {
+      setCreatingSocialDraft(false)
+    }
+  }
+
+  const setSocialDraftStatus = async (draftId: string, status: 'approved' | 'rejected' | 'archived') => {
+    setActingSocialDraftId(draftId)
+    setNotice(null)
+    try {
+      await apiJson(`/v1/herald/social/drafts/${draftId}/status`, {
+        method: 'POST',
+        body: JSON.stringify({ status }),
+      })
+      setNotice(`Social draft ${status}`)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Social draft update failed')
+    } finally {
+      setActingSocialDraftId(null)
     }
   }
 
@@ -421,6 +540,142 @@ export default function Herald() {
           </div>
         ))}
       </div>
+
+      <section className={`rounded-xl border ${border} ${panel} p-5`}>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex items-center gap-2">
+            <Megaphone className="h-4 w-4 text-amber-400" />
+            <div>
+              <h2 className={`text-xs font-mono uppercase tracking-widest ${muted}`}>Social approval outbox</h2>
+              <p className={`mt-1 text-sm ${muted}`}>AT0 Spark · draft only · {socialDrafts.length} variants</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {socialProfiles.map((profile) => (
+              <label
+                key={profile.platform}
+                className={`inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border px-3 text-sm font-bold ${border} ${strongPanel}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={socialSelectedPlatforms.includes(profile.platform)}
+                  onChange={() => toggleSocialPlatform(profile.platform)}
+                  className="h-4 w-4 accent-emerald-500"
+                />
+                {profile.display_name}
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+          <div className={`rounded-lg border p-4 ${border} ${strongPanel}`}>
+            <label className={`text-[10px] font-mono uppercase tracking-widest ${muted}`} htmlFor="social-topic">
+              Topic
+            </label>
+            <textarea
+              id="social-topic"
+              value={socialTopic}
+              onChange={(event) => setSocialTopic(event.target.value)}
+              rows={5}
+              className={`mt-2 w-full resize-none rounded-lg border px-3 py-2 text-sm outline-none ${border} ${panel} ${strong}`}
+              placeholder="What should Herald draft?"
+            />
+            <button
+              type="button"
+              onClick={createSocialDraft}
+              disabled={creatingSocialDraft}
+              className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-lg bg-amber-500 px-4 text-sm font-bold text-[#141414] transition hover:bg-amber-400 disabled:opacity-45"
+            >
+              {creatingSocialDraft ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Megaphone className="h-4 w-4" />}
+              Draft social
+            </button>
+
+            <div className="mt-5 space-y-3">
+              {socialProfiles.map((profile) => (
+                <div key={profile.platform} className={`rounded-lg border p-3 ${border} ${panel}`}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Pill label={profile.display_name} />
+                    <span className={`text-[10px] font-mono uppercase ${muted}`}>v{profile.profile_version}</span>
+                  </div>
+                  <p className={`mt-2 text-xs ${muted}`}>{profile.audience_notes}</p>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {profile.voice_rules.slice(0, 3).map((rule) => (
+                      <span key={rule} className={`rounded-md border px-2 py-1 text-[10px] ${border} ${strongPanel}`}>
+                        {rule}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {socialDrafts.map((draft) => (
+              <article key={draft.id} className={`rounded-lg border p-4 ${border} ${strongPanel}`}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Pill label={draft.platform === 'x' ? 'X' : 'LinkedIn'} />
+                  <Pill label={draft.status} />
+                  <span className={`ml-auto text-[10px] font-mono uppercase ${muted}`}>
+                    Voice {Math.round(draft.voice_score * 100)}%
+                  </span>
+                </div>
+                <h3 className="mt-3 line-clamp-2 text-sm font-bold">{draft.topic}</h3>
+                <pre className={`mt-3 max-h-52 overflow-auto whitespace-pre-wrap rounded-lg border p-3 text-xs leading-relaxed ${border} ${panel}`}>
+                  {draft.draft_text}
+                </pre>
+                <div className="mt-3 flex flex-wrap gap-1">
+                  {draft.safety_flags.map((flag) => (
+                    <span key={flag} className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${classTone(flag)}`}>
+                      {flag.replace(/_/g, ' ')}
+                    </span>
+                  ))}
+                  {draft.repeat_of_variant_id && (
+                    <span className="rounded-md border border-amber-400/30 bg-amber-500/10 px-2 py-1 text-[10px] font-mono uppercase text-amber-300">
+                      possible repeat
+                    </span>
+                  )}
+                </div>
+                {draft.status === 'needs_review' && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSocialDraftStatus(draft.id, 'approved')}
+                      disabled={actingSocialDraftId === draft.id}
+                      className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-emerald-600 px-3 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-45"
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSocialDraftStatus(draft.id, 'rejected')}
+                      disabled={actingSocialDraftId === draft.id}
+                      className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-bold transition ${border} ${panel} disabled:opacity-45`}
+                    >
+                      <XCircle className="h-4 w-4" />
+                      Reject
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSocialDraftStatus(draft.id, 'archived')}
+                      disabled={actingSocialDraftId === draft.id}
+                      className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-bold transition ${border} ${panel} disabled:opacity-45`}
+                    >
+                      <Archive className="h-4 w-4" />
+                      Archive
+                    </button>
+                  </div>
+                )}
+              </article>
+            ))}
+            {!loading && socialDrafts.length === 0 && (
+              <div className={`rounded-lg border p-4 text-sm ${border} ${muted}`}>No social drafts yet.</div>
+            )}
+          </div>
+        </div>
+      </section>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
         <section className={`rounded-xl border ${border} ${panel} p-5`}>

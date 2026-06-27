@@ -55,6 +55,7 @@ from brain.routes.helm import router as helm_router
 from brain.routes.helm_voice import router as helm_voice_router
 from brain.routes.internet_scout import router as internet_scout_router
 from brain.routes.at0_mail import router as at0_mail_router
+from brain.routes.herald_social import router as herald_social_router
 from brain.routes.internal import router as internal_router
 from brain.routes.settings import router as settings_router
 from brain.routes.settings_identity import router as settings_identity_router
@@ -147,6 +148,7 @@ app.include_router(helm_router)
 app.include_router(helm_voice_router)
 app.include_router(internet_scout_router)
 app.include_router(at0_mail_router)
+app.include_router(herald_social_router)
 app.include_router(internal_router)
 app.include_router(settings_router)
 app.include_router(settings_identity_router)

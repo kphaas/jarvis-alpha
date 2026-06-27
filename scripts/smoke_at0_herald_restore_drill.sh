@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Focused Herald restore drill. Dumps Herald mail/audit/monitor tables from
+# Focused Herald restore drill. Dumps Herald mail/social/audit/monitor tables from
 # jarvis_alpha, restores them into a scratch database, and compares row counts.
 
 set -euo pipefail
@@ -22,6 +22,10 @@ TABLES=(
   public.alpha_at0_mail_draft_proposals
   public.alpha_at0_mail_send_events
   public.alpha_at0_mail_graph_health
+  public.alpha_herald_social_platform_profiles
+  public.alpha_herald_social_draft_requests
+  public.alpha_herald_social_draft_variants
+  public.alpha_herald_social_draft_events
 )
 
 PSQL="${PSQL:-/opt/homebrew/Cellar/postgresql@16/16.13/bin/psql}"
@@ -123,6 +127,24 @@ SQL
   mv "${SCHEMA_SQL}.with_function" "$SCHEMA_SQL"
 fi
 
+if ! grep -Eq "CREATE (OR REPLACE )?FUNCTION public\\.alpha_herald_social_draft_events_immutable" "$SCHEMA_SQL"; then
+  FUNC_SQL="${TMP_DIR}/social_draft_events_function.sql"
+  cat >"$FUNC_SQL" <<'SQL'
+CREATE OR REPLACE FUNCTION public.alpha_herald_social_draft_events_immutable()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'pg_catalog', 'public'
+AS $$
+BEGIN
+    RAISE EXCEPTION 'alpha_herald_social_draft_events is append-only';
+END;
+$$;
+SQL
+  cat "$FUNC_SQL" "$SCHEMA_SQL" >"${SCHEMA_SQL}.with_function"
+  mv "${SCHEMA_SQL}.with_function" "$SCHEMA_SQL"
+fi
+
 "$PG_DUMP" \
   --data-only \
   --format=custom \
@@ -139,8 +161,8 @@ psql_exec "$DRILL_DB" "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
 "$PSQL" -h "$PGHOST" -U "$PGUSER" -d "$DRILL_DB" -v ON_ERROR_STOP=1 -q -f "$SCHEMA_SQL" >/dev/null
 "$PG_RESTORE" --exit-on-error --dbname "$DRILL_DB" "$DATA_DUMP" >/dev/null
 
-schema_count="$(psql_scalar "$DRILL_DB" "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'alpha_at0_mail_%';")"
-trigger_count="$(psql_scalar "$DRILL_DB" "SELECT count(*) FROM pg_trigger WHERE tgname = 'trg_alpha_at0_mail_send_events_immutable';")"
+schema_count="$(psql_scalar "$DRILL_DB" "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND (table_name LIKE 'alpha_at0_mail_%' OR table_name LIKE 'alpha_herald_social_%');")"
+trigger_count="$(psql_scalar "$DRILL_DB" "SELECT count(*) FROM pg_trigger WHERE tgname IN ('trg_alpha_at0_mail_send_events_immutable', 'trg_alpha_herald_social_draft_events_immutable');")"
 
 status="PASS"
 rows_md=""
@@ -159,7 +181,7 @@ for table in "${TABLES[@]}"; do
   rows_md+="| \`$table\` | $live_count | $restored_count | $match |"$'\n'
 done
 
-if [ "$schema_count" -lt "${#TABLES[@]}" ] || [ "$trigger_count" -lt 1 ]; then
+if [ "$schema_count" -lt "${#TABLES[@]}" ] || [ "$trigger_count" -lt 2 ]; then
   status="FAIL"
 fi
 
@@ -176,7 +198,7 @@ cat >"$REPORT_PATH" <<EOF
 | Scratch database | ${DRILL_DB} (dropped after verification) |
 | Tables verified | ${#TABLES[@]} |
 | Restored Herald tables found | ${schema_count} |
-| Append-only send trigger found | ${trigger_count} |
+| Append-only triggers found | ${trigger_count} |
 | Live rows | ${total_live} |
 | Restored rows | ${total_restored} |
 
@@ -188,8 +210,8 @@ ${rows_md_trimmed}
 
 ## Evidence Notes
 
-- Drill restored Herald mail intake, draft proposal, append-only send audit, and Graph health monitor tables into an isolated scratch database.
-- Report intentionally records metadata and row counts only. It does not include email body previews, reply draft text, Graph tokens, or secrets.
+- Drill restored Herald mail intake, social draft outbox, append-only audit, and Graph health monitor tables into an isolated scratch database.
+- Report intentionally records metadata and row counts only. It does not include email body previews, reply/social draft text, Graph tokens, platform tokens, or secrets.
 - Scratch dump files were mode 600 and removed after the drill.
 EOF
 
