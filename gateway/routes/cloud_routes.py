@@ -1822,7 +1822,7 @@ async def _fetch_public_content(
 
     body = b"".join(chunks)
     raw_text = body.decode("utf-8", errors="replace")
-    sanitized = sanitize_untrusted_text(raw_text)
+    sanitized = sanitize_untrusted_text(raw_text, max_chars=max_bytes)
     return _FetchedInternetContent(
         url=final.normalized_url,
         host=final.host,
