@@ -27,6 +27,10 @@ from brain.services.internet_scout.ai_news_brief import (
     latest_ai_news_brief,
 )
 from brain.services.internet_scout.health import build_beacon_health
+from brain.services.internet_scout.market_brief import (
+    MarketBrief,
+    latest_market_brief,
+)
 from jarvis_common.logging_config import get_logger
 
 router = APIRouter(prefix="/v1/helm", tags=["helm"])
@@ -1464,6 +1468,21 @@ async def helm_ai_news_brief(
         audit_actor=f"helm_ai_news_brief:{actor}",
     ) as conn:
         return await latest_ai_news_brief(conn)
+
+
+@router.get("/markets/brief", response_model=MarketBrief)
+async def helm_market_brief(
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> MarketBrief:
+    """Return the latest Auto-generated global market snapshot for Helm."""
+    check_scopes(request, "helm.read", "admin")
+    actor = str(getattr(request.state, "user_id", "unknown"))
+    async with platform_admin_connection(
+        source="http",
+        audit_actor=f"helm_market_brief:{actor}",
+    ) as conn:
+        return await latest_market_brief(conn)
 
 
 @router.get("/self", response_model=At0SelfModel)

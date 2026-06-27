@@ -172,3 +172,28 @@
     nightly bulk archives instead of crawling when backfilling.
   last_verified: 2026-06-19
   review_cadence_days: 180
+
+- id: yahoo-finance-chart
+  name: Yahoo Finance Chart
+  domain: financial-market
+  url: https://finance.yahoo.com/
+  api_base_url: https://query1.finance.yahoo.com/v8/finance/chart
+  auth:
+    type: none
+    notes: |
+      No API key. Unofficial chart endpoint used only as a delayed, read-only
+      market snapshot fallback for Helm operator awareness.
+  pricing: free
+  free_tier: Public unauthenticated chart response; rate limits not contracted
+  license: vendor-tos
+  baa_available: not-applicable
+  phi_safe: false
+  primary_use_cases:
+    - global-index-snapshot
+    - delayed-market-read
+    - helm-market-brief
+  notes: |
+    Do not use for trading, order routing, portfolio valuation, or guarantees.
+    Prefer Polygon/Finnhub/Tiingo for production-grade licensed market data.
+  last_verified: 2026-06-27
+  review_cadence_days: 30
