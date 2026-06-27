@@ -1614,7 +1614,7 @@ async def test_internet_fetch_blocks_private_redirect(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return None
 
-        def stream(self, method, url):
+        def stream(self, method, url, **kwargs):
             return FakeStream()
 
     monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
@@ -1632,6 +1632,7 @@ async def test_internet_fetch_blocks_private_redirect(monkeypatch):
 @pytest.mark.asyncio
 async def test_internet_fetch_returns_sanitized_text(monkeypatch):
     monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    seen_headers: dict[str, str] = {}
 
     class FakeResponse:
         status_code = 200
@@ -1659,7 +1660,8 @@ async def test_internet_fetch_returns_sanitized_text(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return None
 
-        def stream(self, method, url):
+        def stream(self, method, url, **kwargs):
+            seen_headers.update(kwargs.get("headers") or {})
             return FakeStream()
 
     monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
@@ -1672,6 +1674,7 @@ async def test_internet_fetch_returns_sanitized_text(monkeypatch):
     assert result["url"] == "https://public.example.test/report"
     assert result["content_hash"]
     assert "ignore_prior_instructions" in result["risk_markers"]
+    assert seen_headers["User-Agent"] == "AT-0 Beacon/1.0"
 
 
 @pytest.mark.asyncio
@@ -1708,7 +1711,7 @@ async def test_internet_fetch_preserves_text_to_requested_byte_cap(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return None
 
-        def stream(self, method, url):
+        def stream(self, method, url, **kwargs):
             return FakeStream()
 
     monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
@@ -1760,7 +1763,7 @@ async def test_internet_extract_returns_main_text(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return None
 
-        def stream(self, method, url):
+        def stream(self, method, url, **kwargs):
             return FakeStream()
 
     monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
@@ -1813,7 +1816,7 @@ async def test_internet_extract_falls_back_to_local_html_text(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return None
 
-        def stream(self, method, url):
+        def stream(self, method, url, **kwargs):
             return FakeStream()
 
     monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)

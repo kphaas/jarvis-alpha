@@ -1850,8 +1850,11 @@ async def _fetch_public_content(
         )
 
     max_bytes = min(max(max_bytes, 1), DEFAULT_MAX_CONTENT_BYTES)
+    headers = {"User-Agent": "AT-0 Beacon/1.0"}
     async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
-        async with client.stream("GET", safety.normalized_url) as response:
+        async with client.stream(
+            "GET", safety.normalized_url, headers=headers
+        ) as response:
             chain = [safety.normalized_url]
             chain.extend(str(history.url) for history in response.history)
             chain.append(str(response.url))
