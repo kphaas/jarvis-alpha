@@ -114,6 +114,12 @@ class LinkedInMemberPostRequest(BaseModel):
     text: str = Field(min_length=1, max_length=3000)
 
 
+class LinkedInTokenIntrospectionRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=5000)
+    client_id: str = Field(min_length=5, max_length=200)
+    client_secret: str = Field(min_length=10, max_length=500)
+
+
 class AnthropicAdminRequest(BaseModel):
     path: str
     params: dict[str, str]
@@ -554,6 +560,30 @@ async def linkedin_member_post(
         if post_urn
         else None,
     }
+
+
+@router.post("/linkedin/token_introspection")
+async def linkedin_token_introspection(
+    req: LinkedInTokenIntrospectionRequest,
+    authorization: str = Header(...),
+):
+    _authorize_gateway_call(authorization)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            "https://www.linkedin.com/oauth/v2/introspectToken",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data={
+                "token": req.token,
+                "client_id": req.client_id,
+                "client_secret": req.client_secret,
+            },
+        )
+    payload: Any
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {"raw": response.text}
+    return {"status_code": response.status_code, "payload": payload}
 
 
 @router.post("/anthropic_admin")
