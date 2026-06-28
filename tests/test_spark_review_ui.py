@@ -266,7 +266,9 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Try again with feedback" in source
     assert "regenerateWithFeedback" in source
     assert "one or two short text-message sentences" in source
-    assert "Pick up to 2 signals before retrying." in source
+    assert "draft_text_override" in source
+    assert 'feedbackLabel === "voice_rewrite"' in source
+    assert "Pick up to 3 signals before retrying." in source
     assert "Tone direction" in source
     assert "Send only after approval passes" in source
     assert "Send can resume from the persisted outbox" in source

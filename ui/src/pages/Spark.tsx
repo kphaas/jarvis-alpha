@@ -1513,12 +1513,12 @@ function FeedbackSelectionHint({
   muted: string;
   selectedCount: number;
 }) {
-  const remaining = Math.max(0, 2 - selectedCount);
+  const remaining = Math.max(0, 3 - selectedCount);
   return (
     <p className={`text-xs ${muted}`}>
       {selectedCount
         ? `${selectedCount} selected, ${remaining} slot${remaining === 1 ? "" : "s"} left.`
-        : "Pick up to 2 signals before retrying."}
+        : "Pick up to 3 signals before retrying."}
     </p>
   );
 }

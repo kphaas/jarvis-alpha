@@ -64,6 +64,7 @@ export interface SparkIMessageDraftFeedbackRequest {
   approval_ref_hash: string;
   source_reference_hash: string;
   chat_guid_hash: string;
+  draft_text_override?: string | null;
 }
 
 export interface SparkIMessageDraftFeedbackResponse {
