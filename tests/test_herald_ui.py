@@ -60,6 +60,10 @@ def test_herald_ui_exposes_social_approval_outbox() -> None:
     assert (
         "apiJson<SocialEngagement>('/v1/herald/social/linkedin/engagements'" in source
     )
+    assert (
+        "apiJson<LinkedInScoutResponse>('/v1/herald/social/linkedin/engagements/scout'"
+        in source
+    )
     assert "/v1/herald/social/linkedin/engagements/${itemId}/draft-reply" in source
     assert "/v1/herald/social/linkedin/engagements/${itemId}/publish-reply" in source
     assert "/v1/herald/social/linkedin/engagements/${itemId}/status" in source
@@ -75,6 +79,7 @@ def test_herald_ui_exposes_social_approval_outbox() -> None:
     assert "Social approval outbox" in source
     assert "Draft weekly LinkedIn" in source
     assert "LinkedIn engagement inbox" in source
+    assert "Scout targets" in source
     assert "Add to inbox" in source
     assert "Draft reply" in source
     assert "r_member_social_feed" in source

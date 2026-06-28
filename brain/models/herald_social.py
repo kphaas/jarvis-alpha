@@ -91,6 +91,21 @@ class HeraldLinkedInIngestResponse(BaseModel):
     skipped_count: int
 
 
+class HeraldLinkedInScoutRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    topics: list[str] = Field(default_factory=list, max_length=8)
+    per_topic: int = Field(default=2, ge=1, le=5)
+    max_targets: int = Field(default=6, ge=1, le=12)
+
+
+class HeraldLinkedInScoutResponse(BaseModel):
+    created_count: int
+    skipped_count: int
+    reason: str
+    item_ids: list[UUID]
+
+
 class HeraldSocialEngagementCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
