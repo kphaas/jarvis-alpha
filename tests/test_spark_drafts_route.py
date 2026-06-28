@@ -855,6 +855,7 @@ async def test_spark_imessage_draft_feedback_records_label_only(
             "approval_ref_hash": "approval-hash",
             "source_reference_hash": "source-hash",
             "chat_guid_hash": "chat-hash",
+            "draft_text_override": None,
         }
     ]
     logs = json.dumps(fake_logger.infos).lower()
