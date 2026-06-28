@@ -188,7 +188,7 @@ request_json "GET" "cadence" "/v1/herald/social/linkedin/cadence"
 request_json "POST" "weekly" "/v1/herald/social/linkedin/weekly"
 
 WEEKLY_DRAFT_ID="$(cat "${TMP_DIR}/weekly.id")"
-ARCHIVE_BODY="${TMP_DIR}/archive.json"
+ARCHIVE_BODY="${TMP_DIR}/archive_body.json"
 printf '{"status":"archived","reviewer_notes":"smoke cleanup"}\n' >"${ARCHIVE_BODY}"
 request_json "POST" "archive" "/v1/herald/social/drafts/${WEEKLY_DRAFT_ID}/status" "${ARCHIVE_BODY}"
 
