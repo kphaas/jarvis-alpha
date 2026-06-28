@@ -142,17 +142,30 @@ elif label == "engagements":
     print(f"PASS engagements: count={len(items)}")
 elif label == "reply":
     drafts = payload.get("drafts")
-    if not isinstance(drafts, list) or len(drafts) != 1:
-        raise SystemExit("FAIL reply: expected one draft")
-    draft = drafts[0]
-    if draft.get("draft_kind") != "reply":
-        raise SystemExit(f"FAIL reply: kind={draft.get('draft_kind')}")
-    if draft.get("platform") != "linkedin":
-        raise SystemExit(f"FAIL reply: platform={draft.get('platform')}")
-    if draft.get("status") != "needs_review":
-        raise SystemExit(f"FAIL reply: status={draft.get('status')}")
-    Path(sys.argv[2]).with_suffix(".id").write_text(draft["id"], encoding="utf-8")
-    print("PASS reply: LinkedIn reply draft created")
+    if not isinstance(drafts, list) or len(drafts) < 3:
+        raise SystemExit("FAIL reply: expected three reply options")
+    styles = set()
+    ids = []
+    for draft in drafts:
+        if draft.get("draft_kind") != "reply":
+            raise SystemExit(f"FAIL reply: kind={draft.get('draft_kind')}")
+        if draft.get("platform") != "linkedin":
+            raise SystemExit(f"FAIL reply: platform={draft.get('platform')}")
+        if draft.get("status") != "needs_review":
+            raise SystemExit(f"FAIL reply: status={draft.get('status')}")
+        flags = set(draft.get("safety_flags", []))
+        styles.update(flag for flag in flags if flag.startswith("reply_style_"))
+        ids.append(draft["id"])
+    expected_styles = {
+        "reply_style_strong_short",
+        "reply_style_practical",
+        "reply_style_warm",
+    }
+    if not expected_styles.issubset(styles):
+        raise SystemExit(f"FAIL reply: missing styles {expected_styles - styles}")
+    Path(sys.argv[2]).with_suffix(".id").write_text(ids[0], encoding="utf-8")
+    Path(sys.argv[2]).with_suffix(".ids").write_text("\n".join(ids), encoding="utf-8")
+    print(f"PASS reply: LinkedIn reply options created={len(drafts)}")
 elif label == "engagement_status":
     if payload.get("status") != "archived":
         raise SystemExit(f"FAIL engagement_status: status={payload.get('status')}")
@@ -213,9 +226,11 @@ request_json "POST" "engagement" "/v1/herald/social/linkedin/engagements" "${ENG
 ENGAGEMENT_ID="$(cat "${TMP_DIR}/engagement.id")"
 request_json "GET" "engagements" "/v1/herald/social/linkedin/engagements?status=needs_reply&limit=5"
 request_json "POST" "reply" "/v1/herald/social/linkedin/engagements/${ENGAGEMENT_ID}/draft-reply"
-REPLY_DRAFT_ID="$(cat "${TMP_DIR}/reply.id")"
 printf '{"status":"archived","reviewer_notes":"smoke cleanup"}\n' >"${ARCHIVE_BODY}"
-request_json "POST" "archive" "/v1/herald/social/drafts/${REPLY_DRAFT_ID}/status" "${ARCHIVE_BODY}"
+while IFS= read -r REPLY_DRAFT_ID; do
+  [ -n "${REPLY_DRAFT_ID}" ] || continue
+  request_json "POST" "archive" "/v1/herald/social/drafts/${REPLY_DRAFT_ID}/status" "${ARCHIVE_BODY}"
+done <"${TMP_DIR}/reply.ids"
 ENGAGEMENT_STATUS_BODY="${TMP_DIR}/engagement_status.json"
 printf '{"status":"archived"}\n' >"${ENGAGEMENT_STATUS_BODY}"
 request_json "POST" "engagement_status" "/v1/herald/social/linkedin/engagements/${ENGAGEMENT_ID}/status" "${ENGAGEMENT_STATUS_BODY}"
