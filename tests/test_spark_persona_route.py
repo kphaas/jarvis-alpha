@@ -198,7 +198,7 @@ async def test_spark_guardrails_write_logs_only_safe_metadata(
                 "active_mode": "draft_only",
                 "auto_send_enabled": False,
                 "protected_topic_count": 7,
-                "protected_relationship_count": 4,
+                "protected_relationship_count": 5,
                 "actor_sub": "ken",
                 "actor_type": "user",
             },

@@ -40,7 +40,7 @@ class SparkProtectedRelationship(BaseModel):
     notes: str | None = Field(default=None, max_length=240)
 
 
-CORE_FAMILY_TARGET_ORDER = ("ken", "sweta", "ryleigh", "sloane")
+CORE_FAMILY_TARGET_ORDER = ("ken", "sweta", "ryleigh", "sloane", "meagan")
 CORE_FAMILY_TARGET_DEFAULTS = {
     "ken": SparkProtectedRelationship(
         id="ken",
@@ -70,6 +70,13 @@ CORE_FAMILY_TARGET_DEFAULTS = {
         relationship="child",
         sensitivity="minor",
         notes="Draft-only until Ken explicitly approves a relationship policy.",
+    ),
+    "meagan": SparkProtectedRelationship(
+        id="meagan",
+        label="Meagan",
+        relationship="co-parent",
+        sensitivity="relationship",
+        notes="Draft-only co-parenting target; no autonomous send.",
     ),
 }
 
@@ -172,6 +179,7 @@ def default_spark_guardrails() -> SparkGuardrailState:
             CORE_FAMILY_TARGET_DEFAULTS["sweta"],
             CORE_FAMILY_TARGET_DEFAULTS["ryleigh"],
             CORE_FAMILY_TARGET_DEFAULTS["sloane"],
+            CORE_FAMILY_TARGET_DEFAULTS["meagan"],
         ],
         calibration=SparkPersonaCalibration(
             target_voice=[

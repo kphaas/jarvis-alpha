@@ -27,6 +27,7 @@ def test_default_spark_guardrails_start_draft_only_and_no_auto_send() -> None:
         "sweta",
         "ryleigh",
         "sloane",
+        "meagan",
     ]
     assert "robotic" in state.calibration.avoid_voice
     assert "fair enough" in state.calibration.signature_phrases
@@ -83,6 +84,7 @@ def test_spark_guardrails_strip_non_core_relationships_on_load(tmp_path) -> None
         "sweta",
         "ryleigh",
         "sloane",
+        "meagan",
     ]
 
 
@@ -95,4 +97,5 @@ def test_spark_guardrails_load_missing_path_returns_default(tmp_path) -> None:
 
 def test_core_family_target_labels_include_ken_and_exclude_non_family() -> None:
     assert is_core_family_target_label("Ken") is True
+    assert is_core_family_target_label("Meagan") is True
     assert is_core_family_target_label("Mother") is False
