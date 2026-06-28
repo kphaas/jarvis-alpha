@@ -115,12 +115,11 @@ def test_herald_social_outbox_smoke_covers_draft_only_flow() -> None:
     assert "draft_only_no_publish" in text
     assert "WEEKLY_DRAFT_ID" in text
     assert "REPLY_DRAFT_ID" in text
-    assert "reply draft" in text
-    assert (
-        'REPLY_DRAFT_ID="$(cat "${TMP_DIR}/reply.id")"\n'
-        'printf \'{"status":"archived","reviewer_notes":"smoke cleanup"}\\n\' >"${ARCHIVE_BODY}"\n'
-        'request_json "POST" "archive"'
-    ) in text
+    assert "reply options" in text
+    assert "reply_style_strong_short" in text
+    assert "reply_style_practical" in text
+    assert "reply_style_warm" in text
+    assert 'done <"${TMP_DIR}/reply.ids"' in text
     assert "herald.read,herald.write" in text
     assert "Postiz" not in text
     assert "Buffer" not in text
