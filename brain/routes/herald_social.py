@@ -14,6 +14,8 @@ from brain.models.herald_social import (
     HeraldLinkedInCadenceOut,
     HeraldLinkedInIngestRequest,
     HeraldLinkedInIngestResponse,
+    HeraldLinkedInScoutRequest,
+    HeraldLinkedInScoutResponse,
     HeraldLinkedInReadPlanOut,
     HeraldSocialDraftCreate,
     HeraldSocialDraftCreateResponse,
@@ -43,7 +45,9 @@ from brain.services.herald_social import (
     linkedin_weekly_topic,
     load_herald_spark_context,
     normalize_platforms,
+    scout_linkedin_engagement_targets,
 )
+from brain.services.internet_scout.gateway_client import InternetScoutGatewayError
 
 router = APIRouter(prefix="/v1/herald/social", tags=["herald-social"])
 
@@ -207,6 +211,7 @@ async def get_linkedin_read_plan(
         discovery_targets=[
             "comments on AT0 member posts",
             "reactions and mentions on owned LinkedIn activity",
+            "public AI and business-transformation targets from Gateway search",
             "public URLs Ken adds manually until read access is approved",
         ],
         boundary=[
@@ -347,6 +352,32 @@ async def ingest_linkedin_comments(
         post_urn=body.post_urn.strip(),
         imported_count=imported,
         skipped_count=skipped,
+    )
+
+
+@router.post("/linkedin/engagements/scout", response_model=HeraldLinkedInScoutResponse)
+async def scout_linkedin_engagements(
+    body: HeraldLinkedInScoutRequest,
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldLinkedInScoutResponse:
+    _check_write_scope(request)
+    try:
+        async with get_pool().acquire() as conn:
+            outcome = await scout_linkedin_engagement_targets(
+                conn,
+                actor_sub=_actor_sub(request),
+                topics=body.topics or None,
+                per_topic=body.per_topic,
+                max_targets=body.max_targets,
+            )
+    except InternetScoutGatewayError as exc:
+        raise HTTPException(status_code=502, detail="linkedin_scout_failed") from exc
+    return HeraldLinkedInScoutResponse(
+        created_count=outcome.created_count,
+        skipped_count=outcome.skipped_count,
+        reason=outcome.reason,
+        item_ids=list(outcome.item_ids),
     )
 
 

@@ -1,14 +1,23 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
+from uuid import UUID
 
+import pytest
+
+from brain.services.internet_scout.models import (
+    GatewaySearchResponse,
+    GatewaySearchResult,
+)
 from brain.services.herald_social import (
     create_social_draft,
     hash_social_draft,
     linkedin_engagement_slots_due,
+    linkedin_target_scout_queries,
     linkedin_weekly_topic,
     normalize_platforms,
+    scout_linkedin_engagement_targets,
 )
 
 
@@ -128,6 +137,68 @@ def test_linkedin_engagement_slots_due_reaches_three_per_week() -> None:
     ]
 
 
+def test_linkedin_target_scout_queries_focus_on_brand_topics() -> None:
+    queries = linkedin_target_scout_queries(["AI governance", "AI governance"])
+
+    assert queries == (
+        "LinkedIn posts AI governance enterprise AI CIO business transformation",
+    )
+    assert "http" not in queries[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_linkedin_target_scout_queues_local_review_items_only() -> None:
+    class FakeSearchClient:
+        async def search(self, *, query: str, count: int = 5, provider: str = "auto"):
+            assert "enterprise AI" in query
+            assert count == 2
+            assert provider == "auto"
+            return GatewaySearchResponse(
+                provider="fake",
+                query_hash="a" * 64,
+                fetched_at=datetime.now(UTC),
+                results=[
+                    GatewaySearchResult(
+                        title="AI operating model discussion",
+                        url="https://social.example/member-post",
+                        host="social.example",
+                        description="A useful thread on approval gates.",
+                    ),
+                    GatewaySearchResult(
+                        title="Unsafe result",
+                        url="https://social.example/unsafe",
+                        host="social.example",
+                        description="Skip me.",
+                        risk_markers=["prompt_injection"],
+                    ),
+                ],
+            )
+
+    class FakeConn:
+        def __init__(self) -> None:
+            self.rows: list[tuple[object, ...]] = []
+
+        async def fetchrow(self, _query: str, *args: object):
+            self.rows.append(args)
+            return {"id": UUID("11111111-1111-4111-8111-111111111111")}
+
+    conn = FakeConn()
+    outcome = await scout_linkedin_engagement_targets(
+        conn,  # type: ignore[arg-type]
+        actor_sub="tester",
+        topics=["AI operating model"],
+        per_topic=2,
+        max_targets=3,
+        search_client=FakeSearchClient(),  # type: ignore[arg-type]
+    )
+
+    assert outcome.created_count == 1
+    assert outcome.skipped_count == 1
+    assert outcome.reason == "created"
+    assert conn.rows[0][0].startswith("herald:scout:")
+    assert conn.rows[0][1] == "https://social.example/member-post"
+
+
 def test_linkedin_weekly_auto_draft_is_draft_only_and_deduped() -> None:
     source = SERVICE.read_text(encoding="utf-8")
 
@@ -145,6 +216,17 @@ def test_linkedin_engagement_scheduler_is_draft_only_and_capped() -> None:
     assert "draft_linkedin_engagement_replies_if_due" in source
     assert "weekly_limit: int = 3" in source
     assert "engagement_scheduler" in source
+    assert "publish_linkedin_text" not in source
+    assert "publish_linkedin_comment" not in source
+
+
+def test_linkedin_target_scout_uses_gateway_search_without_publish() -> None:
+    source = SERVICE.read_text(encoding="utf-8")
+
+    assert "scout_linkedin_engagement_targets" in source
+    assert "InternetScoutGatewayClient" in source
+    assert "herald:scout:" in source
+    assert "alpha_herald_social_engagement_items" in source
     assert "publish_linkedin_text" not in source
     assert "publish_linkedin_comment" not in source
 
@@ -240,6 +322,7 @@ def test_social_routes_publish_only_through_linkedin_connector() -> None:
     assert "/linkedin/cadence" in source
     assert "/linkedin/read-plan" in source
     assert "/linkedin/engagements" in source
+    assert "/linkedin/engagements/scout" in source
     assert "/linkedin/ingest" in source
     assert "/draft-reply" in source
     assert "/publish-reply" in source

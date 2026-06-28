@@ -291,6 +291,11 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/herald/social/drafts": ["write", "security_write"],
     "POST /v1/herald/social/linkedin/weekly": ["write", "security_write"],
     "POST /v1/herald/social/linkedin/engagements": ["write", "security_write"],
+    "POST /v1/herald/social/linkedin/engagements/scout": [
+        "write",
+        "security_write",
+        "external_call",
+    ],
     "POST /v1/herald/social/linkedin/ingest": [
         "write",
         "security_write",
