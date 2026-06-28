@@ -105,6 +105,7 @@ social inboxes yet. Current repo state has:
 - Draft-only API: `/v1/herald/social/*`
 - UI surface: `/herald` → Social approval outbox
 - LinkedIn needs-reply inbox: `/v1/herald/social/linkedin/engagements`
+- Unified ledger: `public.alpha_herald_interaction_ledger`
 - Read plan: `/v1/herald/social/linkedin/read-plan` (`r_member_social_feed` pending)
 - Smoke: `bash ~/jarvis-alpha/scripts/smoke_herald_social_outbox.sh`
 - Marketing/social drafting docs and brand assets

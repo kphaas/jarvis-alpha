@@ -42,10 +42,22 @@ async def test_prepare_send_records_audit_metadata_without_reply_body() -> None:
     )
 
     assert prepared.send_attempt_count == 1
-    insert_call = execute_calls[-1]
+    insert_call = next(
+        call for call in execute_calls if "alpha_at0_mail_send_events" in call[0]
+    )
     assert "alpha_at0_mail_send_events" in insert_call[0]
     event_payload = json.loads(insert_call[1][-1])
     assert event_payload["provider_operation"] == "message.reply"
     assert event_payload["send_attempt_count"] == 1
     assert event_payload["reply_body_hash"].startswith("sha256:")
     assert "Approved reply body" not in insert_call[1][-1]
+    ledger_call = next(
+        call for call in execute_calls if "alpha_herald_interaction_ledger" in call[0]
+    )
+    assert ledger_call[1][0:5] == (
+        "email",
+        "outbound",
+        "outbound",
+        "sending",
+        "sending",
+    )

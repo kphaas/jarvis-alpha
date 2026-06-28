@@ -40,6 +40,10 @@ from brain.services.herald_linkedin import (
     publish_linkedin_comment,
     publish_linkedin_text,
 )
+from brain.services.herald_interaction_ledger import (
+    record_herald_interaction,
+    record_social_draft_interaction,
+)
 from brain.services.herald_social import (
     create_social_draft,
     linkedin_engagement_reply_topic,
@@ -268,33 +272,53 @@ async def create_linkedin_engagement(
 ) -> HeraldSocialEngagementOut:
     _check_write_scope(request)
     actor_sub = _actor_sub(request)
+    actor_type = _actor_type(request)
     async with get_pool().acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO public.alpha_herald_social_engagement_items (
-                source, account_label, provider_item_urn, provider_post_urn,
-                item_url, author_name, item_text, created_by
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                INSERT INTO public.alpha_herald_social_engagement_items (
+                    source, account_label, provider_item_urn, provider_post_urn,
+                    item_url, author_name, item_text, created_by
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (provider_item_urn) WHERE provider_item_urn IS NOT NULL
+                DO UPDATE SET
+                    item_url = EXCLUDED.item_url,
+                    author_name = EXCLUDED.author_name,
+                    item_text = EXCLUDED.item_text,
+                    updated_at = now()
+                RETURNING id, platform, source, account_label, provider_item_urn,
+                          provider_post_urn, item_url, author_name, item_text, status,
+                          reply_variant_id, discovered_at, created_at, updated_at
+                """,
+                body.source,
+                body.account_label.strip(),
+                body.provider_item_urn.strip() if body.provider_item_urn else None,
+                body.provider_post_urn.strip() if body.provider_post_urn else None,
+                body.item_url.strip() if body.item_url else None,
+                body.author_name.strip(),
+                body.item_text.strip(),
+                actor_sub,
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT (provider_item_urn) WHERE provider_item_urn IS NOT NULL
-            DO UPDATE SET
-                item_url = EXCLUDED.item_url,
-                author_name = EXCLUDED.author_name,
-                item_text = EXCLUDED.item_text,
-                updated_at = now()
-            RETURNING id, platform, source, account_label, provider_item_urn,
-                      provider_post_urn, item_url, author_name, item_text, status,
-                      reply_variant_id, discovered_at, created_at, updated_at
-            """,
-            body.source,
-            body.account_label.strip(),
-            body.provider_item_urn.strip() if body.provider_item_urn else None,
-            body.provider_post_urn.strip() if body.provider_post_urn else None,
-            body.item_url.strip() if body.item_url else None,
-            body.author_name.strip(),
-            body.item_text.strip(),
-            actor_sub,
-        )
+            await record_herald_interaction(
+                conn,
+                channel="linkedin",
+                interaction_kind="engagement",
+                direction="inbound",
+                lifecycle_event="engagement_upserted",
+                status=row["status"],
+                primary_ref_type="social_engagement_item",
+                primary_ref_id=row["id"],
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+                account_label=row["account_label"],
+                related_refs={
+                    "provider_item_urn": row["provider_item_urn"],
+                    "provider_post_urn": row["provider_post_urn"],
+                },
+                event_metadata={"source": row["source"]},
+            )
     return _engagement_out(row)
 
 
@@ -306,6 +330,7 @@ async def ingest_linkedin_comments(
 ) -> HeraldLinkedInIngestResponse:
     _check_write_scope(request)
     actor_sub = _actor_sub(request)
+    actor_type = _actor_type(request)
     try:
         comments = await fetch_linkedin_comments(
             post_urn=body.post_urn,
@@ -319,36 +344,55 @@ async def ingest_linkedin_comments(
     imported = 0
     skipped = 0
     async with get_pool().acquire() as conn:
-        for comment in comments:
-            if not comment.item_text.strip():
-                skipped += 1
-                continue
-            status = await conn.fetchval(
-                """
-                INSERT INTO public.alpha_herald_social_engagement_items (
-                    source, account_label, provider_item_urn, provider_post_urn,
-                    item_url, author_name, item_text, created_by
+        async with conn.transaction():
+            for comment in comments:
+                if not comment.item_text.strip():
+                    skipped += 1
+                    continue
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO public.alpha_herald_social_engagement_items (
+                        source, account_label, provider_item_urn, provider_post_urn,
+                        item_url, author_name, item_text, created_by
+                    )
+                    VALUES (
+                        'linkedin_api', 'AT0', $1, $2, $3, $4, $5, $6
+                    )
+                    ON CONFLICT (provider_item_urn) WHERE provider_item_urn IS NOT NULL
+                    DO UPDATE SET
+                        item_url = EXCLUDED.item_url,
+                        author_name = EXCLUDED.author_name,
+                        item_text = EXCLUDED.item_text,
+                        updated_at = now()
+                    RETURNING id, xmax = 0 AS inserted
+                    """,
+                    comment.provider_item_urn,
+                    comment.provider_post_urn,
+                    comment.item_url,
+                    comment.author_name,
+                    comment.item_text,
+                    actor_sub,
                 )
-                VALUES (
-                    'linkedin_api', 'AT0', $1, $2, $3, $4, $5, $6
-                )
-                ON CONFLICT (provider_item_urn) WHERE provider_item_urn IS NOT NULL
-                DO UPDATE SET
-                    item_url = EXCLUDED.item_url,
-                    author_name = EXCLUDED.author_name,
-                    item_text = EXCLUDED.item_text,
-                    updated_at = now()
-                RETURNING xmax = 0
-                """,
-                comment.provider_item_urn,
-                comment.provider_post_urn,
-                comment.item_url,
-                comment.author_name,
-                comment.item_text,
-                actor_sub,
-            )
-            imported += 1 if status else 0
-            skipped += 0 if status else 1
+                imported += 1 if row["inserted"] else 0
+                skipped += 0 if row["inserted"] else 1
+                if row["inserted"]:
+                    await record_herald_interaction(
+                        conn,
+                        channel="linkedin",
+                        interaction_kind="engagement",
+                        direction="inbound",
+                        lifecycle_event="engagement_ingested",
+                        status="needs_reply",
+                        primary_ref_type="social_engagement_item",
+                        primary_ref_id=row["id"],
+                        actor_sub=actor_sub,
+                        actor_type=actor_type,
+                        related_refs={
+                            "provider_item_urn": comment.provider_item_urn,
+                            "provider_post_urn": comment.provider_post_urn,
+                        },
+                        event_metadata={"source": "linkedin_api"},
+                    )
     return HeraldLinkedInIngestResponse(
         post_urn=body.post_urn.strip(),
         imported_count=imported,
@@ -555,6 +599,21 @@ async def publish_linkedin_engagement_reply(
                 """,
                 item_id,
             )
+            await record_herald_interaction(
+                conn,
+                channel="linkedin",
+                interaction_kind="engagement",
+                direction="outbound",
+                lifecycle_event="engagement_replied",
+                status="replied",
+                primary_ref_type="social_engagement_item",
+                primary_ref_id=item_id,
+                secondary_ref_type="social_draft_variant",
+                secondary_ref_id=variant_id,
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+                event_metadata={"provider_comment_urn": result.provider_post_urn},
+            )
             await _record_event(
                 conn,
                 request_id=request_id,
@@ -583,20 +642,42 @@ async def update_linkedin_engagement_status(
     _: str = Depends(require_auth),
 ) -> HeraldSocialEngagementOut:
     _check_write_scope(request)
+    actor_sub = _actor_sub(request)
+    actor_type = _actor_type(request)
     async with get_pool().acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            UPDATE public.alpha_herald_social_engagement_items
-            SET status = $2,
-                updated_at = now()
-            WHERE id = $1
-            RETURNING id, platform, source, account_label, provider_item_urn,
-                      provider_post_urn, item_url, author_name, item_text, status,
-                      reply_variant_id, discovered_at, created_at, updated_at
-            """,
-            item_id,
-            body.status,
-        )
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                UPDATE public.alpha_herald_social_engagement_items
+                SET status = $2,
+                    updated_at = now()
+                WHERE id = $1
+                RETURNING id, platform, source, account_label, provider_item_urn,
+                          provider_post_urn, item_url, author_name, item_text, status,
+                          reply_variant_id, discovered_at, created_at, updated_at
+                """,
+                item_id,
+                body.status,
+            )
+            if row is not None:
+                await record_herald_interaction(
+                    conn,
+                    channel="linkedin",
+                    interaction_kind="engagement",
+                    direction="internal",
+                    lifecycle_event=f"engagement_{body.status}",
+                    status=body.status,
+                    primary_ref_type="social_engagement_item",
+                    primary_ref_id=row["id"],
+                    actor_sub=actor_sub,
+                    actor_type=actor_type,
+                    account_label=row["account_label"],
+                    related_refs={
+                        "provider_item_urn": row["provider_item_urn"],
+                        "reply_variant_id": row["reply_variant_id"],
+                    },
+                    event_metadata={"source": row["source"]},
+                )
     if row is None:
         raise HTTPException(status_code=404, detail="LinkedIn engagement not found")
     return _engagement_out(row)
@@ -794,7 +875,7 @@ async def update_social_draft_status(
         async with conn.transaction():
             current = await conn.fetchrow(
                 """
-                SELECT v.request_id, v.status, r.draft_kind
+                SELECT v.request_id, v.platform, v.status, r.draft_kind
                 FROM public.alpha_herald_social_draft_variants v
                 JOIN public.alpha_herald_social_draft_requests r
                   ON r.id = v.request_id
@@ -862,6 +943,7 @@ async def update_social_draft_status(
                 actor_sub=actor_sub,
                 actor_type=actor_type,
                 payload={
+                    "platform": current["platform"],
                     "from_status": current["status"],
                     "feedback_provided": bool(body.reviewer_notes),
                 },
@@ -934,7 +1016,10 @@ async def publish_linkedin_draft(
                 event_type="variant_linkedin_publish_started",
                 actor_sub=actor_sub,
                 actor_type=actor_type,
-                payload={"content_hash": current["content_hash"]},
+                payload={
+                    "platform": current["platform"],
+                    "content_hash": current["content_hash"],
+                },
             )
             draft_text = str(current["draft_text"])
 
@@ -1038,7 +1123,10 @@ async def schedule_linkedin_draft(
                 event_type="variant_scheduled",
                 actor_sub=actor_sub,
                 actor_type=actor_type,
-                payload={"scheduled_for": body.scheduled_for.isoformat()},
+                payload={
+                    "platform": current["platform"],
+                    "scheduled_for": body.scheduled_for.isoformat(),
+                },
             )
             row = await _fetch_variant(conn, variant_id)
     return _draft_out(row)
@@ -1095,6 +1183,7 @@ async def mark_linkedin_draft_manually_published(
                 actor_sub=actor_sub,
                 actor_type=actor_type,
                 payload={
+                    "platform": current["platform"],
                     "from_publish_status": current["publish_status"],
                     "published_url": body.published_url.strip(),
                 },
@@ -1184,6 +1273,15 @@ async def _record_event(
         actor_sub,
         actor_type,
         json.dumps(payload, sort_keys=True),
+    )
+    await record_social_draft_interaction(
+        conn,
+        request_id=request_id,
+        variant_id=variant_id,
+        event_type=event_type,
+        actor_sub=actor_sub,
+        actor_type=actor_type,
+        payload=payload,
     )
 
 

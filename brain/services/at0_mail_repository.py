@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Mapping
@@ -8,6 +9,7 @@ import asyncpg
 
 from brain.services.at0_mail_classifier import MailClassification
 from brain.services.at0_mail_graph_client import At0MailMessage
+from brain.services.herald_interaction_ledger import record_herald_interaction
 
 
 @dataclass(frozen=True)
@@ -138,6 +140,26 @@ async def record_message(
         classification.reason,
     )
     if row is not None:
+        await record_herald_interaction(
+            conn,
+            channel="email",
+            interaction_kind="message",
+            direction="inbound",
+            lifecycle_event="message_recorded",
+            status=row["status"],
+            primary_ref_type="at0_mail_message",
+            primary_ref_id=row["id"],
+            actor_sub="at0-mail-scan",
+            actor_type="service",
+            related_refs={
+                "mailbox": message.mailbox,
+                "graph_message_id": message.graph_message_id,
+            },
+            event_metadata={
+                "classification": row["classification"],
+                "priority": classification.priority,
+            },
+        )
         return PersistedAt0Message(
             id=str(row["id"]),
             created=True,
@@ -170,22 +192,41 @@ async def record_draft_proposal(
     reply_subject: str,
     proposed_body: str,
 ) -> str:
-    return str(
-        await conn.fetchval(
-            """
-            INSERT INTO public.alpha_at0_mail_draft_proposals (
-                mail_message_id, mailbox, recipient_email, reply_subject, proposed_body
-            )
-            VALUES ($1::uuid, $2, $3, $4, $5)
-            RETURNING id
-            """,
-            message_id,
-            mailbox,
-            recipient_email,
-            reply_subject,
-            proposed_body,
+    draft_id = await conn.fetchval(
+        """
+        INSERT INTO public.alpha_at0_mail_draft_proposals (
+            mail_message_id, mailbox, recipient_email, reply_subject, proposed_body
         )
+        VALUES ($1::uuid, $2, $3, $4, $5)
+        RETURNING id
+        """,
+        message_id,
+        mailbox,
+        recipient_email,
+        reply_subject,
+        proposed_body,
     )
+    await record_herald_interaction(
+        conn,
+        channel="email",
+        interaction_kind="draft",
+        direction="internal",
+        lifecycle_event="draft_created",
+        status="needs_review",
+        primary_ref_type="at0_mail_draft_proposal",
+        primary_ref_id=draft_id,
+        secondary_ref_type="at0_mail_message",
+        secondary_ref_id=message_id,
+        actor_sub="at0-mail-scan",
+        actor_type="service",
+        related_refs={"mailbox": mailbox},
+        event_metadata={"reply_body_hash": _body_hash(proposed_body)},
+    )
+    return str(draft_id)
+
+
+def _body_hash(body: str) -> str:
+    return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 async def dashboard_summary(conn: asyncpg.Connection) -> dict:
