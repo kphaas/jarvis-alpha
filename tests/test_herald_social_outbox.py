@@ -6,6 +6,7 @@ from pathlib import Path
 from brain.services.herald_social import (
     create_social_draft,
     hash_social_draft,
+    linkedin_engagement_slots_due,
     linkedin_weekly_topic,
     normalize_platforms,
 )
@@ -115,6 +116,18 @@ def test_linkedin_weekly_topic_rotates_without_external_inputs() -> None:
     )
 
 
+def test_linkedin_engagement_slots_due_reaches_three_per_week() -> None:
+    assert [linkedin_engagement_slots_due(day) for day in range(1, 8)] == [
+        1,
+        1,
+        2,
+        2,
+        3,
+        3,
+        3,
+    ]
+
+
 def test_linkedin_weekly_auto_draft_is_draft_only_and_deduped() -> None:
     source = SERVICE.read_text(encoding="utf-8")
 
@@ -122,6 +135,16 @@ def test_linkedin_weekly_auto_draft_is_draft_only_and_deduped() -> None:
     assert "active_weekly_draft_exists" in source
     assert "linkedin-weekly-brand" in source
     assert "human_review_required" in source
+    assert "publish_linkedin_text" not in source
+    assert "publish_linkedin_comment" not in source
+
+
+def test_linkedin_engagement_scheduler_is_draft_only_and_capped() -> None:
+    source = SERVICE.read_text(encoding="utf-8")
+
+    assert "draft_linkedin_engagement_replies_if_due" in source
+    assert "weekly_limit: int = 3" in source
+    assert "engagement_scheduler" in source
     assert "publish_linkedin_text" not in source
     assert "publish_linkedin_comment" not in source
 

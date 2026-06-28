@@ -51,6 +51,14 @@ class WeeklyDraftOutcome:
     variant_id: UUID | None
 
 
+@dataclass(frozen=True, slots=True)
+class EngagementDraftOutcome:
+    created_count: int
+    reason: str
+    item_ids: tuple[UUID, ...]
+    variant_ids: tuple[UUID, ...]
+
+
 def clean_social_topic(topic: str) -> str:
     clean = _WHITESPACE.sub(" ", topic.strip())
     if len(clean) < 3:
@@ -142,6 +150,21 @@ def linkedin_weekly_topic(today: date) -> str:
     return themes[week_index]
 
 
+def linkedin_engagement_reply_topic(item_text: str) -> str:
+    clean = " ".join(item_text.split()).strip()
+    return clean[:500]
+
+
+def linkedin_engagement_slots_due(isodow: int) -> int:
+    if isodow < 1 or isodow > 7:
+        raise ValueError("isodow must be 1..7")
+    if isodow < 3:
+        return 1
+    if isodow < 5:
+        return 2
+    return 3
+
+
 async def create_weekly_linkedin_draft_if_due(
     conn: asyncpg.Connection,
     *,
@@ -213,7 +236,7 @@ async def create_weekly_linkedin_draft_if_due(
             topic,
             actor_sub,
         )
-        await _record_weekly_event(
+        await _record_service_event(
             conn,
             request_id=request_id,
             variant_id=None,
@@ -276,7 +299,7 @@ async def create_weekly_linkedin_draft_if_due(
             safety_flags,
             repeat_of,
         )
-        await _record_weekly_event(
+        await _record_service_event(
             conn,
             request_id=request_id,
             variant_id=variant_id,
@@ -300,6 +323,199 @@ async def create_weekly_linkedin_draft_if_due(
             },
         )
         return WeeklyDraftOutcome(True, "created", request_id, variant_id)
+
+
+async def draft_linkedin_engagement_replies_if_due(
+    conn: asyncpg.Connection,
+    *,
+    actor_sub: str,
+    actor_type: str = "service",
+    weekly_limit: int = 3,
+) -> EngagementDraftOutcome:
+    async with conn.transaction():
+        cadence = await conn.fetchrow(
+            """
+            SELECT current_date AS today,
+                   EXTRACT(ISODOW FROM current_date)::int AS isodow
+            """
+        )
+        slots_due = min(weekly_limit, linkedin_engagement_slots_due(cadence["isodow"]))
+        created_this_week = await conn.fetchval(
+            """
+            SELECT count(*)::int
+            FROM public.alpha_herald_social_draft_variants v
+            JOIN public.alpha_herald_social_draft_requests r
+              ON r.id = v.request_id
+            WHERE r.campaign = 'linkedin-engagement-inbox'
+              AND r.draft_kind = 'reply'
+              AND v.platform = 'linkedin'
+              AND v.created_at >= date_trunc('week', now())
+              AND (
+                  v.status IN ('needs_review', 'approved')
+                  OR v.publish_status IN ('manual_published', 'linkedin_published')
+              )
+            """
+        )
+        remaining = min(weekly_limit - created_this_week, slots_due - created_this_week)
+        if remaining <= 0:
+            return EngagementDraftOutcome(0, "quota_satisfied", (), ())
+
+        profile = await conn.fetchrow(
+            """
+            SELECT platform, account_label, audience_notes, voice_rules,
+                   safety_rules, max_chars, profile_version
+            FROM public.alpha_herald_social_platform_profiles
+            WHERE active = true
+              AND platform = 'linkedin'
+            """
+        )
+        if profile is None:
+            return EngagementDraftOutcome(0, "linkedin_profile_missing", (), ())
+
+        items = await conn.fetch(
+            """
+            SELECT id, author_name, item_text, item_url
+            FROM public.alpha_herald_social_engagement_items
+            WHERE status = 'needs_reply'
+            ORDER BY discovered_at ASC, created_at ASC
+            LIMIT $1
+            FOR UPDATE SKIP LOCKED
+            """,
+            remaining,
+        )
+        if not items:
+            return EngagementDraftOutcome(0, "no_targets", (), ())
+
+        spark_context, spark_meta = await load_herald_spark_context(conn)
+        item_ids: list[UUID] = []
+        variant_ids: list[UUID] = []
+        for item in items:
+            topic = linkedin_engagement_reply_topic(str(item["item_text"]))
+            request_id = await conn.fetchval(
+                """
+                INSERT INTO public.alpha_herald_social_draft_requests (
+                    topic, source_url, campaign, account_label, requested_by,
+                    draft_kind, engagement_author
+                )
+                VALUES (
+                    $1, $2, 'linkedin-engagement-inbox', 'AT0', $3, 'reply', $4
+                )
+                RETURNING id
+                """,
+                topic,
+                item["item_url"],
+                actor_sub,
+                str(item["author_name"]),
+            )
+            await _record_service_event(
+                conn,
+                request_id=request_id,
+                variant_id=None,
+                event_type="request_created",
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+                payload={
+                    "draft_kind": "reply",
+                    "platforms": ["linkedin"],
+                    "engagement_item_id": str(item["id"]),
+                    "spark_input": {
+                        "topic": topic,
+                        "context_hash": spark_meta.get("context_hash"),
+                        "context_available": spark_meta.get("context_available"),
+                    },
+                    "trigger": "engagement_scheduler",
+                },
+            )
+            draft = create_social_draft(
+                topic=topic,
+                platform="linkedin",
+                max_chars=int(profile["max_chars"]),
+                draft_kind="reply",
+                engagement_author=str(item["author_name"]),
+                spark_context=spark_context,
+            )
+            repeat_of = await conn.fetchval(
+                """
+                SELECT id
+                FROM public.alpha_herald_social_draft_variants
+                WHERE platform = 'linkedin'
+                  AND content_hash = $1
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                draft.content_hash,
+            )
+            safety_flags = list(draft.safety_flags)
+            if repeat_of is not None:
+                safety_flags.append("possible_repeat")
+            variant_id = await conn.fetchval(
+                """
+                INSERT INTO public.alpha_herald_social_draft_variants (
+                    request_id, platform, account_label, draft_text, content_hash,
+                    profile_version, audience_notes, voice_rules, safety_rules,
+                    voice_score, safety_flags, repeat_of_variant_id
+                )
+                VALUES (
+                    $1, 'linkedin', 'AT0', $2, $3, $4, $5,
+                    $6::text[], $7::text[], $8, $9::text[], $10
+                )
+                RETURNING id
+                """,
+                request_id,
+                draft.draft_text,
+                draft.content_hash,
+                int(profile["profile_version"]),
+                profile["audience_notes"],
+                list(profile["voice_rules"]),
+                list(profile["safety_rules"]),
+                draft.voice_score,
+                safety_flags,
+                repeat_of,
+            )
+            await conn.execute(
+                """
+                UPDATE public.alpha_herald_social_engagement_items
+                SET status = 'draft_created',
+                    reply_variant_id = $2,
+                    updated_at = now()
+                WHERE id = $1
+                """,
+                item["id"],
+                variant_id,
+            )
+            await _record_service_event(
+                conn,
+                request_id=request_id,
+                variant_id=variant_id,
+                event_type="variant_created",
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+                payload={
+                    "platform": "linkedin",
+                    "draft_kind": "reply",
+                    "engagement_item_id": str(item["id"]),
+                    "profile_version": int(profile["profile_version"]),
+                    "repeat": repeat_of is not None,
+                    "spark_input": {
+                        "context_hash": draft.spark_context_hash,
+                        "context_available": bool(draft.spark_context_hash),
+                    },
+                    "spark_output": {
+                        "content_hash": draft.content_hash,
+                        "draft_engine": "herald_social_spark_v1",
+                    },
+                    "trigger": "engagement_scheduler",
+                },
+            )
+            item_ids.append(item["id"])
+            variant_ids.append(variant_id)
+
+    return EngagementDraftOutcome(
+        len(variant_ids),
+        "created" if variant_ids else "no_targets",
+        tuple(item_ids),
+        tuple(variant_ids),
+    )
 
 
 def _x_draft(topic: str, *, max_chars: int) -> str:
@@ -444,7 +660,7 @@ def _voice_score(text: str, flags: list[str]) -> float:
     return max(0.0, round(score, 2))
 
 
-async def _record_weekly_event(
+async def _record_service_event(
     conn: asyncpg.Connection,
     *,
     request_id: UUID,
