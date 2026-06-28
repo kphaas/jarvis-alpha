@@ -23,6 +23,19 @@ from jarvis_common.logging_config import get_logger
 
 log = get_logger("alpha_brain")
 router = APIRouter()
+MAINTAINER_STALE_AFTER_HOURS = 24
+MAINTAINER_CANDIDATE_FIELDS = (
+    "id",
+    "node",
+    "layer",
+    "package",
+    "from_ver",
+    "to_ver",
+    "semver_delta",
+    "tier",
+    "state",
+    "detected_at",
+)
 
 # Only list agents that have installed LaunchAgent plists.
 # Add new entries here AFTER creating the plist — never list stubs.
@@ -155,6 +168,7 @@ def _maintainer_report_path() -> Path:
 
 
 def _maintainer_missing(path: Path) -> dict[str, Any]:
+    checked_at = datetime.now(timezone.utc).isoformat()
     return {
         "status": "missing",
         "source": "jarvis-maintainer",
@@ -162,13 +176,17 @@ def _maintainer_missing(path: Path) -> dict[str, Any]:
         "path": str(path),
         "candidate_count": 0,
         "candidate_count_by_tier": {},
+        "candidates": [],
         "drift_count": 0,
         "inventory_count": 0,
         "inventory_rows_recorded": 0,
         "new_or_existing_candidate_ids": [],
         "node": None,
         "last_scan_at": None,
-        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "scan_age_hours": None,
+        "scan_stale_after_hours": MAINTAINER_STALE_AFTER_HOURS,
+        "is_stale": False,
+        "checked_at": checked_at,
     }
 
 
@@ -183,11 +201,45 @@ def _maintainer_int(raw: Any) -> int:
     return raw if isinstance(raw, int) else 0
 
 
+def _maintainer_candidates(raw: Any) -> list[dict[str, str]]:
+    if not isinstance(raw, list):
+        return []
+    rows = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        row = {
+            field: item.get(field) if isinstance(item.get(field), str) else ""
+            for field in MAINTAINER_CANDIDATE_FIELDS
+        }
+        if row["id"]:
+            rows.append(row)
+    return rows
+
+
+def _maintainer_scan_age_hours(last_scan_at: Any, now: datetime) -> float | None:
+    if not isinstance(last_scan_at, str) or not last_scan_at:
+        return None
+    try:
+        parsed = datetime.fromisoformat(last_scan_at.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = datetime.strptime(last_scan_at, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return round(max(0.0, (now - parsed).total_seconds() / 3600), 2)
+
+
 def _maintainer_report_payload(report: dict[str, Any], path: Path) -> dict[str, Any]:
     tiers = report.get("candidate_count_by_tier")
     candidate_ids = report.get("new_or_existing_candidate_ids")
+    now = datetime.now(timezone.utc)
+    scan_age_hours = _maintainer_scan_age_hours(report.get("last_scan_at"), now)
+    is_stale = scan_age_hours is None or scan_age_hours > MAINTAINER_STALE_AFTER_HOURS
     return {
-        "status": "ok",
+        "status": "stale" if is_stale else "ok",
         "source": "jarvis-maintainer",
         "authority": report.get("authority")
         if report.get("authority") == "none"
@@ -195,6 +247,7 @@ def _maintainer_report_payload(report: dict[str, Any], path: Path) -> dict[str, 
         "path": str(path),
         "candidate_count": _maintainer_int(report.get("candidate_count")),
         "candidate_count_by_tier": tiers if isinstance(tiers, dict) else {},
+        "candidates": _maintainer_candidates(report.get("candidates")),
         "drift_count": _maintainer_int(report.get("drift_count")),
         "inventory_count": _maintainer_int(report.get("inventory_count")),
         "inventory_rows_recorded": _maintainer_int(
@@ -207,7 +260,10 @@ def _maintainer_report_payload(report: dict[str, Any], path: Path) -> dict[str, 
         "last_scan_at": report.get("last_scan_at")
         if isinstance(report.get("last_scan_at"), str)
         else None,
-        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "scan_age_hours": scan_age_hours,
+        "scan_stale_after_hours": MAINTAINER_STALE_AFTER_HOURS,
+        "is_stale": is_stale,
+        "checked_at": now.isoformat(),
     }
 
 
