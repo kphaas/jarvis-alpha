@@ -219,6 +219,23 @@ async def test_spark_imessage_draft_targets_list_approved_threads_safely(
             SparkApprovedSourceRecord(
                 principal_id=principal_id,
                 source="imessage",
+                approval_id="ken-imessage-meagan-20260628-001",
+                source_reference_hash="meagan-hash",
+                source_reference_label="Meagan",
+                source_reference_path=None,
+                source_sha256=None,
+                thread_kind="one_to_one",
+                requested_max_messages=50,
+                requested_date_window=None,
+                relationship_marked=True,
+                relationship_approved=True,
+                legal_marked=False,
+                decision_approved=True,
+                parent_minor_context_approved=True,
+            ),
+            SparkApprovedSourceRecord(
+                principal_id=principal_id,
+                source="imessage",
                 approval_id="ken-imessage-approved-20260605-002",
                 source_reference_hash="mother-hash",
                 source_reference_label="Mother",
@@ -254,7 +271,17 @@ async def test_spark_imessage_draft_targets_list_approved_threads_safely(
                 "relationship_approved": True,
                 "parent_minor_context_approved": False,
                 "legal_marked": False,
-            }
+            },
+            {
+                "approval_id": "ken-imessage-meagan-20260628-001",
+                "label": "Meagan",
+                "channel": "iMessage",
+                "thread_kind": "one_to_one",
+                "relationship_marked": True,
+                "relationship_approved": True,
+                "parent_minor_context_approved": True,
+                "legal_marked": False,
+            },
         ],
     }
     logs = json.dumps(fake_logger.infos).lower()
