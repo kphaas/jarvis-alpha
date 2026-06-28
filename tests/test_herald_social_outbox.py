@@ -195,16 +195,20 @@ def test_social_routes_publish_only_through_linkedin_connector() -> None:
     assert "/linkedin/cadence" in source
     assert "/linkedin/read-plan" in source
     assert "/linkedin/engagements" in source
+    assert "/linkedin/ingest" in source
     assert "/draft-reply" in source
+    assert "/publish-reply" in source
     assert "/schedule" in source
     assert "/publish/manual" in source
     assert "/publish/linkedin" in source
     assert "create_social_draft" in source
+    assert "fetch_linkedin_comments" in source
+    assert "publish_linkedin_comment" in source
     assert "publish_linkedin_text" in source
     assert "alpha_herald_social_draft_events" in source
     assert "alpha_herald_social_engagement_items" in source
     assert "planned_pending_linkedin_approval" in source
-    assert "r_member_social" in source
+    assert "r_member_social_feed" in source
     assert "send_at0_mail_reply" not in source
     assert "requests.post" not in source
     assert "aiohttp" not in source
