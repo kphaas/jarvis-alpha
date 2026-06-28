@@ -24,6 +24,7 @@ EPISODIC_LIMIT = 5
 WORKING_LIMIT = 10
 TEMPORAL_GRAPH_CONTEXT_RULE = (
     "Use [current] rows as present facts. Treat [historical] rows as old context only. "
+    "Prefer [current] rows when current and historical rows describe the same entity. "
     "Treat [needs refresh] rows as unconfirmed until reviewed."
 )
 
@@ -52,11 +53,11 @@ class MemoryService:
         re.IGNORECASE,
     )
     CURRENT_GRAPH_QUERY = re.compile(
-        r"\b(current|currently|latest|now|active|present|today)\b",
+        r"\b(current|currently|latest|now|active|present|today|next|upcoming|future|planned)\b",
         re.IGNORECASE,
     )
     HISTORICAL_GRAPH_QUERY = re.compile(
-        r"\b(old|older|previous|prior|past|history|historical|formerly|before|used?\s+to|no longer|expired|stale)\b",
+        r"\b(old|older|previous|prior|past|history|historical|timeline|evolved?|evolution|formerly|before|used?\s+to|no longer|expired|stale)\b",
         re.IGNORECASE,
     )
     GRAPH_CHANGE_QUERY = re.compile(
