@@ -78,10 +78,11 @@ def test_linkedin_reply_draft_is_reviewed_engagement_only() -> None:
         engagement_author="Sam",
     )
 
-    assert "Thanks Sam" in draft.draft_text
-    assert "clear trail" in draft.draft_text
+    assert "enterprise AI question" in draft.draft_text
+    assert "human approval trail" in draft.draft_text
     assert "draft_only_no_publish" in draft.safety_flags
     assert "human_review_required" in draft.safety_flags
+    assert "reply_style_practical" in draft.safety_flags
 
     try:
         create_social_draft(
@@ -94,6 +95,31 @@ def test_linkedin_reply_draft_is_reviewed_engagement_only() -> None:
         assert "reply_drafts_linkedin_only" in str(exc)
     else:
         raise AssertionError("reply drafts should be LinkedIn-only for this slice")
+
+
+def test_linkedin_reply_styles_include_strong_short_option() -> None:
+    strong = create_social_draft(
+        topic="AI governance should be tied to business operating models.",
+        platform="linkedin",
+        max_chars=3000,
+        draft_kind="reply",
+        engagement_author="Robert",
+        reply_style="strong_short",
+    )
+    warm = create_social_draft(
+        topic="AI governance should be tied to business operating models.",
+        platform="linkedin",
+        max_chars=3000,
+        draft_kind="reply",
+        engagement_author="Robert",
+        reply_style="warm",
+    )
+
+    assert len(strong.draft_text) < 240
+    assert "Strong point" in strong.draft_text
+    assert "reply_style_strong_short" in strong.safety_flags
+    assert "Agree with this framing" in warm.draft_text
+    assert "reply_style_warm" in warm.safety_flags
 
 
 def test_linkedin_draft_uses_spark_context_without_leaking_raw_context() -> None:
@@ -335,6 +361,9 @@ def test_social_routes_publish_only_through_linkedin_connector() -> None:
     assert "publish_linkedin_text" in source
     assert "alpha_herald_social_draft_events" in source
     assert "alpha_herald_social_engagement_items" in source
+    assert 'reply_styles=["strong_short", "practical", "warm"]' in source
+    assert "SET reply_variant_id = $1" in source
+    assert "feedback_provided" in source
     assert "planned_pending_linkedin_approval" in source
     assert "r_member_social_feed" in source
     assert "send_at0_mail_reply" not in source
