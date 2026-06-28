@@ -368,6 +368,12 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "external_call",
         "imessage_send",
     ],
+    "POST /v1/spark/drafts/imessage/outbox/{outbox_id}/trusted-live-send": [
+        "write",
+        "security_write",
+        "external_call",
+        "imessage_send",
+    ],
     "POST /v1/spark/drafts/imessage/outbox/{outbox_id}/cancel": [
         "write",
         "security_write",
