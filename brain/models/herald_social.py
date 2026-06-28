@@ -78,6 +78,19 @@ class HeraldSocialManualPublishUpdate(BaseModel):
     published_url: str = Field(min_length=8, max_length=500)
 
 
+class HeraldLinkedInIngestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    post_urn: str = Field(min_length=8, max_length=200)
+    limit: int = Field(default=25, ge=1, le=50)
+
+
+class HeraldLinkedInIngestResponse(BaseModel):
+    post_urn: str
+    imported_count: int
+    skipped_count: int
+
+
 class HeraldSocialEngagementCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

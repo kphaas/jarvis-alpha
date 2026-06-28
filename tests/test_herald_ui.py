@@ -54,13 +54,14 @@ def test_herald_ui_exposes_social_approval_outbox() -> None:
     assert "apiJson<LinkedInCadence>('/v1/herald/social/linkedin/cadence')" in source
     assert "apiJson<LinkedInReadPlan>('/v1/herald/social/linkedin/read-plan')" in source
     assert (
-        "apiJson<SocialEngagementList>('/v1/herald/social/linkedin/engagements?status=needs_reply&limit=12')"
+        "apiJson<SocialEngagementList>('/v1/herald/social/linkedin/engagements?status=all&limit=12')"
         in source
     )
     assert (
         "apiJson<SocialEngagement>('/v1/herald/social/linkedin/engagements'" in source
     )
     assert "/v1/herald/social/linkedin/engagements/${itemId}/draft-reply" in source
+    assert "/v1/herald/social/linkedin/engagements/${itemId}/publish-reply" in source
     assert "/v1/herald/social/linkedin/engagements/${itemId}/status" in source
     assert "apiJson<SocialDraftCreateResponse>('/v1/herald/social/drafts'" in source
     assert (
@@ -76,8 +77,9 @@ def test_herald_ui_exposes_social_approval_outbox() -> None:
     assert "LinkedIn engagement inbox" in source
     assert "Add to inbox" in source
     assert "Draft reply" in source
-    assert "r_member_social" in source
+    assert "r_member_social_feed" in source
     assert "Post to LinkedIn" in source
+    assert "Post reply" in source
     assert "Mark published" in source
     assert "publish_failed" in source
     assert 'type="date"' in source

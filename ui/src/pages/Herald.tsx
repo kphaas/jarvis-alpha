@@ -351,7 +351,7 @@ export default function Herald() {
         apiJson<SocialDraftList>('/v1/herald/social/drafts?status=all&limit=12'),
         apiJson<LinkedInCadence>('/v1/herald/social/linkedin/cadence'),
         apiJson<LinkedInReadPlan>('/v1/herald/social/linkedin/read-plan'),
-        apiJson<SocialEngagementList>('/v1/herald/social/linkedin/engagements?status=needs_reply&limit=12'),
+        apiJson<SocialEngagementList>('/v1/herald/social/linkedin/engagements?status=all&limit=12'),
       ])
       setMailboxes(mailboxRes.mailboxes)
       if (selectedMailbox !== ALL_MAILBOXES && !mailboxRes.mailboxes.includes(selectedMailbox)) {
@@ -377,6 +377,15 @@ export default function Herald() {
   useEffect(() => {
     load()
   }, [load])
+
+  const approvedReplyVariantIds = useMemo(
+    () => new Set(
+      socialDrafts
+        .filter((draft) => draft.draft_kind === 'reply' && draft.status === 'approved')
+        .map((draft) => draft.id),
+    ),
+    [socialDrafts],
+  )
 
   const totals = useMemo(() => {
     const inSelectedMailbox = (mailbox?: string | null) => (
@@ -552,6 +561,23 @@ export default function Herald() {
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'LinkedIn reply draft failed')
+    } finally {
+      setActingEngagementId(null)
+    }
+  }
+
+  const publishLinkedinEngagementReply = async (itemId: string) => {
+    setActingEngagementId(itemId)
+    setNotice(null)
+    try {
+      await apiJson(`/v1/herald/social/linkedin/engagements/${itemId}/publish-reply`, {
+        method: 'POST',
+      })
+      setNotice('LinkedIn reply published')
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'LinkedIn reply publish failed')
+      await load()
     } finally {
       setActingEngagementId(null)
     }
@@ -852,9 +878,9 @@ export default function Herald() {
                 </span>
               </div>
               <div className={`mt-2 flex flex-wrap gap-2 text-[10px] font-mono uppercase ${muted}`}>
-                <Pill label={`write ${linkedinReadPlan?.write_scope ?? 'w_member_social'}`} />
-                <Pill label={`read ${linkedinReadPlan?.required_read_scopes.join(', ') ?? 'r_member_social'} pending`} />
-                <Pill label={`${engagementItems.length} needs reply`} />
+                <Pill label={`write ${linkedinReadPlan?.write_scope ?? 'w_member_social_feed'}`} />
+                <Pill label={`read ${linkedinReadPlan?.required_read_scopes.join(', ') ?? 'r_member_social_feed'} pending`} />
+                <Pill label={`${engagementItems.length} items`} />
               </div>
               <div className="mt-3 grid gap-2">
                 <input
@@ -914,6 +940,20 @@ export default function Herald() {
                         {actingEngagementId === item.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
                         Draft reply
                       </button>
+                      {item.reply_variant_id && item.status === 'draft_created' && (
+                        <button
+                          type="button"
+                          onClick={() => publishLinkedinEngagementReply(item.id)}
+                          disabled={
+                            actingEngagementId === item.id
+                            || !approvedReplyVariantIds.has(item.reply_variant_id)
+                          }
+                          className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#0a66c2] px-3 text-sm font-bold text-white transition hover:bg-[#0957a5] disabled:opacity-45"
+                        >
+                          {actingEngagementId === item.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                          Post reply
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => setEngagementStatus(item.id, 'ignored')}
@@ -1009,7 +1049,7 @@ export default function Herald() {
                     {draft.publish_error_message ?? draft.publish_error_type ?? 'LinkedIn publish failed'}
                   </div>
                 )}
-                {draft.platform === 'linkedin' && draft.status === 'approved' && !['manual_published', 'linkedin_published'].includes(draft.publish_status) && (
+                {draft.platform === 'linkedin' && draft.draft_kind === 'post' && draft.status === 'approved' && !['manual_published', 'linkedin_published'].includes(draft.publish_status) && (
                   <div className={`mt-3 grid gap-2 rounded-lg border p-3 ${border} ${panel}`}>
                     <button
                       type="button"

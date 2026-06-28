@@ -105,12 +105,12 @@ social inboxes yet. Current repo state has:
 - Draft-only API: `/v1/herald/social/*`
 - UI surface: `/herald` → Social approval outbox
 - LinkedIn needs-reply inbox: `/v1/herald/social/linkedin/engagements`
-- Read plan: `/v1/herald/social/linkedin/read-plan` (`r_member_social` pending)
+- Read plan: `/v1/herald/social/linkedin/read-plan` (`r_member_social_feed` pending)
 - Smoke: `bash ~/jarvis-alpha/scripts/smoke_herald_social_outbox.sh`
 - Marketing/social drafting docs and brand assets
 - Per-platform voice profiles for X and LinkedIn
 - No automated social account read connector for X, LinkedIn, Instagram,
   Threads, TikTok, Bluesky, or Mastodon
 
-Recommended next slice: LinkedIn `r_member_social` approval, connector health,
+Recommended next slice: LinkedIn `r_member_social_feed` approval, connector health,
 rate caps, and automated ingestion into the existing needs-reply inbox.
