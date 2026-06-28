@@ -617,6 +617,110 @@ async def test_linkedin_token_introspection_uses_oauth_endpoint(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_linkedin_member_post_comments_uses_social_actions(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"elements": [{"id": "urn:li:comment:abc123"}]}
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            seen["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, *, params, headers):
+            seen["url"] = url
+            seen["params"] = params
+            seen["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.linkedin_member_post_comments(
+        cloud_routes.LinkedInPostCommentsRequest(
+            access_token="token-" + ("x" * 40),
+            linkedin_version="202606",
+            post_urn="urn:li:share:abc123",
+            count=3,
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert (
+        seen["url"]
+        == "https://api.linkedin.com/rest/socialActions/urn%3Ali%3Ashare%3Aabc123/comments"
+    )
+    assert seen["params"] == {"count": 3}
+    assert seen["headers"]["Linkedin-Version"] == "202606"
+    assert result["payload"]["elements"][0]["id"] == "urn:li:comment:abc123"
+    assert "access_token" not in result
+
+
+@pytest.mark.asyncio
+async def test_linkedin_member_comment_uses_social_actions(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 201
+        text = ""
+        headers = {"x-restli-id": "urn:li:comment:abc123"}
+
+        def json(self):
+            return {"id": "urn:li:comment:abc123"}
+
+    class FakeClient:
+        def __init__(self, *, timeout: float):
+            seen["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, headers, json):
+            seen["url"] = url
+            seen["headers"] = headers
+            seen["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(cloud_routes.httpx, "AsyncClient", FakeClient)
+
+    result = await cloud_routes.linkedin_member_comment(
+        cloud_routes.LinkedInMemberCommentRequest(
+            access_token="token-" + ("x" * 40),
+            author_urn="urn:li:person:abc123",
+            linkedin_version="202606",
+            post_urn="urn:li:share:abc123",
+            text="Approved reply",
+        ),
+        authorization="Bearer gateway-token",
+    )
+
+    assert (
+        seen["url"]
+        == "https://api.linkedin.com/rest/socialActions/urn%3Ali%3Ashare%3Aabc123/comments"
+    )
+    assert seen["json"] == {
+        "actor": "urn:li:person:abc123",
+        "message": {"text": "Approved reply"},
+    }
+    assert result["comment_urn"] == "urn:li:comment:abc123"
+    assert "access_token" not in result
+
+
+@pytest.mark.asyncio
 async def test_anthropic_admin_rejects_unsupported_path(monkeypatch):
     monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
 
