@@ -22,6 +22,10 @@ GRAPH_EDGE_LIMIT = 8
 GRAPH_STALE_AFTER_DAYS = 90
 EPISODIC_LIMIT = 5
 WORKING_LIMIT = 10
+TEMPORAL_GRAPH_CONTEXT_RULE = (
+    "Use [current] rows as present facts. Treat [historical] rows as old context only. "
+    "Treat [needs refresh] rows as unconfirmed until reviewed."
+)
 
 
 class MemoryService:
@@ -47,15 +51,27 @@ class MemoryService:
         r"^(ok|okay|thanks|thank you|got it|sure|yes|no|yep|nope|k|cool|nice|good|great|alright|sounds good|perfect|fine|hmm|hm|ah|oh|lol|haha)[\.\!\?]?$",
         re.IGNORECASE,
     )
+    CURRENT_GRAPH_QUERY = re.compile(
+        r"\b(current|currently|latest|now|active|present|today)\b",
+        re.IGNORECASE,
+    )
     HISTORICAL_GRAPH_QUERY = re.compile(
-        r"\b(old|older|previous|prior|past|history|historical|changed|change|formerly|before|used?\s+to|no longer|expired|stale)\b",
+        r"\b(old|older|previous|prior|past|history|historical|formerly|before|used?\s+to|no longer|expired|stale)\b",
+        re.IGNORECASE,
+    )
+    GRAPH_CHANGE_QUERY = re.compile(
+        r"\b(changed|change|changes|changing)\b",
         re.IGNORECASE,
     )
 
     @classmethod
     def _include_historical_graph(cls, prompt: str) -> bool:
         query = (prompt or "").strip()
-        return bool(cls.HISTORICAL_GRAPH_QUERY.search(query))
+        if cls.HISTORICAL_GRAPH_QUERY.search(query):
+            return True
+        if cls.CURRENT_GRAPH_QUERY.search(query):
+            return False
+        return bool(cls.GRAPH_CHANGE_QUERY.search(query))
 
     def _score_importance(self, text: str) -> float:
         """
@@ -130,7 +146,7 @@ class MemoryService:
 
         if graph:
             graph_lines = "\n".join(self._graph_context_line(row) for row in graph)
-            parts.append(f"[TEMPORAL GRAPH]\n{graph_lines}")
+            parts.append(f"[TEMPORAL GRAPH]\n{TEMPORAL_GRAPH_CONTEXT_RULE}\n{graph_lines}")
 
         if episodic:
             memories = "\n".join(f"- {r['summary']}" for r in episodic)

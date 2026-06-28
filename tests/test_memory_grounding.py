@@ -173,6 +173,7 @@ async def test_build_context_injects_temporal_graph_before_episodic(
     )
 
     assert "[TEMPORAL GRAPH]" in context
+    assert "Use [current] rows as present facts." in context
     assert "- [current] Project: Temporal graph memory" in context
     assert "- [historical] Relation: Ken works on Memory" in context
     assert context.index("[ALWAYS KNOWN]") < context.index("[TEMPORAL GRAPH]")
@@ -274,8 +275,11 @@ def test_graph_context_line_labels_currentness() -> None:
     [
         ("What is the current trip plan?", False),
         ("What is the latest project state?", False),
+        ("What are the current changes to the trip plan?", False),
         ("What are my priorities for memory?", False),
+        ("What changed?", True),
         ("What changed in the old trip plan?", True),
+        ("What changed before this current plan?", True),
         ("What did this use to be?", True),
         ("Show stale relationship history.", True),
     ],
