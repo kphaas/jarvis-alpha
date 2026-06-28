@@ -100,6 +100,10 @@ def test_spark_review_ui_keeps_send_out_of_phase() -> None:
     assert "can_send" in source
     assert "requires_human_approval" in source
     assert "Submit approval" in source
+    assert "SPARK_INLINE_APPROVE_SEND_TARGETS" in source
+    assert "/v1/approvals/unlock" in source
+    assert "/v1/approvals/${approvalQueueId}/decide" in source
+    assert "Approve + Send" in source
     assert "Send approved" in source
     assert "auto_send_enabled: false" in source
     forbidden = (

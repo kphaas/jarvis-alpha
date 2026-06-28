@@ -37,6 +37,7 @@ import {
   useSparkIMessageOutbox,
   useSparkIMessageTargetPreview,
 } from "../hooks/useSparkDraftReview";
+import { apiJson } from "../lib/apiFetch";
 import { useSparkGuardrails } from "../hooks/useSparkGuardrails";
 import { useAppStore } from "../store";
 import type {
@@ -100,11 +101,18 @@ const TONE_OPTIONS = [
   { label: "Blunt", value: "Make the reply direct and blunt, but still respectful." },
 ];
 
+const SPARK_INLINE_APPROVE_SEND_TARGETS = new Set(["sweta", "meagan"]);
+
 function feedbackDisplayLabels(values: SparkDraftFeedbackLabel[]) {
   if (!values.length) return null;
   return values
     .map((value) => FEEDBACK_BUTTONS.find((item) => item.value === value)?.label ?? value)
     .join(" + ");
+}
+
+function canInlineApproveSendTarget(value: string | null | undefined) {
+  const target = value?.trim().toLowerCase();
+  return Boolean(target && SPARK_INLINE_APPROVE_SEND_TARGETS.has(target));
 }
 
 const DEFAULT_FAVORITE_TARGETS: SparkProtectedRelationship[] = [
@@ -1535,6 +1543,9 @@ export default function Spark() {
   );
   const [draftTargetId, setDraftTargetId] = useState<string | null>(null);
   const [detailPanel, setDetailPanel] = useState<DetailPanel | null>(null);
+  const [sparkApprovalPin, setSparkApprovalPin] = useState("");
+  const [sparkApproveSendError, setSparkApproveSendError] = useState<string | null>(null);
+  const [sparkApproveSendLoading, setSparkApproveSendLoading] = useState(false);
   const guardrailsState = useSparkGuardrails();
   const targetState = useSparkIMessageDraftTargets(principalId);
   const outboxState = useSparkIMessageOutbox(principalId);
@@ -1625,6 +1636,13 @@ export default function Spark() {
   const hasOutbox = Boolean(resolvedOutboxId);
   const hasSendResult = Boolean(state.approvedSend);
   const selectedTone = state.styleAdjustments[0] ?? "";
+  const inlineApproveSendTarget =
+    activeApprovalOutbox?.target_label ?? selectedDraftTarget?.label ?? null;
+  const canInlineApproveSend =
+    Boolean(approvalQueueId && resolvedOutboxId) &&
+    canInlineApproveSendTarget(inlineApproveSendTarget) &&
+    !hasSendResult;
+  const sparkApproveSendBusy = sparkApproveSendLoading || state.approvedSendLoading;
   const workflowSteps: CockpitStep[] = [
     {
       id: "target",
@@ -1720,13 +1738,61 @@ export default function Spark() {
 
   function selectPrincipal(nextPrincipalId: SparkPrincipalId) {
     state.resetDraftSurface();
+    setSparkApprovalPin("");
+    setSparkApproveSendError(null);
     setDraftTargetId(null);
     setPrincipalId(nextPrincipalId);
   }
 
   function selectDraftTarget(nextTargetId: string) {
     state.resetDraftSurface();
+    setSparkApprovalPin("");
+    setSparkApproveSendError(null);
     setDraftTargetId(nextTargetId);
+  }
+
+  async function approveAndSendFromSpark() {
+    if (!approvalQueueId || !resolvedOutboxId || !canInlineApproveSend) return;
+    if (!sparkApprovalPin.trim()) {
+      setSparkApproveSendError("Enter PIN to approve and send.");
+      return;
+    }
+    setSparkApproveSendLoading(true);
+    setSparkApproveSendError(null);
+    try {
+      const unlock = await apiJson<{ approval_token: string }>(
+        "/v1/approvals/unlock",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pin: sparkApprovalPin.trim() }),
+        },
+      );
+      await apiJson<{ decision: string }>(
+        `/v1/approvals/${approvalQueueId}/decide`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Approval-Token": unlock.approval_token,
+          },
+          body: JSON.stringify({ decision: "approved" }),
+        },
+      );
+      setSparkApprovalPin("");
+      state.sendApprovedOutbox(resolvedOutboxId);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("409")) {
+        setSparkApprovalPin("");
+        state.sendApprovedOutbox(resolvedOutboxId);
+        return;
+      }
+      setSparkApproveSendError(
+        error instanceof Error ? error.message : "Approve + Send failed",
+      );
+    } finally {
+      setSparkApproveSendLoading(false);
+    }
   }
 
   return (
@@ -2214,7 +2280,38 @@ export default function Spark() {
                     muted={muted}
                   />
                 )}
-                {resolvedOutboxId && (
+                {canInlineApproveSend && (
+                  <div className="space-y-2">
+                    <input
+                      type="password"
+                      value={sparkApprovalPin}
+                      onChange={(event) => setSparkApprovalPin(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") void approveAndSendFromSpark();
+                      }}
+                      placeholder="Approval PIN"
+                      className={`min-h-11 w-full rounded-lg border px-3 text-sm ${border} ${input}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void approveAndSendFromSpark()}
+                      disabled={sparkApproveSendBusy}
+                      className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${border} ${
+                        sparkApproveSendBusy
+                          ? "opacity-45"
+                          : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                      }`}
+                    >
+                      {sparkApproveSendBusy ? (
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                      Approve + Send
+                    </button>
+                  </div>
+                )}
+                {resolvedOutboxId && !canInlineApproveSend && (
                   <button
                     type="button"
                     onClick={() => state.sendApprovedOutbox(resolvedOutboxId)}
@@ -2248,6 +2345,11 @@ export default function Spark() {
                 {state.approvedSendError && (
                   <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
                     Send blocked until the outbox item is approved and persisted
+                  </div>
+                )}
+                {sparkApproveSendError && (
+                  <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
+                    {sparkApproveSendError}
                   </div>
                 )}
               </div>
