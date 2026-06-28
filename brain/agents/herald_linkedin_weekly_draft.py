@@ -45,7 +45,7 @@ async def run_once(*, trigger: str):
             "herald linkedin weekly draft check completed",
             extra={
                 "trigger": trigger,
-                "created": outcome.created,
+                "draft_created": outcome.created,
                 "reason": outcome.reason,
                 "request_id": str(outcome.request_id) if outcome.request_id else None,
                 "variant_id": str(outcome.variant_id) if outcome.variant_id else None,
