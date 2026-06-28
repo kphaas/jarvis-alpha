@@ -6,6 +6,7 @@ from pathlib import Path
 from brain.services.herald_social import (
     create_social_draft,
     hash_social_draft,
+    linkedin_engagement_slots_due,
     linkedin_weekly_topic,
     normalize_platforms,
 )
@@ -20,6 +21,7 @@ MIGRATION = (
     / "20260626_120000_herald_social_outbox.sql"
 )
 ROUTE = REPO_ROOT / "brain" / "routes" / "herald_social.py"
+SERVICE = REPO_ROOT / "brain" / "services" / "herald_social.py"
 LINKEDIN_WEEKLY_MIGRATION = (
     REPO_ROOT
     / "brain"
@@ -33,6 +35,13 @@ LINKEDIN_PUBLISH_MIGRATION = (
     / "db"
     / "migrations"
     / "20260627_120000_herald_linkedin_publish.sql"
+)
+LINKEDIN_ENGAGEMENT_MIGRATION = (
+    REPO_ROOT
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260627_160000_herald_linkedin_engagement_inbox.sql"
 )
 
 
@@ -101,6 +110,49 @@ def test_linkedin_weekly_topic_rotates_without_external_inputs() -> None:
     assert second
     assert first != second
     assert "http" not in first.lower()
+    assert any(
+        term in f"{first} {second}"
+        for term in ("Enterprise AI", "enterprise transformation", "AT0")
+    )
+
+
+def test_linkedin_engagement_slots_due_reaches_three_per_week() -> None:
+    assert [linkedin_engagement_slots_due(day) for day in range(1, 8)] == [
+        1,
+        1,
+        2,
+        2,
+        3,
+        3,
+        3,
+    ]
+
+
+def test_linkedin_weekly_auto_draft_is_draft_only_and_deduped() -> None:
+    source = SERVICE.read_text(encoding="utf-8")
+
+    assert "create_weekly_linkedin_draft_if_due" in source
+    assert "active_weekly_draft_exists" in source
+    assert "linkedin-weekly-brand" in source
+    assert "human_review_required" in source
+    assert "publish_linkedin_text" not in source
+    assert "publish_linkedin_comment" not in source
+
+
+def test_linkedin_engagement_scheduler_is_draft_only_and_capped() -> None:
+    source = SERVICE.read_text(encoding="utf-8")
+
+    assert "draft_linkedin_engagement_replies_if_due" in source
+    assert "weekly_limit: int = 3" in source
+    assert "engagement_scheduler" in source
+    assert "publish_linkedin_text" not in source
+    assert "publish_linkedin_comment" not in source
+
+
+def test_linkedin_cadence_counts_live_and_manual_publish_receipts() -> None:
+    source = ROUTE.read_text(encoding="utf-8")
+
+    assert "'manual_published', 'linkedin_published'" in source
 
 
 def test_platform_normalization_deduplicates_and_rejects_unknowns() -> None:
@@ -167,18 +219,41 @@ def test_linkedin_publish_migration_adds_approved_publish_state() -> None:
     assert "access_token" not in source
 
 
+def test_linkedin_engagement_migration_adds_needs_reply_inbox() -> None:
+    source = LINKEDIN_ENGAGEMENT_MIGRATION.read_text(encoding="utf-8")
+
+    assert "public.alpha_herald_social_engagement_items" in source
+    assert "needs_reply" in source
+    assert "draft_created" in source
+    assert "reply_variant_id" in source
+    assert "r_member_social" in source
+    assert "FORCE ROW LEVEL SECURITY" in source
+    assert "access_token" not in source
+    assert "client_secret" not in source
+
+
 def test_social_routes_publish_only_through_linkedin_connector() -> None:
     source = ROUTE.read_text(encoding="utf-8")
 
     assert "/v1/herald/social" in source
     assert "/linkedin/weekly" in source
     assert "/linkedin/cadence" in source
+    assert "/linkedin/read-plan" in source
+    assert "/linkedin/engagements" in source
+    assert "/linkedin/ingest" in source
+    assert "/draft-reply" in source
+    assert "/publish-reply" in source
     assert "/schedule" in source
     assert "/publish/manual" in source
     assert "/publish/linkedin" in source
     assert "create_social_draft" in source
+    assert "fetch_linkedin_comments" in source
+    assert "publish_linkedin_comment" in source
     assert "publish_linkedin_text" in source
     assert "alpha_herald_social_draft_events" in source
+    assert "alpha_herald_social_engagement_items" in source
+    assert "planned_pending_linkedin_approval" in source
+    assert "r_member_social_feed" in source
     assert "send_at0_mail_reply" not in source
     assert "requests.post" not in source
     assert "aiohttp" not in source

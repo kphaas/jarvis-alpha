@@ -12,23 +12,34 @@ from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
 from brain.models.herald_social import (
     HeraldLinkedInCadenceOut,
+    HeraldLinkedInIngestRequest,
+    HeraldLinkedInIngestResponse,
+    HeraldLinkedInReadPlanOut,
     HeraldSocialDraftCreate,
     HeraldSocialDraftCreateResponse,
     HeraldSocialDraftList,
     HeraldSocialDraftScheduleUpdate,
     HeraldSocialDraftStatusUpdate,
     HeraldSocialDraftVariantOut,
+    HeraldSocialEngagementCreate,
+    HeraldSocialEngagementList,
+    HeraldSocialEngagementOut,
+    HeraldSocialEngagementStatusUpdate,
     HeraldSocialManualPublishUpdate,
     HeraldSocialPlatformProfileList,
     HeraldSocialPlatformProfileOut,
 )
 from brain.services.herald_linkedin import (
     HeraldLinkedInConfigError,
+    HeraldLinkedInIngestDisabled,
     HeraldLinkedInPublishError,
+    fetch_linkedin_comments,
+    publish_linkedin_comment,
     publish_linkedin_text,
 )
 from brain.services.herald_social import (
     create_social_draft,
+    linkedin_engagement_reply_topic,
     linkedin_weekly_topic,
     load_herald_spark_context,
     normalize_platforms,
@@ -150,7 +161,9 @@ async def get_linkedin_cadence(
             SELECT current_date AS today,
                    max(v.published_at) FILTER (
                        WHERE v.platform = 'linkedin'
-                         AND v.publish_status = 'manual_published'
+                         AND v.publish_status IN (
+                             'manual_published', 'linkedin_published'
+                         )
                    ) AS last_published_at,
                    min(v.scheduled_for) FILTER (
                        WHERE v.platform = 'linkedin'
@@ -179,6 +192,381 @@ async def get_linkedin_cadence(
         next_scheduled_for=row["next_scheduled_for"],
         approved_ready_count=int(row["approved_ready_count"] or 0),
     )
+
+
+@router.get("/linkedin/read-plan", response_model=HeraldLinkedInReadPlanOut)
+async def get_linkedin_read_plan(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldLinkedInReadPlanOut:
+    _check_read_scope(request)
+    return HeraldLinkedInReadPlanOut(
+        status="planned_pending_linkedin_approval",
+        write_scope="w_member_social_feed",
+        required_read_scopes=["r_member_social_feed"],
+        discovery_targets=[
+            "comments on AT0 member posts",
+            "reactions and mentions on owned LinkedIn activity",
+            "public URLs Ken adds manually until read access is approved",
+        ],
+        boundary=[
+            "no autonomous likes, follows, DMs, comments, or reposts",
+            "read connector inserts needs_reply items only",
+            "reply drafts require human approval before publish",
+        ],
+    )
+
+
+@router.get("/linkedin/engagements", response_model=HeraldSocialEngagementList)
+async def list_linkedin_engagements(
+    request: Request,
+    _: str = Depends(require_auth),
+    status: Literal[
+        "needs_reply",
+        "draft_created",
+        "ignored",
+        "replied",
+        "archived",
+        "all",
+    ] = Query(default="needs_reply"),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> HeraldSocialEngagementList:
+    _check_read_scope(request)
+    params: list[object] = []
+    where = "TRUE"
+    if status != "all":
+        params.append(status)
+        where = f"status = ${len(params)}"
+    params.append(limit)
+    async with get_pool().acquire() as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT id, platform, source, account_label, provider_item_urn,
+                   provider_post_urn, item_url, author_name, item_text, status,
+                   reply_variant_id, discovered_at, created_at, updated_at
+            FROM public.alpha_herald_social_engagement_items
+            WHERE {where}
+            ORDER BY discovered_at DESC
+            LIMIT ${len(params)}
+            """,
+            *params,
+        )
+    return HeraldSocialEngagementList(items=[_engagement_out(row) for row in rows])
+
+
+@router.post("/linkedin/engagements", response_model=HeraldSocialEngagementOut)
+async def create_linkedin_engagement(
+    body: HeraldSocialEngagementCreate,
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldSocialEngagementOut:
+    _check_write_scope(request)
+    actor_sub = _actor_sub(request)
+    async with get_pool().acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO public.alpha_herald_social_engagement_items (
+                source, account_label, provider_item_urn, provider_post_urn,
+                item_url, author_name, item_text, created_by
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (provider_item_urn) WHERE provider_item_urn IS NOT NULL
+            DO UPDATE SET
+                item_url = EXCLUDED.item_url,
+                author_name = EXCLUDED.author_name,
+                item_text = EXCLUDED.item_text,
+                updated_at = now()
+            RETURNING id, platform, source, account_label, provider_item_urn,
+                      provider_post_urn, item_url, author_name, item_text, status,
+                      reply_variant_id, discovered_at, created_at, updated_at
+            """,
+            body.source,
+            body.account_label.strip(),
+            body.provider_item_urn.strip() if body.provider_item_urn else None,
+            body.provider_post_urn.strip() if body.provider_post_urn else None,
+            body.item_url.strip() if body.item_url else None,
+            body.author_name.strip(),
+            body.item_text.strip(),
+            actor_sub,
+        )
+    return _engagement_out(row)
+
+
+@router.post("/linkedin/ingest", response_model=HeraldLinkedInIngestResponse)
+async def ingest_linkedin_comments(
+    body: HeraldLinkedInIngestRequest,
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldLinkedInIngestResponse:
+    _check_write_scope(request)
+    actor_sub = _actor_sub(request)
+    try:
+        comments = await fetch_linkedin_comments(
+            post_urn=body.post_urn,
+            limit=body.limit,
+        )
+    except HeraldLinkedInIngestDisabled as exc:
+        raise HTTPException(status_code=409, detail="linkedin_ingest_disabled") from exc
+    except (HeraldLinkedInConfigError, HeraldLinkedInPublishError) as exc:
+        raise HTTPException(status_code=502, detail="linkedin_ingest_failed") from exc
+
+    imported = 0
+    skipped = 0
+    async with get_pool().acquire() as conn:
+        for comment in comments:
+            if not comment.item_text.strip():
+                skipped += 1
+                continue
+            status = await conn.fetchval(
+                """
+                INSERT INTO public.alpha_herald_social_engagement_items (
+                    source, account_label, provider_item_urn, provider_post_urn,
+                    item_url, author_name, item_text, created_by
+                )
+                VALUES (
+                    'linkedin_api', 'AT0', $1, $2, $3, $4, $5, $6
+                )
+                ON CONFLICT (provider_item_urn) WHERE provider_item_urn IS NOT NULL
+                DO UPDATE SET
+                    item_url = EXCLUDED.item_url,
+                    author_name = EXCLUDED.author_name,
+                    item_text = EXCLUDED.item_text,
+                    updated_at = now()
+                RETURNING xmax = 0
+                """,
+                comment.provider_item_urn,
+                comment.provider_post_urn,
+                comment.item_url,
+                comment.author_name,
+                comment.item_text,
+                actor_sub,
+            )
+            imported += 1 if status else 0
+            skipped += 0 if status else 1
+    return HeraldLinkedInIngestResponse(
+        post_urn=body.post_urn.strip(),
+        imported_count=imported,
+        skipped_count=skipped,
+    )
+
+
+@router.post(
+    "/linkedin/engagements/{item_id}/draft-reply",
+    response_model=HeraldSocialDraftCreateResponse,
+)
+async def draft_linkedin_engagement_reply(
+    item_id: UUID,
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldSocialDraftCreateResponse:
+    _check_write_scope(request)
+    async with get_pool().acquire() as conn:
+        item = await conn.fetchrow(
+            """
+            SELECT id, author_name, item_text, item_url, status
+            FROM public.alpha_herald_social_engagement_items
+            WHERE id = $1
+            """,
+            item_id,
+        )
+    if item is None:
+        raise HTTPException(status_code=404, detail="LinkedIn engagement not found")
+    if item["status"] in {"ignored", "archived"}:
+        raise HTTPException(status_code=409, detail="engagement_closed")
+
+    body = HeraldSocialDraftCreate(
+        topic=linkedin_engagement_reply_topic(str(item["item_text"])),
+        platforms=["linkedin"],
+        account_label="AT0",
+        source_url=item["item_url"],
+        campaign="linkedin-engagement-inbox",
+        draft_kind="reply",
+        engagement_author=str(item["author_name"]),
+    )
+    response = await _create_social_drafts(body=body, request=request)
+    variant_id = response.drafts[0].id if response.drafts else None
+    if variant_id is not None:
+        async with get_pool().acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE public.alpha_herald_social_engagement_items
+                SET status = 'draft_created',
+                    reply_variant_id = $2,
+                    updated_at = now()
+                WHERE id = $1
+                """,
+                item_id,
+                variant_id,
+            )
+    return response
+
+
+@router.post(
+    "/linkedin/engagements/{item_id}/publish-reply",
+    response_model=HeraldSocialDraftVariantOut,
+)
+async def publish_linkedin_engagement_reply(
+    item_id: UUID,
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldSocialDraftVariantOut:
+    _check_write_scope(request)
+    actor_sub = _actor_sub(request)
+    actor_type = _actor_type(request)
+    async with get_pool().acquire() as conn:
+        async with conn.transaction():
+            current = await conn.fetchrow(
+                """
+                SELECT e.id, e.status AS engagement_status, e.provider_post_urn,
+                       e.reply_variant_id, v.request_id, v.platform, v.status,
+                       v.publish_status, v.draft_text, v.content_hash,
+                       r.draft_kind
+                FROM public.alpha_herald_social_engagement_items e
+                JOIN public.alpha_herald_social_draft_variants v
+                  ON v.id = e.reply_variant_id
+                JOIN public.alpha_herald_social_draft_requests r
+                  ON r.id = v.request_id
+                WHERE e.id = $1
+                FOR UPDATE
+                """,
+                item_id,
+            )
+            if current is None:
+                raise HTTPException(status_code=404, detail="LinkedIn reply not found")
+            if current["provider_post_urn"] is None:
+                raise HTTPException(status_code=409, detail="linkedin_post_urn_missing")
+            if current["draft_kind"] != "reply":
+                raise HTTPException(status_code=400, detail="reply_draft_required")
+            if current["platform"] != "linkedin":
+                raise HTTPException(status_code=400, detail="linkedin_only")
+            if current["status"] != "approved":
+                raise HTTPException(status_code=409, detail="draft_not_approved")
+            if current["engagement_status"] == "replied":
+                raise HTTPException(
+                    status_code=409, detail="engagement_already_replied"
+                )
+            if current["publish_status"] in {"manual_published", "linkedin_published"}:
+                raise HTTPException(status_code=409, detail="draft_already_published")
+            if current["publish_status"] == "sending":
+                raise HTTPException(status_code=409, detail="draft_publish_in_progress")
+
+            await conn.execute(
+                """
+                UPDATE public.alpha_herald_social_draft_variants
+                SET publish_status = 'sending',
+                    publish_attempt_count = publish_attempt_count + 1,
+                    last_publish_attempt_at = now(),
+                    publish_error_type = NULL,
+                    publish_error_message = NULL,
+                    updated_at = now()
+                WHERE id = $1
+                """,
+                current["reply_variant_id"],
+            )
+            await _record_event(
+                conn,
+                request_id=current["request_id"],
+                variant_id=current["reply_variant_id"],
+                event_type="variant_linkedin_publish_started",
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+                payload={
+                    "publish_target": "comment",
+                    "content_hash": current["content_hash"],
+                },
+            )
+            post_urn = str(current["provider_post_urn"])
+            draft_text = str(current["draft_text"])
+            variant_id = current["reply_variant_id"]
+            request_id = current["request_id"]
+
+    try:
+        result = await publish_linkedin_comment(post_urn=post_urn, text=draft_text)
+    except (HeraldLinkedInConfigError, HeraldLinkedInPublishError) as exc:
+        async with get_pool().acquire() as conn:
+            async with conn.transaction():
+                await _record_linkedin_publish_failure(
+                    conn,
+                    variant_id=variant_id,
+                    request_id=request_id,
+                    actor_sub=actor_sub,
+                    actor_type=actor_type,
+                    exc=exc,
+                )
+        raise HTTPException(status_code=502, detail="linkedin_comment_failed") from exc
+
+    async with get_pool().acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                UPDATE public.alpha_herald_social_draft_variants
+                SET publish_status = 'linkedin_published',
+                    published_at = now(),
+                    published_url = $2,
+                    provider_post_urn = $3,
+                    publish_error_type = NULL,
+                    publish_error_message = NULL,
+                    updated_at = now()
+                WHERE id = $1
+                """,
+                variant_id,
+                result.published_url,
+                post_urn,
+            )
+            await conn.execute(
+                """
+                UPDATE public.alpha_herald_social_engagement_items
+                SET status = 'replied',
+                    updated_at = now()
+                WHERE id = $1
+                """,
+                item_id,
+            )
+            await _record_event(
+                conn,
+                request_id=request_id,
+                variant_id=variant_id,
+                event_type="variant_linkedin_published",
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+                payload={
+                    "publish_target": "comment",
+                    "linkedin_status_code": result.status_code,
+                    "provider_comment_urn": result.provider_post_urn,
+                },
+            )
+            row = await _fetch_variant(conn, variant_id)
+    return _draft_out(row)
+
+
+@router.post(
+    "/linkedin/engagements/{item_id}/status",
+    response_model=HeraldSocialEngagementOut,
+)
+async def update_linkedin_engagement_status(
+    item_id: UUID,
+    body: HeraldSocialEngagementStatusUpdate,
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldSocialEngagementOut:
+    _check_write_scope(request)
+    async with get_pool().acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE public.alpha_herald_social_engagement_items
+            SET status = $2,
+                updated_at = now()
+            WHERE id = $1
+            RETURNING id, platform, source, account_label, provider_item_urn,
+                      provider_post_urn, item_url, author_name, item_text, status,
+                      reply_variant_id, discovered_at, created_at, updated_at
+            """,
+            item_id,
+            body.status,
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="LinkedIn engagement not found")
+    return _engagement_out(row)
 
 
 @router.post("/linkedin/weekly", response_model=HeraldSocialDraftCreateResponse)
@@ -733,3 +1121,7 @@ async def _record_event(
 
 def _draft_out(row) -> HeraldSocialDraftVariantOut:
     return HeraldSocialDraftVariantOut(**dict(row))
+
+
+def _engagement_out(row) -> HeraldSocialEngagementOut:
+    return HeraldSocialEngagementOut(**dict(row))

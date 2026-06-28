@@ -114,6 +114,21 @@ class LinkedInMemberPostRequest(BaseModel):
     text: str = Field(min_length=1, max_length=3000)
 
 
+class LinkedInPostCommentsRequest(BaseModel):
+    access_token: str = Field(min_length=20, max_length=5000)
+    linkedin_version: str = Field(default="202606", pattern=r"^[0-9]{6}$")
+    post_urn: str = Field(min_length=8, max_length=200)
+    count: int = Field(default=25, ge=1, le=50)
+
+
+class LinkedInMemberCommentRequest(BaseModel):
+    access_token: str = Field(min_length=20, max_length=5000)
+    author_urn: str = Field(pattern=r"^urn:li:person:[A-Za-z0-9_-]+$")
+    linkedin_version: str = Field(default="202606", pattern=r"^[0-9]{6}$")
+    post_urn: str = Field(min_length=8, max_length=200)
+    text: str = Field(min_length=1, max_length=3000)
+
+
 class LinkedInTokenIntrospectionRequest(BaseModel):
     token: str = Field(min_length=20, max_length=5000)
     client_id: str = Field(min_length=5, max_length=200)
@@ -558,6 +573,68 @@ async def linkedin_member_post(
         "post_urn": post_urn,
         "post_url": f"https://www.linkedin.com/feed/update/{post_urn}"
         if post_urn
+        else None,
+    }
+
+
+@router.post("/linkedin/member_post_comments")
+async def linkedin_member_post_comments(
+    req: LinkedInPostCommentsRequest,
+    authorization: str = Header(...),
+):
+    _authorize_gateway_call(authorization)
+    encoded_urn = quote(req.post_urn, safe="")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"https://api.linkedin.com/rest/socialActions/{encoded_urn}/comments",
+            params={"count": req.count},
+            headers={
+                "Authorization": f"Bearer {req.access_token}",
+                "Linkedin-Version": req.linkedin_version,
+                "X-Restli-Protocol-Version": "2.0.0",
+            },
+        )
+    payload: Any
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {"raw": response.text}
+    return {"status_code": response.status_code, "payload": payload}
+
+
+@router.post("/linkedin/member_comment")
+async def linkedin_member_comment(
+    req: LinkedInMemberCommentRequest,
+    authorization: str = Header(...),
+):
+    _authorize_gateway_call(authorization)
+    encoded_urn = quote(req.post_urn, safe="")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"https://api.linkedin.com/rest/socialActions/{encoded_urn}/comments",
+            headers={
+                "Authorization": f"Bearer {req.access_token}",
+                "Content-Type": "application/json",
+                "Linkedin-Version": req.linkedin_version,
+                "X-Restli-Protocol-Version": "2.0.0",
+            },
+            json={
+                "actor": req.author_urn,
+                "message": {"text": req.text},
+            },
+        )
+    payload: Any
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {"raw": response.text}
+    comment_urn = response.headers.get("x-restli-id")
+    return {
+        "status_code": response.status_code,
+        "payload": payload,
+        "comment_urn": comment_urn,
+        "comment_url": f"https://www.linkedin.com/feed/update/{req.post_urn}"
+        if comment_urn
         else None,
     }
 
