@@ -39,6 +39,7 @@ from brain.services.herald_linkedin import (
 )
 from brain.services.herald_social import (
     create_social_draft,
+    linkedin_engagement_reply_topic,
     linkedin_weekly_topic,
     load_herald_spark_context,
     normalize_platforms,
@@ -374,7 +375,7 @@ async def draft_linkedin_engagement_reply(
         raise HTTPException(status_code=409, detail="engagement_closed")
 
     body = HeraldSocialDraftCreate(
-        topic=_engagement_reply_topic(str(item["item_text"])),
+        topic=linkedin_engagement_reply_topic(str(item["item_text"])),
         platforms=["linkedin"],
         account_label="AT0",
         source_url=item["item_url"],
@@ -1124,8 +1125,3 @@ def _draft_out(row) -> HeraldSocialDraftVariantOut:
 
 def _engagement_out(row) -> HeraldSocialEngagementOut:
     return HeraldSocialEngagementOut(**dict(row))
-
-
-def _engagement_reply_topic(item_text: str) -> str:
-    clean = " ".join(item_text.split()).strip()
-    return clean[:500]

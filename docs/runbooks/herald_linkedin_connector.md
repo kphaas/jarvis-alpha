@@ -72,6 +72,9 @@ warning window closes, then restart Alpha.
 - `GET /v1/herald/social/linkedin/read-plan` reports the read-access plan:
   `w_member_social` can publish approved top-level posts, but feed/comment
   discovery needs `r_member_social_feed`.
+- `com.jarvis.alpha.herald-linkedin-engagement-scheduler` runs daily on Brain
+  and creates up to 3 LinkedIn reply drafts per week from existing `needs_reply`
+  engagement items.
 - `POST /v1/herald/social/linkedin/engagements` creates a local `needs_reply`
   item from a public LinkedIn URL/comment Ken provides.
 - `POST /v1/herald/social/linkedin/engagements/{item_id}/draft-reply` creates a
@@ -92,4 +95,5 @@ warning window closes, then restart Alpha.
   Community Management app.
 - No scheduled ingestion loop; comment ingestion is manual and disabled by
   default.
+- No scheduled comment publish. The scheduler only drafts replies for review.
 - No token values in audit events, logs, UI, or test fixtures.
