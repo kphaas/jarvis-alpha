@@ -72,6 +72,12 @@ warning window closes, then restart Alpha.
 - `GET /v1/herald/social/linkedin/read-plan` reports the read-access plan:
   `w_member_social` can publish approved top-level posts, but feed/comment
   discovery needs `r_member_social_feed`.
+- `com.jarvis.alpha.herald-linkedin-target-scout` runs daily on Brain and uses
+  Gateway Internet Scout public search to queue target candidates into the
+  LinkedIn engagement inbox. It does not use Chrome, cookies, logged-in
+  scraping, likes, follows, DMs, comments, or publish APIs.
+- `POST /v1/herald/social/linkedin/engagements/scout` runs the same scout on
+  demand from `/herald`, optionally with operator-supplied topics.
 - `com.jarvis.alpha.herald-linkedin-engagement-scheduler` runs daily on Brain
   and creates up to 3 LinkedIn reply drafts per week from existing `needs_reply`
   engagement items.
@@ -96,4 +102,6 @@ warning window closes, then restart Alpha.
 - No scheduled ingestion loop; comment ingestion is manual and disabled by
   default.
 - No scheduled comment publish. The scheduler only drafts replies for review.
+- Target scouting uses public search results only and queues candidates for
+  review; it does not guarantee every result is commentable on LinkedIn.
 - No token values in audit events, logs, UI, or test fixtures.

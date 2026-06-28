@@ -238,6 +238,13 @@ interface SocialEngagementList {
   items: SocialEngagement[]
 }
 
+interface LinkedInScoutResponse {
+  created_count: number
+  skipped_count: number
+  reason: string
+  item_ids: string[]
+}
+
 const ALL_MAILBOXES = 'all'
 
 function timeText(value: string | null) {
@@ -314,6 +321,7 @@ export default function Herald() {
   const [engagementAuthor, setEngagementAuthor] = useState('')
   const [engagementUrl, setEngagementUrl] = useState('')
   const [engagementContext, setEngagementContext] = useState('')
+  const [scoutTopics, setScoutTopics] = useState('AI and enterprise transformation, AT0 private AI progress')
   const [scheduleDates, setScheduleDates] = useState<Record<string, string>>({})
   const [publishedUrls, setPublishedUrls] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -322,6 +330,7 @@ export default function Herald() {
   const [creatingSocialDraft, setCreatingSocialDraft] = useState(false)
   const [creatingLinkedinWeekly, setCreatingLinkedinWeekly] = useState(false)
   const [creatingEngagementDraft, setCreatingEngagementDraft] = useState(false)
+  const [scoutingLinkedinTargets, setScoutingLinkedinTargets] = useState(false)
   const [actingSocialDraftId, setActingSocialDraftId] = useState<string | null>(null)
   const [actingEngagementId, setActingEngagementId] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -547,6 +556,31 @@ export default function Herald() {
       setError(err instanceof Error ? err.message : 'LinkedIn engagement add failed')
     } finally {
       setCreatingEngagementDraft(false)
+    }
+  }
+
+  const scoutLinkedinTargets = async () => {
+    const topics = scoutTopics
+      .split(/[\n,]/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+    setScoutingLinkedinTargets(true)
+    setNotice(null)
+    try {
+      const result = await apiJson<LinkedInScoutResponse>('/v1/herald/social/linkedin/engagements/scout', {
+        method: 'POST',
+        body: JSON.stringify({
+          topics,
+          per_topic: 2,
+          max_targets: 6,
+        }),
+      })
+      setNotice(`LinkedIn targets scouted: ${result.created_count} new, ${result.skipped_count} skipped`)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'LinkedIn target scout failed')
+    } finally {
+      setScoutingLinkedinTargets(false)
     }
   }
 
@@ -882,6 +916,26 @@ export default function Herald() {
                 <Pill label={`read ${linkedinReadPlan?.required_read_scopes.join(', ') ?? 'r_member_social_feed'} pending`} />
                 <Pill label={`${engagementItems.length} items`} />
               </div>
+              <label className={`mt-3 block text-[10px] font-mono uppercase tracking-widest ${muted}`} htmlFor="linkedin-scout-topics">
+                Scout topics
+              </label>
+              <textarea
+                id="linkedin-scout-topics"
+                value={scoutTopics}
+                onChange={(event) => setScoutTopics(event.target.value)}
+                rows={3}
+                className={`mt-2 w-full resize-none rounded-lg border px-3 py-2 text-sm outline-none ${border} ${strongPanel} ${strong}`}
+                placeholder="AI transformation, enterprise operating model"
+              />
+              <button
+                type="button"
+                onClick={scoutLinkedinTargets}
+                disabled={scoutingLinkedinTargets}
+                className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-45"
+              >
+                {scoutingLinkedinTargets ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Scout targets
+              </button>
               <div className="mt-3 grid gap-2">
                 <input
                   value={engagementAuthor}
@@ -917,7 +971,7 @@ export default function Herald() {
                 {engagementItems.map((item) => (
                   <article key={item.id} className={`rounded-lg border p-3 ${border} ${strongPanel}`}>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Pill label={item.source === 'linkedin_api' ? 'LinkedIn API' : 'Manual'} />
+                      <Pill label={item.provider_item_urn?.startsWith('herald:scout:') ? 'Scout' : item.source === 'linkedin_api' ? 'LinkedIn API' : 'Manual'} />
                       <Pill label={item.status} />
                       <span className={`ml-auto text-[10px] font-mono uppercase ${muted}`}>
                         {timeText(item.discovered_at)}

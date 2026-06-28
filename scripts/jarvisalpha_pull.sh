@@ -178,7 +178,7 @@ needs_reload_spark_send_readiness() {
 }
 
 needs_reload_herald_linkedin() {
-  service_has_changes_matching "alpha-herald-linkedin" '(^brain/agents/herald_linkedin_(health_watcher|weekly_draft|engagement_scheduler)\.py$|^brain/services/herald_(linkedin_health|social)\.py$|^launchagents/com\.jarvis\.alpha\.herald-linkedin-(health|weekly-draft|engagement-scheduler)\.template\.plist$|^scripts/start_alpha_herald_linkedin_(health|weekly_draft|engagement_scheduler)\.sh$|^scripts/install_launchagents\.py$)'
+  service_has_changes_matching "alpha-herald-linkedin" '(^brain/agents/herald_linkedin_(health_watcher|weekly_draft|engagement_scheduler|target_scout)\.py$|^brain/services/herald_(linkedin_health|social)\.py$|^launchagents/com\.jarvis\.alpha\.herald-linkedin-(health|weekly-draft|engagement-scheduler|target-scout)\.template\.plist$|^scripts/start_alpha_herald_linkedin_(health|weekly_draft|engagement_scheduler|target_scout)\.sh$|^scripts/install_launchagents\.py$)'
 }
 
 needs_reload_ai_news_brief() {
@@ -616,6 +616,7 @@ fi
 HERALD_LINKEDIN_HEALTH_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.herald-linkedin-health.plist"
 HERALD_LINKEDIN_WEEKLY_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.herald-linkedin-weekly-draft.plist"
 HERALD_LINKEDIN_ENGAGEMENT_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.herald-linkedin-engagement-scheduler.plist"
+HERALD_LINKEDIN_TARGET_SCOUT_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.herald-linkedin-target-scout.plist"
 if [ "$NODE_SHORT" = "brain" ] && needs_reload_herald_linkedin; then
   echo ""
   echo "Refreshing Herald LinkedIn LaunchAgents..."
@@ -630,7 +631,7 @@ if [ "$NODE_SHORT" = "brain" ] && needs_reload_herald_linkedin; then
     exit 1
   fi
   rm -f "$INSTALL_LOG"
-  for PLIST in "$HERALD_LINKEDIN_HEALTH_PLIST" "$HERALD_LINKEDIN_WEEKLY_PLIST" "$HERALD_LINKEDIN_ENGAGEMENT_PLIST"; do
+  for PLIST in "$HERALD_LINKEDIN_HEALTH_PLIST" "$HERALD_LINKEDIN_WEEKLY_PLIST" "$HERALD_LINKEDIN_ENGAGEMENT_PLIST" "$HERALD_LINKEDIN_TARGET_SCOUT_PLIST"; do
     if [ ! -f "$PLIST" ]; then
       emit fail restart node="$NODE_SHORT" service="alpha-herald-linkedin" dur_ms=$(($(time_ms) - HERALD_LINKEDIN_START)) error="plist missing after install: $PLIST"
       echo "❌ Herald LinkedIn LaunchAgent plist missing after install"
@@ -642,13 +643,16 @@ if [ "$NODE_SHORT" = "brain" ] && needs_reload_herald_linkedin; then
   HERALD_LINKEDIN_HEALTH_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.herald-linkedin-health" {print $1}' | head -1)
   HERALD_LINKEDIN_WEEKLY_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.herald-linkedin-weekly-draft" {print $1}' | head -1)
   HERALD_LINKEDIN_ENGAGEMENT_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.herald-linkedin-engagement-scheduler" {print $1}' | head -1)
+  HERALD_LINKEDIN_TARGET_SCOUT_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.herald-linkedin-target-scout" {print $1}' | head -1)
   [ "$HERALD_LINKEDIN_HEALTH_PID" = "-" ] && HERALD_LINKEDIN_HEALTH_PID=0
   [ "$HERALD_LINKEDIN_WEEKLY_PID" = "-" ] && HERALD_LINKEDIN_WEEKLY_PID=0
   [ "$HERALD_LINKEDIN_ENGAGEMENT_PID" = "-" ] && HERALD_LINKEDIN_ENGAGEMENT_PID=0
+  [ "$HERALD_LINKEDIN_TARGET_SCOUT_PID" = "-" ] && HERALD_LINKEDIN_TARGET_SCOUT_PID=0
   echo "✅ Herald LinkedIn LaunchAgents refreshed"
   emit ok restart node="$NODE_SHORT" service="alpha-herald-linkedin-health" pid="${HERALD_LINKEDIN_HEALTH_PID:-0}" dur_ms=$(($(time_ms) - HERALD_LINKEDIN_START))
   emit ok restart node="$NODE_SHORT" service="alpha-herald-linkedin-weekly-draft" pid="${HERALD_LINKEDIN_WEEKLY_PID:-0}" dur_ms=$(($(time_ms) - HERALD_LINKEDIN_START))
   emit ok restart node="$NODE_SHORT" service="alpha-herald-linkedin-engagement-scheduler" pid="${HERALD_LINKEDIN_ENGAGEMENT_PID:-0}" dur_ms=$(($(time_ms) - HERALD_LINKEDIN_START))
+  emit ok restart node="$NODE_SHORT" service="alpha-herald-linkedin-target-scout" pid="${HERALD_LINKEDIN_TARGET_SCOUT_PID:-0}" dur_ms=$(($(time_ms) - HERALD_LINKEDIN_START))
   mark_service_checked "alpha-herald-linkedin"
 elif [ "$NODE_SHORT" = "brain" ]; then
   emit skip restart node="$NODE_SHORT" service="alpha-herald-linkedin" reason="no_launchagent_changes"
