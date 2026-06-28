@@ -231,6 +231,7 @@ class SparkIMessageDraftFeedbackRequest(BaseModel):
     approval_ref_hash: str = Field(min_length=1, max_length=160)
     source_reference_hash: str = Field(min_length=1, max_length=160)
     chat_guid_hash: str = Field(min_length=1, max_length=160)
+    draft_text_override: str | None = Field(default=None, max_length=4000)
 
 
 class SparkIMessageDraftFeedbackOut(BaseModel):
@@ -1034,6 +1035,7 @@ async def spark_imessage_draft_feedback(
             approval_ref_hash=payload.approval_ref_hash,
             source_reference_hash=payload.source_reference_hash,
             chat_guid_hash=payload.chat_guid_hash,
+            draft_text_override=payload.draft_text_override,
         )
     except Exception as exc:
         _log_failure(request, exc=exc, status_code=500)

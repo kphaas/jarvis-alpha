@@ -164,6 +164,7 @@ def test_draft_quality_feedback_accepts_voice_rewrite(tmp_path: Path) -> None:
         approval_ref_hash="approval-hash",
         source_reference_hash="source-hash",
         chat_guid_hash="chat-hash",
+        draft_text_override="That's great to hear. Thanks for keeping me in the loop.",
         vault_root=tmp_path,
         created_at=datetime(2026, 6, 15, 9, 7, tzinfo=UTC),
     )
@@ -179,6 +180,14 @@ def test_draft_quality_feedback_accepts_voice_rewrite(tmp_path: Path) -> None:
     )
     row = json.loads(feedback_path.read_text(encoding="utf-8").strip())
     assert row["feedback_label"] == "voice_rewrite"
+    assert (
+        row["edited_draft_text"]
+        == "That's great to hear. Thanks for keeping me in the loop."
+    )
+    assert row["candidate_key_phrases"] == [
+        "That's great to hear",
+        "Thanks for keeping me in the loop",
+    ]
 
 
 def test_feedback_default_root_is_not_personality_git_checkout() -> None:
@@ -256,6 +265,7 @@ def test_recent_feedback_lessons_prioritize_voice_rewrite(tmp_path: Path) -> Non
         approval_ref_hash="approval-hash",
         source_reference_hash="source-hash",
         chat_guid_hash="chat-hash",
+        draft_text_override="That's great to hear. Thanks for keeping me in the loop.",
         vault_root=tmp_path,
         created_at=datetime(2026, 6, 15, 9, 7, tzinfo=UTC),
     )
@@ -271,6 +281,10 @@ def test_recent_feedback_lessons_prioritize_voice_rewrite(tmp_path: Path) -> Non
     )
     assert (
         "Prefer Ken's exact rewrite pattern over generic polishing when the draft was manually corrected."
+        in lessons
+    )
+    assert (
+        'Ken-approved rewrite example: "That\'s great to hear. Thanks for keeping me in the loop."'
         in lessons
     )
 

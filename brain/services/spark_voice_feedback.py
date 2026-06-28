@@ -110,10 +110,11 @@ def record_spark_draft_quality_feedback(
     approval_ref_hash: str,
     source_reference_hash: str,
     chat_guid_hash: str,
+    draft_text_override: str | None = None,
     vault_root: str | Path | None = None,
     created_at: datetime | None = None,
 ) -> SparkDraftQualityFeedbackResult:
-    """Append a label-only quality signal without storing draft or thread text."""
+    """Append quality feedback without storing runtime thread text."""
 
     if feedback_label not in {
         "sounds_like_me",
@@ -140,7 +141,8 @@ def record_spark_draft_quality_feedback(
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
 
-    record = {
+    edited_text = _clean_text(draft_text_override or "")
+    record: dict[str, Any] = {
         "feedback_version": QUALITY_FEEDBACK_VERSION,
         "created_at": now.astimezone(UTC).isoformat(),
         "principal_id": safe_principal,
@@ -159,6 +161,22 @@ def record_spark_draft_quality_feedback(
             "draft_only_no_send",
         ],
     }
+    if feedback_label == "voice_rewrite" and edited_text:
+        record.update(
+            {
+                "event": "draft_voice_rewrite_feedback_submitted",
+                "edited_draft_text": edited_text[:MAX_STORED_DRAFT_CHARS],
+                "edited_draft_hash": _sha256_text(edited_text),
+                "candidate_key_phrases": list(
+                    extract_candidate_key_phrases(edited_text)
+                ),
+                "guardrails": [
+                    "no_inbound_runtime_context_stored",
+                    "human_edited_draft_text_only",
+                    "draft_only_no_send",
+                ],
+            }
+        )
     feedback_ref_hash = _record_ref_hash(record)
     record["feedback_ref_hash"] = feedback_ref_hash
 
@@ -286,21 +304,30 @@ def _lessons_from_feedback_row(row: dict[str, Any]) -> tuple[str, ...]:
         )
     if version == QUALITY_FEEDBACK_VERSION:
         return _quality_feedback_lessons(
-            str(row.get("feedback_label") or "").strip().lower()
+            str(row.get("feedback_label") or "").strip().lower(),
+            edited_text=str(row.get("edited_draft_text") or ""),
         )
     return ()
 
 
-def _quality_feedback_lessons(label: str) -> tuple[str, ...]:
+def _quality_feedback_lessons(
+    label: str,
+    *,
+    edited_text: str = "",
+) -> tuple[str, ...]:
     if label == "sounds_like_me":
         return (
             "When a draft is close, keep the same casual specificity instead of rewriting into a new tone.",
         )
     if label == "voice_rewrite":
-        return (
+        lessons = [
             "Treat Ken's edited draft text as the strongest available voice signal for the next reply.",
             "Prefer Ken's exact rewrite pattern over generic polishing when the draft was manually corrected.",
-        )
+        ]
+        clean = _clean_text(edited_text)
+        if clean:
+            lessons.append(f'Ken-approved rewrite example: "{clean[:240]}"')
+        return tuple(lessons)
     if label == "out_of_context":
         return (
             "Answer the latest inbound text before adding a new topic or explanation.",

@@ -211,6 +211,8 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
             approval_ref_hash: draftMutation.data!.approval_ref_hash,
             source_reference_hash: draftMutation.data!.source_reference_hash,
             chat_guid_hash: draftMutation.data!.chat_guid_hash,
+            draft_text_override:
+              feedbackLabel === "voice_rewrite" ? draftText.trim() || null : null,
           };
           return apiJson<SparkIMessageDraftFeedbackResponse>(
             "/v1/spark/drafts/imessage/feedback",
@@ -307,7 +309,7 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
       if (current.includes(feedbackLabel)) {
         return current.filter((item) => item !== feedbackLabel);
       }
-      if (current.length >= 2) {
+      if (current.length >= 3) {
         return current;
       }
       return [...current, feedbackLabel];
@@ -382,7 +384,7 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     canSendApprovedOutbox:
       Boolean(approvalMutation.data?.outbox_id) && !approvedSendMutation.isPending,
     resetDraftSurface,
-    canSelectMoreFeedback: selectedFeedbackLabels.length < 2,
+    canSelectMoreFeedback: selectedFeedbackLabels.length < 3,
     feedbackRecorded:
       lastSubmittedFeedbackLabels.length > 0 &&
       Boolean(feedbackMutation.data?.responses.every((item) => item.feedback_recorded)),
