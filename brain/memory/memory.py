@@ -1553,6 +1553,7 @@ class MemoryService:
             WITH principals AS (
                 SELECT user_id::text AS principal_id
                 FROM public.alpha_semantic_memory
+                WHERE COALESCE(review_status, 'active') IN ('active', 'pending_review')
                 UNION
                 SELECT user_id::text AS principal_id
                 FROM public.alpha_conversation_memory
@@ -1569,6 +1570,7 @@ class MemoryService:
                     )::int AS pending_review,
                     MAX(updated_at) AS semantic_last_at
                 FROM public.alpha_semantic_memory
+                WHERE COALESCE(review_status, 'active') IN ('active', 'pending_review')
                 GROUP BY user_id
             ),
             conversation_counts AS (
