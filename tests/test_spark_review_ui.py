@@ -100,7 +100,10 @@ def test_spark_review_ui_keeps_send_out_of_phase() -> None:
     assert "can_send" in source
     assert "requires_human_approval" in source
     assert "Submit approval" in source
+    assert "SPARK_TRUSTED_LIVE_TARGETS" in source
     assert "SPARK_INLINE_APPROVE_SEND_TARGETS" in source
+    assert "/v1/spark/drafts/imessage/outbox/${outboxId}/trusted-live-send" in source
+    assert "Send trusted live" in source
     assert "/v1/approvals/unlock" in source
     assert "/v1/approvals/${approvalQueueId}/decide" in source
     assert "Approve + Send" in source
@@ -280,7 +283,10 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Tone direction" in source
     assert "Send only after approval passes" in source
     assert "Send can resume from the persisted outbox" in source
-    assert "Send blocked until the outbox item is approved and persisted" in source
+    assert (
+        "Send blocked until the outbox item is trusted, approved, and persisted"
+        in source
+    )
     assert "Happier" in source
     assert "Sweeter" in source
     assert "Relaxed" in source
