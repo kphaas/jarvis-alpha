@@ -50,6 +50,7 @@ export interface SparkIMessageDraftApprovalRequest extends SparkIMessageDraftReq
 
 export type SparkDraftFeedbackLabel =
   | "sounds_like_me"
+  | "voice_rewrite"
   | "out_of_context"
   | "too_robotic"
   | "too_formal"

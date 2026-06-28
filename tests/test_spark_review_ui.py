@@ -74,6 +74,9 @@ def test_spark_review_ui_uses_draft_routes_and_api_wrapper() -> None:
     assert "/v1/spark/persona/target-memory/reject" in source
     assert "/v1/spark/drafts/imessage/feedback" in source
     assert "draft_text_override" in source
+    assert "voice_rewrite" in source
+    assert "My rewrite" in source
+    assert "hasEditedDraft" in source
     assert "fetch(" not in source
     assert "XMLHttpRequest" not in source
 

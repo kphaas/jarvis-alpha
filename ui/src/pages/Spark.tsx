@@ -82,6 +82,7 @@ const FEEDBACK_BUTTONS: Array<{
   tone: "ok" | "warn";
 }> = [
   { label: "Keep this direction", value: "sounds_like_me", tone: "ok" },
+  { label: "My rewrite", value: "voice_rewrite", tone: "ok" },
   { label: "Wrong context", value: "out_of_context", tone: "warn" },
   { label: "Too robotic", value: "too_robotic", tone: "warn" },
   { label: "Too formal", value: "too_formal", tone: "warn" },
@@ -1597,6 +1598,9 @@ export default function Spark() {
     state.draft?.context_preview ?? targetPreviewState.data?.context_preview ?? [];
   const previewContextCount = targetPreviewState.data?.context_preview.length ?? 0;
   const hasDraftText = Boolean(state.draftText.trim());
+  const hasEditedDraft = Boolean(
+    state.draft && state.draftText.trim() !== state.draft.draft_text.trim(),
+  );
   const hasRecordedFeedback = state.feedbackRecorded;
   const selectedFeedbackLabel = feedbackDisplayLabels(state.selectedFeedbackLabels);
   const recordedFeedbackLabel = feedbackDisplayLabels(
@@ -2058,6 +2062,7 @@ export default function Spark() {
                   onClick={() => state.toggleFeedbackLabel(feedback.value)}
                   disabled={
                     !state.draft ||
+                    (feedback.value === "voice_rewrite" && !hasEditedDraft) ||
                     state.feedbackLoading ||
                     (!state.selectedFeedbackLabels.includes(feedback.value) &&
                       !state.canSelectMoreFeedback)
