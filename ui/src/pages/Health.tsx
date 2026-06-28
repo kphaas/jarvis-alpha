@@ -107,18 +107,35 @@ interface At0MailHealthPayload {
   latest_graph_health: At0MailGraphHealth | null;
 }
 
+interface MaintainerCandidate {
+  id: string;
+  node: string;
+  layer: string;
+  package: string;
+  from_ver: string;
+  to_ver: string;
+  semver_delta: string;
+  tier: string;
+  state: string;
+  detected_at: string;
+}
+
 interface MaintainerHealthPayload {
-  status: "ok" | "missing" | "invalid";
+  status: "ok" | "missing" | "invalid" | "stale";
   source: string;
   authority: "none";
   candidate_count: number;
   candidate_count_by_tier: Record<string, number>;
+  candidates: MaintainerCandidate[];
   drift_count: number;
   inventory_count: number;
   inventory_rows_recorded: number;
   new_or_existing_candidate_ids: string[];
   node: string | null;
   last_scan_at: string | null;
+  scan_age_hours: number | null;
+  scan_stale_after_hours: number;
+  is_stale: boolean;
   checked_at: string;
   error?: string;
 }
@@ -220,7 +237,7 @@ function at0MailStatusColor(status: string, requiresAttention?: boolean): string
 
 function maintainerStatusColor(status: string): string {
   if (status === "ok") return "#22c55e";
-  if (status === "missing") return "#f59e0b";
+  if (status === "missing" || status === "stale") return "#f59e0b";
   return "#ef4444";
 }
 
@@ -825,13 +842,45 @@ export default function Health({ theme }: { theme: "dark" | "light" }) {
                   </div>
                 </div>
               </div>
+              {maintainerHealth.candidates.length > 0 && (
+                <div style={{ border: `1px solid ${border}`, borderRadius: 8, overflow: "hidden", marginBottom: 10 }}>
+                  {maintainerHealth.candidates.slice(0, 6).map((candidate, index) => (
+                    <div
+                      key={candidate.id}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "72px minmax(130px, 1fr) minmax(150px, 1fr) 72px",
+                        gap: 10,
+                        padding: "8px 10px",
+                        borderTop: index === 0 ? "none" : `1px solid ${border}`,
+                        fontSize: 11,
+                        alignItems: "center",
+                      }}
+                    >
+                      <span style={{ fontFamily: "ui-monospace, monospace", color: "#f59e0b" }}>{candidate.id}</span>
+                      <span style={{ fontWeight: 700 }}>{candidate.package}</span>
+                      <span style={{ color: muted, fontFamily: "ui-monospace, monospace" }}>
+                        {candidate.from_ver} → {candidate.to_ver}
+                      </span>
+                      <span style={{ color: maintainerStatusColor(candidate.tier === "T-major" ? "stale" : "ok"), fontWeight: 700 }}>
+                        {candidate.tier}
+                      </span>
+                    </div>
+                  ))}
+                  {maintainerHealth.candidates.length > 6 && (
+                    <div style={{ padding: "8px 10px", borderTop: `1px solid ${border}`, fontSize: 11, color: muted }}>
+                      +{maintainerHealth.candidates.length - 6} more candidates in the report
+                    </div>
+                  )}
+                </div>
+              )}
               {maintainerHealth.error && (
                 <div style={{ fontSize: 11, color: "#ef4444", marginBottom: 8 }}>
                   {maintainerHealth.error}
                 </div>
               )}
               <div style={{ fontSize: 11, color: muted }}>
-                Checked {new Date(maintainerHealth.checked_at).toLocaleTimeString()} · proposals stay local-only review artifacts
+                Checked {new Date(maintainerHealth.checked_at).toLocaleTimeString()} · scan age {maintainerHealth.scan_age_hours ?? "—"}h / {maintainerHealth.scan_stale_after_hours}h
               </div>
             </>
           )}
