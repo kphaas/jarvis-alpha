@@ -57,6 +57,16 @@ warning window closes, then restart Alpha.
 3. `POST /v1/herald/social/drafts/{variant_id}/publish/linkedin` sends through Gateway to LinkedIn.
 4. Herald records append-only start/success/failure events and marks the draft `linkedin_published` or `publish_failed`.
 
+## Weekly Draft Automation
+
+- `com.jarvis.alpha.herald-linkedin-weekly-draft` runs daily on Brain.
+- It creates at most one active `linkedin-weekly-brand` draft, then stops until
+  that draft is approved/published, archived, or rejected.
+- It does not publish. It only creates a `needs_review` LinkedIn draft using
+  Spark voice context and the weekly AT0/enterprise AI topic rotation.
+- Cadence treats both manual receipts and direct LinkedIn publishes as the last
+  published date.
+
 ## Engagement Inbox
 
 - `GET /v1/herald/social/linkedin/read-plan` reports the read-access plan:
@@ -77,6 +87,7 @@ warning window closes, then restart Alpha.
 ## Boundary
 
 - No autonomous posting.
+- No automatic publish from the weekly scheduler.
 - No automated LinkedIn read/like/DM path until LinkedIn approves the separate
   Community Management app.
 - No scheduled ingestion loop; comment ingestion is manual and disabled by
