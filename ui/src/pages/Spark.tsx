@@ -101,7 +101,8 @@ const TONE_OPTIONS = [
   { label: "Blunt", value: "Make the reply direct and blunt, but still respectful." },
 ];
 
-const SPARK_INLINE_APPROVE_SEND_TARGETS = new Set(["sweta", "meagan"]);
+const SPARK_TRUSTED_LIVE_TARGETS = new Set(["sweta", "meagan"]);
+const SPARK_INLINE_APPROVE_SEND_TARGETS = SPARK_TRUSTED_LIVE_TARGETS;
 
 function feedbackDisplayLabels(values: SparkDraftFeedbackLabel[]) {
   if (!values.length) return null;
@@ -113,6 +114,11 @@ function feedbackDisplayLabels(values: SparkDraftFeedbackLabel[]) {
 function canInlineApproveSendTarget(value: string | null | undefined) {
   const target = value?.trim().toLowerCase();
   return Boolean(target && SPARK_INLINE_APPROVE_SEND_TARGETS.has(target));
+}
+
+function canTrustedLiveTarget(value: string | null | undefined) {
+  const target = value?.trim().toLowerCase();
+  return Boolean(target && SPARK_TRUSTED_LIVE_TARGETS.has(target));
 }
 
 const DEFAULT_FAVORITE_TARGETS: SparkProtectedRelationship[] = [
@@ -1634,7 +1640,9 @@ export default function Spark() {
   const canSendResolvedOutbox = state.hasSendableOutbox(resolvedOutboxId);
   const hasApproval = Boolean(approvalQueueId);
   const hasOutbox = Boolean(resolvedOutboxId);
-  const hasSendResult = Boolean(state.approvedSend);
+  const sendResult = state.trustedLiveSend ?? state.approvedSend;
+  const sendError = state.trustedLiveSendError ?? state.approvedSendError;
+  const hasSendResult = Boolean(sendResult);
   const selectedTone = state.styleAdjustments[0] ?? "";
   const inlineApproveSendTarget =
     activeApprovalOutbox?.target_label ?? selectedDraftTarget?.label ?? null;
@@ -1642,7 +1650,14 @@ export default function Spark() {
     Boolean(approvalQueueId && resolvedOutboxId) &&
     canInlineApproveSendTarget(inlineApproveSendTarget) &&
     !hasSendResult;
-  const sparkApproveSendBusy = sparkApproveSendLoading || state.approvedSendLoading;
+  const canTrustedLiveSend =
+    Boolean(resolvedOutboxId) &&
+    canTrustedLiveTarget(inlineApproveSendTarget) &&
+    !hasSendResult;
+  const sparkApproveSendBusy =
+    sparkApproveSendLoading ||
+    state.approvedSendLoading ||
+    state.trustedLiveSendLoading;
   const workflowSteps: CockpitStep[] = [
     {
       id: "target",
@@ -1718,7 +1733,7 @@ export default function Spark() {
       id: "send",
       label: "Send",
       detail: hasSendResult
-        ? `Send result: ${state.approvedSend?.outbox_status ?? "done"}`
+        ? `Send result: ${sendResult?.outbox_status ?? "done"}`
         : hasOutbox
           ? activeApprovalOutbox
             ? "Send can resume from the persisted outbox"
@@ -1728,7 +1743,7 @@ export default function Spark() {
             : "Approval required first",
       status: hasSendResult
         ? "complete"
-        : state.approvedSendError
+        : sendError
           ? "error"
           : hasOutbox
             ? "active"
@@ -2280,7 +2295,26 @@ export default function Spark() {
                     muted={muted}
                   />
                 )}
-                {canInlineApproveSend && (
+                {canTrustedLiveSend && (
+                  <button
+                    type="button"
+                    onClick={() => state.sendTrustedLiveOutbox(resolvedOutboxId)}
+                    disabled={!canSendResolvedOutbox}
+                    className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${border} ${
+                      canSendResolvedOutbox
+                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                        : "opacity-45"
+                    }`}
+                  >
+                    {state.trustedLiveSendLoading ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
+                    Send trusted live
+                  </button>
+                )}
+                {canInlineApproveSend && !canTrustedLiveSend && (
                   <div className="space-y-2">
                     <input
                       type="password"
@@ -2311,7 +2345,7 @@ export default function Spark() {
                     </button>
                   </div>
                 )}
-                {resolvedOutboxId && !canInlineApproveSend && (
+                {resolvedOutboxId && !canInlineApproveSend && !canTrustedLiveSend && (
                   <button
                     type="button"
                     onClick={() => state.sendApprovedOutbox(resolvedOutboxId)}
@@ -2342,9 +2376,16 @@ export default function Spark() {
                     muted={muted}
                   />
                 )}
-                {state.approvedSendError && (
+                {state.trustedLiveSend && (
+                  <MetricRow
+                    label="Send"
+                    value={state.trustedLiveSend.outbox_status}
+                    muted={muted}
+                  />
+                )}
+                {sendError && (
                   <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
-                    Send blocked until the outbox item is approved and persisted
+                    Send blocked until the outbox item is trusted, approved, and persisted
                   </div>
                 )}
                 {sparkApproveSendError && (

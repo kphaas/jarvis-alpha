@@ -15,6 +15,8 @@ from brain.services.spark_outbox import (
 )
 from brain.services.spark_outbox_send import (
     SparkOutboxSendError,
+    is_trusted_live_spark_target,
+    prepare_trusted_live_spark_imessage_outbox_send,
     resolve_approved_chat_guid_for_outbox,
     send_approved_spark_imessage_outbox,
 )
@@ -24,6 +26,7 @@ from brain.services.spark_voice_ingest import SparkApprovedSourceRecord
 class FakeConn:
     def __init__(self, row: dict[str, object]) -> None:
         self.row = row
+        self.fetches: list[tuple[str, tuple[object, ...]]] = []
         self.fetchvals: list[tuple[str, tuple[object, ...]]] = []
         self.executes: list[tuple[str, tuple[object, ...]]] = []
         self._statuses = ["sending", "sent"]
@@ -38,6 +41,12 @@ class FakeConn:
         self.fetchvals.append((query, args))
         status = self._statuses.pop(0)
         return json.dumps({"recorded": True, "status": status})
+
+    async def fetch(self, query: str, *args: object):
+        assert "decide_approval" in query
+        self.fetches.append((query, args))
+        self.row["approval_status"] = "approved"
+        return [{"queue_id": args[0], "description": "Spark trusted live send"}]
 
     async def execute(self, query: str, *args: object):
         self.executes.append((query, args))
@@ -262,6 +271,103 @@ def test_resolve_approved_chat_guid_matches_target_hash(
     )
 
 
+@pytest.mark.asyncio
+async def test_prepare_trusted_live_approves_adult_target_and_reuses_send_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "SPARK_IMESSAGE_APPROVED_CHAT_GUID_KEN_IMESSAGE_APPROVED_20260605_001",
+        "approved-chat-guid",
+    )
+    crypto = _crypto()
+    queue_id = UUID("11111111-1111-4111-8111-111111111111")
+    outbox_id = UUID("22222222-2222-4222-8222-222222222222")
+    target_hash = _sha256_text("approved-chat-guid")
+    encrypted = crypto.encrypt_draft_text(
+        draft_text="Trusted text",
+        channel="imessage",
+        principal_id="ken",
+        target_ref_hash=target_hash,
+        approval_queue_id=queue_id,
+        approval_parameters_hash="a" * 64,
+    )
+    conn = FakeConn(
+        _row(
+            outbox_id=outbox_id,
+            queue_id=queue_id,
+            target_hash=target_hash,
+            ciphertext=encrypted.ciphertext,
+            text_hash=encrypted.draft_text_hash,
+            key_version=encrypted.payload_key_version,
+            approval_status="pending",
+        )
+    )
+
+    prepared = await prepare_trusted_live_spark_imessage_outbox_send(
+        conn,  # type: ignore[arg-type]
+        outbox_id=outbox_id,
+        actor_sub="spark-service",
+        actor_type="service",
+        crypto=crypto,
+        approved_sources=(_source(),),
+    )
+
+    assert is_trusted_live_spark_target("Sweta")
+    assert prepared.draft_text == "Trusted text"
+    assert prepared.chat_guid == "approved-chat-guid"
+    assert conn.fetches[0][1][0] == queue_id
+    assert conn.fetches[0][1][1] == "approved"
+    assert conn.fetches[0][1][2] == "spark-service"
+    assert len(conn.fetches[0][1][3]) == 32
+    assert len(conn.fetchvals) == 1
+    assert conn.fetchvals[0][1][1] == "sending"
+
+
+@pytest.mark.asyncio
+async def test_prepare_trusted_live_rejects_minor_target_before_side_effect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "SPARK_IMESSAGE_APPROVED_CHAT_GUID_KEN_IMESSAGE_APPROVED_20260605_001",
+        "approved-chat-guid",
+    )
+    crypto = _crypto()
+    encrypted = crypto.encrypt_draft_text(
+        draft_text="Do not send",
+        channel="imessage",
+        principal_id="ken",
+        target_ref_hash=_sha256_text("approved-chat-guid"),
+        approval_queue_id=UUID("11111111-1111-4111-8111-111111111111"),
+        approval_parameters_hash="a" * 64,
+    )
+    conn = FakeConn(
+        _row(
+            outbox_id=UUID("22222222-2222-4222-8222-222222222222"),
+            queue_id=UUID("11111111-1111-4111-8111-111111111111"),
+            target_hash=_sha256_text("approved-chat-guid"),
+            ciphertext=encrypted.ciphertext,
+            text_hash=encrypted.draft_text_hash,
+            key_version=encrypted.payload_key_version,
+            approval_status="pending",
+            target_label="Ryleigh",
+        )
+    )
+
+    assert not is_trusted_live_spark_target("Ryleigh")
+    with pytest.raises(SparkOutboxSendError, match="trusted_live_target_not_allowed"):
+        await prepare_trusted_live_spark_imessage_outbox_send(
+            conn,  # type: ignore[arg-type]
+            outbox_id=UUID("22222222-2222-4222-8222-222222222222"),
+            actor_sub="spark-service",
+            actor_type="service",
+            crypto=crypto,
+            approved_sources=(_source(),),
+        )
+
+    assert conn.fetches == []
+    assert conn.fetchvals == []
+
+
 def _crypto() -> SparkOutboxCrypto:
     return SparkOutboxCrypto(
         SparkOutboxCryptoConfig(
@@ -302,13 +408,14 @@ def _row(
     key_version: str,
     approval_status: str = "approved",
     outbox_status: str = "pending_approval",
+    target_label: str = "Sweta",
 ) -> dict[str, object]:
     return {
         "outbox_id": outbox_id,
         "channel": "imessage",
         "principal_id": "ken",
         "target_ref_hash": target_hash,
-        "target_label": "Sweta",
+        "target_label": target_label,
         "approval_queue_id": queue_id,
         "approval_parameters_hash": "a" * 64,
         "approval_status": approval_status,
