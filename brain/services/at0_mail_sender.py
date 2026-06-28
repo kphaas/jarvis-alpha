@@ -9,6 +9,7 @@ from uuid import UUID
 import asyncpg
 
 from brain.services.at0_mail_graph_client import At0MailSendResult
+from brain.services.herald_interaction_ledger import record_herald_interaction
 
 
 class At0MailDraftSendError(RuntimeError):
@@ -268,4 +269,27 @@ async def _append_send_event(
         error_type,
         error_message,
         json.dumps(event_payload, sort_keys=True),
+    )
+    await record_herald_interaction(
+        conn,
+        channel="email",
+        interaction_kind="outbound",
+        direction="outbound",
+        lifecycle_event=event_type,
+        status=event_type,
+        primary_ref_type="at0_mail_draft_proposal",
+        primary_ref_id=prepared.draft_id,
+        secondary_ref_type="at0_mail_message",
+        secondary_ref_id=prepared.mail_message_id,
+        actor_sub=prepared.actor_sub,
+        actor_type=prepared.actor_type,
+        related_refs={
+            "mailbox": prepared.mailbox,
+            "graph_message_id": prepared.graph_message_id,
+        },
+        event_metadata={
+            "http_status_code": http_status_code,
+            "error_type": error_type,
+            **event_payload,
+        },
     )

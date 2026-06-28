@@ -13,6 +13,10 @@ import asyncpg
 
 from brain.services.internet_scout.gateway_client import InternetScoutGatewayClient
 from brain.services.internet_scout.models import GatewaySearchResponse
+from brain.services.herald_interaction_ledger import (
+    record_herald_interaction,
+    record_social_draft_interaction,
+)
 from brain.services.spark_memory_grounding import (
     SparkMemoryGroundingError,
     load_spark_memory_grounding,
@@ -628,6 +632,24 @@ async def scout_linkedin_engagement_targets(
                 skipped += 1
                 continue
             item_ids.append(row["id"])
+            await record_herald_interaction(
+                conn,
+                channel="linkedin",
+                interaction_kind="engagement",
+                direction="inbound",
+                lifecycle_event="engagement_scouted",
+                status="needs_reply",
+                primary_ref_type="social_engagement_item",
+                primary_ref_id=row["id"],
+                actor_sub=created_by,
+                actor_type="service",
+                related_refs={"provider_item_urn": provider_item_urn},
+                event_metadata={
+                    "source": "gateway_scout",
+                    "query_hash": response.query_hash,
+                    "host": result.host,
+                },
+            )
 
     return EngagementScoutOutcome(
         len(item_ids),
@@ -839,4 +861,13 @@ async def _record_service_event(
         actor_sub,
         actor_type,
         json.dumps(payload, sort_keys=True),
+    )
+    await record_social_draft_interaction(
+        conn,
+        request_id=request_id,
+        variant_id=variant_id,
+        event_type=event_type,
+        actor_sub=actor_sub,
+        actor_type=actor_type,
+        payload=payload,
     )
