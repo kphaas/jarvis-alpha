@@ -18,6 +18,7 @@ code, tests or smoke coverage, and a runbook/update that proves the behavior.
 | HSG-004 | Social inbox UI | Partial | `/herald` separates email from social channels and lets Ken triage account/platform streams without autonomous replies, likes, follows, or DMs. |
 | HSG-005 | Analytics feedback loop | Open | Herald stores per-account/per-post metric snapshots, shows trend context, and emits a weekly digest that feeds future drafting recommendations. |
 | HSG-006 | Brand and voice memory per platform | Done | AT0 Spark has platform-specific voice rules, audience notes, safety lint, and repeat-post prevention that are visible in the draft workflow. |
+| HSG-007 | Press outreach target and pitch drafting | Done | Herald maintains sourced press targets, creates capped weekly pitch drafts, and blocks autonomous sends, follow-ups, or private contact scraping. |
 
 ## Council 4-Lens Review
 
@@ -48,3 +49,4 @@ manual receipt workflow are deployed and smoke-tested:
 | 2026-06-27 | HSG-004 | Partial: added `/herald` LinkedIn engagement reply drafting from operator-provided source/context. No autonomous social inbox read/like/reply/DM actions. |
 | 2026-06-27 | HSG-002 | Partial: added approved LinkedIn publish connector through Gateway, Spark-informed draft audit hashes, and `docs/runbooks/herald_linkedin_connector.md`. Still missing LinkedIn read/engagement ingestion and connector health monitor. |
 | 2026-06-27 | HSG-004 | Partial: added `alpha_herald_social_engagement_items`, `/v1/herald/social/linkedin/engagements`, `/draft-reply`, `/read-plan`, Herald needs-reply queue UI, and smoke coverage. Automated LinkedIn discovery still waits on approved `r_member_social`. |
+| 2026-06-28 | HSG-007 | Added `brain/services/herald_press_outreach.py`, draft-only unit coverage, sourced 30-target runbook, and first weekly batch drafts. No Graph send, autonomous follow-up, or private email scraping. |
