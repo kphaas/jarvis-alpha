@@ -42,6 +42,13 @@ from brain.services.spark_memory_router import plan_spark_memory_route
             "project",
             None,
         ),
+        (
+            "Ken and Sweta have a trip planned to Denver.",
+            "temporal_graph",
+            "memory_graph_reviewed_write",
+            "project",
+            None,
+        ),
     ],
 )
 def test_spark_learning_examples_route_to_reviewable_memory_lanes(
@@ -121,10 +128,25 @@ def test_spark_graph_trip_learning_sets_refresh_and_currentness_metadata() -> No
     ]
 
 
+def test_spark_graph_planned_trip_learning_extracts_location_and_currentness() -> None:
+    plan = plan_spark_memory_route(
+        note="Ken and Sweta have a trip planned to Denver.",
+        principal_id="ken",
+    )
+
+    assert plan.destination == "temporal_graph"
+    assert plan.currentness_policy == "candidate_current"
+    assert plan.temporal_kind == "planned_event"
+    assert plan.extracted_locations == ("Denver",)
+    assert plan.graph_payload is not None
+    assert plan.graph_payload["properties"]["currentness_policy"] == "candidate_current"
+
+
 @pytest.mark.parametrize(
     ("note", "expected_phrase"),
     [
         ("I often say fair enough.", "fair enough"),
+        ("My catchphrase is keep it simple.", "keep it simple"),
         ("My key phrase is sounds good to me.", "sounds good to me"),
         (
             "A phrase I use is ship it when the smoke passes.",

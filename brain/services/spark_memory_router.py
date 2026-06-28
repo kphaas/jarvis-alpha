@@ -29,8 +29,8 @@ SparkMemoryDestination = Literal[
 SparkMemoryRisk = Literal["standard", "high_visibility", "reviewed_write"]
 
 _PERSONALITY_TEXT = re.compile(
-    r"\b(phrase|phrasing|say|voice|tone|style|sound like|avoid sounding|"
-    r"kind of person|value|principle)\b",
+    r"\b(phrase|phrasing|catchphrase|signature phrase|say|voice|tone|style|"
+    r"sound like|avoid sounding|kind of person|value|principle)\b",
     re.IGNORECASE,
 )
 _SELF_TRAIT_TEXT = re.compile(
@@ -44,8 +44,9 @@ _TARGET_TEXT = re.compile(
     re.IGNORECASE,
 )
 _GRAPH_TEXT = re.compile(
-    r"\b(planning|plan|trip|relationship|partner|project|working with|"
-    r"met with|connected to|collaborating|dating|married|custody)\b",
+    r"\b(planning|planned|plans?|trip|travel|traveling|flight|hotel|vacation|"
+    r"booked|scheduled|relationship|partner|project|working with|met with|"
+    r"connected to|collaborating|dating|married|custody)\b",
     re.IGNORECASE,
 )
 _HEALTH_OR_CHILD_TEXT = re.compile(
@@ -254,7 +255,11 @@ def _graph_node_payload(
     temporal_kind = _graph_temporal_kind(note)
     node_type = (
         "project"
-        if re.search(r"\b(plan|planning|trip|project)\b", note, re.I)
+        if re.search(
+            r"\b(plan|planning|planned|trip|travel|traveling|flight|hotel|vacation|project)\b",
+            note,
+            re.I,
+        )
         else "relationship"
     )
     label_preview = _label_preview(note)
@@ -326,7 +331,11 @@ def _target_kind(note: str) -> str:
 
 
 def _personality_kind(lowered_note: str) -> str:
-    if "phrase" in lowered_note or "say" in lowered_note:
+    if (
+        "phrase" in lowered_note
+        or "catchphrase" in lowered_note
+        or "say" in lowered_note
+    ):
         return "phrase"
     if "avoid" in lowered_note:
         return "avoid"
@@ -349,7 +358,11 @@ def _personality_kind(lowered_note: str) -> str:
 
 
 def _graph_relationship_kind(note: str) -> str:
-    if re.search(r"\b(trip|travel|flight|hotel|vacation)\b", note, re.I):
+    if re.search(
+        r"\b(trip|travel|traveling|flight|hotel|vacation|booked|scheduled)\b",
+        note,
+        re.I,
+    ):
         return "planning_trip"
     if re.search(r"\b(project|working with|collaborating|collaboration)\b", note, re.I):
         return "project_collaboration"
@@ -421,6 +434,7 @@ def _extract_phrases(note: str) -> list[str]:
         r"\b(?:key\s+)?(?:phrase|phrasing|say)\s+(?:i\s+use\s*)?:\s*([^.;!?]{2,80})",
         r"\b(?:a\s+)?(?:key\s+)?phrase\s+i\s+use\s+is\s+([^.;!?]{2,80})",
         r"\bmy\s+(?:key\s+)?phrase\s+is\s+([^.;!?]{2,80})",
+        r"\bmy\s+(?:signature\s+)?catchphrase\s+is\s+([^.;!?]{2,80})",
         r"\bi\s+(?:often\s+|usually\s+)?say\s+([^.;!?]{2,80})",
     )
     for pattern in patterns:
@@ -460,14 +474,19 @@ def _extract_projects(note: str) -> list[str]:
 
 def _extract_locations(note: str) -> list[str]:
     location_matches = re.findall(
-        r"\b(?:trip|travel|flight|vacation)\s+(?:to|in|for)\s+([A-Z][A-Za-z .'-]{1,60})",
+        r"\b(?:trip|travel|traveling|flight|vacation)\s+"
+        r"(?:(?:planned|booked|scheduled)\s+)?(?:to|in|for)\s+([A-Z][A-Za-z .'-]{1,60})",
         note,
     )
     return _dedupe_fragments(location_matches, max_length=64)
 
 
 def _graph_temporal_kind(note: str) -> str:
-    if re.search(r"\b(trip|travel|flight|hotel|vacation)\b", note, re.I):
+    if re.search(
+        r"\b(trip|travel|traveling|flight|hotel|vacation|booked|scheduled)\b",
+        note,
+        re.I,
+    ):
         return "planned_event"
     if re.search(r"\b(project|working with|collaborating|collaboration)\b", note, re.I):
         return "project_state"
@@ -479,7 +498,11 @@ def _graph_temporal_kind(note: str) -> str:
 def _currentness_policy(note: str) -> str:
     if re.search(r"\b(used to|previously|formerly|was|were)\b", note, re.I):
         return "historical_needs_confirmation"
-    if re.search(r"\b(planning|plans?|working|collaborating|dating)\b", note, re.I):
+    if re.search(
+        r"\b(planning|planned|plans?|working|collaborating|dating|booked|scheduled|traveling)\b",
+        note,
+        re.I,
+    ):
         return "candidate_current"
     return "confirm_current"
 
