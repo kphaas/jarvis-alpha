@@ -67,6 +67,8 @@ KNOWN_NON_EGRESS: tuple[tuple[str, str], ...] = (
     ("brain/services/internet_scout/search_quality_evals.py", "platform.openai.com"),
     # Static DOCX XML namespace identifier; not fetched over the network.
     ("brain/ingest/docx.py", "schemas.openxmlformats.org"),
+    # Herald press pitch text; URL is emitted for human review, not fetched.
+    ("brain/services/herald_press_outreach.py", "at-0.com"),
 )
 
 
