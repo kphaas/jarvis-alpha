@@ -15,6 +15,9 @@ Herald MVP is the AT-0 mail-intake and approved-reply production slice:
 The social-presence Herald module now has a draft-only approval outbox. It does
 not publish to social platforms yet.
 
+The press-outreach lane is also draft-only. It maintains sourced targets and
+weekly pitch drafts, but does not auto-send pitches or scrape contact data.
+
 ## Runtime
 
 | Surface | Value |
@@ -114,3 +117,16 @@ social inboxes yet. Current repo state has:
 
 Recommended next slice: LinkedIn `r_member_social_feed` approval, connector health,
 rate caps, and automated ingestion into the existing needs-reply inbox.
+
+## Press Outreach Track
+
+Herald can now support AT0 press work as a reviewable drafting loop:
+
+- Runbook and 30 sourced targets: `docs/runbooks/herald_press_outreach.md`
+- First weekly draft batch: `docs/runbooks/herald_press_week_01_drafts.md`
+- Draft generator: `brain/services/herald_press_outreach.py`
+- Weekly cap: 5 pitch drafts
+- No autonomous sends, follow-ups, private email scraping, or Graph send calls
+
+Send remains manual and Ken-approved until a dedicated press-send design has
+been reviewed with mailbox scope, audit events, retry behavior, and rate caps.
