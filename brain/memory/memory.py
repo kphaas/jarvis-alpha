@@ -146,7 +146,9 @@ class MemoryService:
 
         if graph:
             graph_lines = "\n".join(self._graph_context_line(row) for row in graph)
-            parts.append(f"[TEMPORAL GRAPH]\n{TEMPORAL_GRAPH_CONTEXT_RULE}\n{graph_lines}")
+            parts.append(
+                f"[TEMPORAL GRAPH]\n{TEMPORAL_GRAPH_CONTEXT_RULE}\n{graph_lines}"
+            )
 
         if episodic:
             memories = "\n".join(f"- {r['summary']}" for r in episodic)
