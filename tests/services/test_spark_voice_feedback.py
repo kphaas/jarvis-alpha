@@ -156,6 +156,31 @@ def test_draft_quality_feedback_accepts_out_of_context(tmp_path: Path) -> None:
     assert row["feedback_label"] == "out_of_context"
 
 
+def test_draft_quality_feedback_accepts_voice_rewrite(tmp_path: Path) -> None:
+    result = record_spark_draft_quality_feedback(
+        principal_id="ken",
+        feedback_label="voice_rewrite",
+        draft_version="spark-imessage-draft/v0",
+        approval_ref_hash="approval-hash",
+        source_reference_hash="source-hash",
+        chat_guid_hash="chat-hash",
+        vault_root=tmp_path,
+        created_at=datetime(2026, 6, 15, 9, 7, tzinfo=UTC),
+    )
+
+    assert result.recorded is True
+    feedback_path = (
+        tmp_path
+        / "spark"
+        / "principals"
+        / "ken"
+        / "feedback"
+        / "imessage_draft_edits.jsonl"
+    )
+    row = json.loads(feedback_path.read_text(encoding="utf-8").strip())
+    assert row["feedback_label"] == "voice_rewrite"
+
+
 def test_feedback_default_root_is_not_personality_git_checkout() -> None:
     from brain.services import spark_voice_feedback as feedback
 
@@ -221,6 +246,33 @@ def test_recent_feedback_lessons_merge_quality_and_edit_signals(tmp_path: Path) 
         in lessons
     )
     assert "Prefer shorter text drafts when Spark over-explains." in lessons
+
+
+def test_recent_feedback_lessons_prioritize_voice_rewrite(tmp_path: Path) -> None:
+    record_spark_draft_quality_feedback(
+        principal_id="ken",
+        feedback_label="voice_rewrite",
+        draft_version="spark-imessage-draft/v0",
+        approval_ref_hash="approval-hash",
+        source_reference_hash="source-hash",
+        chat_guid_hash="chat-hash",
+        vault_root=tmp_path,
+        created_at=datetime(2026, 6, 15, 9, 7, tzinfo=UTC),
+    )
+
+    lessons = load_recent_feedback_lessons(
+        principal_id="ken",
+        vault_root=tmp_path,
+    )
+
+    assert (
+        lessons[0]
+        == "Treat Ken's edited draft text as the strongest available voice signal for the next reply."
+    )
+    assert (
+        "Prefer Ken's exact rewrite pattern over generic polishing when the draft was manually corrected."
+        in lessons
+    )
 
 
 def test_recent_feedback_lessons_add_tighter_word_count_guidance(

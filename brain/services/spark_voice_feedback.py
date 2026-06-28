@@ -29,6 +29,7 @@ MAX_KEY_PHRASES = 8
 MAX_RECENT_FEEDBACK_LESSONS = 6
 SparkDraftQualityFeedbackLabel = Literal[
     "sounds_like_me",
+    "voice_rewrite",
     "out_of_context",
     "too_robotic",
     "too_formal",
@@ -116,6 +117,7 @@ def record_spark_draft_quality_feedback(
 
     if feedback_label not in {
         "sounds_like_me",
+        "voice_rewrite",
         "out_of_context",
         "too_robotic",
         "too_formal",
@@ -293,6 +295,11 @@ def _quality_feedback_lessons(label: str) -> tuple[str, ...]:
     if label == "sounds_like_me":
         return (
             "When a draft is close, keep the same casual specificity instead of rewriting into a new tone.",
+        )
+    if label == "voice_rewrite":
+        return (
+            "Treat Ken's edited draft text as the strongest available voice signal for the next reply.",
+            "Prefer Ken's exact rewrite pattern over generic polishing when the draft was manually corrected.",
         )
     if label == "out_of_context":
         return (

@@ -36,6 +36,8 @@ export const SPARK_COMPARISON_SCENARIOS = [
 const FEEDBACK_RETRY_ADJUSTMENTS: Record<SparkDraftFeedbackLabel, string> = {
   sounds_like_me:
     "Keep this direction. Stay natural, specific, and in the same thread.",
+  voice_rewrite:
+    "Use my edited draft as the strongest voice example. Match its wording length, directness, and level of warmth instead of generic polishing.",
   out_of_context:
     "The previous draft missed the thread context. Answer only the latest inbound ask first, stay on the same subject, and do not introduce any new logistics or facts unless they were already in the thread.",
   too_robotic:
