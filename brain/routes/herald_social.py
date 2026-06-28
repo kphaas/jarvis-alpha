@@ -160,7 +160,9 @@ async def get_linkedin_cadence(
             SELECT current_date AS today,
                    max(v.published_at) FILTER (
                        WHERE v.platform = 'linkedin'
-                         AND v.publish_status = 'manual_published'
+                         AND v.publish_status IN (
+                             'manual_published', 'linkedin_published'
+                         )
                    ) AS last_published_at,
                    min(v.scheduled_for) FILTER (
                        WHERE v.platform = 'linkedin'

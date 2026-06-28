@@ -20,6 +20,7 @@ MIGRATION = (
     / "20260626_120000_herald_social_outbox.sql"
 )
 ROUTE = REPO_ROOT / "brain" / "routes" / "herald_social.py"
+SERVICE = REPO_ROOT / "brain" / "services" / "herald_social.py"
 LINKEDIN_WEEKLY_MIGRATION = (
     REPO_ROOT
     / "brain"
@@ -108,6 +109,27 @@ def test_linkedin_weekly_topic_rotates_without_external_inputs() -> None:
     assert second
     assert first != second
     assert "http" not in first.lower()
+    assert any(
+        term in f"{first} {second}"
+        for term in ("Enterprise AI", "enterprise transformation", "AT0")
+    )
+
+
+def test_linkedin_weekly_auto_draft_is_draft_only_and_deduped() -> None:
+    source = SERVICE.read_text(encoding="utf-8")
+
+    assert "create_weekly_linkedin_draft_if_due" in source
+    assert "active_weekly_draft_exists" in source
+    assert "linkedin-weekly-brand" in source
+    assert "human_review_required" in source
+    assert "publish_linkedin_text" not in source
+    assert "publish_linkedin_comment" not in source
+
+
+def test_linkedin_cadence_counts_live_and_manual_publish_receipts() -> None:
+    source = ROUTE.read_text(encoding="utf-8")
+
+    assert "'manual_published', 'linkedin_published'" in source
 
 
 def test_platform_normalization_deduplicates_and_rejects_unknowns() -> None:

@@ -177,6 +177,10 @@ needs_reload_spark_send_readiness() {
   service_has_changes_matching "alpha-spark-send-readiness" '(^launchagents/com\.jarvis\.alpha\.spark-send-readiness\.template\.plist$|^scripts/start_alpha_spark_send_readiness\.sh$|^scripts/smoke_spark_send_readiness\.sh$|^scripts/install_launchagents\.py$)'
 }
 
+needs_reload_herald_linkedin() {
+  service_has_changes_matching "alpha-herald-linkedin" '(^brain/agents/herald_linkedin_(health_watcher|weekly_draft)\.py$|^brain/services/herald_(linkedin_health|social)\.py$|^launchagents/com\.jarvis\.alpha\.herald-linkedin-(health|weekly-draft)\.template\.plist$|^scripts/start_alpha_herald_linkedin_(health|weekly_draft)\.sh$|^scripts/install_launchagents\.py$)'
+}
+
 needs_reload_ai_news_brief() {
   service_has_changes_matching "alpha-ai-news-brief" '(^brain/services/internet_scout/ai_news_brief\.py$|^brain/routes/helm\.py$|^launchagents/com\.jarvis\.alpha\.ai-news-brief\.template\.plist$|^scripts/(run_ai_news_brief\.py|start_alpha_ai_news_brief\.sh|install_launchagents\.py)$)'
 }
@@ -607,6 +611,44 @@ if [ "$NODE_SHORT" = "brain" ] && needs_reload_spark_send_readiness; then
 elif [ "$NODE_SHORT" = "brain" ]; then
   emit skip restart node="$NODE_SHORT" service="alpha-spark-send-readiness" reason="no_launchagent_changes"
   mark_service_checked "alpha-spark-send-readiness"
+fi
+
+HERALD_LINKEDIN_HEALTH_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.herald-linkedin-health.plist"
+HERALD_LINKEDIN_WEEKLY_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.herald-linkedin-weekly-draft.plist"
+if [ "$NODE_SHORT" = "brain" ] && needs_reload_herald_linkedin; then
+  echo ""
+  echo "Refreshing Herald LinkedIn LaunchAgents..."
+  HERALD_LINKEDIN_START=$(time_ms)
+  INSTALL_LOG=$(mktemp)
+  if ! python3 "${REPO_DIR}/scripts/install_launchagents.py" --node brain >"$INSTALL_LOG" 2>&1; then
+    HERALD_LINKEDIN_DUR=$(($(time_ms) - HERALD_LINKEDIN_START))
+    INSTALL_ERR=$(tail -5 "$INSTALL_LOG" | tr '\n' ' ' | cut -c1-300)
+    rm -f "$INSTALL_LOG"
+    emit fail restart node="$NODE_SHORT" service="alpha-herald-linkedin" dur_ms="$HERALD_LINKEDIN_DUR" error="$INSTALL_ERR"
+    echo "❌ Herald LinkedIn LaunchAgent install failed"
+    exit 1
+  fi
+  rm -f "$INSTALL_LOG"
+  for PLIST in "$HERALD_LINKEDIN_HEALTH_PLIST" "$HERALD_LINKEDIN_WEEKLY_PLIST"; do
+    if [ ! -f "$PLIST" ]; then
+      emit fail restart node="$NODE_SHORT" service="alpha-herald-linkedin" dur_ms=$(($(time_ms) - HERALD_LINKEDIN_START)) error="plist missing after install: $PLIST"
+      echo "❌ Herald LinkedIn LaunchAgent plist missing after install"
+      exit 1
+    fi
+    launchctl unload "$PLIST" 2>/dev/null || true
+    launchctl load "$PLIST"
+  done
+  HERALD_LINKEDIN_HEALTH_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.herald-linkedin-health" {print $1}' | head -1)
+  HERALD_LINKEDIN_WEEKLY_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.herald-linkedin-weekly-draft" {print $1}' | head -1)
+  [ "$HERALD_LINKEDIN_HEALTH_PID" = "-" ] && HERALD_LINKEDIN_HEALTH_PID=0
+  [ "$HERALD_LINKEDIN_WEEKLY_PID" = "-" ] && HERALD_LINKEDIN_WEEKLY_PID=0
+  echo "✅ Herald LinkedIn LaunchAgents refreshed"
+  emit ok restart node="$NODE_SHORT" service="alpha-herald-linkedin-health" pid="${HERALD_LINKEDIN_HEALTH_PID:-0}" dur_ms=$(($(time_ms) - HERALD_LINKEDIN_START))
+  emit ok restart node="$NODE_SHORT" service="alpha-herald-linkedin-weekly-draft" pid="${HERALD_LINKEDIN_WEEKLY_PID:-0}" dur_ms=$(($(time_ms) - HERALD_LINKEDIN_START))
+  mark_service_checked "alpha-herald-linkedin"
+elif [ "$NODE_SHORT" = "brain" ]; then
+  emit skip restart node="$NODE_SHORT" service="alpha-herald-linkedin" reason="no_launchagent_changes"
+  mark_service_checked "alpha-herald-linkedin"
 fi
 
 AI_NEWS_BRIEF_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.ai-news-brief.plist"
