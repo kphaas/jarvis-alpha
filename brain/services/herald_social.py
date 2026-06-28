@@ -7,10 +7,12 @@ import re
 from dataclasses import dataclass
 from datetime import date
 from uuid import UUID
-from typing import Literal
+from typing import Literal, Protocol
 
 import asyncpg
 
+from brain.services.internet_scout.gateway_client import InternetScoutGatewayClient
+from brain.services.internet_scout.models import GatewaySearchResponse
 from brain.services.spark_memory_grounding import (
     SparkMemoryGroundingError,
     load_spark_memory_grounding,
@@ -32,6 +34,23 @@ _BANNED_HYPE = re.compile(
     re.IGNORECASE,
 )
 _WRONG_NAME = re.compile(r"\b(AT-0|ATO|At0|at0)\b")
+DEFAULT_LINKEDIN_TARGET_TOPICS: tuple[str, ...] = (
+    "enterprise AI transformation",
+    "AI operating model",
+    "AI governance and risk",
+    "human in the loop AI",
+    "private AI infrastructure",
+)
+
+
+class _SearchClient(Protocol):
+    async def search(
+        self,
+        *,
+        query: str,
+        count: int = 5,
+        provider: Literal["auto", "searxng", "brave", "perplexity"] = "auto",
+    ) -> GatewaySearchResponse: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +76,14 @@ class EngagementDraftOutcome:
     reason: str
     item_ids: tuple[UUID, ...]
     variant_ids: tuple[UUID, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class EngagementScoutOutcome:
+    created_count: int
+    skipped_count: int
+    reason: str
+    item_ids: tuple[UUID, ...]
 
 
 def clean_social_topic(topic: str) -> str:
@@ -163,6 +190,22 @@ def linkedin_engagement_slots_due(isodow: int) -> int:
     if isodow < 5:
         return 2
     return 3
+
+
+def linkedin_target_scout_queries(
+    topics: list[str] | tuple[str, ...] | None,
+) -> tuple[str, ...]:
+    clean_topics = tuple(
+        dict.fromkeys(
+            clean_social_topic(topic)
+            for topic in (topics or DEFAULT_LINKEDIN_TARGET_TOPICS)
+            if topic.strip()
+        )
+    )
+    return tuple(
+        f"LinkedIn posts {topic} enterprise AI CIO business transformation"
+        for topic in clean_topics
+    )
 
 
 async def create_weekly_linkedin_draft_if_due(
@@ -518,6 +561,71 @@ async def draft_linkedin_engagement_replies_if_due(
     )
 
 
+async def scout_linkedin_engagement_targets(
+    conn: asyncpg.Connection,
+    *,
+    actor_sub: str,
+    topics: list[str] | tuple[str, ...] | None = None,
+    per_topic: int = 2,
+    max_targets: int = 6,
+    search_client: _SearchClient | None = None,
+) -> EngagementScoutOutcome:
+    queries = linkedin_target_scout_queries(topics)
+    if not queries:
+        return EngagementScoutOutcome(0, 0, "no_topics", ())
+
+    client = search_client or InternetScoutGatewayClient()
+    item_ids: list[UUID] = []
+    skipped = 0
+    per_topic = max(1, min(per_topic, 5))
+    max_targets = max(1, min(max_targets, 12))
+    created_by = (actor_sub or "unknown")[:160]
+
+    for query in queries:
+        if len(item_ids) >= max_targets:
+            break
+        response = await client.search(query=query, count=per_topic, provider="auto")
+        for result in response.results:
+            if len(item_ids) >= max_targets:
+                break
+            if result.risk_markers:
+                skipped += 1
+                continue
+            url = result.url.strip()
+            if not url:
+                skipped += 1
+                continue
+            provider_item_urn = f"herald:scout:{hash_social_draft(url)[:16]}"
+            row = await conn.fetchrow(
+                """
+                INSERT INTO public.alpha_herald_social_engagement_items (
+                    source, account_label, provider_item_urn, provider_post_urn,
+                    item_url, author_name, item_text, created_by
+                )
+                VALUES ('manual', 'AT0', $1, NULL, $2, $3, $4, $5)
+                ON CONFLICT (provider_item_urn) WHERE provider_item_urn IS NOT NULL
+                DO NOTHING
+                RETURNING id
+                """,
+                provider_item_urn,
+                _fit(url, 500),
+                _scout_author_name(result.title, result.host),
+                _scout_item_text(result.title, result.description, result.host),
+                created_by,
+            )
+            if row is None:
+                skipped += 1
+                continue
+            item_ids.append(row["id"])
+
+    return EngagementScoutOutcome(
+        len(item_ids),
+        skipped,
+        "created" if item_ids else "no_new_targets",
+        tuple(item_ids),
+    )
+
+
 def _x_draft(topic: str, *, max_chars: int) -> str:
     template = (
         "AT0 is private AI for real life, running on owned hardware.\n\n"
@@ -610,6 +718,20 @@ def _clean_author(engagement_author: str | None) -> str | None:
 def _clean_spark_context(spark_context: str | None) -> str:
     clean = _WHITESPACE.sub(" ", (spark_context or "").strip())
     return clean[:1200]
+
+
+def _scout_author_name(title: str | None, host: str) -> str:
+    clean = _WHITESPACE.sub(" ", (title or host or "LinkedIn target").strip())
+    return _fit(clean, 160)
+
+
+def _scout_item_text(title: str | None, description: str, host: str) -> str:
+    parts = [
+        _WHITESPACE.sub(" ", part.strip())
+        for part in (title or "", description, f"Source host: {host}")
+        if part.strip()
+    ]
+    return _fit("\n\n".join(parts), 1200)
 
 
 def _spark_public_line(spark_context: str | None) -> str:
