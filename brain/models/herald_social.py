@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 SocialPlatform = Literal["x", "linkedin"]
 SocialDraftStatus = Literal["needs_review", "approved", "rejected", "archived"]
 SocialDraftKind = Literal["post", "reply"]
+SocialReplyStyle = Literal["strong_short", "practical", "warm"]
 SocialEngagementStatus = Literal[
     "needs_reply",
     "draft_created",
@@ -57,6 +58,8 @@ class HeraldSocialDraftCreate(BaseModel):
     campaign: str | None = Field(default=None, min_length=2, max_length=120)
     draft_kind: SocialDraftKind = "post"
     engagement_author: str | None = Field(default=None, min_length=1, max_length=120)
+    reply_style: SocialReplyStyle | None = None
+    reply_styles: list[SocialReplyStyle] = Field(default_factory=list, max_length=3)
 
 
 class HeraldSocialDraftStatusUpdate(BaseModel):
