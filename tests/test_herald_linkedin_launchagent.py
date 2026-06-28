@@ -21,6 +21,7 @@ WEEKLY_START_SCRIPT = (
     REPO_ROOT / "scripts" / "start_alpha_herald_linkedin_weekly_draft.sh"
 )
 PULL_SCRIPT = REPO_ROOT / "scripts" / "jarvisalpha_pull.sh"
+WEEKLY_AGENT = REPO_ROOT / "brain" / "agents" / "herald_linkedin_weekly_draft.py"
 
 
 def test_herald_linkedin_health_launchagent_template_renders() -> None:
@@ -95,3 +96,10 @@ def test_pull_script_refreshes_herald_linkedin_launchagents() -> None:
     assert "needs_reload_herald_linkedin" in source
     assert "com.jarvis.alpha.herald-linkedin-health.plist" in source
     assert "com.jarvis.alpha.herald-linkedin-weekly-draft.plist" in source
+
+
+def test_weekly_agent_does_not_log_reserved_created_field() -> None:
+    source = WEEKLY_AGENT.read_text(encoding="utf-8")
+
+    assert '"draft_created": outcome.created' in source
+    assert '"created": outcome.created' not in source
