@@ -57,12 +57,23 @@ const SPARK_PRINCIPALS = [
 ];
 
 type SparkPrincipalId = "ken" | "sweta" | "ryleigh" | "sloane";
+type SparkTargetId = SparkPrincipalId | "meagan";
+
+const SPARK_DRAFT_TARGETS = [
+  ...SPARK_PRINCIPALS,
+  { id: "meagan", label: "Meagan" },
+];
 
 const SPARK_PRINCIPAL_LABELS: Record<SparkPrincipalId, string> = {
   ken: "Ken",
   sweta: "Sweta",
   ryleigh: "Ryleigh",
   sloane: "Sloane",
+};
+
+const SPARK_TARGET_LABELS: Record<SparkTargetId, string> = {
+  ...SPARK_PRINCIPAL_LABELS,
+  meagan: "Meagan",
 };
 
 const FEEDBACK_BUTTONS: Array<{
@@ -125,6 +136,14 @@ const DEFAULT_FAVORITE_TARGETS: SparkProtectedRelationship[] = [
     label: "Sloane",
     relationship: "child",
     sensitivity: "minor",
+    default_mode: "draft_only",
+    approval_required: true,
+  },
+  {
+    id: "meagan",
+    label: "Meagan",
+    relationship: "co-parent",
+    sensitivity: "relationship",
     default_mode: "draft_only",
     approval_required: true,
   },
@@ -198,23 +217,23 @@ function parseSparkPrincipalId(value: string | null): SparkPrincipalId | null {
   return (match?.id as SparkPrincipalId | undefined) ?? null;
 }
 
-function targetIdFromLabel(value: string | null): SparkPrincipalId | null {
+function targetIdFromLabel(value: string | null): SparkTargetId | null {
   if (!value) return null;
   const normalized = normalizedKey(value);
-  const match = SPARK_PRINCIPALS.find(
-    (principal) =>
-      normalizedKey(principal.id) === normalized ||
-      normalizedKey(principal.label) === normalized,
+  const match = SPARK_DRAFT_TARGETS.find(
+    (target) =>
+      normalizedKey(target.id) === normalized ||
+      normalizedKey(target.label) === normalized,
   );
-  return (match?.id as SparkPrincipalId | undefined) ?? null;
+  return (match?.id as SparkTargetId | undefined) ?? null;
 }
 
 function pairRelationship(
   principalId: SparkPrincipalId,
-  targetId: SparkPrincipalId,
+  targetId: SparkTargetId,
 ) {
   const principalIsChild = isChildPrincipal(principalId);
-  const targetIsChild = isChildPrincipal(targetId);
+  const targetIsChild = targetId !== "meagan" && isChildPrincipal(targetId);
   if (!principalIsChild && !targetIsChild) return "partner";
   if (principalIsChild && targetIsChild) return "sibling";
   return targetIsChild ? "child" : "parent";
@@ -222,9 +241,9 @@ function pairRelationship(
 
 function fallbackSensitivity(
   principalId: SparkPrincipalId,
-  targetId: SparkPrincipalId,
+  targetId: SparkTargetId,
 ) {
-  if (isChildPrincipal(targetId)) return "minor";
+  if (targetId !== "meagan" && isChildPrincipal(targetId)) return "minor";
   if (pairRelationship(principalId, targetId) === "partner") return "relationship";
   return "family";
 }
@@ -243,8 +262,8 @@ function buildDraftTargetOptions(
   const targetByLabel = new Map(
     targets.map((target) => [normalizedKey(target.label), target]),
   );
-  const candidateIds = SPARK_PRINCIPALS.map(
-    (principal) => principal.id as SparkPrincipalId,
+  const candidateIds = SPARK_DRAFT_TARGETS.map(
+    (target) => target.id as SparkTargetId,
   ).filter((targetId) => targetId !== principalId);
 
   return candidateIds.map((targetId) => {
@@ -253,14 +272,15 @@ function buildDraftTargetOptions(
       DEFAULT_FAVORITE_TARGETS.find((relationship) => relationship.id === targetId) ??
       null;
     const label =
-      configuredRelationship?.label ?? SPARK_PRINCIPAL_LABELS[targetId];
+      configuredRelationship?.label ?? SPARK_TARGET_LABELS[targetId];
     const target =
       targetByLabel.get(normalizedKey(label)) ??
       targets.find((item) => normalizedKey(item.label) === normalizedKey(targetId));
     return {
       id: targetId,
       label,
-      relationship: pairRelationship(principalId, targetId),
+      relationship:
+        configuredRelationship?.relationship ?? pairRelationship(principalId, targetId),
       sensitivity:
         configuredRelationship?.sensitivity ??
         fallbackSensitivity(principalId, targetId),

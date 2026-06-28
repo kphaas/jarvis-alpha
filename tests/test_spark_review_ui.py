@@ -53,6 +53,8 @@ def test_spark_review_ui_uses_draft_routes_and_api_wrapper() -> None:
     )
 
     assert "apiJson" in source
+    assert "SPARK_DRAFT_TARGETS" in source
+    assert "Meagan" in source
     assert "/v1/spark/drafts/imessage/targets" in source
     assert "/v1/spark/drafts/imessage/target-preview" in source
     assert "/v1/spark/drafts/imessage" in source
@@ -204,7 +206,8 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "sweta" in source
     assert "ryleigh" in source
     assert "sloane" in source
-    assert "meagan" not in source
+    assert 'type SparkPrincipalId = "ken" | "sweta" | "ryleigh" | "sloane"' in source
+    assert "meagan" in source
     assert "mother" not in source
     assert "Review console" in source
     assert "Voice profile" in source
