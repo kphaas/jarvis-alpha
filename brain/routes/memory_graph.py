@@ -205,7 +205,7 @@ class MemoryGraphExecuteResponse(BaseModel):
 async def get_memory_graph(
     request: Request,
     as_of: datetime | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=1000),
     _user_id: str = Depends(require_auth),
 ) -> MemoryGraphResponse:
     uid = _request_user_uuid(request)
@@ -249,7 +249,7 @@ async def get_memory_admin_user_graph(
     principal_id: str,
     request: Request,
     as_of: datetime | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=1000),
     _user_id: str = Depends(require_auth),
 ) -> MemoryGraphResponse:
     check_scopes(request, "memory.read", "admin")
