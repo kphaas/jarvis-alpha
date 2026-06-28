@@ -30,6 +30,7 @@ from brain.models.herald_social import (
     HeraldSocialManualPublishUpdate,
     HeraldSocialPlatformProfileList,
     HeraldSocialPlatformProfileOut,
+    SocialReplyStyle,
 )
 from brain.services.herald_linkedin import (
     HeraldLinkedInConfigError,
@@ -413,6 +414,7 @@ async def draft_linkedin_engagement_reply(
         campaign="linkedin-engagement-inbox",
         draft_kind="reply",
         engagement_author=str(item["author_name"]),
+        reply_styles=["strong_short", "practical", "warm"],
     )
     response = await _create_social_drafts(body=body, request=request)
     variant_id = response.drafts[0].id if response.drafts else None
@@ -689,82 +691,88 @@ async def _create_social_drafts(
             )
 
             draft_rows = []
+            reply_styles = _reply_styles_for(body)
             for platform in platforms:
                 profile = profiles[platform]
-                draft = create_social_draft(
-                    topic=body.topic,
-                    platform=platform,
-                    max_chars=int(profile["max_chars"]),
-                    draft_kind=body.draft_kind,
-                    engagement_author=body.engagement_author,
-                    spark_context=spark_context,
-                )
-                repeat_of = await conn.fetchval(
-                    """
-                    SELECT id
-                    FROM public.alpha_herald_social_draft_variants
-                    WHERE platform = $1
-                      AND content_hash = $2
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                    """,
-                    platform,
-                    draft.content_hash,
-                )
-                safety_flags = list(draft.safety_flags)
-                if repeat_of is not None:
-                    safety_flags.append("possible_repeat")
-                row = await conn.fetchrow(
-                    """
-                    INSERT INTO public.alpha_herald_social_draft_variants (
-                        request_id, platform, account_label, draft_text,
-                        content_hash, profile_version, audience_notes,
-                        voice_rules, safety_rules, voice_score, safety_flags,
-                        repeat_of_variant_id
+                for reply_style in reply_styles:
+                    draft = create_social_draft(
+                        topic=body.topic,
+                        platform=platform,
+                        max_chars=int(profile["max_chars"]),
+                        draft_kind=body.draft_kind,
+                        engagement_author=body.engagement_author,
+                        reply_style=reply_style,
+                        spark_context=spark_context,
                     )
-                    VALUES (
-                        $1, $2, $3, $4, $5, $6, $7,
-                        $8::text[], $9::text[], $10, $11::text[], $12
+                    repeat_of = await conn.fetchval(
+                        """
+                        SELECT id
+                        FROM public.alpha_herald_social_draft_variants
+                        WHERE platform = $1
+                          AND content_hash = $2
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                        """,
+                        platform,
+                        draft.content_hash,
                     )
-                    RETURNING id
-                    """,
-                    request_id,
-                    platform,
-                    body.account_label.strip(),
-                    draft.draft_text,
-                    draft.content_hash,
-                    int(profile["profile_version"]),
-                    profile["audience_notes"],
-                    list(profile["voice_rules"]),
-                    list(profile["safety_rules"]),
-                    draft.voice_score,
-                    safety_flags,
-                    repeat_of,
-                )
-                variant_id = row["id"]
-                await _record_event(
-                    conn,
-                    request_id=request_id,
-                    variant_id=variant_id,
-                    event_type="variant_created",
-                    actor_sub=actor_sub,
-                    actor_type=actor_type,
-                    payload={
-                        "platform": platform,
-                        "draft_kind": body.draft_kind,
-                        "profile_version": int(profile["profile_version"]),
-                        "repeat": repeat_of is not None,
-                        "spark_input": {
-                            "context_hash": draft.spark_context_hash,
-                            "context_available": bool(draft.spark_context_hash),
+                    safety_flags = list(draft.safety_flags)
+                    if repeat_of is not None:
+                        safety_flags.append("possible_repeat")
+                    row = await conn.fetchrow(
+                        """
+                        INSERT INTO public.alpha_herald_social_draft_variants (
+                            request_id, platform, account_label, draft_text,
+                            content_hash, profile_version, audience_notes,
+                            voice_rules, safety_rules, voice_score, safety_flags,
+                            repeat_of_variant_id
+                        )
+                        VALUES (
+                            $1, $2, $3, $4, $5, $6, $7,
+                            $8::text[], $9::text[], $10, $11::text[], $12
+                        )
+                        RETURNING id
+                        """,
+                        request_id,
+                        platform,
+                        body.account_label.strip(),
+                        draft.draft_text,
+                        draft.content_hash,
+                        int(profile["profile_version"]),
+                        profile["audience_notes"],
+                        list(profile["voice_rules"]),
+                        list(profile["safety_rules"]),
+                        draft.voice_score,
+                        safety_flags,
+                        repeat_of,
+                    )
+                    variant_id = row["id"]
+                    await _record_event(
+                        conn,
+                        request_id=request_id,
+                        variant_id=variant_id,
+                        event_type="variant_created",
+                        actor_sub=actor_sub,
+                        actor_type=actor_type,
+                        payload={
+                            "platform": platform,
+                            "draft_kind": body.draft_kind,
+                            "reply_style": reply_style
+                            if body.draft_kind == "reply"
+                            else None,
+                            "profile_version": int(profile["profile_version"]),
+                            "repeat": repeat_of is not None,
+                            "spark_input": {
+                                "context_hash": draft.spark_context_hash,
+                                "context_available": bool(draft.spark_context_hash),
+                            },
+                            "spark_output": {
+                                "content_hash": draft.content_hash,
+                                "draft_engine": "herald_social_spark_v1",
+                            },
                         },
-                        "spark_output": {
-                            "content_hash": draft.content_hash,
-                            "draft_engine": "herald_social_spark_v1",
-                        },
-                    },
-                )
-                draft_rows.append(await _fetch_variant(conn, variant_id))
+                    )
+                    draft_rows.append(await _fetch_variant(conn, variant_id))
 
     return HeraldSocialDraftCreateResponse(
         request_id=request_id,
@@ -786,9 +794,11 @@ async def update_social_draft_status(
         async with conn.transaction():
             current = await conn.fetchrow(
                 """
-                SELECT request_id, status
-                FROM public.alpha_herald_social_draft_variants
-                WHERE id = $1
+                SELECT v.request_id, v.status, r.draft_kind
+                FROM public.alpha_herald_social_draft_variants v
+                JOIN public.alpha_herald_social_draft_requests r
+                  ON r.id = v.request_id
+                WHERE v.id = $1
                 FOR UPDATE
                 """,
                 variant_id,
@@ -811,6 +821,21 @@ async def update_social_draft_status(
                 body.reviewer_notes,
                 actor_sub,
             )
+            if body.status == "approved" and current["draft_kind"] == "reply":
+                await conn.execute(
+                    """
+                    UPDATE public.alpha_herald_social_engagement_items e
+                    SET reply_variant_id = $1,
+                        updated_at = now()
+                    WHERE e.reply_variant_id IN (
+                        SELECT v.id
+                        FROM public.alpha_herald_social_draft_variants v
+                        WHERE v.request_id = $2
+                    )
+                    """,
+                    variant_id,
+                    current["request_id"],
+                )
             await conn.execute(
                 """
                 UPDATE public.alpha_herald_social_draft_requests r
@@ -836,10 +861,22 @@ async def update_social_draft_status(
                 event_type=f"variant_{body.status}",
                 actor_sub=actor_sub,
                 actor_type=actor_type,
-                payload={"from_status": current["status"]},
+                payload={
+                    "from_status": current["status"],
+                    "feedback_provided": bool(body.reviewer_notes),
+                },
             )
             row = await _fetch_variant(conn, variant_id)
     return _draft_out(row)
+
+
+def _reply_styles_for(body: HeraldSocialDraftCreate) -> tuple[SocialReplyStyle, ...]:
+    if body.draft_kind != "reply":
+        return ("practical",)
+    styles = body.reply_styles or ([body.reply_style] if body.reply_style else [])
+    if not styles:
+        styles = ["practical"]
+    return tuple(dict.fromkeys(styles))
 
 
 @router.post(

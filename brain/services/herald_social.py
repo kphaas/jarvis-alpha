@@ -26,7 +26,13 @@ from brain.services.spark_voice_ingest import SparkVoiceIngestError
 
 SocialPlatform = Literal["x", "linkedin"]
 SocialDraftKind = Literal["post", "reply"]
+SocialReplyStyle = Literal["strong_short", "practical", "warm"]
 SUPPORTED_PLATFORMS: tuple[SocialPlatform, ...] = ("x", "linkedin")
+LINKEDIN_REPLY_STYLES: tuple[SocialReplyStyle, ...] = (
+    "strong_short",
+    "practical",
+    "warm",
+)
 
 _WHITESPACE = re.compile(r"\s+")
 _BANNED_HYPE = re.compile(
@@ -113,6 +119,7 @@ def create_social_draft(
     max_chars: int,
     draft_kind: SocialDraftKind = "post",
     engagement_author: str | None = None,
+    reply_style: SocialReplyStyle = "practical",
     spark_context: str | None = None,
 ) -> SocialDraftResult:
     clean_topic = clean_social_topic(topic)
@@ -124,6 +131,7 @@ def create_social_draft(
         draft = _linkedin_reply_draft(
             clean_topic,
             engagement_author=clean_author or "there",
+            reply_style=reply_style,
             max_chars=max_chars,
             spark_context=clean_spark_context,
         )
@@ -139,6 +147,8 @@ def create_social_draft(
     flags.extend(("draft_only_no_publish", "human_review_required"))
     if clean_spark_context:
         flags.append("spark_context_used")
+    if draft_kind == "reply":
+        flags.append(f"reply_style_{reply_style}")
     return SocialDraftResult(
         draft_text=draft,
         content_hash=hash_social_draft(draft),
@@ -475,6 +485,7 @@ async def draft_linkedin_engagement_replies_if_due(
                 max_chars=int(profile["max_chars"]),
                 draft_kind="reply",
                 engagement_author=str(item["author_name"]),
+                reply_style="strong_short",
                 spark_context=spark_context,
             )
             repeat_of = await conn.fetchval(
@@ -689,17 +700,34 @@ def _linkedin_reply_draft(
     topic: str,
     *,
     engagement_author: str,
+    reply_style: SocialReplyStyle,
     max_chars: int,
     spark_context: str | None = None,
 ) -> str:
-    spark_line = _spark_reply_line(spark_context)
-    template = (
-        "Thanks {author} - this is the part I keep coming back to.\n\n"
-        "{topic}\n\n"
-        "{spark_line}"
-        "For me, the useful bar is whether the system leaves a clear trail: what it saw, "
-        "what it suggested, what a human approved, and what changed afterward."
-    )
+    spark_line = _spark_reply_line(spark_context, reply_style=reply_style)
+    if reply_style == "strong_short":
+        template = (
+            "Strong point. AI governance is not overhead; it is the operating "
+            "model that lets teams move faster without losing trust, auditability, "
+            "or accountability."
+        )
+    elif reply_style == "warm":
+        template = (
+            "Agree with this framing, {author}. The organizations that win with AI "
+            "will be the ones that make trust, accountability, and review trails part "
+            "of the operating model from the start.\n\n"
+            "{spark_line}"
+            "That is where AI moves from experiment to enterprise capability."
+        )
+    else:
+        template = (
+            "This is the right enterprise AI question, {author}: not just whether AI "
+            "can automate work, but whether leaders can inspect, govern, and trust it "
+            "at scale.\n\n"
+            "{spark_line}"
+            "That is the bar I keep coming back to: useful autonomy with a clear human "
+            "approval trail."
+        )
     return _fit(
         template.format(author=engagement_author, topic=topic, spark_line=spark_line),
         max_chars,
@@ -743,12 +771,18 @@ def _spark_public_line(spark_context: str | None) -> str:
     )
 
 
-def _spark_reply_line(spark_context: str | None) -> str:
+def _spark_reply_line(
+    spark_context: str | None,
+    *,
+    reply_style: SocialReplyStyle,
+) -> str:
     if not spark_context:
         return ""
+    if reply_style == "strong_short":
+        return ""
     return (
-        "That matches the voice I want here: practical, low-hype, and grounded "
-        "in reviewable systems.\n\n"
+        "The useful posture is practical, low-hype, and grounded in reviewable "
+        "systems.\n\n"
     )
 
 

@@ -82,6 +82,11 @@ def test_herald_ui_exposes_social_approval_outbox() -> None:
     assert "Scout targets" in source
     assert "Add to inbox" in source
     assert "Draft reply" in source
+    assert "LinkedIn reply options created" in source
+    assert "Feedback for rejection or next draft" in source
+    assert "replyStyleLabel" in source
+    assert "Strong short" in source
+    assert "reviewer_notes" in source
     assert "r_member_social_feed" in source
     assert "Post to LinkedIn" in source
     assert "Post reply" in source

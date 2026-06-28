@@ -280,6 +280,13 @@ function classTone(value: string) {
   return 'border-white/10 bg-white/5 text-zinc-300'
 }
 
+function replyStyleLabel(flags: string[]) {
+  if (flags.includes('reply_style_strong_short')) return 'Strong short'
+  if (flags.includes('reply_style_warm')) return 'Warm'
+  if (flags.includes('reply_style_practical')) return 'Practical'
+  return null
+}
+
 function Pill({ label }: { label: string }) {
   return (
     <span className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${classTone(label)}`}>
@@ -324,6 +331,7 @@ export default function Herald() {
   const [scoutTopics, setScoutTopics] = useState('AI and enterprise transformation, AT0 private AI progress')
   const [scheduleDates, setScheduleDates] = useState<Record<string, string>>({})
   const [publishedUrls, setPublishedUrls] = useState<Record<string, string>>({})
+  const [socialDraftFeedback, setSocialDraftFeedback] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
   const [actingDraftId, setActingDraftId] = useState<string | null>(null)
@@ -591,7 +599,7 @@ export default function Herald() {
       const result = await apiJson<SocialDraftCreateResponse>(`/v1/herald/social/linkedin/engagements/${itemId}/draft-reply`, {
         method: 'POST',
       })
-      setNotice(`LinkedIn reply draft created: ${result.drafts.length}`)
+      setNotice(`LinkedIn reply options created: ${result.drafts.length}`)
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'LinkedIn reply draft failed')
@@ -635,12 +643,21 @@ export default function Herald() {
   }
 
   const setSocialDraftStatus = async (draftId: string, status: 'approved' | 'rejected' | 'archived') => {
+    const reviewerNotes = socialDraftFeedback[draftId]?.trim()
     setActingSocialDraftId(draftId)
     setNotice(null)
     try {
       await apiJson(`/v1/herald/social/drafts/${draftId}/status`, {
         method: 'POST',
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({
+          status,
+          reviewer_notes: reviewerNotes || undefined,
+        }),
+      })
+      setSocialDraftFeedback((current) => {
+        const next = { ...current }
+        delete next[draftId]
+        return next
       })
       setNotice(`Social draft ${status}`)
       await load()
@@ -1051,6 +1068,9 @@ export default function Herald() {
                 <div className="flex flex-wrap items-center gap-2">
                   <Pill label={draft.platform === 'x' ? 'X' : 'LinkedIn'} />
                   <Pill label={draft.draft_kind} />
+                  {draft.draft_kind === 'reply' && replyStyleLabel(draft.safety_flags) && (
+                    <Pill label={replyStyleLabel(draft.safety_flags) ?? ''} />
+                  )}
                   <Pill label={draft.status} />
                   <Pill label={draft.publish_status} />
                   <span className={`ml-auto text-[10px] font-mono uppercase ${muted}`}>
@@ -1157,34 +1177,50 @@ export default function Herald() {
                   </div>
                 )}
                 {draft.status === 'needs_review' && (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setSocialDraftStatus(draft.id, 'approved')}
-                      disabled={actingSocialDraftId === draft.id}
-                      className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-emerald-600 px-3 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-45"
-                    >
-                      <CheckCircle2 className="h-4 w-4" />
-                      Approve
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSocialDraftStatus(draft.id, 'rejected')}
-                      disabled={actingSocialDraftId === draft.id}
-                      className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-bold transition ${border} ${panel} disabled:opacity-45`}
-                    >
-                      <XCircle className="h-4 w-4" />
-                      Reject
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSocialDraftStatus(draft.id, 'archived')}
-                      disabled={actingSocialDraftId === draft.id}
-                      className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-bold transition ${border} ${panel} disabled:opacity-45`}
-                    >
-                      <Archive className="h-4 w-4" />
-                      Archive
-                    </button>
+                  <div className="mt-3 space-y-2">
+                    <textarea
+                      value={socialDraftFeedback[draft.id] ?? ''}
+                      onChange={(event) => setSocialDraftFeedback((current) => ({
+                        ...current,
+                        [draft.id]: event.target.value,
+                      }))}
+                      placeholder="Feedback for rejection or next draft"
+                      className={`min-h-20 w-full rounded-lg border px-3 py-2 text-sm outline-none ${border} ${panel} ${strong}`}
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSocialDraftStatus(draft.id, 'approved')}
+                        disabled={actingSocialDraftId === draft.id}
+                        className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-emerald-600 px-3 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-45"
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSocialDraftStatus(draft.id, 'rejected')}
+                        disabled={actingSocialDraftId === draft.id}
+                        className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-bold transition ${border} ${panel} disabled:opacity-45`}
+                      >
+                        <XCircle className="h-4 w-4" />
+                        Reject
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSocialDraftStatus(draft.id, 'archived')}
+                        disabled={actingSocialDraftId === draft.id}
+                        className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-bold transition ${border} ${panel} disabled:opacity-45`}
+                      >
+                        <Archive className="h-4 w-4" />
+                        Archive
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {draft.status !== 'needs_review' && draft.reviewer_notes && (
+                  <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${border} ${panel}`}>
+                    Feedback: {draft.reviewer_notes}
                   </div>
                 )}
               </article>
