@@ -32,6 +32,17 @@ def test_profile_seed_builds_reviewed_node_proposals() -> None:
     assert (
         first_payload["provenance"]["source_basis"] == "user_approved_profile_context"
     )
+    assert {
+        proposal["payload"]["provenance"]["source_basis"] for proposal in proposals
+    } >= {"resume_docx_and_linkedin_profile", "linkedin_profile", "resume_docx"}
+
+
+def test_profile_seed_does_not_include_contact_details() -> None:
+    proposals = build_profile_node_proposals(principal_id="ken")
+    payload_text = json.dumps(proposals).lower()
+
+    for forbidden in ("phone", "email", "@", "cell", "mobile"):
+        assert forbidden not in payload_text
 
 
 def test_profile_edge_seed_requires_approved_endpoint_nodes() -> None:
