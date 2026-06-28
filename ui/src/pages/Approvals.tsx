@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock, Fingerprint, Sparkles, Globe2, MousePointerClick } from 'lucide-react'
 import { apiJson } from '../lib/apiFetch'
 import { useAppStore } from '../store'
+import type { SparkIMessageApprovedSendResponse } from '../types/spark'
 
 interface PrivacyApprovalContext {
   case_id: string
@@ -72,6 +73,7 @@ interface DecideResponse {
 }
 
 const REFRESH_MS = 10_000
+const SPARK_APPROVE_SEND_TARGETS = new Set(['sweta', 'meagan'])
 
 const TIER_COLORS: Record<string, string> = {
   T4: 'text-amber-400 bg-amber-500/15 border-amber-500/30',
@@ -140,6 +142,16 @@ function buildSparkReviewUrl(item: QueueItem): string {
   return `/spark?${params.toString()}`
 }
 
+function canApproveAndSendSpark(item: QueueItem): boolean {
+  const target = item.spark?.target_label?.trim().toLowerCase()
+  return Boolean(
+    item.spark?.outbox_recorded &&
+    item.spark?.outbox_id &&
+    target &&
+    SPARK_APPROVE_SEND_TARGETS.has(target)
+  )
+}
+
 export default function Approvals() {
   const { theme } = useAppStore()
   const isDark = theme === 'dark'
@@ -159,6 +171,7 @@ export default function Approvals() {
     id: string
     decision: string
     sparkReturnUrl?: string | null
+    sendStatus?: string | null
   } | null>(null)
 
   const isUnlocked = approvalToken && Date.now() < tokenExpiry
@@ -232,6 +245,61 @@ export default function Approvals() {
         setApprovalToken(null)
         setShowPinModal(true)
       }
+    } finally {
+      setActing(null)
+    }
+  }
+
+  const handleApproveAndSendSpark = async (item: QueueItem) => {
+    if (!isUnlocked) {
+      setShowPinModal(true)
+      return
+    }
+    const outboxId = item.spark?.outbox_id
+    if (!outboxId || !canApproveAndSendSpark(item)) {
+      return
+    }
+    setActing(item.id)
+    setActionResult(null)
+    let decision: DecideResponse | null = null
+    try {
+      decision = await apiJson<DecideResponse>(
+        `/v1/approvals/${item.id}/decide`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Approval-Token': approvalToken!,
+          },
+          body: JSON.stringify({ decision: 'approved' }),
+        }
+      )
+      const send = await apiJson<SparkIMessageApprovedSendResponse>(
+        `/v1/spark/drafts/imessage/outbox/${outboxId}/send`,
+        { method: 'POST' }
+      )
+      setActionResult({
+        id: item.id,
+        decision: decision.decision,
+        sparkReturnUrl: buildSparkReviewUrl(item),
+        sendStatus: send.outbox_status,
+      })
+      await load()
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('403')) {
+        setApprovalToken(null)
+        setShowPinModal(true)
+        return
+      }
+      setError(e instanceof Error ? e.message : 'Approve + Send failed')
+      if (decision) {
+        setActionResult({
+          id: item.id,
+          decision: decision.decision,
+          sparkReturnUrl: buildSparkReviewUrl(item),
+        })
+      }
+      await load()
     } finally {
       setActing(null)
     }
@@ -315,6 +383,7 @@ export default function Approvals() {
         >
           {actionResult.decision === 'approved' ? <ShieldCheck className="w-4 h-4" /> : <ShieldX className="w-4 h-4" />}
           Request {actionResult.decision}
+          {actionResult.sendStatus && <span className="font-mono">· send {actionResult.sendStatus}</span>}
           {actionResult.sparkReturnUrl && (
             <Link
               to={actionResult.sparkReturnUrl}
@@ -443,6 +512,16 @@ export default function Approvals() {
                   <Sparkles className="w-3.5 h-3.5" />
                   Review Spark
                 </Link>
+              )}
+              {canApproveAndSendSpark(item) && (
+                <button
+                  disabled={acting === item.id}
+                  onClick={() => handleApproveAndSendSpark(item)}
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-40"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Approve + Send
+                </button>
               )}
               <button
                 disabled={acting === item.id}

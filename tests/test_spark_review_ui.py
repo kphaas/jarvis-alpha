@@ -121,6 +121,10 @@ def test_spark_approval_handoff_ui_links_to_spark_review() -> None:
     assert "buildSparkReviewUrl" in approvals_source
     assert "Review Spark" in approvals_source
     assert "Return to Spark send" in approvals_source
+    assert "SPARK_APPROVE_SEND_TARGETS" in approvals_source
+    assert "canApproveAndSendSpark" in approvals_source
+    assert "Approve + Send" in approvals_source
+    assert "/v1/spark/drafts/imessage/outbox/${outboxId}/send" in approvals_source
     assert "useSearchParams" in spark_source
     assert "Approval queue" in spark_source
     assert 'searchParams.get("principal")' in spark_source
