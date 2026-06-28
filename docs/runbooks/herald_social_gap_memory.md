@@ -1,6 +1,6 @@
 # Herald Social Gap Memory
 
-Updated: 2026-06-27
+Updated: 2026-06-28
 
 ## Purpose
 
@@ -12,7 +12,7 @@ code, tests or smoke coverage, and a runbook/update that proves the behavior.
 
 | ID | Gap | State | Complete When |
 |---|---|---|---|
-| HSG-001 | Unified interaction ledger across email and social | Open | Email messages, social mentions, drafts, approvals, sends, and failures share one typed interaction model or adapter contract, with append-only outbound audit. |
+| HSG-001 | Unified interaction ledger across email and social | Done | Email messages, social mentions, drafts, approvals, sends, and failures share one typed interaction model or adapter contract, with append-only outbound audit. |
 | HSG-002 | Social connector layer | Partial | At least one approved connector path exists for read + draft/schedule/publish handoff, with token scope docs, health check, and policy limits. Prefer Postiz/Buffer before direct browser automation. |
 | HSG-003 | Social approval outbox | Done | Herald can create platform-specific social drafts, queue them for approve/reject, preserve versions, and block every outbound action until explicit approval. |
 | HSG-004 | Social inbox UI | Partial | `/herald` separates email from social channels and lets Ken triage account/platform streams without autonomous replies, likes, follows, or DMs. |
@@ -52,3 +52,4 @@ manual receipt workflow are deployed and smoke-tested:
 | 2026-06-27 | HSG-002 | Partial: added Brain LaunchAgent `com.jarvis.alpha.herald-linkedin-weekly-draft` for automatic weekly LinkedIn draft creation. It creates review-only Spark drafts and never publishes. |
 | 2026-06-28 | HSG-004 | Partial: added Brain LaunchAgent `com.jarvis.alpha.herald-linkedin-engagement-scheduler` to draft up to 3 LinkedIn replies per week from existing `needs_reply` items. It does not discover posts or publish comments. |
 | 2026-06-28 | HSG-004 | Partial: added `com.jarvis.alpha.herald-linkedin-target-scout` and `/v1/herald/social/linkedin/engagements/scout` so Herald can discover public AI/business-transformation targets through Gateway Internet Scout and queue them for review. No logged-in scraping or autonomous comment/publish. |
+| 2026-06-28 | HSG-001 | Added append-only `alpha_herald_interaction_ledger`, `brain/services/herald_interaction_ledger.py`, and hooks for AT-0 mail messages/drafts/sends plus social drafts, approvals, LinkedIn engagement items, scout targets, and publish outcomes. |

@@ -52,6 +52,13 @@ LINKEDIN_ENGAGEMENT_MIGRATION = (
     / "migrations"
     / "20260627_160000_herald_linkedin_engagement_inbox.sql"
 )
+INTERACTION_LEDGER_MIGRATION = (
+    REPO_ROOT
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260628_130000_herald_interaction_ledger.sql"
+)
 
 
 def test_social_draft_is_draft_only_and_brand_linted() -> None:
@@ -203,10 +210,15 @@ async def test_linkedin_target_scout_queues_local_review_items_only() -> None:
     class FakeConn:
         def __init__(self) -> None:
             self.rows: list[tuple[object, ...]] = []
+            self.events: list[tuple[object, ...]] = []
 
         async def fetchrow(self, _query: str, *args: object):
             self.rows.append(args)
             return {"id": UUID("11111111-1111-4111-8111-111111111111")}
+
+        async def execute(self, _query: str, *args: object):
+            self.events.append(args)
+            return "INSERT 0 1"
 
     conn = FakeConn()
     outcome = await scout_linkedin_engagement_targets(
@@ -223,6 +235,13 @@ async def test_linkedin_target_scout_queues_local_review_items_only() -> None:
     assert outcome.reason == "created"
     assert conn.rows[0][0].startswith("herald:scout:")
     assert conn.rows[0][1] == "https://social.example/member-post"
+    assert conn.events[0][0:5] == (
+        "linkedin",
+        "engagement",
+        "inbound",
+        "engagement_scouted",
+        "needs_reply",
+    )
 
 
 def test_linkedin_weekly_auto_draft_is_draft_only_and_deduped() -> None:
@@ -336,6 +355,20 @@ def test_linkedin_engagement_migration_adds_needs_reply_inbox() -> None:
     assert "reply_variant_id" in source
     assert "r_member_social" in source
     assert "FORCE ROW LEVEL SECURITY" in source
+    assert "access_token" not in source
+    assert "client_secret" not in source
+
+
+def test_herald_interaction_ledger_migration_is_append_only_metadata() -> None:
+    source = INTERACTION_LEDGER_MIGRATION.read_text(encoding="utf-8")
+
+    assert "public.alpha_herald_interaction_ledger" in source
+    assert "alpha_herald_interaction_ledger_immutable" in source
+    assert "FORCE ROW LEVEL SECURITY" in source
+    assert "channel IN ('email', 'social', 'linkedin', 'x')" in source
+    assert "interaction_kind IN" in source
+    assert "No mail body" in source
+    assert "draft text" in source
     assert "access_token" not in source
     assert "client_secret" not in source
 
