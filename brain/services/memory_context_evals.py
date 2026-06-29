@@ -109,7 +109,9 @@ def _current_prompt_excludes_history() -> MemoryContextEvalResult:
         eval_group="auto_context",
         passed=include_history is False,
         details={"prompt": prompt, "include_history": include_history},
-        failures=() if include_history is False else ("current_prompt_includes_history",),
+        failures=()
+        if include_history is False
+        else ("current_prompt_includes_history",),
     )
 
 
@@ -121,7 +123,9 @@ def _historical_prompt_includes_history() -> MemoryContextEvalResult:
         eval_group="auto_context",
         passed=include_history is True,
         details={"prompt": prompt, "include_history": include_history},
-        failures=() if include_history is True else ("historical_prompt_excludes_history",),
+        failures=()
+        if include_history is True
+        else ("historical_prompt_excludes_history",),
     )
 
 
@@ -145,7 +149,9 @@ def _at0_prompt_includes_system_principal() -> MemoryContextEvalResult:
         eval_group="auto_context",
         passed=include_system is True,
         details={"prompt": prompt, "include_at0_system_graph": include_system},
-        failures=() if include_system is True else ("at0_system_principal_not_selected",),
+        failures=()
+        if include_system is True
+        else ("at0_system_principal_not_selected",),
     )
 
 
@@ -231,7 +237,9 @@ def _context_section_order_contract() -> MemoryContextEvalResult:
 def _group_summary(results: list[MemoryContextEvalResult]) -> dict[str, dict[str, int]]:
     summary: dict[str, dict[str, int]] = {}
     for result in results:
-        group = summary.setdefault(result.eval_group, {"case_count": 0, "passed": 0, "failed": 0})
+        group = summary.setdefault(
+            result.eval_group, {"case_count": 0, "passed": 0, "failed": 0}
+        )
         group["case_count"] += 1
         group["passed" if result.passed else "failed"] += 1
     return summary
