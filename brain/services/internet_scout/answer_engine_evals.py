@@ -8,6 +8,7 @@ strategy, and deep-research coverage.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from time import perf_counter_ns
 
 from brain.services.internet_scout.models import (
     InternetScoutRequest,
@@ -32,6 +33,12 @@ class AnswerEngineEvalResult:
 def run_answer_engine_evals() -> list[AnswerEngineEvalResult]:
     """Run the Beacon answer-engine UX contract benchmark."""
     search_results = run_search_quality_evals()
+    return _answer_engine_results(search_results)
+
+
+def _answer_engine_results(
+    search_results: list[SearchQualityEvalResult],
+) -> list[AnswerEngineEvalResult]:
     by_name = {result.name: result for result in search_results}
     return [
         *_focus_mode_contract_results(),
@@ -47,7 +54,10 @@ def run_answer_engine_evals() -> list[AnswerEngineEvalResult]:
 
 def answer_engine_eval_payload() -> dict[str, object]:
     """Return a JSON-safe payload for scripts, CI, and health wiring."""
-    results = run_answer_engine_evals()
+    started_ns = perf_counter_ns()
+    search_results = run_search_quality_evals()
+    results = _answer_engine_results(search_results)
+    elapsed_ms = max(0, round((perf_counter_ns() - started_ns) / 1_000_000))
     failed = [result for result in results if not result.passed]
     return {
         "suite": "beacon_answer_engine",
@@ -56,6 +66,11 @@ def answer_engine_eval_payload() -> dict[str, object]:
         "passed": len(results) - len(failed),
         "failed": len(failed),
         "case_groups": _group_summary(results),
+        "reporting": _reporting_summary(
+            results=results,
+            search_results=search_results,
+            elapsed_ms=elapsed_ms,
+        ),
         "results": [
             {
                 **asdict(result),
@@ -566,3 +581,93 @@ def _group_summary(results: list[AnswerEngineEvalResult]) -> dict[str, object]:
         }
         for name, items in sorted(groups.items())
     }
+
+
+def _reporting_summary(
+    *,
+    results: list[AnswerEngineEvalResult],
+    search_results: list[SearchQualityEvalResult],
+    elapsed_ms: int,
+) -> dict[str, object]:
+    return {
+        "latency": {
+            "suite_elapsed_ms": elapsed_ms,
+            "case_count": len(results),
+            "avg_case_elapsed_ms": round(elapsed_ms / len(results), 2)
+            if results
+            else 0,
+        },
+        "cost": _cost_report(search_results),
+        "citation_precision": _citation_precision_report(search_results),
+    }
+
+
+def _cost_report(results: list[SearchQualityEvalResult]) -> dict[str, object]:
+    return {
+        "mode": "offline_fixture",
+        "provider_call_count": 0,
+        "estimated_provider_cost_usd": 0.0,
+        "planned_search_count": sum(
+            _int_detail(result, "research_search_budget") for result in results
+        ),
+        "planned_extract_budget": sum(
+            _int_detail(result, "research_max_extracts") for result in results
+        ),
+        "note": "Offline deterministic eval; planned budgets are measured, provider spend is zero.",
+    }
+
+
+def _citation_precision_report(
+    results: list[SearchQualityEvalResult],
+) -> dict[str, object]:
+    accepted = sum(_int_detail(result, "accepted_citation_count") for result in results)
+    rejected = sum(_int_detail(result, "rejected_citation_count") for result in results)
+    total = accepted + rejected
+    return {
+        "accepted_citation_count": accepted,
+        "rejected_citation_count": rejected,
+        "evaluated_citation_count": total,
+        "precision": round(accepted / total, 4) if total else 0.0,
+        "unsupported_claim_count": sum(
+            _int_detail(result, "unsupported_claim_count") for result in results
+        ),
+        "prompt_injection_rejection_count": sum(
+            _int_detail(result, "prompt_injection_rejection_count")
+            for result in results
+        ),
+        "by_group": {
+            group: _citation_precision_report_for_group(items)
+            for group, items in sorted(_search_groups(results).items())
+        },
+    }
+
+
+def _citation_precision_report_for_group(
+    results: list[SearchQualityEvalResult],
+) -> dict[str, object]:
+    accepted = sum(_int_detail(result, "accepted_citation_count") for result in results)
+    rejected = sum(_int_detail(result, "rejected_citation_count") for result in results)
+    total = accepted + rejected
+    return {
+        "case_count": len(results),
+        "accepted_citation_count": accepted,
+        "rejected_citation_count": rejected,
+        "precision": round(accepted / total, 4) if total else 0.0,
+    }
+
+
+def _search_groups(
+    results: list[SearchQualityEvalResult],
+) -> dict[str, list[SearchQualityEvalResult]]:
+    groups: dict[str, list[SearchQualityEvalResult]] = {}
+    for result in results:
+        groups.setdefault(result.eval_group, []).append(result)
+    return groups
+
+
+def _int_detail(result: SearchQualityEvalResult, key: str) -> int:
+    value = result.details.get(key, 0)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0

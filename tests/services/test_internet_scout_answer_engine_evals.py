@@ -34,6 +34,31 @@ def test_answer_engine_eval_payload_groups_contracts() -> None:
     assert payload["case_groups"]["evidence_transparency"]["case_count"] == 1
 
 
+def test_answer_engine_eval_payload_reports_latency_cost_and_citation_precision() -> (
+    None
+):
+    payload = answer_engine_eval_payload()
+    reporting = payload["reporting"]
+
+    assert reporting["latency"]["case_count"] == payload["passed"] + payload["failed"]
+    assert reporting["latency"]["suite_elapsed_ms"] >= 0
+    assert reporting["cost"] == {
+        "mode": "offline_fixture",
+        "provider_call_count": 0,
+        "estimated_provider_cost_usd": 0.0,
+        "planned_search_count": 157,
+        "planned_extract_budget": 156,
+        "note": "Offline deterministic eval; planned budgets are measured, provider spend is zero.",
+    }
+    assert reporting["citation_precision"]["accepted_citation_count"] == 32
+    assert reporting["citation_precision"]["rejected_citation_count"] == 14
+    assert reporting["citation_precision"]["evaluated_citation_count"] == 46
+    assert reporting["citation_precision"]["precision"] == 0.6957
+    assert reporting["citation_precision"]["unsupported_claim_count"] == 7
+    assert reporting["citation_precision"]["prompt_injection_rejection_count"] == 3
+    assert reporting["citation_precision"]["by_group"]["daily_use"]["case_count"] == 10
+
+
 def test_focus_mode_is_part_of_research_plan_contract() -> None:
     plan = InternetScoutOrchestrator().plan(
         InternetScoutRequest(
