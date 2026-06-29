@@ -94,6 +94,8 @@ export interface BeaconQualitySummary {
   accepted_citation_count: number
   rejected_citation_count: number
   official_source_count: number
+  required_official_target_count: number
+  covered_official_target_count: number
   verified_claim_count: number
   unsupported_claim_count: number
   prompt_injection_rejection_count: number
@@ -166,8 +168,12 @@ export interface BeaconResearchReport {
   accepted_citation_count: number
   rejected_citation_count: number
   source_hosts: string[]
+  verified_claim_count: number
+  unsupported_claim_count: number
   source_diversity_score: number
   coverage_warnings: string[]
+  verified_claims: string[]
+  unsupported_claims: string[]
   source_rankings: Array<{
     rank: number
     source_url: string
@@ -194,4 +200,19 @@ export interface BeaconAnswerResponse {
   evidence_transparency?: BeaconEvidenceTransparency
   answer_context: string
   raw_web_content_is_untrusted: boolean
+}
+
+export interface BeaconBrowserApprovalResponse {
+  request_id: string
+  approval_queue_id: string
+  approval_status: 'pending'
+  preview: {
+    approval_hash_prefix: string
+    allowed_hosts: string[]
+    click_targets?: Array<{
+      selector: string
+      label?: string | null
+      expected_host?: string | null
+    }>
+  }
 }

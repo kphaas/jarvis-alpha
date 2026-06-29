@@ -1,14 +1,15 @@
-import { AlertTriangle, Compass, Database, GitBranch, ListChecks, Timer } from 'lucide-react'
+import { AlertTriangle, Compass, Database, GitBranch, ListChecks, Quote, Timer } from 'lucide-react'
 import type { ReactNode } from 'react'
-import type { BeaconResearchPlan, BeaconResearchReport } from '../../types/beacon'
+import type { BeaconQualitySummary, BeaconResearchPlan, BeaconResearchReport } from '../../types/beacon'
 
 interface Props {
   plan: BeaconResearchPlan
   report: BeaconResearchReport
+  quality: BeaconQualitySummary
   isDark: boolean
 }
 
-export function BeaconResearchPlanStrip({ plan, report, isDark }: Props) {
+export function BeaconResearchPlanStrip({ plan, report, quality, isDark }: Props) {
   const border = isDark ? 'border-white/10' : 'border-[#141414]/10'
   const panel = isDark ? 'bg-white/5' : 'bg-white/50'
   const mutedPanel = isDark ? 'bg-black/20' : 'bg-white/40'
@@ -50,6 +51,35 @@ export function BeaconResearchPlanStrip({ plan, report, isDark }: Props) {
           value={report.answerability.replaceAll('_', ' ')}
           detail={`${report.cited_source_count} cited`}
         />
+      </div>
+
+      <div className={`mt-4 rounded-lg border p-3 ${border} ${mutedPanel}`}>
+        <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest opacity-45">
+          <ListChecks className="h-4 w-4" />
+          Eval gates
+        </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-4">
+          <Metric
+            icon={<Database className="h-4 w-4" />}
+            label="Official"
+            value={`${quality.covered_official_target_count}/${quality.required_official_target_count}`}
+          />
+          <Metric
+            icon={<Quote className="h-4 w-4" />}
+            label="Verified"
+            value={String(report.verified_claim_count)}
+          />
+          <Metric
+            icon={<AlertTriangle className="h-4 w-4" />}
+            label="Unsupported"
+            value={String(report.unsupported_claim_count)}
+          />
+          <Metric
+            icon={<AlertTriangle className="h-4 w-4" />}
+            label="Warnings"
+            value={String(report.coverage_warnings.length)}
+          />
+        </div>
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
