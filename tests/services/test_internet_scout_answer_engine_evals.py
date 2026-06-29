@@ -48,3 +48,20 @@ def test_focus_mode_is_part_of_research_plan_contract() -> None:
     assert plan.research.authority_required is True
     assert plan.research.provider_strategy == "fanout"
     assert "focus_mode:official" in plan.research.notes
+
+
+def test_deep_research_eval_requires_complete_vendor_coverage() -> None:
+    result = next(
+        item
+        for item in run_answer_engine_evals()
+        if item.name == "deep_research_surfaces_plan_and_coverage"
+    )
+
+    assert result.passed is True
+    assert (
+        result.details["covered_official_target_count"]
+        == result.details["required_official_target_count"]
+    )
+    assert len(result.details["research_report_verified_claims"]) >= 2
+    assert result.details["research_report_unsupported_claims"] == []
+    assert result.details["research_report_coverage_warnings"] == []

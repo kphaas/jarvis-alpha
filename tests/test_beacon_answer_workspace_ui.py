@@ -10,6 +10,8 @@ ANSWER_SUMMARY = (
 RESEARCH_COCKPIT = (
     REPO_ROOT / "ui" / "src" / "components" / "beacon" / "BeaconResearchPlanStrip.tsx"
 )
+BEACON_PAGE = REPO_ROOT / "ui" / "src" / "pages" / "Beacon.tsx"
+BEACON_TYPES = REPO_ROOT / "ui" / "src" / "types" / "beacon.ts"
 
 
 def test_beacon_answer_workspace_prioritizes_answer_over_debug_context() -> None:
@@ -31,3 +33,18 @@ def test_beacon_deep_research_cockpit_shows_plan_and_ranked_sources() -> None:
     assert "Ranked sources" in source
     assert "source_rankings" in source
     assert "Stop criteria" in source
+    assert "Eval gates" in source
+    assert "covered_official_target_count" in source
+    assert "verified_claim_count" in source
+
+
+def test_beacon_page_can_queue_browser_action_approvals() -> None:
+    source = BEACON_PAGE.read_text(encoding="utf-8")
+    types = BEACON_TYPES.read_text(encoding="utf-8")
+
+    assert "Browser action approval" in source
+    assert "/v1/internet-scout/browser-task/approval-request" in source
+    assert "browser_clicks" in source
+    assert "Queue approval" in source
+    assert 'to="/approvals"' in source
+    assert "BeaconBrowserApprovalResponse" in types

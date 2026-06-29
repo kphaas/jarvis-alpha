@@ -20,7 +20,14 @@ interface BeaconActionTimelineItem {
   status?: string
   description?: string
   allowed_host_count?: number
+  target_count?: number
   [key: string]: unknown
+}
+
+interface BeaconClickTarget {
+  selector: string
+  label?: string | null
+  expected_host?: string | null
 }
 
 export interface BeaconApprovalContext {
@@ -45,6 +52,7 @@ export interface BeaconApprovalContext {
   forms_allowed: boolean
   credential_entry_allowed?: boolean
   risk_labels?: string[]
+  click_targets?: BeaconClickTarget[]
   action_timeline?: BeaconActionTimelineItem[]
   raw_task_text_included: boolean
   raw_web_content_is_untrusted: boolean
@@ -80,6 +88,7 @@ export function BeaconBrowserApprovalPanel({
   const allowedHosts = beacon.allowed_hosts ?? []
   const urlHashes = beacon.url_hashes ?? []
   const riskLabels = beacon.risk_labels ?? []
+  const clickTargets = beacon.click_targets ?? []
   const actionTimeline = beacon.action_timeline ?? []
   const screenshotPolicy = beacon.screenshot_policy ?? {}
   const card = isDark ? 'bg-black/25 border-white/10' : 'bg-white/70 border-[#141414]/10'
@@ -263,6 +272,9 @@ export function BeaconBrowserApprovalPanel({
                 {typeof step.allowed_host_count === 'number' && (
                   <div className={`font-mono ${muted}`}>allowed hosts: {step.allowed_host_count}</div>
                 )}
+                {typeof step.target_count === 'number' && (
+                  <div className={`font-mono ${muted}`}>click targets: {step.target_count}</div>
+                )}
               </div>
             </div>
           )) : (
@@ -270,6 +282,25 @@ export function BeaconBrowserApprovalPanel({
           )}
         </div>
       </div>
+
+      {clickTargets.length > 0 && (
+        <details className={`rounded-lg border p-3 ${card}`}>
+          <summary className="cursor-pointer text-[11px] font-bold">
+            Approved click targets · {clickTargets.length}
+          </summary>
+          <div className="mt-2 space-y-2">
+            {clickTargets.map((target, index) => (
+              <div key={`${target.selector}-${index}`} className={`rounded-md border p-2 text-[11px] ${card}`}>
+                <div className="font-bold">{target.label || `Target ${index + 1}`}</div>
+                <div className={`font-mono break-all ${muted}`}>{target.selector}</div>
+                {target.expected_host && (
+                  <div className={`font-mono ${muted}`}>expected host: {target.expected_host}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
 
       <div className={`text-[11px] ${muted}`}>
         Approve runs only this reviewed browser plan. Deny leaves the browser runtime untouched.

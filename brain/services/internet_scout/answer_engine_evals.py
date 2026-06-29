@@ -303,6 +303,17 @@ def _deep_research_contract(
         failures.append("answerability")
     if details["research_report_cited_source_count"] < 2:
         failures.append("source_count")
+    if (
+        details["covered_official_target_count"]
+        < details["required_official_target_count"]
+    ):
+        failures.append("official_target_coverage")
+    if len(details["research_report_verified_claims"]) < 2:
+        failures.append("verified_claims")
+    if details["research_report_unsupported_claims"]:
+        failures.append("unsupported_claims")
+    if details["research_report_coverage_warnings"]:
+        failures.append("coverage_warnings")
     return AnswerEngineEvalResult(
         name="deep_research_surfaces_plan_and_coverage",
         eval_group="deep_research",
@@ -313,6 +324,17 @@ def _deep_research_contract(
             "research_report_answerability": details["research_report_answerability"],
             "research_report_cited_source_count": details[
                 "research_report_cited_source_count"
+            ],
+            "required_official_target_count": details["required_official_target_count"],
+            "covered_official_target_count": details["covered_official_target_count"],
+            "research_report_verified_claims": details[
+                "research_report_verified_claims"
+            ],
+            "research_report_unsupported_claims": details[
+                "research_report_unsupported_claims"
+            ],
+            "research_report_coverage_warnings": details[
+                "research_report_coverage_warnings"
             ],
         },
         failures=tuple(failures),
