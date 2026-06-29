@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock, Fingerprint, Sparkles } from 'lucide-react'
+import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock, Fingerprint, Sparkles, Activity, MousePointerClick } from 'lucide-react'
 import { BeaconBrowserApprovalPanel, type BeaconApprovalContext } from '../components/beacon/BeaconBrowserApprovalPanel'
 import { apiJson } from '../lib/apiFetch'
 import { useAppStore } from '../store'
@@ -42,6 +42,30 @@ interface QueueItem {
 
 interface PendingResponse {
   pending: QueueItem[]
+  count: number
+}
+
+interface BrowserHistoryItem {
+  request_id: string
+  approval_queue_id: string | null
+  event_type: string
+  status: string
+  created_at: string
+  selected_tool: string
+  request_status: string
+  risk_tier: string | null
+  approval_hash_prefix: string | null
+  observation_count: number
+  screenshot_count: number
+  action_audit_count: number
+  action: string | null
+  host: string | null
+  blocked_reason: string | null
+  elapsed_ms: number | null
+}
+
+interface BrowserHistoryResponse {
+  history: BrowserHistoryItem[]
   count: number
 }
 
@@ -132,6 +156,24 @@ function canApproveAndSendSpark(item: QueueItem): boolean {
   )
 }
 
+function shortId(value?: string | null): string {
+  return value ? value.slice(0, 8) : 'none'
+}
+
+function eventLabel(value: string): string {
+  return value.replace(/_/g, ' ')
+}
+
+function historyStatusClass(status: string): string {
+  if (status === 'succeeded' || status === 'queued') {
+    return 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30'
+  }
+  if (status === 'failed' || status === 'blocked') {
+    return 'text-rose-400 bg-rose-500/15 border-rose-500/30'
+  }
+  return 'text-amber-400 bg-amber-500/15 border-amber-500/30'
+}
+
 export default function Approvals() {
   const { theme } = useAppStore()
   const isDark = theme === 'dark'
@@ -139,6 +181,8 @@ export default function Approvals() {
   const subtle = isDark ? 'bg-white/5' : 'bg-[#141414]/5'
 
   const [data, setData] = useState<PendingResponse | null>(null)
+  const [browserHistory, setBrowserHistory] = useState<BrowserHistoryItem[]>([])
+  const [historyError, setHistoryError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [acting, setActing] = useState<string | null>(null)
@@ -161,6 +205,20 @@ export default function Approvals() {
       const res = await apiJson<PendingResponse>('/v1/approvals/pending')
       setData(res)
       setError(null)
+      try {
+        const history = await apiJson<BrowserHistoryResponse>(
+          '/v1/internet-scout/browser-task/history?limit=12'
+        )
+        setBrowserHistory(history.history ?? [])
+        setHistoryError(null)
+      } catch (historyLoadError) {
+        setBrowserHistory([])
+        setHistoryError(
+          historyLoadError instanceof Error
+            ? historyLoadError.message
+            : 'Failed to load browser history'
+        )
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load')
     } finally {
@@ -389,6 +447,96 @@ export default function Approvals() {
           <ShieldCheck className="w-10 h-10 text-emerald-500 mb-3" />
           <p className="text-sm font-medium opacity-60">No pending approvals</p>
         </div>
+      )}
+
+      {!loading && !error && (
+        <section className={`p-5 rounded-2xl border ${border} ${subtle} space-y-3`}>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Activity className="w-4 h-4 text-cyan-400" />
+              <h2 className="text-sm font-bold">Browser execution history</h2>
+            </div>
+            <span className="text-[10px] font-mono uppercase opacity-50">
+              {browserHistory.length} recent
+            </span>
+          </div>
+
+          {historyError && (
+            <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-400">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              Browser history unavailable: {historyError}
+            </div>
+          )}
+
+          {!historyError && browserHistory.length === 0 && (
+            <p className="rounded-xl border border-dashed border-current/15 p-3 text-xs opacity-50">
+              No browser approval or execution events recorded yet.
+            </p>
+          )}
+
+          {!historyError && browserHistory.length > 0 && (
+            <div className="space-y-2">
+              {browserHistory.map((item) => (
+                <div
+                  key={`${item.request_id}-${item.event_type}-${item.status}-${item.created_at}`}
+                  className={`rounded-xl border ${border} p-3 ${isDark ? 'bg-black/20' : 'bg-white/60'}`}
+                >
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-bold capitalize">
+                          {eventLabel(item.event_type)}
+                        </span>
+                        <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${historyStatusClass(item.status)}`}>
+                          {item.status}
+                        </span>
+                        {item.risk_tier && tierBadge(item.risk_tier)}
+                      </div>
+                      <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] opacity-50">
+                        <span className="font-mono">request {shortId(item.request_id)}</span>
+                        {item.approval_queue_id && (
+                          <span className="font-mono">approval {shortId(item.approval_queue_id)}</span>
+                        )}
+                        {item.approval_hash_prefix && (
+                          <span className="font-mono">hash {item.approval_hash_prefix}</span>
+                        )}
+                        <span>{new Date(item.created_at).toLocaleString()}</span>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-mono uppercase opacity-40">
+                      {item.request_status}
+                    </span>
+                  </div>
+
+                  {item.event_type === 'browser_action' && (
+                    <div className={`mt-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs ${isDark ? 'bg-black/30' : 'bg-black/5'}`}>
+                      <MousePointerClick className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                      <span className="font-mono">{item.action ?? 'action'}</span>
+                      {item.host && <span className="opacity-60">on {item.host}</span>}
+                      {item.elapsed_ms !== null && (
+                        <span className="ml-auto font-mono opacity-50">{item.elapsed_ms}ms</span>
+                      )}
+                    </div>
+                  )}
+
+                  {(item.observation_count > 0 || item.screenshot_count > 0 || item.action_audit_count > 0) && (
+                    <div className="mt-3 flex items-center gap-3 flex-wrap text-[11px] opacity-60">
+                      <span>{item.observation_count} observations</span>
+                      <span>{item.screenshot_count} screenshots</span>
+                      <span>{item.action_audit_count} audited actions</span>
+                    </div>
+                  )}
+
+                  {item.blocked_reason && (
+                    <div className="mt-3 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-400">
+                      blocked: {item.blocked_reason}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       )}
 
       {/* Pending items */}
