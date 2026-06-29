@@ -176,6 +176,7 @@ export default function BeaconOps() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [dataSourcesOpen, setDataSourcesOpen] = useState(false)
+  const [operationalDetailsOpen, setOperationalDetailsOpen] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -223,6 +224,7 @@ export default function BeaconOps() {
     () => approvalsStatus(beacon?.approvals, beacon?.browser),
     [beacon],
   )
+  const actions = beacon ? operatorActions(beacon) : []
 
   return (
     <motion.div
@@ -397,84 +399,117 @@ export default function BeaconOps() {
             )}
           </Panel>
 
-          <section className="grid gap-4 xl:grid-cols-3">
-            <Panel title="Cost Guard" icon={DollarSign} isDark={isDark}>
-              <div className="space-y-3">
-                <KeyValue label="Mode" value={beacon.cost.mode.replace(/_/g, ' ')} muted={muted} />
-                <KeyValue label="Exact cost" value={beacon.cost.exact_cost_available ? 'available' : 'not recorded'} muted={muted} />
+          <section className={`rounded-lg border p-4 ${border} ${panel}`}>
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Activity className="h-4 w-4 opacity-70" />
+                  <h2 className="text-sm font-semibold uppercase tracking-wide">Operational Details</h2>
+                </div>
+                <p className={`mt-1 text-xs ${muted}`}>
+                  Cost, citation, browser runtime, evidence, canary, and operator action.
+                </p>
+              </div>
+              <div className="grid flex-1 gap-3 sm:grid-cols-3">
                 <KeyValue label="Requests" value={String(beacon.cost.beacon_request_count)} muted={muted} />
-                <KeyValue label="Backup caps" value={String(beacon.cost.budget_capped_backup_provider_count)} muted={muted} />
+                <KeyValue label="Evidence" value={`${beacon.evidence.succeeded}/${beacon.evidence.total}`} muted={muted} />
+                <KeyValue label="Action" value={actions[0]?.label ?? 'None'} muted={muted} />
               </div>
-            </Panel>
-
-            <Panel title="Citation Quality" icon={Quote} isDark={isDark}>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                <KeyValue label="Supported" value={String(beacon.citation_quality.supported)} muted={muted} />
-                <KeyValue label="Weak" value={String(beacon.citation_quality.weak)} muted={muted} />
-                <KeyValue label="Insufficient" value={String(beacon.citation_quality.insufficient)} muted={muted} />
-                <KeyValue label="Rejected risk" value={String(beacon.citation_quality.rejected_citation_count)} muted={muted} />
-                <KeyValue label="Prompt-injection rejected" value={String(beacon.citation_quality.prompt_injection_rejection_count)} muted={muted} />
-              </div>
-            </Panel>
-
-            <Panel title="Browser Approval Queue" icon={ShieldCheck} isDark={isDark}>
-              <div className="space-y-3">
-                <KeyValue label="Pending" value={String(beacon.approvals.pending_browser_approvals)} muted={muted} />
-                <KeyValue label="Approved 24h" value={String(beacon.approvals.approved_24h)} muted={muted} />
-                <KeyValue label="Executed 24h" value={String(beacon.approvals.executed_24h)} muted={muted} />
-                <KeyValue label="Denied 24h" value={String(beacon.approvals.denied_24h)} muted={muted} />
-                <KeyValue label="Next expiry" value={formatDateTime(beacon.approvals.next_expires_at)} muted={muted} />
-              </div>
-            </Panel>
+              <button
+                type="button"
+                aria-expanded={operationalDetailsOpen}
+                aria-controls="beacon-operational-details"
+                onClick={() => setOperationalDetailsOpen((open) => !open)}
+                className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-xs font-mono uppercase tracking-widest transition ${border} ${panel}`}
+              >
+                {operationalDetailsOpen ? 'Hide details' : 'Show details'}
+                <ChevronDown className={`h-4 w-4 transition ${operationalDetailsOpen ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
           </section>
 
-          <section className="grid gap-4 xl:grid-cols-2">
-            <Panel title="Browser Runtime" icon={MousePointerClick} isDark={isDark}>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <KeyValue label="Runtime" value={beacon.browser.runtime} muted={muted} />
-                <KeyValue label="Enabled" value={beacon.browser.runtime_enabled ? 'yes' : 'no'} muted={muted} />
-                <KeyValue label="Playwright" value={beacon.browser.playwright_version ?? 'unknown'} muted={muted} />
-                <KeyValue label="Version ok" value={beacon.browser.playwright_version_ok ? 'yes' : 'no'} muted={muted} />
-                <KeyValue label="Screenshots" value={beacon.browser.screenshot_store_ready ? 'ready' : 'not ready'} muted={muted} />
-                <KeyValue label="Cap" value={`${beacon.browser.max_runs_per_hour}/h`} muted={muted} />
-              </div>
-            </Panel>
+          {operationalDetailsOpen && (
+            <div id="beacon-operational-details" className="space-y-4">
+              <section className="grid gap-4 xl:grid-cols-3">
+                <Panel title="Cost Guard" icon={DollarSign} isDark={isDark}>
+                  <div className="space-y-3">
+                    <KeyValue label="Mode" value={beacon.cost.mode.replace(/_/g, ' ')} muted={muted} />
+                    <KeyValue label="Exact cost" value={beacon.cost.exact_cost_available ? 'available' : 'not recorded'} muted={muted} />
+                    <KeyValue label="Requests" value={String(beacon.cost.beacon_request_count)} muted={muted} />
+                    <KeyValue label="Backup caps" value={String(beacon.cost.budget_capped_backup_provider_count)} muted={muted} />
+                  </div>
+                </Panel>
 
-            <Panel title="Evidence Window" icon={Activity} isDark={isDark}>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <KeyValue label="Total" value={String(beacon.evidence.total)} muted={muted} />
-                <KeyValue label="Succeeded" value={String(beacon.evidence.succeeded)} muted={muted} />
-                <KeyValue label="Failed" value={String(beacon.evidence.failed)} muted={muted} />
-                <KeyValue label="Blocked" value={String(beacon.evidence.blocked)} muted={muted} />
-                <KeyValue label="Last requester" value={beacon.evidence.last_request?.requester ?? 'none'} muted={muted} />
-                <KeyValue label="Last tool" value={beacon.evidence.last_request?.selected_tool ?? 'none'} muted={muted} />
-              </div>
-            </Panel>
-          </section>
+                <Panel title="Citation Quality" icon={Quote} isDark={isDark}>
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                    <KeyValue label="Supported" value={String(beacon.citation_quality.supported)} muted={muted} />
+                    <KeyValue label="Weak" value={String(beacon.citation_quality.weak)} muted={muted} />
+                    <KeyValue label="Insufficient" value={String(beacon.citation_quality.insufficient)} muted={muted} />
+                    <KeyValue label="Rejected risk" value={String(beacon.citation_quality.rejected_citation_count)} muted={muted} />
+                    <KeyValue label="Prompt-injection rejected" value={String(beacon.citation_quality.prompt_injection_rejection_count)} muted={muted} />
+                  </div>
+                </Panel>
 
-          <section className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
-            <Panel title="Quality Canary" icon={CheckCircle2} isDark={isDark}>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <KeyValue label="Status" value={beacon.quality_canary.status} muted={muted} />
-                <KeyValue label="Cases" value={String(beacon.quality_canary.case_count)} muted={muted} />
-                <KeyValue label="Passed" value={String(beacon.quality_canary.passed)} muted={muted} />
-                <KeyValue label="Failed" value={String(beacon.quality_canary.failed)} muted={muted} />
-                <KeyValue label="Age" value={`${beacon.quality_canary.age_hours}h`} muted={muted} />
-                <KeyValue label="Alert" value={beacon.quality_canary.alert.reason.replace(/_/g, ' ')} muted={muted} />
-              </div>
-            </Panel>
+                <Panel title="Browser Approval Queue" icon={ShieldCheck} isDark={isDark}>
+                  <div className="space-y-3">
+                    <KeyValue label="Pending" value={String(beacon.approvals.pending_browser_approvals)} muted={muted} />
+                    <KeyValue label="Approved 24h" value={String(beacon.approvals.approved_24h)} muted={muted} />
+                    <KeyValue label="Executed 24h" value={String(beacon.approvals.executed_24h)} muted={muted} />
+                    <KeyValue label="Denied 24h" value={String(beacon.approvals.denied_24h)} muted={muted} />
+                    <KeyValue label="Next expiry" value={formatDateTime(beacon.approvals.next_expires_at)} muted={muted} />
+                  </div>
+                </Panel>
+              </section>
 
-            <Panel title="Operator Action" icon={AlertTriangle} isDark={isDark}>
-              <div className="flex flex-wrap gap-2">
-                {operatorActions(beacon).map((action) => (
-                  <StatusPill key={action.label} label={action.label} tone={action.tone} isDark={isDark} />
-                ))}
-              </div>
-              <div className={`mt-4 text-xs font-mono uppercase tracking-widest ${muted}`}>
-                Checked {formatDateTime(beacon.checked_at)} - generated {formatDateTime(payload?.generated_at)}
-              </div>
-            </Panel>
-          </section>
+              <section className="grid gap-4 xl:grid-cols-2">
+                <Panel title="Browser Runtime" icon={MousePointerClick} isDark={isDark}>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <KeyValue label="Runtime" value={beacon.browser.runtime} muted={muted} />
+                    <KeyValue label="Enabled" value={beacon.browser.runtime_enabled ? 'yes' : 'no'} muted={muted} />
+                    <KeyValue label="Playwright" value={beacon.browser.playwright_version ?? 'unknown'} muted={muted} />
+                    <KeyValue label="Version ok" value={beacon.browser.playwright_version_ok ? 'yes' : 'no'} muted={muted} />
+                    <KeyValue label="Screenshots" value={beacon.browser.screenshot_store_ready ? 'ready' : 'not ready'} muted={muted} />
+                    <KeyValue label="Cap" value={`${beacon.browser.max_runs_per_hour}/h`} muted={muted} />
+                  </div>
+                </Panel>
+
+                <Panel title="Evidence Window" icon={Activity} isDark={isDark}>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <KeyValue label="Total" value={String(beacon.evidence.total)} muted={muted} />
+                    <KeyValue label="Succeeded" value={String(beacon.evidence.succeeded)} muted={muted} />
+                    <KeyValue label="Failed" value={String(beacon.evidence.failed)} muted={muted} />
+                    <KeyValue label="Blocked" value={String(beacon.evidence.blocked)} muted={muted} />
+                    <KeyValue label="Last requester" value={beacon.evidence.last_request?.requester ?? 'none'} muted={muted} />
+                    <KeyValue label="Last tool" value={beacon.evidence.last_request?.selected_tool ?? 'none'} muted={muted} />
+                  </div>
+                </Panel>
+              </section>
+
+              <section className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+                <Panel title="Quality Canary" icon={CheckCircle2} isDark={isDark}>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <KeyValue label="Status" value={beacon.quality_canary.status} muted={muted} />
+                    <KeyValue label="Cases" value={String(beacon.quality_canary.case_count)} muted={muted} />
+                    <KeyValue label="Passed" value={String(beacon.quality_canary.passed)} muted={muted} />
+                    <KeyValue label="Failed" value={String(beacon.quality_canary.failed)} muted={muted} />
+                    <KeyValue label="Age" value={`${beacon.quality_canary.age_hours}h`} muted={muted} />
+                    <KeyValue label="Alert" value={beacon.quality_canary.alert.reason.replace(/_/g, ' ')} muted={muted} />
+                  </div>
+                </Panel>
+
+                <Panel title="Operator Action" icon={AlertTriangle} isDark={isDark}>
+                  <div className="flex flex-wrap gap-2">
+                    {actions.map((action) => (
+                      <StatusPill key={action.label} label={action.label} tone={action.tone} isDark={isDark} />
+                    ))}
+                  </div>
+                  <div className={`mt-4 text-xs font-mono uppercase tracking-widest ${muted}`}>
+                    Checked {formatDateTime(beacon.checked_at)} - generated {formatDateTime(payload?.generated_at)}
+                  </div>
+                </Panel>
+              </section>
+            </div>
+          )}
         </>
       ) : null}
     </motion.div>
