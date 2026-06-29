@@ -46,6 +46,9 @@ def test_alpha_deploy_runs_cheap_smokes_after_fanout() -> None:
     assert "eval_beacon_answer_engine.py" in text
     assert "JARVIS_SKIP_BEACON_ANSWER_EVAL" in text
     assert "JARVIS_ALPHA_SKIP_BEACON_ANSWER_EVAL" in text
+    assert "eval_memory_context.py" in text
+    assert "JARVIS_SKIP_MEMORY_CONTEXT_EVAL" in text
+    assert "JARVIS_ALPHA_SKIP_MEMORY_CONTEXT_EVAL" in text
 
     endpoint_pull = text.index('remote_pull "Endpoint" "$ENDPOINT"')
     settings_smoke = text.index("run_post_deploy_smokes || DEPLOY_FAILED=1")
@@ -61,6 +64,9 @@ def test_alpha_deploy_runs_cheap_smokes_after_fanout() -> None:
     answer_eval_script = text.index(
         "uv run --python 3.12 python scripts/eval_beacon_answer_engine.py"
     )
+    memory_eval_script = text.index(
+        "uv run --python 3.12 python scripts/eval_memory_context.py"
+    )
     done_banner = text.index('done_banner "$HEAD_AFTER" "$total_dur"', settings_smoke)
 
     assert endpoint_pull < settings_smoke < done_banner
@@ -71,5 +77,6 @@ def test_alpha_deploy_runs_cheap_smokes_after_fanout() -> None:
         < beacon_script
         < browser_click_script
         < answer_eval_script
+        < memory_eval_script
         < done_banner
     )
