@@ -11,6 +11,7 @@ from brain.services.internet_scout.browser_runner import (
     BrowserRuntimeUnavailableError,
     BrowserScreenshotStore,
     BrowserTaskRunner,
+    _approved_click_target_snapshot,
     browser_hourly_run_limit,
     browser_max_steps_limit,
     build_browser_sandbox_policy,
@@ -24,6 +25,7 @@ from brain.services.internet_scout.browser_approvals import (
 )
 from brain.services.internet_scout.evidence import content_hash
 from brain.services.internet_scout.models import (
+    BrowserClickTarget,
     BrowserRunObservation,
     BrowserSandboxPolicy,
     InternetScoutRequest,
@@ -206,6 +208,48 @@ def test_browser_click_targets_are_covered_by_approval_preview_and_hash():
             request.model_copy(update={"browser_clicks": []}), plan.decision
         )
     )
+
+
+@pytest.mark.asyncio
+async def test_approved_click_snapshot_accepts_playwright_first_property():
+    class FakeLocator:
+        @property
+        def first(self):
+            return self
+
+        async def wait_for(self, *, state: str) -> None:
+            assert state == "visible"
+
+        async def evaluate(self, _script: str) -> dict[str, str]:
+            return {
+                "tag": "a",
+                "type": "",
+                "role": "",
+                "name": "",
+                "id": "",
+                "ariaLabel": "",
+                "text": "menu",
+                "href": "https://public.example.test/menu",
+                "contentEditable": "",
+            }
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.locator_obj = FakeLocator()
+
+        def locator(self, selector: str) -> FakeLocator:
+            assert selector == "a.menu"
+            return self.locator_obj
+
+    snapshot = await _approved_click_target_snapshot(
+        FakePage(),
+        click=BrowserClickTarget(
+            selector="a.menu", expected_host="public.example.test"
+        ),
+        sandbox=BrowserSandboxPolicy(allowed_hosts=["public.example.test"]),
+    )
+
+    assert snapshot["href"] == "https://public.example.test/menu"
 
 
 @pytest.mark.asyncio

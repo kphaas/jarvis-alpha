@@ -231,11 +231,9 @@ class PlaywrightBrowserTaskAdapter:
                             if snapshot.get("href")
                             else None,
                         },
-                        operation=lambda click=click: (
-                            page.locator(click.selector)
-                            .first()
-                            .click(timeout=self.timeout_ms)
-                        ),
+                        operation=lambda click=click: _first_locator(
+                            page, click.selector
+                        ).click(timeout=self.timeout_ms),
                     )
                     sequence += 1
                     final_url = str(page.url)
@@ -731,7 +729,7 @@ async def _approved_click_target_snapshot(
     click: BrowserClickTarget,
     sandbox: BrowserSandboxPolicy,
 ) -> dict[str, object]:
-    locator = page.locator(click.selector).first()
+    locator = _first_locator(page, click.selector)
     try:
         await locator.wait_for(state="visible")
         snapshot = await locator.evaluate(
@@ -759,6 +757,14 @@ async def _approved_click_target_snapshot(
     if reason is not None:
         raise BrowserSandboxPolicyError(reason)
     return snapshot
+
+
+def _first_locator(page, selector: str):
+    locator = page.locator(selector)
+    first = getattr(locator, "first", None)
+    if first is None:
+        return locator
+    return first() if callable(first) else first
 
 
 def classify_disallowed_browser_controls(controls: object) -> str | None:
