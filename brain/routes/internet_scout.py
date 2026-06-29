@@ -40,6 +40,8 @@ from brain.services.internet_scout.models import (
     BrowserActionAuditEvent,
     InternetScoutAgentResponse,
     InternetScoutBrowserApprovalResponse,
+    InternetScoutBrowserHistoryItem,
+    InternetScoutBrowserHistoryResponse,
     InternetScoutBrowserRunRequest,
     InternetScoutBrowserRunResponse,
     InternetScoutConsumerRequest,
@@ -560,6 +562,97 @@ async def internet_scout_browser_run_approved(
     return result
 
 
+@router.get(
+    "/browser-task/history",
+    response_model=InternetScoutBrowserHistoryResponse,
+)
+async def internet_scout_browser_history(
+    request: Request,
+    _user_id: str = Depends(require_auth),
+    limit: int = 20,
+) -> InternetScoutBrowserHistoryResponse:
+    """Return recent Beacon browser approval/run audit events for operator review."""
+    check_scopes(request, "internet_scout.read", "admin")
+    safe_limit = min(max(limit, 1), 50)
+    async with rls_connection(request) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                event.request_id,
+                event.event_type,
+                event.status,
+                event.created_at,
+                request.selected_tool,
+                request.status AS request_status,
+                request.policy_tier AS risk_tier,
+                event.metadata->>'approval_queue_id' AS approval_queue_id,
+                event.metadata->>'approval_hash_prefix' AS approval_hash_prefix,
+                CASE
+                    WHEN event.metadata->>'observation_count' ~ '^[0-9]+$'
+                    THEN (event.metadata->>'observation_count')::integer
+                    ELSE 0
+                END AS observation_count,
+                CASE
+                    WHEN event.metadata->>'screenshot_count' ~ '^[0-9]+$'
+                    THEN (event.metadata->>'screenshot_count')::integer
+                    ELSE 0
+                END AS screenshot_count,
+                CASE
+                    WHEN event.metadata->>'action_audit_count' ~ '^[0-9]+$'
+                    THEN (event.metadata->>'action_audit_count')::integer
+                    ELSE 0
+                END AS action_audit_count,
+                event.metadata->>'action' AS action,
+                event.metadata->>'host' AS host,
+                event.metadata->>'blocked_reason' AS blocked_reason,
+                CASE
+                    WHEN event.metadata->>'elapsed_ms' ~ '^[0-9]+$'
+                    THEN (event.metadata->>'elapsed_ms')::integer
+                    ELSE NULL
+                END AS elapsed_ms
+            FROM public.alpha_internet_tool_events AS event
+            JOIN public.alpha_internet_requests AS request
+              ON request.id = event.request_id
+            WHERE event.tool = 'browser_use'
+              AND event.event_type IN (
+                  'approval_request',
+                  'browser_run',
+                  'browser_action'
+              )
+            ORDER BY event.created_at DESC, event.id DESC
+            LIMIT $1
+            """,
+            safe_limit,
+        )
+    history = [
+        InternetScoutBrowserHistoryItem(
+            request_id=row["request_id"],
+            approval_queue_id=_optional_uuid(row["approval_queue_id"]),
+            event_type=row["event_type"],
+            status=row["status"],
+            created_at=row["created_at"],
+            selected_tool=row["selected_tool"],
+            request_status=row["request_status"],
+            risk_tier=row["risk_tier"],
+            approval_hash_prefix=row["approval_hash_prefix"],
+            observation_count=int(row["observation_count"] or 0),
+            screenshot_count=int(row["screenshot_count"] or 0),
+            action_audit_count=int(row["action_audit_count"] or 0),
+            action=row["action"],
+            host=row["host"],
+            blocked_reason=row["blocked_reason"],
+            elapsed_ms=(
+                int(row["elapsed_ms"]) if row["elapsed_ms"] is not None else None
+            ),
+        )
+        for row in rows
+    ]
+    return InternetScoutBrowserHistoryResponse(
+        history=history,
+        count=len(history),
+    )
+
+
 @router.get("/requests/{request_id}", response_model=InternetScoutStoredResponse)
 async def internet_scout_request(
     request_id: UUID,
@@ -638,3 +731,12 @@ def _approval_actor_type(request: Request) -> str:
     if actor_type not in {"user", "service", "agent"}:
         return "user"
     return actor_type
+
+
+def _optional_uuid(value: object) -> UUID | None:
+    if value is None:
+        return None
+    try:
+        return UUID(str(value))
+    except ValueError:
+        return None

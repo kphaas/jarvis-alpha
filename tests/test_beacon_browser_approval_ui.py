@@ -64,3 +64,15 @@ def test_approvals_page_uses_beacon_browser_approval_panel() -> None:
     assert (
         "<BeaconBrowserApprovalPanel beacon={item.beacon} isDark={isDark} />" in source
     )
+
+
+def test_approvals_page_surfaces_browser_execution_history() -> None:
+    source = APPROVALS.read_text(encoding="utf-8")
+
+    assert "/v1/internet-scout/browser-task/history?limit=12" in source
+    assert "Browser execution history" in source
+    assert "interface BrowserHistoryItem" in source
+    assert "approval_queue_id" in source
+    assert "browser_action" in source
+    assert "audited actions" in source
+    assert "Browser history unavailable" in source

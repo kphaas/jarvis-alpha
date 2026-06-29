@@ -156,6 +156,82 @@ async def fake_rls_connection(request):
     yield object()
 
 
+class FakeHistoryConn:
+    instances: list["FakeHistoryConn"] = []
+    approval_queue_id = uuid4()
+    browser_request_id = uuid4()
+    approval_request_id = uuid4()
+
+    def __init__(self) -> None:
+        self.fetch_calls: list[tuple[str, int]] = []
+
+    async def fetch(self, query, limit):
+        self.fetch_calls.append((query, limit))
+        return [
+            {
+                "request_id": self.browser_request_id,
+                "event_type": "browser_action",
+                "status": "succeeded",
+                "created_at": datetime(2026, 6, 18, 12, 3, tzinfo=UTC),
+                "selected_tool": "browser_use",
+                "request_status": "succeeded",
+                "risk_tier": "T5",
+                "approval_queue_id": str(self.approval_queue_id),
+                "approval_hash_prefix": "abc123abc123",
+                "observation_count": 0,
+                "screenshot_count": 0,
+                "action_audit_count": 0,
+                "action": "navigate",
+                "host": "public.example.test",
+                "blocked_reason": None,
+                "elapsed_ms": 12,
+            },
+            {
+                "request_id": self.browser_request_id,
+                "event_type": "browser_run",
+                "status": "succeeded",
+                "created_at": datetime(2026, 6, 18, 12, 2, tzinfo=UTC),
+                "selected_tool": "browser_use",
+                "request_status": "succeeded",
+                "risk_tier": "T5",
+                "approval_queue_id": str(self.approval_queue_id),
+                "approval_hash_prefix": None,
+                "observation_count": 1,
+                "screenshot_count": 1,
+                "action_audit_count": 2,
+                "action": None,
+                "host": None,
+                "blocked_reason": None,
+                "elapsed_ms": None,
+            },
+            {
+                "request_id": self.approval_request_id,
+                "event_type": "approval_request",
+                "status": "queued",
+                "created_at": datetime(2026, 6, 18, 12, 1, tzinfo=UTC),
+                "selected_tool": "browser_use",
+                "request_status": "blocked",
+                "risk_tier": "T5",
+                "approval_queue_id": str(self.approval_queue_id),
+                "approval_hash_prefix": "abc123abc123",
+                "observation_count": 0,
+                "screenshot_count": 0,
+                "action_audit_count": 0,
+                "action": None,
+                "host": None,
+                "blocked_reason": None,
+                "elapsed_ms": None,
+            },
+        ]
+
+
+@asynccontextmanager
+async def fake_history_connection(request):
+    conn = FakeHistoryConn()
+    FakeHistoryConn.instances.append(conn)
+    yield conn
+
+
 @pytest.mark.asyncio
 async def test_internet_scout_research_requires_scope():
     with pytest.raises(HTTPException) as exc:
@@ -242,6 +318,47 @@ async def test_internet_scout_retention_report_is_report_only(monkeypatch):
 
     assert response.mode == "report_only"
     assert response.old_request_count == 7
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_browser_history_returns_recent_audit_events(
+    monkeypatch,
+):
+    FakeHistoryConn.instances = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_history_connection)
+
+    response = await internet_scout.internet_scout_browser_history(
+        _request(scopes=["internet_scout.read"]),
+        _user_id="ken",
+        limit=99,
+    )
+
+    query, limit = FakeHistoryConn.instances[0].fetch_calls[0]
+    assert response.count == 3
+    assert limit == 50
+    assert "alpha_internet_tool_events" in query
+    assert response.history[0].event_type == "browser_action"
+    assert response.history[0].action == "navigate"
+    assert response.history[0].host == "public.example.test"
+    assert response.history[0].elapsed_ms == 12
+    assert response.history[0].approval_queue_id == FakeHistoryConn.approval_queue_id
+    assert response.history[1].event_type == "browser_run"
+    assert response.history[1].observation_count == 1
+    assert response.history[1].screenshot_count == 1
+    assert response.history[1].action_audit_count == 2
+    assert response.history[2].event_type == "approval_request"
+    assert response.history[2].approval_hash_prefix == "abc123abc123"
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_browser_history_requires_read_scope():
+    with pytest.raises(HTTPException) as exc:
+        await internet_scout.internet_scout_browser_history(
+            _request(),
+            _user_id="ken",
+        )
+
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -732,6 +849,10 @@ def test_internet_scout_routes_are_classified():
     ) == [
         "write",
         "security_write",
+    ]
+    assert classify_route("GET", "/v1/internet-scout/browser-task/history") == [
+        "read",
+        "security_read",
     ]
     assert classify_route(
         "POST",

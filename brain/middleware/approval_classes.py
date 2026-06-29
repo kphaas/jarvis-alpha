@@ -214,6 +214,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "write",
         "security_write",
     ],
+    "GET /v1/internet-scout/browser-task/history": ["read", "security_read"],
     "POST /v1/internet-scout/requests/{request_id}/memory-promotions": [
         "write",
         "security_write",

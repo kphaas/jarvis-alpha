@@ -741,6 +741,33 @@ class InternetScoutBrowserRunResponse(BaseModel):
     blocked_reasons: list[str] = Field(default_factory=list)
 
 
+class InternetScoutBrowserHistoryItem(BaseModel):
+    request_id: UUID
+    approval_queue_id: UUID | None = None
+    event_type: str = Field(max_length=64)
+    status: str = Field(max_length=64)
+    created_at: datetime
+    selected_tool: str = Field(max_length=64)
+    request_status: str = Field(max_length=64)
+    risk_tier: ApprovalTier | None = None
+    approval_hash_prefix: str | None = Field(default=None, max_length=12)
+    observation_count: int = Field(default=0, ge=0, le=100)
+    screenshot_count: int = Field(default=0, ge=0, le=100)
+    action_audit_count: int = Field(default=0, ge=0, le=100)
+    action: str | None = Field(default=None, max_length=64)
+    host: str | None = Field(default=None, max_length=255)
+    blocked_reason: str | None = Field(default=None, max_length=160)
+    elapsed_ms: int | None = Field(default=None, ge=0, le=120_000)
+
+
+class InternetScoutBrowserHistoryResponse(BaseModel):
+    history: list[InternetScoutBrowserHistoryItem] = Field(
+        default_factory=list,
+        max_length=50,
+    )
+    count: int = Field(default=0, ge=0, le=50)
+
+
 class InternetScoutMemoryPromotionCandidate(BaseModel):
     claim_index: int = Field(ge=0)
     proposed_fact: str = Field(min_length=1, max_length=500)
