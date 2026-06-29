@@ -766,6 +766,9 @@ class InternetScoutBrowserHistoryResponse(BaseModel):
         max_length=50,
     )
     count: int = Field(default=0, ge=0, le=50)
+    limit: int = Field(default=20, ge=1, le=50)
+    offset: int = Field(default=0, ge=0)
+    has_more: bool = False
 
 
 class InternetScoutMemoryPromotionCandidate(BaseModel):
