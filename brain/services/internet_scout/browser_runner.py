@@ -18,6 +18,7 @@ from brain.services.internet_scout.evidence import (
 )
 from brain.services.internet_scout.models import (
     BrowserActionAuditEvent,
+    BrowserClickTarget,
     BrowserRunObservation,
     BrowserSandboxPolicy,
     EvidenceClaim,
@@ -97,7 +98,7 @@ class BrowserScreenshotStore:
 
 
 class PlaywrightBrowserTaskAdapter:
-    """Production browser adapter for public, read-only page observation."""
+    """Production browser adapter for approved public-page observation/clicks."""
 
     def __init__(
         self,
@@ -155,10 +156,11 @@ class PlaywrightBrowserTaskAdapter:
                 )
                 page = await context.new_page()
                 page.set_default_timeout(self.timeout_ms)
+                sequence = 1
                 await _timed_action(
                     audit_action,
                     action="navigate",
-                    sequence=1,
+                    sequence=sequence,
                     host=sandbox.allowed_hosts[0],
                     url_hash=_hash_url(request.urls[0]),
                     operation=lambda: page.goto(
@@ -167,6 +169,7 @@ class PlaywrightBrowserTaskAdapter:
                         timeout=self.timeout_ms,
                     ),
                 )
+                sequence += 1
                 final_url = str(page.url)
                 final_safety = validate_url(final_url)
                 if (
@@ -176,7 +179,7 @@ class PlaywrightBrowserTaskAdapter:
                     await _emit_action(
                         audit_action,
                         BrowserActionAuditEvent(
-                            sequence=2,
+                            sequence=sequence,
                             action="navigate",
                             status="blocked",
                             host=final_safety.host,
@@ -190,39 +193,122 @@ class PlaywrightBrowserTaskAdapter:
                 await _timed_action(
                     audit_action,
                     action="inspect_controls",
-                    sequence=3,
+                    sequence=sequence,
                     host=final_safety.host,
                     url_hash=_hash_url(final_url),
                     operation=lambda: _assert_no_disallowed_form_controls(page),
                 )
+                sequence += 1
+                for click_index, click in enumerate(request.browser_clicks, start=1):
+                    before_ref = await _capture_review_screenshot(
+                        page,
+                        store=self.screenshot_store,
+                        audit_action=audit_action,
+                        sequence=sequence,
+                        host=final_safety.host,
+                        url_hash=_hash_url(final_url),
+                        phase="before_click",
+                        click_index=click_index,
+                    )
+                    sequence += 1
+                    snapshot = await _approved_click_target_snapshot(
+                        page,
+                        click=click,
+                        sandbox=sandbox,
+                    )
+                    await _timed_action(
+                        audit_action,
+                        action="click",
+                        sequence=sequence,
+                        host=final_safety.host,
+                        url_hash=_hash_url(final_url),
+                        metadata={
+                            "click_index": click_index,
+                            "before_screenshot_ref": before_ref,
+                            "target_tag": snapshot.get("tag"),
+                            "target_role": snapshot.get("role"),
+                            "target_href_hash": _hash_url(str(snapshot["href"]))
+                            if snapshot.get("href")
+                            else None,
+                        },
+                        operation=lambda click=click: (
+                            page.locator(click.selector)
+                            .first()
+                            .click(timeout=self.timeout_ms)
+                        ),
+                    )
+                    sequence += 1
+                    final_url = str(page.url)
+                    final_safety = validate_url(final_url)
+                    if (
+                        not final_safety.allowed
+                        or final_safety.host not in sandbox.allowed_hosts
+                    ):
+                        await _emit_action(
+                            audit_action,
+                            BrowserActionAuditEvent(
+                                sequence=sequence,
+                                action="click",
+                                status="blocked",
+                                host=final_safety.host,
+                                url_hash=_hash_url(final_url),
+                                blocked_reason="browser_click_cross_host_blocked",
+                            ),
+                        )
+                        raise BrowserSandboxPolicyError(
+                            "browser_click_cross_host_blocked"
+                        )
+                    await _timed_action(
+                        audit_action,
+                        action="inspect_controls",
+                        sequence=sequence,
+                        host=final_safety.host,
+                        url_hash=_hash_url(final_url),
+                        metadata={"click_index": click_index},
+                        operation=lambda: _assert_no_disallowed_form_controls(page),
+                    )
+                    sequence += 1
+                    await _capture_review_screenshot(
+                        page,
+                        store=self.screenshot_store,
+                        audit_action=audit_action,
+                        sequence=sequence,
+                        host=final_safety.host,
+                        url_hash=_hash_url(final_url),
+                        phase="after_click",
+                        click_index=click_index,
+                    )
+                    sequence += 1
                 title = await page.title()
                 raw_visible_text = await _timed_action(
                     audit_action,
                     action="extract_text",
-                    sequence=4,
+                    sequence=sequence,
                     host=final_safety.host,
                     url_hash=_hash_url(final_url),
                     operation=lambda: page.locator("body").inner_text(
                         timeout=self.timeout_ms
                     ),
                 )
+                sequence += 1
                 sanitized = sanitize_untrusted_text(raw_visible_text, max_chars=5000)
-                screenshot = await _timed_action(
-                    audit_action,
-                    action="screenshot",
-                    sequence=5,
+                screenshot_ref = await _capture_review_screenshot(
+                    page,
+                    store=self.screenshot_store,
+                    audit_action=audit_action,
+                    sequence=sequence,
                     host=final_safety.host,
                     url_hash=_hash_url(final_url),
-                    operation=lambda: page.screenshot(full_page=True),
+                    phase="final_observation",
                 )
-                screenshot_ref = self.screenshot_store.save_png(screenshot)
+                sequence += 1
                 content_hash = hashlib.sha256(
                     sanitized.text.encode("utf-8")
                 ).hexdigest()
                 await _emit_action(
                     audit_action,
                     BrowserActionAuditEvent(
-                        sequence=6,
+                        sequence=sequence,
                         action="observe",
                         status="succeeded",
                         host=final_safety.host,
@@ -487,6 +573,7 @@ async def _timed_action(
     host: str | None,
     url_hash: str | None,
     operation,
+    metadata: dict[str, object] | None = None,
 ):
     started = perf_counter()
     await _emit_action(
@@ -497,6 +584,7 @@ async def _timed_action(
             status="started",
             host=host,
             url_hash=url_hash,
+            metadata=metadata or {},
         ),
     )
     try:
@@ -512,6 +600,7 @@ async def _timed_action(
                 url_hash=url_hash,
                 elapsed_ms=_elapsed_ms(started),
                 blocked_reason=str(exc),
+                metadata=metadata or {},
             ),
         )
         raise
@@ -526,6 +615,7 @@ async def _timed_action(
                 url_hash=url_hash,
                 elapsed_ms=_elapsed_ms(started),
                 blocked_reason=exc.__class__.__name__,
+                metadata=metadata or {},
             ),
         )
         raise
@@ -538,9 +628,70 @@ async def _timed_action(
             host=host,
             url_hash=url_hash,
             elapsed_ms=_elapsed_ms(started),
+            metadata=metadata or {},
         ),
     )
     return result
+
+
+async def _capture_review_screenshot(
+    page,
+    *,
+    store: BrowserScreenshotStore,
+    audit_action: BrowserActionAuditCallback | None,
+    sequence: int,
+    host: str | None,
+    url_hash: str | None,
+    phase: str,
+    click_index: int | None = None,
+) -> str:
+    started = perf_counter()
+    metadata = {"phase": phase}
+    if click_index is not None:
+        metadata["click_index"] = click_index
+    await _emit_action(
+        audit_action,
+        BrowserActionAuditEvent(
+            sequence=sequence,
+            action="screenshot",
+            status="started",
+            host=host,
+            url_hash=url_hash,
+            metadata=metadata,
+        ),
+    )
+    try:
+        data = await page.screenshot(full_page=True)
+    except Exception as exc:
+        await _emit_action(
+            audit_action,
+            BrowserActionAuditEvent(
+                sequence=sequence,
+                action="screenshot",
+                status="failed",
+                host=host,
+                url_hash=url_hash,
+                elapsed_ms=_elapsed_ms(started),
+                blocked_reason=exc.__class__.__name__,
+                metadata=metadata,
+            ),
+        )
+        raise
+    screenshot_ref = store.save_png(data)
+    await _emit_action(
+        audit_action,
+        BrowserActionAuditEvent(
+            sequence=sequence,
+            action="screenshot",
+            status="succeeded",
+            host=host,
+            url_hash=url_hash,
+            elapsed_ms=_elapsed_ms(started),
+            screenshot_ref=screenshot_ref,
+            metadata=metadata,
+        ),
+    )
+    return screenshot_ref
 
 
 async def _enforce_browser_request_allowlist(route, *, allowed_hosts: set[str]) -> None:
@@ -572,6 +723,42 @@ async def _assert_no_disallowed_form_controls(page) -> None:
     reason = classify_disallowed_browser_controls(controls)
     if reason is not None:
         raise BrowserSandboxPolicyError(reason)
+
+
+async def _approved_click_target_snapshot(
+    page,
+    *,
+    click: BrowserClickTarget,
+    sandbox: BrowserSandboxPolicy,
+) -> dict[str, object]:
+    locator = page.locator(click.selector).first()
+    try:
+        await locator.wait_for(state="visible")
+        snapshot = await locator.evaluate(
+            """
+            (el) => ({
+              tag: String(el.tagName || '').toLowerCase(),
+              type: String(el.getAttribute('type') || '').toLowerCase(),
+              role: String(el.getAttribute('role') || '').toLowerCase(),
+              name: String(el.getAttribute('name') || '').toLowerCase(),
+              id: String(el.getAttribute('id') || '').toLowerCase(),
+              ariaLabel: String(el.getAttribute('aria-label') || '').toLowerCase(),
+              text: String(el.innerText || el.textContent || '').toLowerCase().slice(0, 200),
+              href: String(el.href || el.getAttribute('href') || ''),
+              contentEditable: String(el.getAttribute('contenteditable') || '').toLowerCase()
+            })
+            """
+        )
+    except Exception as exc:
+        raise BrowserSandboxPolicyError("browser_click_target_not_found") from exc
+    reason = classify_disallowed_browser_click_target(
+        snapshot,
+        allowed_hosts=sandbox.allowed_hosts,
+        expected_host=click.expected_host,
+    )
+    if reason is not None:
+        raise BrowserSandboxPolicyError(reason)
+    return snapshot
 
 
 def classify_disallowed_browser_controls(controls: object) -> str | None:
@@ -611,6 +798,55 @@ def classify_disallowed_browser_controls(controls: object) -> str | None:
         if any(marker in haystack for marker in credential_markers):
             return "browser_credential_fields_blocked"
     return "browser_forms_blocked"
+
+
+def classify_disallowed_browser_click_target(
+    target: object,
+    *,
+    allowed_hosts: list[str],
+    expected_host: str | None = None,
+) -> str | None:
+    if not isinstance(target, dict):
+        return "browser_click_target_invalid"
+    tag = str(target.get("tag", "")).lower()
+    if tag in {"form", "input", "textarea", "select", "option"}:
+        return "browser_click_form_control_blocked"
+    if str(target.get("contentEditable", "")).lower() == "true":
+        return "browser_click_form_control_blocked"
+
+    href = str(target.get("href", "")).strip()
+    if href:
+        safety = validate_url(href)
+        if not safety.allowed or safety.host not in allowed_hosts:
+            return "browser_click_cross_host_blocked"
+        if expected_host and safety.host != expected_host:
+            return "browser_click_unexpected_host_blocked"
+    elif expected_host:
+        return "browser_click_expected_host_missing"
+
+    haystack = " ".join(
+        str(target.get(key, "")).lower()
+        for key in ("type", "role", "name", "id", "ariaLabel", "text", "href")
+    )
+    risky_markers = {
+        "buy",
+        "checkout",
+        "confirm",
+        "credit",
+        "login",
+        "order",
+        "password",
+        "pay",
+        "payment",
+        "post",
+        "purchase",
+        "send",
+        "sign in",
+        "submit",
+    }
+    if any(marker in haystack for marker in risky_markers):
+        return "browser_click_risky_target_blocked"
+    return None
 
 
 def _hash_url(url: str) -> str:

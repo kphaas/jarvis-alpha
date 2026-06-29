@@ -63,7 +63,7 @@ References:
 | Research benchmark breadth | Deterministic quality canaries exist, but not a broader industry-style benchmark suite with latency, cost, citation precision, and refusal quality. | Partial | Eval harness covers current facts, official docs, local/weather, shopping, adversarial pages, and insufficient-evidence refusal. |
 | Durable web cache/index | Beacon now has a DB-backed public-web evidence cache with TTL, URL dedupe, search-term GIN index, local quality/term rerank, and hit telemetry. Runtime reuse is still limited to the backend cache contract. | Partial | Evidence cache has TTL, dedupe, reuse policy, optional embeddings/rerank index, and cache hit telemetry. |
 | Browser action UX | Approval payloads now include v2 review metadata: action timeline, host allowlist, URL hashes, screenshot policy, risk labels, and blocked capabilities. Helm still needs the richer visual treatment. | Partial | Approvals UI shows action timeline, pre/post screenshots, host allowlist, risk labels, and one-click deny/approve. |
-| Browser action capability | Browser execution remains observation-first. It does not yet support structured click flows such as reservation navigation. | Partial | Click-only v2 supports approved element snapshots, same-host navigation, no credentials, no purchases, screenshots before/after, and per-click audit. |
+| Browser action capability | Browser execution now supports a bounded approved-selector click path, but operator request UX is still thin. | Partial | Click-only v2 supports approved element snapshots, same-host navigation, no credentials, no purchases, screenshots before/after, and per-click audit. |
 | MCP/tool ecosystem | Beacon is mostly internal Alpha routes, not a tool marketplace style integration layer. | Not started | Beacon exposes policy-scoped tool contracts for approved internal agents and optional MCP-facing consumers. |
 | Product-mode defaults | Focus mode request contract and Beacon UI selector are in progress. | Partial | Mode selector maps to source policies, provider strategy, extraction budget, and UI labels. |
 | Ops SLO dashboard | Beacon now has a one-page Ops dashboard for answer latency, provider state, spend-guard posture, citation quality, browser approvals, and operator actions. | Complete | `/beacon/ops` shows SLO cards, 24h windows, provider/cost/citation/browser sections, and action chips after deployed smoke. |
@@ -81,7 +81,7 @@ References:
 | 6 | Deep research cockpit | Partial | UI renders research plan, subquestions, warnings, final report summary, and ranked sources; progress and exportable citations remain. |
 | 7 | Cache/rerank/index layer | Partial | Beacon stores recent public evidence snippets with TTL, URL dedupe, indexed search terms, local rerank metadata, and cache-hit counters. |
 | 8 | Browser approval UX v2 | Partial | Approval contracts include action timeline, screenshot policy, host allowlist, URL hashes, risk labels, and deny/approve-compatible metadata. |
-| 9 | Browser click-only v2 | Not started | Structured clicks are approved per target, no typing, no credentials, no purchases, no cross-host jumps. |
+| 9 | Browser click-only v2 | Partial | Backend runner supports approved selectors, no typing, no credentials/forms/purchases, no cross-host jumps, screenshots before/after, and per-click audit; operator request UX remains. |
 | 10 | Ops/SLO dashboard | Complete | Beacon Ops reports latency, cost guard, quality canary, provider state, browser approvals, and next operator action. |
 
 ## UX Improvement Notes

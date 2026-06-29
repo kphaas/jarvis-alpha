@@ -87,11 +87,20 @@ class InternetTool(str, Enum):
     BROWSER_USE = "browser_use"
 
 
+class BrowserClickTarget(BaseModel):
+    """One operator-approved click target for the browser sandbox."""
+
+    selector: str = Field(min_length=1, max_length=200)
+    label: str | None = Field(default=None, max_length=120)
+    expected_host: str | None = Field(default=None, max_length=255)
+
+
 class InternetScoutRequest(BaseModel):
     """Operator or system request for read-only public internet evidence."""
 
     query: str | None = Field(default=None, max_length=2000)
     urls: list[str] = Field(default_factory=list, max_length=20)
+    browser_clicks: list[BrowserClickTarget] = Field(default_factory=list, max_length=3)
     tool_hint: InternetTool | None = None
     focus_mode: InternetScoutFocusMode = "all"
     max_pages: int = Field(default=1, ge=1, le=50)
@@ -112,6 +121,17 @@ class InternetScoutRequest(BaseModel):
     @classmethod
     def _strip_urls(cls, value: list[str]) -> list[str]:
         return [item.strip() for item in value if item.strip()]
+
+    @field_validator("browser_clicks")
+    @classmethod
+    def _strip_browser_clicks(
+        cls, value: list[BrowserClickTarget]
+    ) -> list[BrowserClickTarget]:
+        return [
+            item.model_copy(update={"selector": item.selector.strip()})
+            for item in value
+            if item.selector.strip()
+        ]
 
 
 class InternetScoutConsumerRequest(BaseModel):
@@ -692,6 +712,7 @@ class BrowserActionAuditEvent(BaseModel):
         "runtime",
         "navigate",
         "inspect_controls",
+        "click",
         "extract_text",
         "screenshot",
         "observe",
