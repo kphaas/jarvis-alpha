@@ -179,7 +179,10 @@ def browser_task_approval_preview(
             decision=decision,
             allowed_hosts=allowed_hosts,
         ),
-        action_timeline=_browser_action_timeline(allowed_hosts=allowed_hosts),
+        action_timeline=_browser_action_timeline(
+            allowed_hosts=allowed_hosts,
+            click_count=len(request.browser_clicks),
+        ),
         approval_hash_prefix=parameters_hash[:12],
     )
 
@@ -211,6 +214,8 @@ def _browser_risk_labels(
         "no_credentials",
         "raw_web_content_untrusted",
     ]
+    if request.browser_clicks:
+        labels.extend(["click_only", "approved_selectors_only"])
     if request.sensitivity != "normal":
         labels.append(f"sensitivity_{request.sensitivity}")
     if decision.tier in {"T4", "T5"}:
@@ -220,9 +225,13 @@ def _browser_risk_labels(
     return labels
 
 
-def _browser_action_timeline(*, allowed_hosts: list[str]) -> list[dict[str, object]]:
+def _browser_action_timeline(
+    *,
+    allowed_hosts: list[str],
+    click_count: int = 0,
+) -> list[dict[str, object]]:
     host_count = len(allowed_hosts)
-    return [
+    timeline: list[dict[str, object]] = [
         {
             "step": "review_request",
             "status": "pending_operator_review",
@@ -249,14 +258,28 @@ def _browser_action_timeline(*, allowed_hosts: list[str]) -> list[dict[str, obje
             "status": "planned",
             "description": "Block forms, credentials, payment, login, and other disallowed controls before extraction.",
         },
-        {
-            "step": "screenshot",
-            "status": "planned",
-            "description": "Capture review screenshots after observation; screenshot refs are recorded in the audit event.",
-        },
-        {
-            "step": "extract_text",
-            "status": "planned",
-            "description": "Extract sanitized visible text as untrusted evidence only.",
-        },
     ]
+    if click_count:
+        timeline.append(
+            {
+                "step": "click",
+                "status": "planned",
+                "description": "Click only operator-approved selectors; no typing, forms, credentials, purchases, or cross-host navigation.",
+                "target_count": click_count,
+            }
+        )
+    timeline.extend(
+        [
+            {
+                "step": "screenshot",
+                "status": "planned",
+                "description": "Capture review screenshots after observation; screenshot refs are recorded in the audit event.",
+            },
+            {
+                "step": "extract_text",
+                "status": "planned",
+                "description": "Extract sanitized visible text as untrusted evidence only.",
+            },
+        ]
+    )
+    return timeline
