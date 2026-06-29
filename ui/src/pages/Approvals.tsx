@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock, Fingerprint, Sparkles, Globe2, MousePointerClick } from 'lucide-react'
+import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock, Fingerprint, Sparkles } from 'lucide-react'
+import { BeaconBrowserApprovalPanel, type BeaconApprovalContext } from '../components/beacon/BeaconBrowserApprovalPanel'
 import { apiJson } from '../lib/apiFetch'
 import { useAppStore } from '../store'
 import type { SparkIMessageApprovedSendResponse } from '../types/spark'
@@ -21,27 +22,6 @@ interface SparkApprovalContext {
   outbox_id?: string | null
   outbox_status?: string | null
   outbox_recorded?: boolean
-}
-
-interface BeaconApprovalContext {
-  kind: string
-  request_id?: string | null
-  selected_tool: string
-  risk_tier: string
-  sensitivity: string
-  requires_human_approval: boolean
-  has_query: boolean
-  url_count: number
-  max_pages: number
-  max_depth: number
-  needs_interaction: boolean
-  same_host_required: boolean
-  screenshots_required: boolean
-  downloads_allowed: boolean
-  forms_allowed: boolean
-  raw_task_text_included: boolean
-  raw_web_content_is_untrusted: boolean
-  approval_hash_prefix: string
 }
 
 interface QueueItem {
@@ -461,27 +441,7 @@ export default function Approvals() {
               </div>
             )}
             {item.beacon && (
-              <div className="flex items-start gap-2 opacity-90">
-                <MousePointerClick className="w-3 h-3 mt-0.5 shrink-0 text-cyan-400" />
-                <span>
-                  <strong>beacon browser:</strong> {item.beacon.selected_tool.replace('_', ' ')}
-                  {' · '}query {item.beacon.has_query ? 'yes' : 'no'}
-                  {' · '}urls {item.beacon.url_count}
-                  {' · '}screenshots {item.beacon.screenshots_required ? 'required' : 'off'}
-                  {' · '}same-host {item.beacon.same_host_required ? 'yes' : 'no'}
-                </span>
-              </div>
-            )}
-            {item.beacon && (
-              <div className="flex items-start gap-2 opacity-80">
-                <Globe2 className="w-3 h-3 mt-0.5 shrink-0 text-cyan-400" />
-                <span>
-                  <strong>approval contract:</strong> raw task text {item.beacon.raw_task_text_included ? 'included' : 'hidden'}
-                  {' · '}web content {item.beacon.raw_web_content_is_untrusted ? 'untrusted evidence' : 'trusted'}
-                  {' · '}hash {item.beacon.approval_hash_prefix}
-                  {item.beacon.request_id ? ` · request ${item.beacon.request_id.slice(0, 8)}` : ''}
-                </span>
-              </div>
+              <BeaconBrowserApprovalPanel beacon={item.beacon} isDark={isDark} />
             )}
           </div>
 
