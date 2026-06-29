@@ -33,6 +33,9 @@ def test_beacon_ops_dashboard_surfaces_core_slo_sections() -> None:
     assert "Show details" in source
     assert "Hide details" in source
     assert "aria-expanded={dataSourcesOpen}" in source
+    assert "Operational Details" in source
+    assert "beacon-operational-details" in source
+    assert "aria-expanded={operationalDetailsOpen}" in source
     assert "Operator Action" in source
     assert "exact_cost_available" in source
     assert "budget_capped_backup_provider_count" in source
