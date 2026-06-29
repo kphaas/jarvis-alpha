@@ -5,20 +5,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ANSWER_SUMMARY = (
-    REPO_ROOT
-    / "ui"
-    / "src"
-    / "components"
-    / "beacon"
-    / "BeaconAnswerSummary.tsx"
+    REPO_ROOT / "ui" / "src" / "components" / "beacon" / "BeaconAnswerSummary.tsx"
 )
 RESEARCH_COCKPIT = (
-    REPO_ROOT
-    / "ui"
-    / "src"
-    / "components"
-    / "beacon"
-    / "BeaconResearchPlanStrip.tsx"
+    REPO_ROOT / "ui" / "src" / "components" / "beacon" / "BeaconResearchPlanStrip.tsx"
 )
 
 
