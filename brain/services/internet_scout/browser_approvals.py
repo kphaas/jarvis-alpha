@@ -9,6 +9,7 @@ from uuid import UUID
 import asyncpg
 
 from brain.services.internet_scout.models import (
+    BrowserClickTargetPreview,
     InternetScoutBrowserApprovalPreview,
     InternetScoutRequest,
     InternetTool,
@@ -179,6 +180,7 @@ def browser_task_approval_preview(
             decision=decision,
             allowed_hosts=allowed_hosts,
         ),
+        click_targets=_browser_click_target_previews(request),
         action_timeline=_browser_action_timeline(
             allowed_hosts=allowed_hosts,
             click_count=len(request.browser_clicks),
@@ -223,6 +225,19 @@ def _browser_risk_labels(
     if not allowed_hosts:
         labels.append("host_allowlist_missing")
     return labels
+
+
+def _browser_click_target_previews(
+    request: InternetScoutRequest,
+) -> list[BrowserClickTargetPreview]:
+    return [
+        BrowserClickTargetPreview(
+            selector=click.selector,
+            label=click.label,
+            expected_host=click.expected_host,
+        )
+        for click in request.browser_clicks
+    ]
 
 
 def _browser_action_timeline(

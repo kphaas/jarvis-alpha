@@ -29,6 +29,8 @@ def test_beacon_browser_approval_ui_surfaces_v2_review_contract() -> None:
     assert "screenshot_refs_redacted_until_execution" in source
     assert "credential_entry_allowed" in source
     assert "risk_labels" in source
+    assert "interface BeaconClickTarget" in source
+    assert "click_targets" in source
     assert "action_timeline" in source
 
 
@@ -43,6 +45,8 @@ def test_beacon_browser_approval_ui_has_operator_review_sections() -> None:
     assert "Credential entry" in source
     assert "Risk labels" in source
     assert "Action timeline" in source
+    assert "Approved click targets" in source
+    assert "expected host" in source
     assert "Approve runs only this reviewed browser plan" in source
     assert "Deny leaves the browser runtime untouched" in source
 

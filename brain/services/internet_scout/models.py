@@ -95,6 +95,14 @@ class BrowserClickTarget(BaseModel):
     expected_host: str | None = Field(default=None, max_length=255)
 
 
+class BrowserClickTargetPreview(BaseModel):
+    """Redacted click target shown before an approved browser run."""
+
+    selector: str = Field(min_length=1, max_length=200)
+    label: str | None = Field(default=None, max_length=120)
+    expected_host: str | None = Field(default=None, max_length=255)
+
+
 class InternetScoutRequest(BaseModel):
     """Operator or system request for read-only public internet evidence."""
 
@@ -383,6 +391,10 @@ class InternetScoutBrowserApprovalPreview(BaseModel):
     forms_allowed: bool = False
     credential_entry_allowed: bool = False
     risk_labels: list[str] = Field(default_factory=list, max_length=16)
+    click_targets: list[BrowserClickTargetPreview] = Field(
+        default_factory=list,
+        max_length=3,
+    )
     action_timeline: list[dict[str, object]] = Field(
         default_factory=list, max_length=12
     )
