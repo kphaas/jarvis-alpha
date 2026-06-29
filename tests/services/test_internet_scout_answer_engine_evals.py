@@ -27,6 +27,7 @@ def test_answer_engine_eval_payload_groups_contracts() -> None:
 
     assert payload["status"] == "passed"
     assert payload["case_groups"]["focus_modes"]["case_count"] == 5
+    assert payload["case_groups"]["answer_quality_scenarios"]["case_count"] == 4
     assert payload["case_groups"]["citation_surface"]["case_count"] == 1
     assert payload["case_groups"]["refusal_quality"]["case_count"] == 1
     assert payload["case_groups"]["deep_research"]["case_count"] == 1
@@ -65,3 +66,34 @@ def test_deep_research_eval_requires_complete_vendor_coverage() -> None:
     assert len(result.details["research_report_verified_claims"]) >= 2
     assert result.details["research_report_unsupported_claims"] == []
     assert result.details["research_report_coverage_warnings"] == []
+
+
+def test_answer_quality_evals_cover_real_regression_scenarios() -> None:
+    results = {
+        item.name: item
+        for item in run_answer_engine_evals()
+        if item.eval_group == "answer_quality_scenarios"
+    }
+
+    assert (
+        results["answer_quality_vendor_comparison_is_strong"].details["score"]["label"]
+        == "strong"
+    )
+    assert (
+        results["answer_quality_missing_vendor_is_limited"].details["score"][
+            "official_coverage_score"
+        ]
+        == 50
+    )
+    assert (
+        results["answer_quality_unsupported_pricing_refuses_low"].details["score"][
+            "accepted_source_count"
+        ]
+        == 0
+    )
+    assert (
+        results["answer_quality_prompt_injection_refuses_low"].details["score"][
+            "rejected_risk_count"
+        ]
+        >= 1
+    )

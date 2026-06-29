@@ -41,6 +41,7 @@ def run_answer_engine_evals() -> list[AnswerEngineEvalResult]:
         _deep_research_contract(by_name),
         _provider_telemetry_contract(by_name),
         _evidence_transparency_contract(by_name),
+        *_answer_quality_scenario_contracts(by_name),
     ]
 
 
@@ -431,6 +432,121 @@ def _evidence_transparency_contract(
                 current_accepted and current_accepted[0].get("fetched_at")
             ),
             "answer_quality_score": official_score,
+        },
+        failures=tuple(failures),
+    )
+
+
+def _answer_quality_scenario_contracts(
+    results: dict[str, SearchQualityEvalResult],
+) -> list[AnswerEngineEvalResult]:
+    cases = [
+        {
+            "name": "answer_quality_vendor_comparison_is_strong",
+            "case": "official_vendor_comparison_prefers_provider_docs",
+            "status": "supported",
+            "answerability": "answerable",
+            "label": "strong",
+            "min_score": 90,
+            "min_diversity": 80,
+            "official_coverage": 100,
+            "freshness": 100,
+            "rejected_risk_count": 0,
+        },
+        {
+            "name": "answer_quality_missing_vendor_is_limited",
+            "case": "official_openai_anthropic_comparison_downgrades_when_vendor_missing",
+            "status": "weak",
+            "answerability": "limited",
+            "label": "limited",
+            "max_score": 74,
+            "official_coverage": 50,
+            "required_warning": "Official-source coverage is incomplete.",
+        },
+        {
+            "name": "answer_quality_unsupported_pricing_refuses_low",
+            "case": "unsupported_official_pricing_claim_fails_closed",
+            "status": "insufficient",
+            "answerability": "not_verified",
+            "label": "low",
+            "max_score": 39,
+            "accepted_source_count": 0,
+            "min_rejected_risk_count": 1,
+            "freshness": 0,
+        },
+        {
+            "name": "answer_quality_prompt_injection_refuses_low",
+            "case": "prompt_injection_marker_rejects_citation",
+            "status": "insufficient",
+            "answerability": "not_verified",
+            "label": "low",
+            "max_score": 39,
+            "accepted_source_count": 0,
+            "min_rejected_risk_count": 1,
+        },
+    ]
+    return [_answer_quality_scenario_result(results, case) for case in cases]
+
+
+def _answer_quality_scenario_result(
+    results: dict[str, SearchQualityEvalResult],
+    case: dict[str, object],
+) -> AnswerEngineEvalResult:
+    result = results[str(case["case"])]
+    score = result.details["evidence_transparency"]["answer_quality_score"]
+    failures: list[str] = []
+
+    if result.details["status"] != case["status"]:
+        failures.append(f"status:{result.details['status']}")
+    if result.details["research_report_answerability"] != case["answerability"]:
+        failures.append(
+            f"answerability:{result.details['research_report_answerability']}"
+        )
+    if score["label"] != case["label"]:
+        failures.append(f"label:{score['label']}")
+    if "min_score" in case and score["score"] < case["min_score"]:
+        failures.append(f"score:{score['score']}")
+    if "max_score" in case and score["score"] > case["max_score"]:
+        failures.append(f"score:{score['score']}")
+    if (
+        "min_diversity" in case
+        and score["source_diversity_score"] < case["min_diversity"]
+    ):
+        failures.append(f"source_diversity:{score['source_diversity_score']}")
+    if (
+        "official_coverage" in case
+        and score["official_coverage_score"] != case["official_coverage"]
+    ):
+        failures.append(f"official_coverage:{score['official_coverage_score']}")
+    if "freshness" in case and score["freshness_score"] != case["freshness"]:
+        failures.append(f"freshness:{score['freshness_score']}")
+    if (
+        "rejected_risk_count" in case
+        and score["rejected_risk_count"] != case["rejected_risk_count"]
+    ):
+        failures.append(f"rejected_risk_count:{score['rejected_risk_count']}")
+    if (
+        "min_rejected_risk_count" in case
+        and score["rejected_risk_count"] < case["min_rejected_risk_count"]
+    ):
+        failures.append(f"rejected_risk_count:{score['rejected_risk_count']}")
+    if (
+        "accepted_source_count" in case
+        and score["accepted_source_count"] != case["accepted_source_count"]
+    ):
+        failures.append(f"accepted_source_count:{score['accepted_source_count']}")
+    if "required_warning" in case and case["required_warning"] not in score["warnings"]:
+        failures.append("required_warning")
+
+    return AnswerEngineEvalResult(
+        name=str(case["name"]),
+        eval_group="answer_quality_scenarios",
+        passed=not failures,
+        details={
+            "source_case": result.name,
+            "status": result.details["status"],
+            "answerability": result.details["research_report_answerability"],
+            "score": score,
         },
         failures=tuple(failures),
     )
