@@ -405,7 +405,7 @@ def _run_browser_click_smoke(
     history = _call_json(
         "GET",
         base_url,
-        f"/v1/internet-scout/browser-task/history?limit=20&q={quote(queue_id)}",
+        f"/v1/internet-scout/browser-task/history?limit=50&q={quote(queue_id)}",
         token,
     )
     rows = history.get("history") if isinstance(history.get("history"), list) else []
