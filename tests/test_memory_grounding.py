@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from brain.memory import memory as memory_module
-from brain.memory.memory import MemoryService
+from brain.memory.memory import AT0_SYSTEM_PRINCIPAL_UUID, MemoryService
 
 
 @dataclass(frozen=True)
@@ -181,6 +181,98 @@ async def test_build_context_injects_temporal_graph_before_episodic(
 
 
 @pytest.mark.asyncio
+async def test_build_context_includes_at0_system_graph_for_at0_questions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = uuid4()
+    calls: list[object] = []
+
+    async def fake_graph(
+        _service: MemoryService,
+        _conn: object,
+        graph_user_id: object,
+        *,
+        prompt: str = "",
+    ) -> list[dict[str, object]]:
+        calls.append(graph_user_id)
+        if graph_user_id == AT0_SYSTEM_PRINCIPAL_UUID:
+            return [
+                {
+                    "item_type": "node",
+                    "kind": "project",
+                    "label_preview": "Helm",
+                    "source": "explicit",
+                    "confidence": 0.94,
+                    "retrieval_state": "current",
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(memory_module, "fetch_personality_memory", _async_rows([]))
+    monkeypatch.setattr(
+        memory_module,
+        "load_spark_memory_grounding",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(MemoryService, "_get_semantic", _async_rows([]))
+    monkeypatch.setattr(MemoryService, "_get_graph", fake_graph)
+    monkeypatch.setattr(MemoryService, "_get_episodic", _async_rows([]))
+    monkeypatch.setattr(MemoryService, "_get_working", _async_rows([]))
+
+    context = await MemoryService().build_context(
+        conn=object(),
+        user_id=user_id,
+        prompt="What can Helm do in AT-0?",
+        session_id="thread-1",
+        embedding=[],
+        principal_id="ken",
+    )
+
+    assert calls == [user_id, AT0_SYSTEM_PRINCIPAL_UUID]
+    assert "- [current] Project: Helm" in context
+
+
+@pytest.mark.asyncio
+async def test_build_context_skips_at0_system_graph_for_personal_questions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = uuid4()
+    calls: list[object] = []
+
+    async def fake_graph(
+        _service: MemoryService,
+        _conn: object,
+        graph_user_id: object,
+        *,
+        prompt: str = "",
+    ) -> list[dict[str, object]]:
+        calls.append(graph_user_id)
+        return []
+
+    monkeypatch.setattr(memory_module, "fetch_personality_memory", _async_rows([]))
+    monkeypatch.setattr(
+        memory_module,
+        "load_spark_memory_grounding",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(MemoryService, "_get_semantic", _async_rows([]))
+    monkeypatch.setattr(MemoryService, "_get_graph", fake_graph)
+    monkeypatch.setattr(MemoryService, "_get_episodic", _async_rows([]))
+    monkeypatch.setattr(MemoryService, "_get_working", _async_rows([]))
+
+    await MemoryService().build_context(
+        conn=object(),
+        user_id=user_id,
+        prompt="What should you remember about me?",
+        session_id="thread-1",
+        embedding=[],
+        principal_id="ken",
+    )
+
+    assert calls == [user_id]
+
+
+@pytest.mark.asyncio
 async def test_semantic_memory_uses_prompt_relevance_when_prompt_present() -> None:
     conn = _CapturingConn()
     user_id = uuid4()
@@ -293,6 +385,17 @@ def test_temporal_graph_history_classifier_separates_current_from_old(
     include_history: bool,
 ) -> None:
     assert MemoryService._include_historical_graph(prompt) is include_history
+
+
+def test_admin_inventory_always_exposes_at0_system_principal() -> None:
+    inventory = memory_module._merge_admin_inventory([], [], limit=20)
+
+    system_user = next(
+        user for user in inventory["users"] if user["profile_id"] == "at0_system"
+    )
+    assert system_user["display_name"] == "AT-0 System"
+    assert system_user["role"] == "system"
+    assert str(AT0_SYSTEM_PRINCIPAL_UUID) in system_user["aliases"]
 
 
 def _async_rows(rows: list[dict[str, object]]):
