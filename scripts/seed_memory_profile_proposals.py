@@ -33,6 +33,9 @@ PROFILE_SOURCE_SURFACE = "profile_seed"
 PROFILE_SOURCE = "explicit"
 PROFILE_PRINCIPAL = "ken"
 VALID_FROM = "2026-06-28T00:00:00Z"
+DEFAULT_PROFILE_SEED_APPROVAL_TTL_MINUTES = 120
+MIN_PROFILE_SEED_APPROVAL_TTL_MINUTES = 10
+MAX_PROFILE_SEED_APPROVAL_TTL_MINUTES = 720
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,6 +499,8 @@ def _proposal_summary(result: dict[str, Any]) -> dict[str, Any]:
         "proposal_id": result.get("proposal_id"),
         "approval_queue_id": result.get("approval_queue_id"),
         "parameters_hash": result.get("parameters_hash"),
+        "approval_ttl_minutes": result.get("approval_ttl_minutes"),
+        "approval_ttl_extended": result.get("approval_ttl_extended"),
     }
 
 
@@ -538,6 +543,21 @@ def main() -> int:
         help="HTTP timeout in seconds.",
     )
     parser.add_argument(
+        "--approval-ttl-minutes",
+        type=int,
+        default=int(
+            os.getenv(
+                "MEMORY_PROFILE_SEED_APPROVAL_TTL_MINUTES",
+                str(DEFAULT_PROFILE_SEED_APPROVAL_TTL_MINUTES),
+            )
+        ),
+        help=(
+            "Requested approval window for queued profile seed proposals "
+            f"({MIN_PROFILE_SEED_APPROVAL_TTL_MINUTES}-"
+            f"{MAX_PROFILE_SEED_APPROVAL_TTL_MINUTES} minutes)."
+        ),
+    )
+    parser.add_argument(
         "--queue",
         action="store_true",
         help="Queue proposals through /v1/memory/graph/proposals.",
@@ -556,6 +576,16 @@ def main() -> int:
 
     if args.nodes_only and args.edges_only:
         parser.error("--nodes-only and --edges-only are mutually exclusive")
+    if not (
+        MIN_PROFILE_SEED_APPROVAL_TTL_MINUTES
+        <= args.approval_ttl_minutes
+        <= MAX_PROFILE_SEED_APPROVAL_TTL_MINUTES
+    ):
+        parser.error(
+            "--approval-ttl-minutes must be between "
+            f"{MIN_PROFILE_SEED_APPROVAL_TTL_MINUTES} and "
+            f"{MAX_PROFILE_SEED_APPROVAL_TTL_MINUTES}"
+        )
 
     base_url = args.base_url.rstrip("/")
     node_proposals = (
@@ -614,12 +644,16 @@ def main() -> int:
     assert token is not None
     queued: list[dict[str, Any]] = []
     for proposal in proposals:
+        proposal_request = {
+            **proposal,
+            "approval_ttl_minutes": args.approval_ttl_minutes,
+        }
         result = _call_json(
             "POST",
             base_url,
             "/v1/memory/graph/proposals",
             token,
-            proposal,
+            proposal_request,
             timeout=args.timeout,
         )
         queued.append(
@@ -637,6 +671,7 @@ def main() -> int:
             "status": "queued",
             "principal_id": args.principal_id,
             "queued_count": len(queued),
+            "approval_ttl_minutes": args.approval_ttl_minutes,
             "queued": queued,
             "skipped_edges": skipped_edges,
         }
