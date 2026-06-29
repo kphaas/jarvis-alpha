@@ -5,6 +5,9 @@ import subprocess
 import sys
 
 from scripts.seed_memory_profile_proposals import (
+    DEFAULT_PROFILE_SEED_APPROVAL_TTL_MINUTES,
+    MAX_PROFILE_SEED_APPROVAL_TTL_MINUTES,
+    MIN_PROFILE_SEED_APPROVAL_TTL_MINUTES,
     PROFILE_EDGES,
     PROFILE_NODES,
     PROFILE_SEED_VERSION,
@@ -35,6 +38,15 @@ def test_profile_seed_builds_reviewed_node_proposals() -> None:
     assert {
         proposal["payload"]["provenance"]["source_basis"] for proposal in proposals
     } >= {"resume_docx_and_linkedin_profile", "linkedin_profile", "resume_docx"}
+
+
+def test_profile_seed_approval_ttl_default_is_operator_reviewable() -> None:
+    assert DEFAULT_PROFILE_SEED_APPROVAL_TTL_MINUTES == 120
+    assert (
+        MIN_PROFILE_SEED_APPROVAL_TTL_MINUTES
+        <= DEFAULT_PROFILE_SEED_APPROVAL_TTL_MINUTES
+        <= MAX_PROFILE_SEED_APPROVAL_TTL_MINUTES
+    )
 
 
 def test_profile_seed_does_not_include_contact_details() -> None:
@@ -95,3 +107,21 @@ def test_profile_seed_cli_previews_json_without_queueing() -> None:
     assert payload["status"] == "preview"
     assert payload["node_count"] == len(PROFILE_NODES)
     assert payload["edge_count"] == 0
+
+
+def test_profile_seed_cli_rejects_too_short_approval_ttl() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/seed_memory_profile_proposals.py",
+            "--nodes-only",
+            "--approval-ttl-minutes",
+            "9",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "--approval-ttl-minutes must be between" in result.stderr
