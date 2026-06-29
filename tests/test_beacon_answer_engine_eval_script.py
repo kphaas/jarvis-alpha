@@ -26,3 +26,5 @@ def test_beacon_answer_engine_eval_script_outputs_json() -> None:
     assert payload["passed"] >= 10
     assert payload["case_groups"]["focus_modes"]["failed"] == 0
     assert payload["case_groups"]["provider_telemetry"]["failed"] == 0
+    assert payload["reporting"]["cost"]["mode"] == "offline_fixture"
+    assert payload["reporting"]["citation_precision"]["precision"] > 0
