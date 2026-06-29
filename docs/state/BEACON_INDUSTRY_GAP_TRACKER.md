@@ -56,10 +56,10 @@ References:
 
 | Gap | Current Failure | Status | Close Criteria |
 |---|---|---|---|
-| Perplexity-class UX | Users do not yet get a fully polished answer-engine cockpit with session history, saved runs, and operator workflows in one place. | Partial | Beacon UI has search mode controls, source cards, history, confidence, warning chips, answer-quality score, evidence transparency, and deep research report rendering. |
+| Perplexity-class UX | Beacon now has an answer-first workspace, but saved runs and operator workflows are still not unified into one cockpit. | Partial | Beacon UI has search mode controls, answer workspace, source cards, history, confidence, warning chips, answer-quality score, evidence transparency, and deep research report rendering. |
 | UX visibility into evidence | Source ranking, rejected-source reasons, freshness, official-host match, claim support, and compact answer-quality scoring are now visible in the Beacon UI. | Complete | UI shows source quality, official/primary/general badges, rejected-source reasons, freshness, citation support status, and answer-quality rollup after deployed smoke. |
 | Private/free metasearch | Gateway now routes through self-hosted SearXNG before Brave and Perplexity. | Complete | Gateway has SearXNG provider adapter, health, spend-free routing, tests, and smoke coverage. |
-| Deep research productization | Contracts, planner, reports, and canaries exist, but the user flow is not yet a rich research cockpit. | Partial | UI shows plan, subquestions, progress, coverage warnings, report, source table, and export path. |
+| Deep research productization | Contracts, planner, reports, and canaries exist; the UI now shows a first cockpit slice, but live progress and export are still missing. | Partial | UI shows plan, subquestions, progress, coverage warnings, report, source table, and export path. |
 | Research benchmark breadth | Deterministic quality canaries exist, but not a broader industry-style benchmark suite with latency, cost, citation precision, and refusal quality. | Partial | Eval harness covers current facts, official docs, local/weather, shopping, adversarial pages, and insufficient-evidence refusal. |
 | Durable web cache/index | Beacon now has a DB-backed public-web evidence cache with TTL, URL dedupe, search-term GIN index, local quality/term rerank, and hit telemetry. Runtime reuse is still limited to the backend cache contract. | Partial | Evidence cache has TTL, dedupe, reuse policy, optional embeddings/rerank index, and cache hit telemetry. |
 | Browser action UX | Approval payloads now include v2 review metadata: action timeline, host allowlist, URL hashes, screenshot policy, risk labels, and blocked capabilities. Helm still needs the richer visual treatment. | Partial | Approvals UI shows action timeline, pre/post screenshots, host allowlist, risk labels, and one-click deny/approve. |
@@ -75,10 +75,10 @@ References:
 | 0 | Keep this tracker current | In progress | Every Beacon web-agent PR updates this file when it changes a tracked gap. |
 | 1 | Merge/deploy #483 browser-action executor hardening | Complete | Approved runner has strict same-host allowlist, caps, no forms/downloads/credentials, per-action audit, and post-deploy smoke. |
 | 2 | Add SearXNG/free metasearch provider | Complete | Gateway search provider order becomes SearXNG -> Brave -> Perplexity, with health and smoke; specialized free APIs remain separate first-choice routes. |
-| 3 | Beacon answer-engine UX v1 | Partial | UI has focus modes, source cards, history, confidence/limitations, visible cost/provider state, answer-quality score, and evidence transparency. |
+| 3 | Beacon answer-engine UX v1 | Partial | UI has focus modes, answer workspace, source cards, history, confidence/limitations, visible cost/provider state, answer-quality score, and evidence transparency. |
 | 4 | Evidence transparency UX | Complete | Users can inspect source quality, rejected-source reasons, freshness, official-host match, claim support, and answer-quality rollup in the deployed Beacon UI. |
 | 5 | Eval harness v1 | In progress | Scheduled canary status is now surfaced through Beacon health and Helm summary; broader latency, cost, citation precision, and refusal-quality reporting remains. |
-| 6 | Deep research cockpit | Partial | UI renders research plan, subquestions, progress, warnings, final report, and exportable citations. |
+| 6 | Deep research cockpit | Partial | UI renders research plan, subquestions, warnings, final report summary, and ranked sources; progress and exportable citations remain. |
 | 7 | Cache/rerank/index layer | Partial | Beacon stores recent public evidence snippets with TTL, URL dedupe, indexed search terms, local rerank metadata, and cache-hit counters. |
 | 8 | Browser approval UX v2 | Partial | Approval contracts include action timeline, screenshot policy, host allowlist, URL hashes, risk labels, and deny/approve-compatible metadata. |
 | 9 | Browser click-only v2 | Not started | Structured clicks are approved per target, no typing, no credentials, no purchases, no cross-host jumps. |
