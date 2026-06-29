@@ -39,6 +39,10 @@ def test_alpha_deploy_runs_cheap_smokes_after_fanout() -> None:
     assert 'BEACON_SMOKE_TOKEN_SSH_TARGET="$BRAIN"' in text
     assert "JARVIS_SKIP_BEACON_SMOKE" in text
     assert "JARVIS_ALPHA_SKIP_BEACON_SMOKE" in text
+    assert "beacon browser click" in text
+    assert "JARVIS_BEACON_BROWSER_CLICK_SMOKE" in text
+    assert "JARVIS_ALPHA_BEACON_BROWSER_CLICK_SMOKE" in text
+    assert "--run-browser-click" in text
     assert "eval_beacon_answer_engine.py" in text
     assert "JARVIS_SKIP_BEACON_ANSWER_EVAL" in text
     assert "JARVIS_ALPHA_SKIP_BEACON_ANSWER_EVAL" in text
@@ -54,6 +58,9 @@ def test_alpha_deploy_runs_cheap_smokes_after_fanout() -> None:
     beacon_script = text.index(
         'python3 "$REPO_DIR/scripts/smoke_beacon_production.py" --skip-agent'
     )
+    browser_click_script = text.index(
+        'python3 "$REPO_DIR/scripts/smoke_beacon_production.py" --skip-agent --run-browser-click'
+    )
     answer_eval_script = text.index(
         "uv run --python 3.12 python scripts/eval_beacon_answer_engine.py"
     )
@@ -68,6 +75,7 @@ def test_alpha_deploy_runs_cheap_smokes_after_fanout() -> None:
         < memory_script
         < graph_script
         < beacon_script
+        < browser_click_script
         < answer_eval_script
         < memory_eval_script
         < done_banner
