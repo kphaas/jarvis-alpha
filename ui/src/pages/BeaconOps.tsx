@@ -87,6 +87,25 @@ interface HelmBeaconCostSummary {
   detail: string
 }
 
+interface HelmBeaconDataSourceItem {
+  id: string
+  name: string
+  domain: string
+  pricing: string
+  auth_type: string
+  api_base_url: string | null
+  last_verified: string | null
+  on_hold: boolean
+}
+
+interface HelmBeaconDataSourceSummary {
+  registry: string
+  active_count: number
+  on_hold_count: number
+  data_sources: HelmBeaconDataSourceItem[]
+  on_hold_data_source_ids: string[]
+}
+
 interface HelmBeaconCitationQualitySummary {
   window_hours: number
   status: string
@@ -135,6 +154,7 @@ interface HelmBeaconSummary {
   citation_quality: HelmBeaconCitationQualitySummary
   approvals: HelmBeaconApprovalSummary
   quality_canary: HelmBeaconQualityCanarySummary
+  data_sources: HelmBeaconDataSourceSummary
 }
 
 interface HelmSummaryPayload {
@@ -148,6 +168,7 @@ export default function BeaconOps() {
   const { theme } = useAppStore()
   const isDark = theme === 'dark'
   const border = isDark ? 'border-white/10' : 'border-[#141414]/10'
+  const divider = isDark ? 'divide-white/10' : 'divide-[#141414]/10'
   const panel = isDark ? 'bg-white/5' : 'bg-white/55'
   const muted = isDark ? 'text-zinc-400' : 'text-zinc-600'
   const [payload, setPayload] = useState<HelmSummaryPayload | null>(null)
@@ -167,8 +188,23 @@ export default function BeaconOps() {
   }, [])
 
   useEffect(() => {
-    load()
-  }, [load])
+    let alive = true
+    apiJson<HelmSummaryPayload>('/v1/helm/summary')
+      .then((data) => {
+        if (alive) setPayload(data)
+      })
+      .catch((err) => {
+        if (!alive) return
+        setPayload(null)
+        setError(err instanceof Error ? err.message : 'Beacon Ops unavailable')
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   const beacon = payload?.beacon ?? null
   const latencyTone = useMemo(() => latencyStatus(beacon?.latency), [beacon])
@@ -305,6 +341,45 @@ export default function BeaconOps() {
               </div>
             </Panel>
           </section>
+
+          <Panel title="Data Sources" icon={Server} isDark={isDark}>
+            <div className="grid gap-3 sm:grid-cols-4">
+              <KeyValue label="Registry" value={beacon.data_sources.registry} muted={muted} />
+              <KeyValue label="Active APIs" value={String(beacon.data_sources.active_count)} muted={muted} />
+              <KeyValue label="On hold" value={String(beacon.data_sources.on_hold_count)} muted={muted} />
+              <KeyValue
+                label="Held IDs"
+                value={
+                  beacon.data_sources.on_hold_data_source_ids.length > 0
+                    ? beacon.data_sources.on_hold_data_source_ids.join(', ')
+                    : 'none'
+                }
+                muted={muted}
+              />
+            </div>
+            <div className={`mt-4 divide-y ${divider}`}>
+              {beacon.data_sources.data_sources.length > 0 ? (
+                beacon.data_sources.data_sources.map((source) => (
+                  <div
+                    key={source.id}
+                    className="grid gap-2 py-3 text-sm sm:grid-cols-[1.1fr_0.8fr_0.9fr_1.4fr]"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate font-semibold">{source.name}</div>
+                      <div className={`truncate font-mono text-[10px] uppercase tracking-widest ${muted}`}>
+                        {source.id}
+                      </div>
+                    </div>
+                    <KeyValue label="Domain" value={source.domain} muted={muted} />
+                    <KeyValue label="Access" value={`${source.pricing} / ${source.auth_type}`} muted={muted} />
+                    <KeyValue label="API" value={source.api_base_url ?? 'not listed'} muted={muted} />
+                  </div>
+                ))
+              ) : (
+                <div className={`py-3 text-sm ${muted}`}>No Beacon data sources reported</div>
+              )}
+            </div>
+          </Panel>
 
           <section className="grid gap-4 xl:grid-cols-3">
             <Panel title="Cost Guard" icon={DollarSign} isDark={isDark}>
