@@ -4,6 +4,7 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   Clock3,
   DollarSign,
   Gauge,
@@ -174,6 +175,7 @@ export default function BeaconOps() {
   const [payload, setPayload] = useState<HelmSummaryPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [dataSourcesOpen, setDataSourcesOpen] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -343,42 +345,56 @@ export default function BeaconOps() {
           </section>
 
           <Panel title="Data Sources" icon={Server} isDark={isDark}>
-            <div className="grid gap-3 sm:grid-cols-4">
-              <KeyValue label="Registry" value={beacon.data_sources.registry} muted={muted} />
-              <KeyValue label="Active APIs" value={String(beacon.data_sources.active_count)} muted={muted} />
-              <KeyValue label="On hold" value={String(beacon.data_sources.on_hold_count)} muted={muted} />
-              <KeyValue
-                label="Held IDs"
-                value={
-                  beacon.data_sources.on_hold_data_source_ids.length > 0
-                    ? beacon.data_sources.on_hold_data_source_ids.join(', ')
-                    : 'none'
-                }
-                muted={muted}
-              />
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div className="grid flex-1 gap-3 sm:grid-cols-4">
+                <KeyValue label="Registry" value={beacon.data_sources.registry} muted={muted} />
+                <KeyValue label="Active APIs" value={String(beacon.data_sources.active_count)} muted={muted} />
+                <KeyValue label="On hold" value={String(beacon.data_sources.on_hold_count)} muted={muted} />
+                <KeyValue
+                  label="Held IDs"
+                  value={
+                    beacon.data_sources.on_hold_data_source_ids.length > 0
+                      ? beacon.data_sources.on_hold_data_source_ids.join(', ')
+                      : 'none'
+                  }
+                  muted={muted}
+                />
+              </div>
+              <button
+                type="button"
+                aria-expanded={dataSourcesOpen}
+                aria-controls="beacon-data-source-details"
+                onClick={() => setDataSourcesOpen((open) => !open)}
+                className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-xs font-mono uppercase tracking-widest transition ${border} ${panel}`}
+              >
+                {dataSourcesOpen ? 'Hide details' : 'Show details'}
+                <ChevronDown className={`h-4 w-4 transition ${dataSourcesOpen ? 'rotate-180' : ''}`} />
+              </button>
             </div>
-            <div className={`mt-4 divide-y ${divider}`}>
-              {beacon.data_sources.data_sources.length > 0 ? (
-                beacon.data_sources.data_sources.map((source) => (
-                  <div
-                    key={source.id}
-                    className="grid gap-2 py-3 text-sm sm:grid-cols-[1.1fr_0.8fr_0.9fr_1.4fr]"
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate font-semibold">{source.name}</div>
-                      <div className={`truncate font-mono text-[10px] uppercase tracking-widest ${muted}`}>
-                        {source.id}
+            {dataSourcesOpen && (
+              <div id="beacon-data-source-details" className={`mt-4 divide-y ${divider}`}>
+                {beacon.data_sources.data_sources.length > 0 ? (
+                  beacon.data_sources.data_sources.map((source) => (
+                    <div
+                      key={source.id}
+                      className="grid gap-2 py-3 text-sm sm:grid-cols-[1.1fr_0.8fr_0.9fr_1.4fr]"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold">{source.name}</div>
+                        <div className={`truncate font-mono text-[10px] uppercase tracking-widest ${muted}`}>
+                          {source.id}
+                        </div>
                       </div>
+                      <KeyValue label="Domain" value={source.domain} muted={muted} />
+                      <KeyValue label="Access" value={`${source.pricing} / ${source.auth_type}`} muted={muted} />
+                      <KeyValue label="API" value={source.api_base_url ?? 'not listed'} muted={muted} />
                     </div>
-                    <KeyValue label="Domain" value={source.domain} muted={muted} />
-                    <KeyValue label="Access" value={`${source.pricing} / ${source.auth_type}`} muted={muted} />
-                    <KeyValue label="API" value={source.api_base_url ?? 'not listed'} muted={muted} />
-                  </div>
-                ))
-              ) : (
-                <div className={`py-3 text-sm ${muted}`}>No Beacon data sources reported</div>
-              )}
-            </div>
+                  ))
+                ) : (
+                  <div className={`py-3 text-sm ${muted}`}>No Beacon data sources reported</div>
+                )}
+              </div>
+            )}
           </Panel>
 
           <section className="grid gap-4 xl:grid-cols-3">
