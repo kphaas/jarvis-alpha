@@ -214,7 +214,9 @@ class MemoryService:
         for row in [*graph, *system_graph]:
             key = (
                 str(row.get("item_type") or "node"),
-                str(row.get("id") or row.get("label_preview") or row.get("label") or ""),
+                str(
+                    row.get("id") or row.get("label_preview") or row.get("label") or ""
+                ),
             )
             if key in seen:
                 continue

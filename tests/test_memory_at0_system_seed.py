@@ -24,9 +24,7 @@ def test_at0_system_seed_builds_reviewed_capability_proposals() -> None:
     }
     assert {proposal["proposed_action"] for proposal in proposals} == {"create_node"}
     assert {proposal["object_type"] for proposal in proposals} == {"node"}
-    assert {proposal["source_surface"] for proposal in proposals} == {
-        "at0_system_seed"
-    }
+    assert {proposal["source_surface"] for proposal in proposals} == {"at0_system_seed"}
 
     labels = {proposal["payload"]["label_preview"] for proposal in proposals}
     assert labels == {
@@ -45,7 +43,10 @@ def test_at0_system_seed_builds_reviewed_capability_proposals() -> None:
     assert first_payload["source"] == "explicit"
     assert first_payload["properties"]["domain"] == "at0_system"
     assert first_payload["properties"]["system_principal"] is True
-    assert first_payload["properties"]["capability_seed_version"] == AT0_SYSTEM_SEED_VERSION
+    assert (
+        first_payload["properties"]["capability_seed_version"]
+        == AT0_SYSTEM_SEED_VERSION
+    )
     assert first_payload["properties"]["currentness_policy"] == "candidate_current"
     assert first_payload["provenance"]["contains_raw_profile_scrape"] is False
     assert (

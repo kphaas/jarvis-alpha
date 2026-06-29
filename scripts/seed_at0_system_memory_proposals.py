@@ -193,7 +193,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--token-ssh-target",
-        default=os.getenv("MEMORY_AT0_SYSTEM_SEED_TOKEN_SSH_TARGET", DEFAULT_SSH_TARGET),
+        default=os.getenv(
+            "MEMORY_AT0_SYSTEM_SEED_TOKEN_SSH_TARGET", DEFAULT_SSH_TARGET
+        ),
         help="SSH target used to generate a short-lived bearer token.",
     )
     parser.add_argument(
