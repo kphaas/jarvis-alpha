@@ -71,6 +71,11 @@ def test_approvals_page_surfaces_browser_execution_history() -> None:
 
     assert "/v1/internet-scout/browser-task/history?limit=12" in source
     assert "Browser execution history" in source
+    assert "filteredBrowserHistory" in source
+    assert "matchesHistorySearch" in source
+    assert "Search request, approval, host" in source
+    assert "Approval requests" in source
+    assert "Browser runs" in source
     assert "interface BrowserHistoryItem" in source
     assert "approval_queue_id" in source
     assert "browser_action" in source
