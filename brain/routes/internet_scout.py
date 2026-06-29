@@ -69,6 +69,12 @@ from jarvis_common.logging_config import get_logger
 logger = get_logger("alpha_brain")
 router = APIRouter(prefix="/v1/internet-scout", tags=["internet-scout"])
 
+BROWSER_HISTORY_EVENT_TYPES = {
+    "approval_request",
+    "browser_run",
+    "browser_action",
+}
+
 
 @router.get("/health", response_model=InternetScoutHealthResponse)
 async def internet_scout_health(
@@ -570,10 +576,32 @@ async def internet_scout_browser_history(
     request: Request,
     _user_id: str = Depends(require_auth),
     limit: int = 20,
+    offset: int = 0,
+    event_type: str | None = None,
+    q: str | None = None,
 ) -> InternetScoutBrowserHistoryResponse:
     """Return recent Beacon browser approval/run audit events for operator review."""
     check_scopes(request, "internet_scout.read", "admin")
     safe_limit = min(max(limit, 1), 50)
+    safe_offset = max(offset, 0)
+    normalized_event_type = event_type or None
+    if normalized_event_type and len(normalized_event_type) > 64:
+        raise HTTPException(
+            status_code=400, detail="Invalid browser history event type"
+        )
+    if (
+        normalized_event_type
+        and normalized_event_type not in BROWSER_HISTORY_EVENT_TYPES
+    ):
+        raise HTTPException(
+            status_code=400, detail="Invalid browser history event type"
+        )
+    if q and len(q) > 120:
+        raise HTTPException(
+            status_code=400, detail="Browser history search is too long"
+        )
+    search = q.strip().lower() if q else ""
+    search_pattern = f"%{search}%" if search else None
     async with rls_connection(request) as conn:
         rows = await conn.fetch(
             """
@@ -619,11 +647,32 @@ async def internet_scout_browser_history(
                   'browser_run',
                   'browser_action'
               )
+              AND ($1::text IS NULL OR event.event_type = $1)
+              AND (
+                  $2::text IS NULL
+                  OR lower(
+                      event.request_id::text || ' ' ||
+                      event.event_type || ' ' ||
+                      event.status || ' ' ||
+                      request.status || ' ' ||
+                      COALESCE(request.policy_tier::text, '') || ' ' ||
+                      COALESCE(event.metadata->>'approval_queue_id', '') || ' ' ||
+                      COALESCE(event.metadata->>'approval_hash_prefix', '') || ' ' ||
+                      COALESCE(event.metadata->>'action', '') || ' ' ||
+                      COALESCE(event.metadata->>'host', '') || ' ' ||
+                      COALESCE(event.metadata->>'blocked_reason', '')
+                  ) LIKE $2
+              )
             ORDER BY event.created_at DESC, event.id DESC
-            LIMIT $1
+            LIMIT $3
+            OFFSET $4
             """,
-            safe_limit,
+            normalized_event_type,
+            search_pattern,
+            safe_limit + 1,
+            safe_offset,
         )
+    page_rows = rows[:safe_limit]
     history = [
         InternetScoutBrowserHistoryItem(
             request_id=row["request_id"],
@@ -645,11 +694,14 @@ async def internet_scout_browser_history(
                 int(row["elapsed_ms"]) if row["elapsed_ms"] is not None else None
             ),
         )
-        for row in rows
+        for row in page_rows
     ]
     return InternetScoutBrowserHistoryResponse(
         history=history,
         count=len(history),
+        limit=safe_limit,
+        offset=safe_offset,
+        has_more=len(rows) > safe_limit,
     )
 
 

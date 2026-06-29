@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock, Fingerprint, Sparkles, Activity, MousePointerClick } from 'lucide-react'
@@ -67,6 +67,9 @@ interface BrowserHistoryItem {
 interface BrowserHistoryResponse {
   history: BrowserHistoryItem[]
   count: number
+  limit: number
+  offset: number
+  has_more: boolean
 }
 
 interface DecideResponse {
@@ -174,22 +177,6 @@ function historyStatusClass(status: string): string {
   return 'text-amber-400 bg-amber-500/15 border-amber-500/30'
 }
 
-function matchesHistorySearch(item: BrowserHistoryItem, query: string): boolean {
-  if (!query) return true
-  return [
-    item.request_id,
-    item.approval_queue_id,
-    item.event_type,
-    item.status,
-    item.request_status,
-    item.risk_tier,
-    item.approval_hash_prefix,
-    item.action,
-    item.host,
-    item.blocked_reason,
-  ].some((value) => value?.toLowerCase().includes(query))
-}
-
 export default function Approvals() {
   const { theme } = useAppStore()
   const isDark = theme === 'dark'
@@ -201,6 +188,8 @@ export default function Approvals() {
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [historyQuery, setHistoryQuery] = useState('')
   const [historyEventType, setHistoryEventType] = useState('all')
+  const [historyOffset, setHistoryOffset] = useState(0)
+  const [historyHasMore, setHistoryHasMore] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [acting, setActing] = useState<string | null>(null)
@@ -224,13 +213,22 @@ export default function Approvals() {
       setData(res)
       setError(null)
       try {
+        const historyParams = new URLSearchParams({
+          limit: '12',
+          offset: String(historyOffset),
+        })
+        const trimmedQuery = historyQuery.trim()
+        if (trimmedQuery) historyParams.set('q', trimmedQuery)
+        if (historyEventType !== 'all') historyParams.set('event_type', historyEventType)
         const history = await apiJson<BrowserHistoryResponse>(
-          '/v1/internet-scout/browser-task/history?limit=12'
+          `/v1/internet-scout/browser-task/history?${historyParams.toString()}`
         )
         setBrowserHistory(history.history ?? [])
+        setHistoryHasMore(history.has_more)
         setHistoryError(null)
       } catch (historyLoadError) {
         setBrowserHistory([])
+        setHistoryHasMore(false)
         setHistoryError(
           historyLoadError instanceof Error
             ? historyLoadError.message
@@ -242,7 +240,7 @@ export default function Approvals() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [historyEventType, historyOffset, historyQuery])
 
   useEffect(() => {
     load()
@@ -363,16 +361,8 @@ export default function Approvals() {
 
   const pending = data?.pending ?? []
   const count = data?.count ?? 0
-  const normalizedHistoryQuery = historyQuery.trim().toLowerCase()
-  const filteredBrowserHistory = useMemo(
-    () =>
-      browserHistory.filter(
-        (item) =>
-          (historyEventType === 'all' || item.event_type === historyEventType) &&
-          matchesHistorySearch(item, normalizedHistoryQuery)
-      ),
-    [browserHistory, historyEventType, normalizedHistoryQuery]
-  )
+  const historyStart = browserHistory.length > 0 ? historyOffset + 1 : 0
+  const historyEnd = historyOffset + browserHistory.length
 
   return (
     <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 max-w-4xl">
@@ -485,21 +475,26 @@ export default function Approvals() {
               <h2 className="text-sm font-bold">Browser execution history</h2>
             </div>
             <span className="text-[10px] font-mono uppercase opacity-50">
-              {filteredBrowserHistory.length}/{browserHistory.length} recent
+              {historyStart}-{historyEnd}{historyHasMore ? '+' : ''} recent
             </span>
           </div>
 
-          {browserHistory.length > 0 && (
-            <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
+          <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
               <input
                 value={historyQuery}
-                onChange={(event) => setHistoryQuery(event.target.value)}
+                onChange={(event) => {
+                  setHistoryOffset(0)
+                  setHistoryQuery(event.target.value)
+                }}
                 placeholder="Search request, approval, host"
                 className={`min-h-11 rounded-lg border px-3 text-xs outline-none ${border} ${isDark ? 'bg-black/20' : 'bg-white/60'}`}
               />
               <select
                 value={historyEventType}
-                onChange={(event) => setHistoryEventType(event.target.value)}
+                onChange={(event) => {
+                  setHistoryOffset(0)
+                  setHistoryEventType(event.target.value)
+                }}
                 className={`min-h-11 rounded-lg border px-3 text-xs outline-none ${border} ${isDark ? 'bg-black/20' : 'bg-white/60'}`}
               >
                 <option value="all">All events</option>
@@ -507,8 +502,7 @@ export default function Approvals() {
                 <option value="browser_run">Browser runs</option>
                 <option value="browser_action">Browser actions</option>
               </select>
-            </div>
-          )}
+          </div>
 
           {historyError && (
             <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-400">
@@ -517,21 +511,21 @@ export default function Approvals() {
             </div>
           )}
 
-          {!historyError && browserHistory.length === 0 && (
+          {!historyError && browserHistory.length === 0 && !historyQuery.trim() && historyEventType === 'all' && (
             <p className="rounded-xl border border-dashed border-current/15 p-3 text-xs opacity-50">
               No browser approval or execution events recorded yet.
             </p>
           )}
 
-          {!historyError && browserHistory.length > 0 && filteredBrowserHistory.length === 0 && (
+          {!historyError && browserHistory.length === 0 && (historyQuery.trim() || historyEventType !== 'all') && (
             <p className="rounded-xl border border-dashed border-current/15 p-3 text-xs opacity-50">
               No browser history matches the current filter.
             </p>
           )}
 
-          {!historyError && filteredBrowserHistory.length > 0 && (
+          {!historyError && browserHistory.length > 0 && (
             <div className="space-y-2">
-              {filteredBrowserHistory.map((item) => (
+              {browserHistory.map((item) => (
                 <div
                   key={`${item.request_id}-${item.event_type}-${item.status}-${item.created_at}`}
                   className={`rounded-xl border ${border} p-3 ${isDark ? 'bg-black/20' : 'bg-white/60'}`}
@@ -589,6 +583,27 @@ export default function Approvals() {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+
+          {!historyError && (historyOffset > 0 || historyHasMore) && (
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={historyOffset === 0}
+                onClick={() => setHistoryOffset(Math.max(0, historyOffset - 12))}
+                className={`min-h-10 rounded-lg border px-3 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-40 ${border}`}
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                disabled={!historyHasMore}
+                onClick={() => setHistoryOffset(historyOffset + 12)}
+                className={`min-h-10 rounded-lg border px-3 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-40 ${border}`}
+              >
+                Next
+              </button>
             </div>
           )}
         </section>

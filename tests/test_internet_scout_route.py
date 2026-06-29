@@ -163,10 +163,10 @@ class FakeHistoryConn:
     approval_request_id = uuid4()
 
     def __init__(self) -> None:
-        self.fetch_calls: list[tuple[str, int]] = []
+        self.fetch_calls: list[tuple] = []
 
-    async def fetch(self, query, limit):
-        self.fetch_calls.append((query, limit))
+    async def fetch(self, query, *args):
+        self.fetch_calls.append((query, *args))
         return [
             {
                 "request_id": self.browser_request_id,
@@ -333,9 +333,17 @@ async def test_internet_scout_browser_history_returns_recent_audit_events(
         limit=99,
     )
 
-    query, limit = FakeHistoryConn.instances[0].fetch_calls[0]
+    query, event_type, search, limit, offset = FakeHistoryConn.instances[0].fetch_calls[
+        0
+    ]
     assert response.count == 3
-    assert limit == 50
+    assert response.limit == 50
+    assert response.offset == 0
+    assert response.has_more is False
+    assert event_type is None
+    assert search is None
+    assert limit == 51
+    assert offset == 0
     assert "alpha_internet_tool_events" in query
     assert response.history[0].event_type == "browser_action"
     assert response.history[0].action == "navigate"
@@ -348,6 +356,67 @@ async def test_internet_scout_browser_history_returns_recent_audit_events(
     assert response.history[1].action_audit_count == 2
     assert response.history[2].event_type == "approval_request"
     assert response.history[2].approval_hash_prefix == "abc123abc123"
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_browser_history_reports_more_pages(monkeypatch):
+    FakeHistoryConn.instances = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_history_connection)
+
+    response = await internet_scout.internet_scout_browser_history(
+        _request(scopes=["internet_scout.read"]),
+        _user_id="ken",
+        limit=2,
+    )
+
+    assert response.count == 2
+    assert response.has_more is True
+    assert [item.event_type for item in response.history] == [
+        "browser_action",
+        "browser_run",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_browser_history_passes_filters_to_query(monkeypatch):
+    FakeHistoryConn.instances = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_history_connection)
+
+    response = await internet_scout.internet_scout_browser_history(
+        _request(scopes=["internet_scout.read"]),
+        _user_id="ken",
+        limit=12,
+        offset=12,
+        event_type="browser_action",
+        q="Example.TEST",
+    )
+
+    query, event_type, search, limit, offset = FakeHistoryConn.instances[0].fetch_calls[
+        0
+    ]
+    assert response.offset == 12
+    assert event_type == "browser_action"
+    assert search == "%example.test%"
+    assert limit == 13
+    assert offset == 12
+    assert "$1::text IS NULL OR event.event_type = $1" in query
+    assert "LIKE $2" in query
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_browser_history_rejects_unknown_event_type(monkeypatch):
+    FakeHistoryConn.instances = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_history_connection)
+
+    with pytest.raises(HTTPException) as exc:
+        await internet_scout.internet_scout_browser_history(
+            _request(scopes=["internet_scout.read"]),
+            _user_id="ken",
+            event_type="not_browser_history",
+        )
+
+    assert exc.value.status_code == 400
+    assert FakeHistoryConn.instances == []
 
 
 @pytest.mark.asyncio
