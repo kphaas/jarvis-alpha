@@ -39,6 +39,21 @@ class FakeConn:
                 {"risk_tier": "T4", "count": 2},
                 {"risk_tier": "T5", "count": 1},
             ]
+        if "metadata->'manifest'->'egress'->'data_source_ids'" in query:
+            return [
+                {
+                    "data_source_ids": [
+                        "brave-search",
+                        "perplexity-search",
+                        "sec-edgar",
+                    ],
+                    "on_hold_data_source_ids": ["quiverquant"],
+                },
+                {
+                    "data_source_ids": ["brave-search", "openalex"],
+                    "on_hold_data_source_ids": [],
+                },
+            ]
         if "public.alpha_skill_registry" in query:
             return [
                 {"status": "active", "count": 8, "mutating": 3, "body_access": 1},
@@ -374,6 +389,23 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
     checked_at = datetime(2026, 6, 12, 19, 0, tzinfo=UTC)
 
     class FakeBeaconConn:
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            assert "alpha_skill_registry" in query
+            return [
+                {
+                    "data_source_ids": [
+                        "brave-search",
+                        "perplexity-search",
+                        "sec-edgar",
+                    ],
+                    "on_hold_data_source_ids": ["quiverquant"],
+                },
+                {
+                    "data_source_ids": ["brave-search", "openalex"],
+                    "on_hold_data_source_ids": [],
+                },
+            ]
+
         async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
             assert "beacon_browser_use" in query
             return {
@@ -651,6 +683,17 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
         "expired_24h": 3,
         "highest_pending_risk_tier": "T4",
     }
+    assert payload["data_sources"]["registry"] == "jarvis-data-sources"
+    assert payload["data_sources"]["active_count"] == 4
+    assert payload["data_sources"]["on_hold_count"] == 1
+    assert payload["data_sources"]["on_hold_data_source_ids"] == ["quiverquant"]
+    assert [item["id"] for item in payload["data_sources"]["data_sources"]] == [
+        "brave-search",
+        "perplexity-search",
+        "sec-edgar",
+        "openalex",
+    ]
+    assert payload["data_sources"]["data_sources"][0]["domain"] == "web-search"
     assert payload["quality_canary"] == {
         "status": "passed",
         "suite": "beacon_search_quality",
@@ -692,7 +735,27 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
         ],
     }
     assert "secret" not in str(payload)
+    assert "api_key" not in str(payload["data_sources"])
     assert "/private/beacon/screenshots" not in str(payload)
+
+
+@pytest.mark.asyncio
+async def test_beacon_data_sources_degrade_when_registry_query_unavailable() -> None:
+    class FailingConn:
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            raise RuntimeError("skill registry secret should not leak")
+
+    summary = await helm._beacon_data_sources(FailingConn())
+    payload = summary.model_dump()
+
+    assert payload == {
+        "registry": "jarvis-data-sources",
+        "active_count": 0,
+        "on_hold_count": 1,
+        "data_sources": [],
+        "on_hold_data_source_ids": ["quiverquant"],
+    }
+    assert "skill registry secret should not leak" not in str(payload)
 
 
 @pytest.mark.asyncio

@@ -29,9 +29,13 @@ def test_beacon_ops_dashboard_surfaces_core_slo_sections() -> None:
     assert "Cost Guard" in source
     assert "Citation Quality" in source
     assert "Browser Approvals" in source
+    assert "Data Sources" in source
     assert "Operator Action" in source
     assert "exact_cost_available" in source
     assert "budget_capped_backup_provider_count" in source
+    assert "data_sources.registry" in source
+    assert "on_hold_data_source_ids" in source
+    assert "api_base_url" in source
     assert "slo_met_percent" in source
     assert "prompt_injection_rejection_count" in source
     assert "highest_pending_risk_tier" in source
