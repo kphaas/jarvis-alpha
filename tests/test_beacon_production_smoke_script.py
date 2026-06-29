@@ -213,7 +213,7 @@ def test_browser_click_smoke_approves_runs_and_checks_history(monkeypatch):
                 "request_id": "request-1",
                 "observations": [{"host": "httpbingo.org"}],
             }
-        if path == "/v1/internet-scout/browser-task/history?limit=20&q=queue-1":
+        if path == "/v1/internet-scout/browser-task/history?limit=50&q=queue-1":
             return {
                 "history": [
                     {"event_type": "approval_request", "status": "queued"},
@@ -245,7 +245,7 @@ def test_browser_click_smoke_approves_runs_and_checks_history(monkeypatch):
         "/v1/internet-scout/browser-task/approval-request",
         "/v1/approvals/queue-1/decide",
         "/v1/internet-scout/browser-task/run-approved",
-        "/v1/internet-scout/browser-task/history?limit=20&q=queue-1",
+        "/v1/internet-scout/browser-task/history?limit=50&q=queue-1",
     ]
 
 
