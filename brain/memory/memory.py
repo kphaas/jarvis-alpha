@@ -27,6 +27,9 @@ TEMPORAL_GRAPH_CONTEXT_RULE = (
     "Prefer [current] rows when current and historical rows describe the same entity. "
     "Treat [needs refresh] rows as unconfirmed until reviewed."
 )
+AT0_SYSTEM_PRINCIPAL_ID = "at0_system"
+AT0_SYSTEM_DISPLAY_NAME = "AT-0 System"
+AT0_SYSTEM_PRINCIPAL_UUID = uuid5(NAMESPACE_DNS, AT0_SYSTEM_PRINCIPAL_ID)
 
 
 class MemoryService:
@@ -64,6 +67,10 @@ class MemoryService:
         r"\b(changed|change|changes|changing)\b",
         re.IGNORECASE,
     )
+    AT0_SYSTEM_GRAPH_QUERY = re.compile(
+        r"\b(at-?0|alpha|helm|ask|memory|spark|dream|buddy|forge|family)\b",
+        re.IGNORECASE,
+    )
 
     @classmethod
     def _include_historical_graph(cls, prompt: str) -> bool:
@@ -73,6 +80,10 @@ class MemoryService:
         if cls.CURRENT_GRAPH_QUERY.search(query):
             return False
         return bool(cls.GRAPH_CHANGE_QUERY.search(query))
+
+    @classmethod
+    def _include_at0_system_graph(cls, prompt: str) -> bool:
+        return bool(cls.AT0_SYSTEM_GRAPH_QUERY.search(prompt or ""))
 
     def _score_importance(self, text: str) -> float:
         """
@@ -132,7 +143,7 @@ class MemoryService:
     ) -> str:
         spark_grounding = await self._get_spark_grounding(conn, principal_id)
         semantic = await self._get_semantic(conn, user_id, prompt=prompt)
-        graph = await self._get_graph(conn, user_id, prompt=prompt)
+        graph = await self._get_retrieval_graph(conn, user_id, prompt=prompt)
         episodic = await self._get_episodic(conn, user_id, embedding)
         working = await self._get_working(conn, session_id)
 
@@ -178,6 +189,38 @@ class MemoryService:
             f"- [{retrieval_state}] {kind.title()}: {label} "
             f"(confidence {confidence:.2f}, source {source})"
         )
+
+    async def _get_retrieval_graph(
+        self,
+        conn: asyncpg.Connection,
+        user_id: UUID,
+        *,
+        prompt: str = "",
+    ) -> list[dict]:
+        graph = await self._get_graph(conn, user_id, prompt=prompt)
+        if (
+            not self._include_at0_system_graph(prompt)
+            or user_id == AT0_SYSTEM_PRINCIPAL_UUID
+        ):
+            return graph
+
+        system_graph = await self._get_graph(
+            conn,
+            AT0_SYSTEM_PRINCIPAL_UUID,
+            prompt=prompt,
+        )
+        seen: set[tuple[str, str]] = set()
+        merged: list[dict] = []
+        for row in [*graph, *system_graph]:
+            key = (
+                str(row.get("item_type") or "node"),
+                str(row.get("id") or row.get("label_preview") or row.get("label") or ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(row)
+        return merged
 
     async def _get_spark_grounding(
         self,
@@ -2049,6 +2092,32 @@ def _merge_admin_inventory(
             entry["last_activity_at"],
             row["last_activity_at"],
         )
+
+    system_key = str(AT0_SYSTEM_PRINCIPAL_UUID)
+    if system_key in entries:
+        entries[system_key]["profile_id"] = AT0_SYSTEM_PRINCIPAL_ID
+        entries[system_key]["display_name"] = AT0_SYSTEM_DISPLAY_NAME
+        entries[system_key]["role"] = "system"
+        entries[system_key]["aliases"] = sorted(
+            set(entries[system_key].get("aliases") or [])
+            | {AT0_SYSTEM_PRINCIPAL_ID, system_key}
+        )
+    else:
+        entries[system_key] = {
+            "principal_id": system_key,
+            "profile_id": AT0_SYSTEM_PRINCIPAL_ID,
+            "display_name": AT0_SYSTEM_DISPLAY_NAME,
+            "role": "system",
+            "child_age": None,
+            "aliases": sorted({AT0_SYSTEM_PRINCIPAL_ID, system_key}),
+            "semantic_count": 0,
+            "semantic_review_count": 0,
+            "working_count": 0,
+            "episodic_count": 0,
+            "dream_reviewed_writes_open": 0,
+            "dream_approval_mismatch_count": 0,
+            "last_activity_at": None,
+        }
 
     items = sorted(
         entries.values(),
