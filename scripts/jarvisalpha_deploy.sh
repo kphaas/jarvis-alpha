@@ -385,6 +385,34 @@ print(f"{payload.get('passed', 0)} checks passed")
     fi
   fi
 
+  if [[ "${JARVIS_SKIP_MEMORY_CONTEXT_EVAL:-0}" == "1" || "${JARVIS_ALPHA_SKIP_MEMORY_CONTEXT_EVAL:-0}" == "1" ]]; then
+    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "memory context eval" "SKIPPED (JARVIS_SKIP_MEMORY_CONTEXT_EVAL=1)" ""
+  else
+    local memory_eval_start=$SECONDS
+    local memory_eval_out
+    local memory_eval_ec
+
+    memory_eval_out=$(
+      cd "$REPO_DIR" && uv run --python 3.12 python scripts/eval_memory_context.py 2>&1
+    )
+    memory_eval_ec=$?
+    if [ $memory_eval_ec -ne 0 ]; then
+      step_fail "memory context eval" "failed"
+      echo "$memory_eval_out" >&2
+      smoke_failed=1
+    else
+      local memory_eval_summary
+      memory_eval_summary=$(printf '%s\n' "$memory_eval_out" | tail -1 | python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+print(f"{payload.get('passed', 0)} checks passed")
+' 2>/dev/null || true)
+      step_ok "memory context eval" "${memory_eval_summary:-passed}" "$(fmt_s $((SECONDS - memory_eval_start)))"
+    fi
+  fi
+
   return $smoke_failed
 }
 
