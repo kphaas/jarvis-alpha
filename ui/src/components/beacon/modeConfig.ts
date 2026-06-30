@@ -1,13 +1,76 @@
 import type { BeaconFocusMode, BeaconMode } from '../../types/beacon'
 
 export const BEACON_MODES: BeaconMode[] = [
-  { key: 'all', label: 'All', description: 'Balanced web evidence' },
-  { key: 'official', label: 'Official', description: 'Official and primary hosts' },
-  { key: 'news_current', label: 'News/current', description: 'Freshness required' },
-  { key: 'shopping', label: 'Shopping', description: 'Pricing and source checks' },
-  { key: 'academic', label: 'Academic', description: 'Primary-source emphasis' },
-  { key: 'local_weather', label: 'Local/weather', description: 'Free route first' },
-  { key: 'deep_research', label: 'Deep research', description: 'Fanout and coverage' },
+  {
+    key: 'all',
+    label: 'All',
+    description: 'Balanced web evidence',
+    sourcePolicy: 'Best available sources',
+    providerStrategy: 'Auto route',
+    extractBudget: 'Extract only when needed',
+    maxPages: 1,
+    runLabel: 'Run Beacon',
+  },
+  {
+    key: 'official',
+    label: 'Official',
+    description: 'Official and primary hosts',
+    sourcePolicy: 'Official hosts required',
+    providerStrategy: 'SearXNG > Brave > Perplexity',
+    extractBudget: 'Top official extract',
+    maxPages: 2,
+    runLabel: 'Run official check',
+  },
+  {
+    key: 'news_current',
+    label: 'News/current',
+    description: 'Freshness required',
+    sourcePolicy: 'Fresh sources required',
+    providerStrategy: 'Auto route with recency gate',
+    extractBudget: 'Top fresh extract',
+    maxPages: 1,
+    runLabel: 'Run current check',
+  },
+  {
+    key: 'shopping',
+    label: 'Shopping',
+    description: 'Pricing and source checks',
+    sourcePolicy: 'Vendor and price sources',
+    providerStrategy: 'Auto route with spend guard',
+    extractBudget: 'Top price extract',
+    maxPages: 1,
+    runLabel: 'Run price check',
+  },
+  {
+    key: 'academic',
+    label: 'Academic',
+    description: 'Primary-source emphasis',
+    sourcePolicy: 'Primary and scholarly sources',
+    providerStrategy: 'SearXNG > Brave > Perplexity',
+    extractBudget: 'Top primary extract',
+    maxPages: 2,
+    runLabel: 'Run academic check',
+  },
+  {
+    key: 'local_weather',
+    label: 'Local/weather',
+    description: 'Free route first',
+    sourcePolicy: 'Free local APIs first',
+    providerStrategy: 'Free source router',
+    extractBudget: 'No paid extract by default',
+    maxPages: 1,
+    runLabel: 'Run local check',
+  },
+  {
+    key: 'deep_research',
+    label: 'Deep research',
+    description: 'Fanout and coverage',
+    sourcePolicy: 'Coverage and cross-checks',
+    providerStrategy: 'SearXNG + Brave + Perplexity fanout',
+    extractBudget: 'Top 4 extracts',
+    maxPages: 4,
+    runLabel: 'Run deep research',
+  },
 ]
 
 export const BEACON_PLACEHOLDERS: Record<BeaconFocusMode, string> = {
@@ -18,10 +81,4 @@ export const BEACON_PLACEHOLDERS: Record<BeaconFocusMode, string> = {
   academic: 'single kidney pediatric sports guidance',
   local_weather: 'weather right now at home',
   deep_research: 'compare Brave Search API and Perplexity Search API',
-}
-
-export function maxPagesForMode(mode: BeaconFocusMode): number {
-  if (mode === 'deep_research') return 4
-  if (mode === 'official' || mode === 'academic') return 2
-  return 1
 }

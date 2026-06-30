@@ -11,6 +11,11 @@ export interface BeaconMode {
   key: BeaconFocusMode
   label: string
   description: string
+  sourcePolicy: string
+  providerStrategy: string
+  extractBudget: string
+  maxPages: number
+  runLabel: string
 }
 
 export interface BeaconHealthCheck {
@@ -238,8 +243,14 @@ export interface BeaconResearchProgressEvent {
   intent?: string
   provider_strategy?: string
   search_providers?: string[]
+  max_searches?: number
+  max_extracts?: number
+  min_accepted_citations?: number
+  expected_source_types?: string[]
   source_count?: number
   claim_count?: number
+  request_id?: string
+  error_type?: string
 }
 
 export interface BeaconBrowserApprovalResponse {

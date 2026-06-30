@@ -25,6 +25,11 @@ export function BeaconResearchPlanStrip({ plan, report, quality, evidenceBundle,
   const evidenceHref = evidenceBundle
     ? `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(evidenceBundle, null, 2))}`
     : ''
+  const bundleRedacted = Boolean(
+    evidenceBundle &&
+      !evidenceBundle.raw_web_content_included &&
+      !evidenceBundle.raw_user_query_included
+  )
 
   return (
     <section className={`rounded-lg border p-4 ${border} ${panel}`}>
@@ -53,6 +58,11 @@ export function BeaconResearchPlanStrip({ plan, report, quality, evidenceBundle,
               <FileJson className="h-3 w-3" />
               Export evidence
             </a>
+          )}
+          {evidenceBundle && (
+            <span className={`rounded border px-2 py-1 text-[10px] font-mono uppercase ${bundleRedacted ? 'text-emerald-500' : 'text-amber-500'} ${border}`}>
+              {bundleRedacted ? 'Bundle redacted' : 'Review raw fields'}
+            </span>
           )}
           <span className={`rounded border px-2 py-1 text-[10px] font-mono uppercase ${border}`}>
             {report.answerability.replaceAll('_', ' ')}
@@ -114,6 +124,31 @@ export function BeaconResearchPlanStrip({ plan, report, quality, evidenceBundle,
           />
         </div>
       </div>
+
+      {evidenceBundle && (
+        <div className={`mt-4 rounded-lg border p-3 ${border} ${mutedPanel}`}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-mono uppercase tracking-widest opacity-45">Exportable citation bundle</p>
+              <p className="mt-1 text-sm font-semibold">
+                request {shortId(evidenceBundle.request_id)} · {evidenceBundle.source_hosts.length} hosts
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <span className={`rounded border px-2 py-1 text-[10px] font-mono uppercase ${border}`}>
+                raw web {evidenceBundle.raw_web_content_included ? 'yes' : 'no'}
+              </span>
+              <span className={`rounded border px-2 py-1 text-[10px] font-mono uppercase ${border}`}>
+                raw query {evidenceBundle.raw_user_query_included ? 'yes' : 'no'}
+              </span>
+              <span className={`rounded border px-2 py-1 text-[10px] font-mono uppercase ${border}`}>
+                v{evidenceBundle.bundle_version}
+              </span>
+            </div>
+          </div>
+          <p className="mt-2 text-xs opacity-60">{evidenceBundle.instruction_boundary}</p>
+        </div>
+      )}
 
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
         <div>
@@ -222,4 +257,8 @@ function Metric({ icon, label, value, detail }: MetricProps) {
       {detail && <p className="mt-1 truncate text-xs opacity-55">{detail}</p>}
     </div>
   )
+}
+
+function shortId(value: string): string {
+  return value ? value.slice(0, 8) : 'none'
 }
