@@ -80,6 +80,11 @@ The production hardening follow-up adds a 33-case deterministic search quality
 benchmark, scheduled canary evidence, generated shared schemas for Helm, and a
 narrow retention-cleanup exception that only allows old tool-event deletes when
 `app.beacon_retention_cleanup=true` and `rls.role=platform_admin`.
+The research traceability follow-up adds a local-LLM streaming endpoint for
+bounded lifecycle events and a redacted citation/evidence bundle export. The
+stream is only a UI transport over the existing Beacon execution path; it does
+not add a second executor, direct Brain egress, raw web-content export, or
+automatic memory write path.
 
 ## Architecture
 
@@ -212,6 +217,7 @@ stored evidence, source hash, and claim.
 | Operator readiness | P17 adds a smoke script and rollback runbook before deploy approval. |
 | Readiness noise | Recent evidence failures remain diagnostic warnings; they do not block readiness when database, Gateway, browser runtime, and retention are healthy. |
 | Quality regression detection | Helm Ask smoke supports a multi-case canary suite, and Beacon now records deterministic search-quality canary results for source ranking, claim verification, prompt-injection rejection, and official-source gating. |
+| Research traceability | Deep Research can stream planned, executing, and synthesizing lifecycle events, then return the normal citation envelope plus a redacted evidence bundle. Stream failures expose sanitized error labels, not raw provider exception text. |
 
 ## Consequences
 

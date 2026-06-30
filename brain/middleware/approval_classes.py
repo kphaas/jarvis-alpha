@@ -205,6 +205,11 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "external_call",
         "cost_incurring",
     ],
+    "POST /v1/internet-scout/local-llm/tool/stream": [
+        "write",
+        "external_call",
+        "cost_incurring",
+    ],
     "POST /v1/internet-scout/consumers/{consumer}/local-llm/tool": [
         "write",
         "external_call",

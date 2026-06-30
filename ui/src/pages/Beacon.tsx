@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { MousePointerClick, PlayCircle, RefreshCw, Search, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Loader2, MousePointerClick, PlayCircle, RefreshCw, Search, ShieldCheck } from 'lucide-react'
 import { BeaconAnswerSummary } from '../components/beacon/BeaconAnswerSummary'
 import { BeaconEvidenceTransparencyPanel } from '../components/beacon/BeaconEvidenceTransparencyPanel'
 import { BeaconHealthRail } from '../components/beacon/BeaconHealthRail'
@@ -9,13 +9,14 @@ import { BeaconModeSelector } from '../components/beacon/BeaconModeSelector'
 import { BeaconResearchPlanStrip } from '../components/beacon/BeaconResearchPlanStrip'
 import { BeaconSourceCards } from '../components/beacon/BeaconSourceCards'
 import { BEACON_MODES, BEACON_PLACEHOLDERS, maxPagesForMode } from '../components/beacon/modeConfig'
-import { apiJson } from '../lib/apiFetch'
+import { apiFetch, apiJson } from '../lib/apiFetch'
 import { useAppStore } from '../store'
 import type {
   BeaconAnswerResponse,
   BeaconBrowserApprovalResponse,
   BeaconFocusMode,
   BeaconHealthPayload,
+  BeaconResearchProgressEvent,
 } from '../types/beacon'
 
 export default function Beacon() {
@@ -28,6 +29,7 @@ export default function Beacon() {
   const [result, setResult] = useState<BeaconAnswerResponse | null>(null)
   const [runLoading, setRunLoading] = useState(false)
   const [runError, setRunError] = useState('')
+  const [researchSteps, setResearchSteps] = useState<BeaconResearchProgressEvent[]>([])
   const [browserUrl, setBrowserUrl] = useState('')
   const [clickSelector, setClickSelector] = useState('')
   const [clickLabel, setClickLabel] = useState('')
@@ -59,29 +61,110 @@ export default function Beacon() {
   const runBeacon = async () => {
     const trimmed = query.trim()
     if (!trimmed || runLoading) return
+    const requestBody = JSON.stringify({
+      query: trimmed,
+      tool_hint: 'search',
+      focus_mode: mode,
+      max_pages: maxPagesForMode(mode),
+      max_depth: 0,
+      needs_interaction: false,
+      sensitivity: 'normal',
+      requester: `alpha_ui.beacon_answer_engine.${mode}`,
+    })
     setRunLoading(true)
     setRunError('')
+    setResearchSteps(mode === 'deep_research'
+      ? [{
+        stage: 'queued',
+        status: 'queued',
+        detail: 'Request queued by Beacon UI.',
+      }]
+      : [])
     try {
-      const payload = await apiJson<BeaconAnswerResponse>('/v1/internet-scout/local-llm/tool', {
-        method: 'POST',
-        body: JSON.stringify({
-          query: trimmed,
-          tool_hint: 'search',
-          focus_mode: mode,
-          max_pages: maxPagesForMode(mode),
-          max_depth: 0,
-          needs_interaction: false,
-          sensitivity: 'normal',
-          requester: `alpha_ui.beacon_answer_engine.${mode}`,
-        }),
-      })
-      setResult(payload)
+      if (mode === 'deep_research') {
+        await runBeaconStream(requestBody)
+      } else {
+        const payload = await apiJson<BeaconAnswerResponse>('/v1/internet-scout/local-llm/tool', {
+          method: 'POST',
+          body: requestBody,
+        })
+        setResult(payload)
+      }
       fetchHealth()
     } catch (error) {
       setRunError(error instanceof Error ? error.message : 'Beacon request failed')
       setResult(null)
     } finally {
       setRunLoading(false)
+    }
+  }
+
+  const runBeaconStream = async (requestBody: string) => {
+    const response = await apiFetch('/v1/internet-scout/local-llm/tool/stream', {
+      method: 'POST',
+      body: requestBody,
+    })
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+    if (!response.body) {
+      throw new Error('Beacon stream is unavailable in this browser.')
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let completed = false
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read()
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+        const frames = buffer.split('\n\n')
+        buffer = frames.pop() || ''
+
+        for (const frame of frames) {
+          const parsed = parseBeaconStreamFrame(frame)
+          if (!parsed) continue
+          if (parsed.event === 'step') {
+            setResearchSteps((previous) => [...previous, parsed.data as BeaconResearchProgressEvent].slice(-8))
+          }
+          if (parsed.event === 'completed') {
+            completed = true
+            const completedStep: BeaconResearchProgressEvent = {
+              stage: 'completed',
+              status: 'completed',
+              detail: 'Evidence bundle and report ready.',
+            }
+            setResearchSteps((previous) => [
+              ...previous,
+              completedStep,
+            ].slice(-8))
+            setResult(parsed.data as BeaconAnswerResponse)
+          }
+          if (parsed.event === 'failed') {
+            const failure = parsed.data as Partial<BeaconResearchProgressEvent>
+            const failedStep: BeaconResearchProgressEvent = {
+              stage: 'failed',
+              status: 'failed',
+              detail: failure.detail || 'Beacon stream failed.',
+            }
+            setResearchSteps((previous) => [
+              ...previous,
+              failedStep,
+            ].slice(-8))
+            throw new Error(failure.detail || 'Beacon stream failed.')
+          }
+        }
+
+        if (done) break
+      }
+    } finally {
+      reader.releaseLock()
+    }
+
+    if (!completed) {
+      throw new Error('Beacon stream ended before completion.')
     }
   }
 
@@ -171,6 +254,9 @@ export default function Beacon() {
           </button>
         </div>
         <p className="text-xs opacity-55">{activeMode?.description}</p>
+        {researchSteps.length > 0 && (
+          <BeaconResearchStreamTrace steps={researchSteps} isDark={isDark} />
+        )}
         {runError && <p className="text-sm text-rose-500">{runError}</p>}
       </section>
 
@@ -241,11 +327,67 @@ export default function Beacon() {
       {result && (
         <div className="space-y-5">
           <BeaconAnswerSummary result={result} isDark={isDark} />
-          <BeaconResearchPlanStrip plan={result.plan.research} report={result.research_report} quality={result.quality} isDark={isDark} />
+          <BeaconResearchPlanStrip
+            plan={result.plan.research}
+            report={result.research_report}
+            quality={result.quality}
+            evidenceBundle={result.evidence_bundle}
+            isDark={isDark}
+          />
           <BeaconEvidenceTransparencyPanel transparency={result.evidence_transparency} isDark={isDark} />
           <BeaconSourceCards citations={result.citations} quality={result.quality} isDark={isDark} />
         </div>
       )}
     </motion.div>
   )
+}
+
+function BeaconResearchStreamTrace({ steps, isDark }: { steps: BeaconResearchProgressEvent[]; isDark: boolean }) {
+  const border = isDark ? 'border-white/10' : 'border-[#141414]/10'
+  const panel = isDark ? 'bg-black/20' : 'bg-white/40'
+  const activeStep = steps[steps.length - 1]
+
+  return (
+    <div className={`rounded-lg border px-3 py-2 ${border} ${panel}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-mono uppercase tracking-widest opacity-45">Live research trace</p>
+          <p className="mt-1 text-sm font-semibold">{activeStep?.detail || 'Waiting for Beacon'}</p>
+        </div>
+        <span className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-mono uppercase ${border}`}>
+          {activeStep?.status === 'completed' || activeStep?.status === 'failed' ? (
+            activeStep.status === 'failed' ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />
+          ) : (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          )}
+          {activeStep?.stage || 'queued'}
+        </span>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {steps.map((step, index) => (
+          <span
+            key={`${step.stage}-${index}`}
+            className={`rounded border px-2 py-1 text-[10px] font-mono uppercase ${border} ${step.status === 'failed' ? 'text-rose-500' : ''}`}
+          >
+            {step.stage.replaceAll('_', ' ')}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function parseBeaconStreamFrame(frame: string): { event: string; data: unknown } | null {
+  const eventLine = frame.split('\n').find((line) => line.startsWith('event:'))
+  const dataLine = frame.split('\n').find((line) => line.startsWith('data:'))
+  if (!eventLine || !dataLine) return null
+  const event = eventLine.replace('event:', '').trim()
+  try {
+    return {
+      event,
+      data: JSON.parse(dataLine.replace('data:', '').trim()) as unknown,
+    }
+  } catch {
+    return null
+  }
 }

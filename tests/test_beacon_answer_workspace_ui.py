@@ -31,7 +31,9 @@ def test_beacon_deep_research_cockpit_shows_plan_and_ranked_sources() -> None:
     assert "Plan, coverage, and source ranking" in source
     assert "Progress" in source
     assert "Export report" in source
+    assert "Export evidence" in source
     assert "beacon-research-report.md" in source
+    assert "beacon-evidence-bundle.json" in source
     assert "Subquestions" in source
     assert "Ranked sources" in source
     assert "source_rankings" in source
@@ -39,7 +41,21 @@ def test_beacon_deep_research_cockpit_shows_plan_and_ranked_sources() -> None:
     assert "Eval gates" in source
     assert "covered_official_target_count" in source
     assert "verified_claim_count" in source
-    assert "report_markdown" in BEACON_TYPES.read_text(encoding="utf-8")
+    types = BEACON_TYPES.read_text(encoding="utf-8")
+    assert "report_markdown" in types
+    assert "BeaconEvidenceBundle" in types
+    assert "raw_web_content_included" in types
+
+
+def test_beacon_page_streams_deep_research_steps() -> None:
+    source = BEACON_PAGE.read_text(encoding="utf-8")
+    types = BEACON_TYPES.read_text(encoding="utf-8")
+
+    assert "/v1/internet-scout/local-llm/tool/stream" in source
+    assert "Live research trace" in source
+    assert "parseBeaconStreamFrame" in source
+    assert "evidence_bundle" in source
+    assert "BeaconResearchProgressEvent" in types
 
 
 def test_beacon_page_can_queue_browser_action_approvals() -> None:
