@@ -12,6 +12,11 @@ import inspect
 
 from brain.memory.memory import MemoryService
 from brain.routes import memory as memory_routes
+from brain.services.internet_scout.web_suggestion import suggest_web_for_chat
+from brain.services.memory_web_policy import (
+    should_prefer_memory_over_web_suggestion,
+    should_short_circuit_web_suggestion,
+)
 
 
 @dataclass(frozen=True)
@@ -35,6 +40,7 @@ def run_memory_context_evals() -> list[MemoryContextEvalResult]:
         _graph_current_line_contract(),
         _graph_historical_edge_line_contract(),
         _context_section_order_contract(),
+        _ask_profile_memory_suppresses_web_short_circuit(),
     ]
 
 
@@ -230,6 +236,59 @@ def _context_section_order_contract() -> MemoryContextEvalResult:
         eval_group="auto_context",
         passed=not failures,
         details={"expected_order": expected_order, "positions": positions},
+        failures=tuple(failures),
+    )
+
+
+def _ask_profile_memory_suppresses_web_short_circuit() -> MemoryContextEvalResult:
+    prompt = (
+        "What current Ken career/profile facts are in memory? "
+        "Answer in 3 short bullets and label anything old as historical."
+    )
+    memory_context = "[ALWAYS KNOWN]\n- Ken has approved career profile memory."
+    suggestion = suggest_web_for_chat(
+        query=prompt,
+        internet_mode="none",
+        sensitivity="normal",
+    )
+    public_suggestion = suggest_web_for_chat(
+        query="Who is the current CEO of OpenAI?",
+        internet_mode="none",
+        sensitivity="normal",
+    )
+    failures: list[str] = []
+    if suggestion is None:
+        failures.append("missing_current_information_suggestion")
+    elif suggestion.reason != "current_information_likely":
+        failures.append("unexpected_suggestion_reason")
+    if suggestion and not should_short_circuit_web_suggestion(suggestion):
+        failures.append("baseline_no_longer_short_circuits_current_fact")
+    if suggestion and not should_prefer_memory_over_web_suggestion(
+        user_msg=prompt,
+        memory_context=memory_context,
+        web_suggestion=suggestion,
+        internet_context=None,
+    ):
+        failures.append("profile_memory_recall_does_not_suppress_web_suggestion")
+    if public_suggestion and should_prefer_memory_over_web_suggestion(
+        user_msg="Who is the current CEO of OpenAI?",
+        memory_context=memory_context,
+        web_suggestion=public_suggestion,
+        internet_context=None,
+    ):
+        failures.append("public_current_fact_suppresses_web_suggestion")
+
+    return MemoryContextEvalResult(
+        name="ask_profile_memory_recall_uses_memory_before_web_fallback",
+        eval_group="auto_context",
+        passed=not failures,
+        details={
+            "prompt": prompt,
+            "suggestion_reason": suggestion.reason if suggestion else None,
+            "memory_context_present": True,
+            "public_current_fact_keeps_web_boundary": "public_current_fact_suppresses_web_suggestion"
+            not in failures,
+        },
         failures=tuple(failures),
     )
 
