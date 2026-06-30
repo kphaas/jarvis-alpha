@@ -210,14 +210,17 @@ def test_linkedin_metrics_promote_only_strong_feedback_to_spark_memory() -> None
     assert rate == 0.04
     assert memory is not None
     assert "Favor this topic pattern" in memory
-    assert linkedin_metric_memory_content(
-        topic="Weak topic",
-        draft_kind="post",
-        reply_style="strong_short",
-        engagement_total=1,
-        impressions=200,
-        engagement_rate=0.005,
-    ) is None
+    assert (
+        linkedin_metric_memory_content(
+            topic="Weak topic",
+            draft_kind="post",
+            reply_style="strong_short",
+            engagement_total=1,
+            impressions=200,
+            engagement_rate=0.005,
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio

@@ -217,7 +217,9 @@ def linkedin_engagement_slots_due(isodow: int) -> int:
     return 3
 
 
-def linkedin_reply_style_from_flags(flags: list[str] | tuple[str, ...]) -> SocialReplyStyle:
+def linkedin_reply_style_from_flags(
+    flags: list[str] | tuple[str, ...],
+) -> SocialReplyStyle:
     if "reply_style_warm" in flags:
         return "warm"
     if "reply_style_practical" in flags:
@@ -232,10 +234,14 @@ def linkedin_metric_engagement_total(
     reposts: int,
     profile_clicks: int,
 ) -> int:
-    return max(0, reactions) + max(0, comments) + max(0, reposts) + max(0, profile_clicks)
+    return (
+        max(0, reactions) + max(0, comments) + max(0, reposts) + max(0, profile_clicks)
+    )
 
 
-def linkedin_metric_engagement_rate(*, engagement_total: int, impressions: int) -> float:
+def linkedin_metric_engagement_rate(
+    *, engagement_total: int, impressions: int
+) -> float:
     if impressions <= 0:
         return 0.0
     return round(engagement_total / impressions, 4)
@@ -773,7 +779,9 @@ async def record_linkedin_metric_snapshot(
     )
 
 
-async def load_linkedin_operator_dashboard(conn: asyncpg.Connection) -> dict[str, object]:
+async def load_linkedin_operator_dashboard(
+    conn: asyncpg.Connection,
+) -> dict[str, object]:
     cadence = await conn.fetchrow(
         """
         SELECT current_date AS today,

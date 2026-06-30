@@ -483,9 +483,7 @@ async def record_linkedin_metrics(
     )
 
 
-@router.get(
-    "/linkedin/thought-leaders", response_model=HeraldThoughtLeaderTargetList
-)
+@router.get("/linkedin/thought-leaders", response_model=HeraldThoughtLeaderTargetList)
 async def list_thought_leader_targets(
     request: Request,
     _: str = Depends(require_auth),
@@ -517,9 +515,7 @@ async def list_thought_leader_targets(
     )
 
 
-@router.post(
-    "/linkedin/thought-leaders", response_model=HeraldThoughtLeaderTargetOut
-)
+@router.post("/linkedin/thought-leaders", response_model=HeraldThoughtLeaderTargetOut)
 async def create_thought_leader_target(
     body: HeraldThoughtLeaderTargetCreate,
     request: Request,

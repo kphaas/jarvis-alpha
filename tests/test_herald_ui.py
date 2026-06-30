@@ -66,8 +66,7 @@ def test_herald_ui_exposes_social_approval_outbox() -> None:
         in source
     )
     assert (
-        "apiJson<LinkedInMetricResponse>('/v1/herald/social/linkedin/metrics'"
-        in source
+        "apiJson<LinkedInMetricResponse>('/v1/herald/social/linkedin/metrics'" in source
     )
     assert (
         "apiJson<SocialEngagementList>('/v1/herald/social/linkedin/engagements?status=all&limit=12')"
