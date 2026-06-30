@@ -14,6 +14,9 @@ from brain.services.herald_social import (
     create_social_draft,
     hash_social_draft,
     linkedin_engagement_slots_due,
+    linkedin_metric_engagement_rate,
+    linkedin_metric_engagement_total,
+    linkedin_metric_memory_content,
     linkedin_target_scout_queries,
     linkedin_weekly_topic,
     normalize_platforms,
@@ -58,6 +61,13 @@ INTERACTION_LEDGER_MIGRATION = (
     / "db"
     / "migrations"
     / "20260628_130000_herald_interaction_ledger.sql"
+)
+ANALYTICS_TARGETS_MIGRATION = (
+    REPO_ROOT
+    / "brain"
+    / "db"
+    / "migrations"
+    / "20260630_090000_herald_social_analytics_targets.sql"
 )
 
 
@@ -177,6 +187,37 @@ def test_linkedin_target_scout_queries_focus_on_brand_topics() -> None:
         "LinkedIn posts AI governance enterprise AI CIO business transformation",
     )
     assert "http" not in queries[0].lower()
+
+
+def test_linkedin_metrics_promote_only_strong_feedback_to_spark_memory() -> None:
+    total = linkedin_metric_engagement_total(
+        reactions=5,
+        comments=2,
+        reposts=1,
+        profile_clicks=0,
+    )
+    rate = linkedin_metric_engagement_rate(engagement_total=total, impressions=200)
+    memory = linkedin_metric_memory_content(
+        topic="AI operating model for enterprise transformation",
+        draft_kind="post",
+        reply_style="strong_short",
+        engagement_total=total,
+        impressions=200,
+        engagement_rate=rate,
+    )
+
+    assert total == 8
+    assert rate == 0.04
+    assert memory is not None
+    assert "Favor this topic pattern" in memory
+    assert linkedin_metric_memory_content(
+        topic="Weak topic",
+        draft_kind="post",
+        reply_style="strong_short",
+        engagement_total=1,
+        impressions=200,
+        engagement_rate=0.005,
+    ) is None
 
 
 @pytest.mark.asyncio
@@ -373,6 +414,19 @@ def test_herald_interaction_ledger_migration_is_append_only_metadata() -> None:
     assert "client_secret" not in source
 
 
+def test_herald_social_analytics_and_target_graph_migration_is_metadata_only() -> None:
+    source = ANALYTICS_TARGETS_MIGRATION.read_text(encoding="utf-8")
+
+    assert "public.alpha_herald_social_metric_snapshots" in source
+    assert "public.alpha_herald_thought_leader_targets" in source
+    assert "FORCE ROW LEVEL SECURITY" in source
+    assert "metric_source IN ('manual', 'linkedin_api')" in source
+    assert "relationship_notes" in source
+    assert "access_token" not in source
+    assert "client_secret" not in source
+    assert "private DMs" in source
+
+
 def test_social_routes_publish_only_through_linkedin_connector() -> None:
     source = ROUTE.read_text(encoding="utf-8")
 
@@ -380,9 +434,12 @@ def test_social_routes_publish_only_through_linkedin_connector() -> None:
     assert "/linkedin/weekly" in source
     assert "/linkedin/cadence" in source
     assert "/linkedin/read-plan" in source
+    assert "/linkedin/operator-dashboard" in source
     assert "/linkedin/engagements" in source
     assert "/linkedin/engagements/scout" in source
     assert "/linkedin/ingest" in source
+    assert "/linkedin/metrics" in source
+    assert "/linkedin/thought-leaders" in source
     assert "/draft-reply" in source
     assert "/publish-reply" in source
     assert "/schedule" in source

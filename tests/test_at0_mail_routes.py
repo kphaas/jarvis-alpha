@@ -59,7 +59,15 @@ def test_herald_social_routes_are_classified() -> None:
         "read",
         "security_read",
     ]
+    assert classify_route("GET", "/v1/herald/social/linkedin/operator-dashboard") == [
+        "read",
+        "security_read",
+    ]
     assert classify_route("GET", "/v1/herald/social/linkedin/engagements") == [
+        "read",
+        "security_read",
+    ]
+    assert classify_route("GET", "/v1/herald/social/linkedin/thought-leaders") == [
         "read",
         "security_read",
     ]
@@ -72,6 +80,14 @@ def test_herald_social_routes_are_classified() -> None:
         "security_write",
     ]
     assert classify_route("POST", "/v1/herald/social/linkedin/engagements") == [
+        "write",
+        "security_write",
+    ]
+    assert classify_route("POST", "/v1/herald/social/linkedin/metrics") == [
+        "write",
+        "security_write",
+    ]
+    assert classify_route("POST", "/v1/herald/social/linkedin/thought-leaders") == [
         "write",
         "security_write",
     ]

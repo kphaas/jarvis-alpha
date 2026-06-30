@@ -109,6 +109,73 @@ class HeraldLinkedInScoutResponse(BaseModel):
     item_ids: list[UUID]
 
 
+class HeraldLinkedInMetricRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    variant_id: UUID
+    engagement_item_id: UUID | None = None
+    metric_source: Literal["manual", "linkedin_api"] = "manual"
+    impressions: int = Field(default=0, ge=0, le=2_147_483_647)
+    reactions: int = Field(default=0, ge=0, le=2_147_483_647)
+    comments: int = Field(default=0, ge=0, le=2_147_483_647)
+    reposts: int = Field(default=0, ge=0, le=2_147_483_647)
+    profile_clicks: int = Field(default=0, ge=0, le=2_147_483_647)
+    captured_on: date | None = None
+    notes: str | None = Field(default=None, max_length=500)
+
+
+class HeraldLinkedInMetricOut(BaseModel):
+    metric_id: UUID
+    variant_id: UUID
+    engagement_total: int
+    engagement_rate: float
+    spark_memory_saved: bool
+    spark_memory_content: str | None = None
+
+
+class HeraldLinkedInOperatorDashboardOut(BaseModel):
+    post_due: bool
+    comments_due: int
+    best_topic: str
+    best_reply_style: SocialReplyStyle
+    targets_ready: int
+    approval_backlog: int
+    active_thought_leaders: int
+    metric_snapshots_30d: int
+
+
+class HeraldThoughtLeaderTargetCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    person_name: str = Field(min_length=1, max_length=160)
+    company_name: str | None = Field(default=None, max_length=160)
+    role_title: str | None = Field(default=None, max_length=160)
+    profile_url: str | None = Field(default=None, min_length=8, max_length=500)
+    topics: list[str] = Field(default_factory=list, max_length=8)
+    priority: int = Field(default=3, ge=1, le=5)
+    relationship_notes: str | None = Field(default=None, max_length=1000)
+
+
+class HeraldThoughtLeaderTargetOut(BaseModel):
+    id: UUID
+    platform: Literal["linkedin"]
+    person_name: str
+    company_name: str | None
+    role_title: str | None
+    profile_url: str | None
+    topics: list[str]
+    priority: int
+    relationship_notes: str | None
+    last_interaction_at: datetime | None
+    status: Literal["active", "paused", "archived"]
+    created_at: datetime
+    updated_at: datetime
+
+
+class HeraldThoughtLeaderTargetList(BaseModel):
+    targets: list[HeraldThoughtLeaderTargetOut]
+
+
 class HeraldSocialEngagementCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

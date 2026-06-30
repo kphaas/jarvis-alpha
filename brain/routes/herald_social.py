@@ -14,6 +14,9 @@ from brain.models.herald_social import (
     HeraldLinkedInCadenceOut,
     HeraldLinkedInIngestRequest,
     HeraldLinkedInIngestResponse,
+    HeraldLinkedInMetricOut,
+    HeraldLinkedInMetricRecord,
+    HeraldLinkedInOperatorDashboardOut,
     HeraldLinkedInScoutRequest,
     HeraldLinkedInScoutResponse,
     HeraldLinkedInReadPlanOut,
@@ -30,6 +33,9 @@ from brain.models.herald_social import (
     HeraldSocialManualPublishUpdate,
     HeraldSocialPlatformProfileList,
     HeraldSocialPlatformProfileOut,
+    HeraldThoughtLeaderTargetCreate,
+    HeraldThoughtLeaderTargetList,
+    HeraldThoughtLeaderTargetOut,
     SocialReplyStyle,
 )
 from brain.services.herald_linkedin import (
@@ -48,8 +54,10 @@ from brain.services.herald_social import (
     create_social_draft,
     linkedin_engagement_reply_topic,
     linkedin_weekly_topic,
+    load_linkedin_operator_dashboard,
     load_herald_spark_context,
     normalize_platforms,
+    record_linkedin_metric_snapshot,
     scout_linkedin_engagement_targets,
 )
 from brain.services.internet_scout.gateway_client import InternetScoutGatewayError
@@ -225,6 +233,19 @@ async def get_linkedin_read_plan(
             "reply drafts require human approval before publish",
         ],
     )
+
+
+@router.get(
+    "/linkedin/operator-dashboard", response_model=HeraldLinkedInOperatorDashboardOut
+)
+async def get_linkedin_operator_dashboard(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldLinkedInOperatorDashboardOut:
+    _check_read_scope(request)
+    async with get_pool().acquire() as conn:
+        payload = await load_linkedin_operator_dashboard(conn)
+    return HeraldLinkedInOperatorDashboardOut(**payload)
 
 
 @router.get("/linkedin/engagements", response_model=HeraldSocialEngagementList)
@@ -424,6 +445,126 @@ async def scout_linkedin_engagements(
         reason=outcome.reason,
         item_ids=list(outcome.item_ids),
     )
+
+
+@router.post("/linkedin/metrics", response_model=HeraldLinkedInMetricOut)
+async def record_linkedin_metrics(
+    body: HeraldLinkedInMetricRecord,
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldLinkedInMetricOut:
+    _check_write_scope(request)
+    try:
+        async with get_pool().acquire() as conn:
+            outcome = await record_linkedin_metric_snapshot(
+                conn,
+                variant_id=body.variant_id,
+                engagement_item_id=body.engagement_item_id,
+                metric_source=body.metric_source,
+                impressions=body.impressions,
+                reactions=body.reactions,
+                comments=body.comments,
+                reposts=body.reposts,
+                profile_clicks=body.profile_clicks,
+                captured_on=body.captured_on,
+                notes=body.notes,
+                actor_sub=_actor_sub(request),
+                actor_type=_actor_type(request),
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return HeraldLinkedInMetricOut(
+        metric_id=outcome.metric_id,
+        variant_id=outcome.variant_id,
+        engagement_total=outcome.engagement_total,
+        engagement_rate=outcome.engagement_rate,
+        spark_memory_saved=outcome.spark_memory_saved,
+        spark_memory_content=outcome.spark_memory_content,
+    )
+
+
+@router.get(
+    "/linkedin/thought-leaders", response_model=HeraldThoughtLeaderTargetList
+)
+async def list_thought_leader_targets(
+    request: Request,
+    _: str = Depends(require_auth),
+    status: Literal["active", "paused", "archived", "all"] = Query(default="active"),
+    limit: int = Query(default=24, ge=1, le=100),
+) -> HeraldThoughtLeaderTargetList:
+    _check_read_scope(request)
+    params: list[object] = []
+    where = "TRUE"
+    if status != "all":
+        params.append(status)
+        where = f"status = ${len(params)}"
+    params.append(limit)
+    async with get_pool().acquire() as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT id, platform, person_name, company_name, role_title,
+                   profile_url, topics, priority, relationship_notes,
+                   last_interaction_at, status, created_at, updated_at
+            FROM public.alpha_herald_thought_leader_targets
+            WHERE {where}
+            ORDER BY priority ASC, last_interaction_at DESC NULLS LAST, updated_at DESC
+            LIMIT ${len(params)}
+            """,
+            *params,
+        )
+    return HeraldThoughtLeaderTargetList(
+        targets=[_thought_leader_out(row) for row in rows]
+    )
+
+
+@router.post(
+    "/linkedin/thought-leaders", response_model=HeraldThoughtLeaderTargetOut
+)
+async def create_thought_leader_target(
+    body: HeraldThoughtLeaderTargetCreate,
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldThoughtLeaderTargetOut:
+    _check_write_scope(request)
+    actor_sub = _actor_sub(request)
+    actor_type = _actor_type(request)
+    topics = [topic.strip()[:80] for topic in body.topics if topic.strip()]
+    async with get_pool().acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                INSERT INTO public.alpha_herald_thought_leader_targets (
+                    person_name, company_name, role_title, profile_url, topics,
+                    priority, relationship_notes, created_by
+                )
+                VALUES ($1, $2, $3, $4, $5::text[], $6, $7, $8)
+                RETURNING id, platform, person_name, company_name, role_title,
+                          profile_url, topics, priority, relationship_notes,
+                          last_interaction_at, status, created_at, updated_at
+                """,
+                body.person_name.strip(),
+                body.company_name.strip() if body.company_name else None,
+                body.role_title.strip() if body.role_title else None,
+                body.profile_url.strip() if body.profile_url else None,
+                topics,
+                body.priority,
+                body.relationship_notes.strip() if body.relationship_notes else None,
+                actor_sub,
+            )
+            await record_herald_interaction(
+                conn,
+                channel="linkedin",
+                interaction_kind="engagement",
+                direction="internal",
+                lifecycle_event="thought_leader_target_created",
+                status="active",
+                primary_ref_type="thought_leader_target",
+                primary_ref_id=row["id"],
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+                event_metadata={"topic_count": len(topics)},
+            )
+    return _thought_leader_out(row)
 
 
 @router.post(
@@ -1291,3 +1432,7 @@ def _draft_out(row) -> HeraldSocialDraftVariantOut:
 
 def _engagement_out(row) -> HeraldSocialEngagementOut:
     return HeraldSocialEngagementOut(**dict(row))
+
+
+def _thought_leader_out(row) -> HeraldThoughtLeaderTargetOut:
+    return HeraldThoughtLeaderTargetOut(**dict(row))

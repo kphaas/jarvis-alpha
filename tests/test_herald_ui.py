@@ -54,6 +54,22 @@ def test_herald_ui_exposes_social_approval_outbox() -> None:
     assert "apiJson<LinkedInCadence>('/v1/herald/social/linkedin/cadence')" in source
     assert "apiJson<LinkedInReadPlan>('/v1/herald/social/linkedin/read-plan')" in source
     assert (
+        "apiJson<LinkedInOperatorDashboard>('/v1/herald/social/linkedin/operator-dashboard')"
+        in source
+    )
+    assert (
+        "apiJson<ThoughtLeaderTargetList>('/v1/herald/social/linkedin/thought-leaders?status=active&limit=8')"
+        in source
+    )
+    assert (
+        "apiJson<ThoughtLeaderTarget>('/v1/herald/social/linkedin/thought-leaders'"
+        in source
+    )
+    assert (
+        "apiJson<LinkedInMetricResponse>('/v1/herald/social/linkedin/metrics'"
+        in source
+    )
+    assert (
         "apiJson<SocialEngagementList>('/v1/herald/social/linkedin/engagements?status=all&limit=12')"
         in source
     )
@@ -78,6 +94,12 @@ def test_herald_ui_exposes_social_approval_outbox() -> None:
     assert "/v1/herald/social/drafts/${draftId}/publish/linkedin" in source
     assert "Social approval outbox" in source
     assert "Draft weekly LinkedIn" in source
+    assert "Post due" in source
+    assert "Best topic" in source
+    assert "Thought-leader target graph" in source
+    assert "Analytics feedback loop" in source
+    assert "Record metrics" in source
+    assert "Add target" in source
     assert "LinkedIn engagement inbox" in source
     assert "Scout targets" in source
     assert "Add to inbox" in source
