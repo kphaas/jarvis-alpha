@@ -53,6 +53,7 @@ from brain.services.herald_interaction_ledger import (
 from brain.services.herald_social import (
     create_social_draft,
     linkedin_engagement_reply_topic,
+    linkedin_post_urn_from_url,
     linkedin_weekly_topic,
     load_linkedin_operator_dashboard,
     load_herald_spark_context,
@@ -178,21 +179,29 @@ async def get_linkedin_cadence(
             SELECT current_date AS today,
                    max(v.published_at) FILTER (
                        WHERE v.platform = 'linkedin'
+                         AND r.draft_kind = 'post'
+                         AND r.campaign = 'linkedin-weekly-brand'
                          AND v.publish_status IN (
                              'manual_published', 'linkedin_published'
                          )
                    ) AS last_published_at,
                    min(v.scheduled_for) FILTER (
                        WHERE v.platform = 'linkedin'
+                         AND r.draft_kind = 'post'
+                         AND r.campaign = 'linkedin-weekly-brand'
                          AND v.publish_status = 'scheduled'
                          AND v.scheduled_for >= current_date
                    ) AS next_scheduled_for,
                    count(*) FILTER (
                        WHERE v.platform = 'linkedin'
+                         AND r.draft_kind = 'post'
+                         AND r.campaign = 'linkedin-weekly-brand'
                          AND v.status = 'approved'
                          AND v.publish_status IN ('not_scheduled', 'scheduled')
                    )::int AS approved_ready_count
             FROM public.alpha_herald_social_draft_variants v
+            JOIN public.alpha_herald_social_draft_requests r
+              ON r.id = v.request_id
             """
         )
     today = row["today"]
@@ -294,6 +303,11 @@ async def create_linkedin_engagement(
     _check_write_scope(request)
     actor_sub = _actor_sub(request)
     actor_type = _actor_type(request)
+    provider_post_urn = (
+        body.provider_post_urn.strip()
+        if body.provider_post_urn
+        else linkedin_post_urn_from_url(body.item_url)
+    )
     async with get_pool().acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow(
@@ -305,6 +319,10 @@ async def create_linkedin_engagement(
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 ON CONFLICT (provider_item_urn) WHERE provider_item_urn IS NOT NULL
                 DO UPDATE SET
+                    provider_post_urn = COALESCE(
+                        EXCLUDED.provider_post_urn,
+                        alpha_herald_social_engagement_items.provider_post_urn
+                    ),
                     item_url = EXCLUDED.item_url,
                     author_name = EXCLUDED.author_name,
                     item_text = EXCLUDED.item_text,
@@ -316,7 +334,7 @@ async def create_linkedin_engagement(
                 body.source,
                 body.account_label.strip(),
                 body.provider_item_urn.strip() if body.provider_item_urn else None,
-                body.provider_post_urn.strip() if body.provider_post_urn else None,
+                provider_post_urn,
                 body.item_url.strip() if body.item_url else None,
                 body.author_name.strip(),
                 body.item_text.strip(),
@@ -1306,6 +1324,8 @@ async def mark_linkedin_draft_manually_published(
                 SET publish_status = 'manual_published',
                     published_at = now(),
                     published_url = $2,
+                    publish_error_type = NULL,
+                    publish_error_message = NULL,
                     updated_at = now()
                 WHERE id = $1
                 """,

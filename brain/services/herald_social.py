@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+from urllib.parse import unquote
 from dataclasses import dataclass
 from datetime import date
 from uuid import UUID
@@ -45,6 +46,8 @@ _BANNED_HYPE = re.compile(
     re.IGNORECASE,
 )
 _WRONG_NAME = re.compile(r"\b(AT-0|ATO|At0|at0)\b")
+_LINKEDIN_POST_URN = re.compile(r"urn:li:(?:activity|share):\d+")
+_LINKEDIN_ACTIVITY_URL = re.compile(r"(?:activity|share)-(\d{8,25})(?:[-/?#]|$)")
 DEFAULT_LINKEDIN_TARGET_TOPICS: tuple[str, ...] = (
     "enterprise AI transformation",
     "AI operating model",
@@ -287,6 +290,19 @@ def linkedin_target_scout_queries(
     )
 
 
+def linkedin_post_urn_from_url(url: str | None) -> str | None:
+    text = unquote((url or "").strip())
+    if not text:
+        return None
+    urn = _LINKEDIN_POST_URN.search(text)
+    if urn:
+        return urn.group(0)[:200]
+    activity = _LINKEDIN_ACTIVITY_URL.search(text)
+    if activity:
+        return f"urn:li:activity:{activity.group(1)}"
+    return None
+
+
 async def create_weekly_linkedin_draft_if_due(
     conn: asyncpg.Connection,
     *,
@@ -316,11 +332,15 @@ async def create_weekly_linkedin_draft_if_due(
             SELECT current_date AS today,
                    max(v.published_at) FILTER (
                        WHERE v.platform = 'linkedin'
+                         AND r.draft_kind = 'post'
+                         AND r.campaign = 'linkedin-weekly-brand'
                          AND v.publish_status IN (
                              'manual_published', 'linkedin_published'
                          )
                    ) AS last_published_at
             FROM public.alpha_herald_social_draft_variants v
+            JOIN public.alpha_herald_social_draft_requests r
+              ON r.id = v.request_id
             """
         )
         today = cadence["today"]
@@ -787,6 +807,8 @@ async def load_linkedin_operator_dashboard(
         SELECT current_date AS today,
                max(v.published_at) FILTER (
                    WHERE v.platform = 'linkedin'
+                     AND r.draft_kind = 'post'
+                     AND r.campaign = 'linkedin-weekly-brand'
                      AND v.publish_status IN ('manual_published', 'linkedin_published')
                ) AS last_published_at,
                count(*) FILTER (
@@ -944,18 +966,26 @@ async def scout_linkedin_engagement_targets(
                 skipped += 1
                 continue
             provider_item_urn = f"herald:scout:{hash_social_draft(url)[:16]}"
+            provider_post_urn = linkedin_post_urn_from_url(url)
             row = await conn.fetchrow(
                 """
                 INSERT INTO public.alpha_herald_social_engagement_items (
                     source, account_label, provider_item_urn, provider_post_urn,
                     item_url, author_name, item_text, created_by
                 )
-                VALUES ('manual', 'AT0', $1, NULL, $2, $3, $4, $5)
+                VALUES ('manual', 'AT0', $1, $2, $3, $4, $5, $6)
                 ON CONFLICT (provider_item_urn) WHERE provider_item_urn IS NOT NULL
-                DO NOTHING
+                DO UPDATE SET
+                    provider_post_urn = COALESCE(
+                        EXCLUDED.provider_post_urn,
+                        alpha_herald_social_engagement_items.provider_post_urn
+                    ),
+                    item_url = EXCLUDED.item_url,
+                    updated_at = now()
                 RETURNING id
                 """,
                 provider_item_urn,
+                provider_post_urn,
                 _fit(url, 500),
                 _scout_author_name(result.title, result.host),
                 _scout_item_text(result.title, result.description, result.host),
@@ -981,6 +1011,7 @@ async def scout_linkedin_engagement_targets(
                     "source": "gateway_scout",
                     "query_hash": response.query_hash,
                     "host": result.host,
+                    "provider_post_urn_present": provider_post_urn is not None,
                 },
             )
 
