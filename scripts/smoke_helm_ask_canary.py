@@ -15,8 +15,10 @@ import urllib.error
 import urllib.request
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+COMMON_ROOT = REPO_ROOT / "common"
+for path in (REPO_ROOT, COMMON_ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 from brain.services.internet_scout.ask_canary import (  # noqa: E402
     DEFAULT_CANARY_CASES,
