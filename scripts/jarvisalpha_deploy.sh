@@ -42,6 +42,10 @@ if [[ -n "${JARVIS_ALPHA_SSH_KEY:-}" ]]; then
 fi
 RENDERER="${REPO_DIR}/scripts/render_events.py"
 VERBOSE="${VERBOSE:-0}"
+MEMORY_ASK_PYTHON="${JARVIS_ALPHA_MEMORY_ASK_PYTHON:-${REPO_DIR}/.venv/bin/python3.12}"
+if [[ ! -x "$MEMORY_ASK_PYTHON" ]]; then
+  MEMORY_ASK_PYTHON="python3"
+fi
 
 # ── Log file ──────────────────────────────────────────────
 LOG_TS=$(date +%Y%m%d_%H%M%S)
@@ -330,7 +334,7 @@ print(f"{len(passed)} checks passed")
     memory_ask_out=$(
       HELM_MEMORY_ASK_SMOKE_BASE_URL="$settings_base_url" \
       HELM_MEMORY_ASK_SMOKE_TOKEN_SSH_TARGET="$BRAIN" \
-        python3 "$REPO_DIR/scripts/smoke_helm_memory_ask_session.py" 2>&1
+        "$MEMORY_ASK_PYTHON" "$REPO_DIR/scripts/smoke_helm_memory_ask_session.py" 2>&1
     )
     memory_ask_ec=$?
     if [ $memory_ask_ec -ne 0 ]; then
