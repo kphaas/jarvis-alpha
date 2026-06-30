@@ -397,6 +397,7 @@ export default function Herald() {
   const [publishedUrls, setPublishedUrls] = useState<Record<string, string>>({})
   const [socialDraftFeedback, setSocialDraftFeedback] = useState<Record<string, string>>({})
   const [socialDraftFriction, setSocialDraftFriction] = useState<Record<string, ReviewFriction>>({})
+  const [socialDraftReviewedText, setSocialDraftReviewedText] = useState<Record<string, string>>({})
   const [metricInputs, setMetricInputs] = useState<Record<string, MetricDraftInput>>({})
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
@@ -752,8 +753,11 @@ export default function Herald() {
   }
 
   const setSocialDraftStatus = async (draftId: string, status: 'approved' | 'rejected' | 'archived') => {
+    const draft = socialDrafts.find((item) => item.id === draftId)
     const reviewerNotes = socialDraftFeedback[draftId]?.trim()
     const reviewFriction = socialDraftFriction[draftId] ?? (reviewerNotes ? 'light_edit' : 'as_is')
+    const reviewedText = socialDraftReviewedText[draftId]?.trim()
+    const changedText = reviewedText && reviewedText !== draft?.draft_text.trim() ? reviewedText : undefined
     setActingSocialDraftId(draftId)
     setNotice(null)
     try {
@@ -763,6 +767,7 @@ export default function Herald() {
           status,
           reviewer_notes: reviewerNotes || undefined,
           review_friction: reviewFriction,
+          reviewed_text: changedText,
         }),
       })
       setSocialDraftFeedback((current) => {
@@ -771,6 +776,11 @@ export default function Herald() {
         return next
       })
       setSocialDraftFriction((current) => {
+        const next = { ...current }
+        delete next[draftId]
+        return next
+      })
+      setSocialDraftReviewedText((current) => {
         const next = { ...current }
         delete next[draftId]
         return next
@@ -1489,6 +1499,17 @@ export default function Herald() {
                         <option value="light_edit">Light edit</option>
                         <option value="heavy_rewrite">Heavy rewrite</option>
                       </select>
+                    </label>
+                    <label className={`block text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+                      Reviewed text
+                      <textarea
+                        value={socialDraftReviewedText[draft.id] ?? draft.draft_text}
+                        onChange={(event) => setSocialDraftReviewedText((current) => ({
+                          ...current,
+                          [draft.id]: event.target.value,
+                        }))}
+                        className={`mt-1 min-h-28 w-full rounded-lg border px-3 py-2 text-sm normal-case tracking-normal outline-none ${border} ${strongPanel} ${strong}`}
+                      />
                     </label>
                     <textarea
                       value={socialDraftFeedback[draft.id] ?? ''}

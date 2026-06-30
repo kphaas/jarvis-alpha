@@ -69,6 +69,7 @@ class HeraldSocialDraftStatusUpdate(BaseModel):
     status: Literal["approved", "rejected", "archived"]
     reviewer_notes: str | None = Field(default=None, max_length=500)
     review_friction: SocialReviewFriction | None = None
+    reviewed_text: str | None = Field(default=None, min_length=3, max_length=4000)
 
 
 class HeraldSocialDraftScheduleUpdate(BaseModel):
