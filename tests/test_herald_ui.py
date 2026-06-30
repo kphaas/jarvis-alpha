@@ -95,6 +95,8 @@ def test_herald_ui_exposes_social_approval_outbox() -> None:
     assert "Draft weekly LinkedIn" in source
     assert "Post due" in source
     assert "Best topic" in source
+    assert "Metrics due" in source
+    assert "Learning ready" in source
     assert "Thought-leader target graph" in source
     assert "Analytics feedback loop" in source
     assert "Record metrics" in source
@@ -105,6 +107,9 @@ def test_herald_ui_exposes_social_approval_outbox() -> None:
     assert "Draft reply" in source
     assert "LinkedIn reply options created" in source
     assert "Feedback for rejection or next draft" in source
+    assert "Review friction" in source
+    assert "review_friction" in source
+    assert "heavy_rewrite" in source
     assert "replyStyleLabel" in source
     assert "Strong short" in source
     assert "reviewer_notes" in source

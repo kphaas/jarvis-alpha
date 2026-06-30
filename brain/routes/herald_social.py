@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import timedelta
 from typing import Literal
 from uuid import UUID
@@ -52,8 +53,10 @@ from brain.services.herald_interaction_ledger import (
 )
 from brain.services.herald_social import (
     create_social_draft,
+    linkedin_feedback_memory_note,
     linkedin_engagement_reply_topic,
     linkedin_post_urn_from_url,
+    linkedin_review_friction,
     linkedin_weekly_topic,
     load_linkedin_operator_dashboard,
     load_herald_spark_context,
@@ -62,6 +65,7 @@ from brain.services.herald_social import (
     scout_linkedin_engagement_targets,
 )
 from brain.services.internet_scout.gateway_client import InternetScoutGatewayError
+from brain.services.spark_personality_memory import propose_personality_memory_from_note
 
 router = APIRouter(prefix="/v1/herald/social", tags=["herald-social"])
 
@@ -1026,11 +1030,13 @@ async def update_social_draft_status(
     _check_write_scope(request)
     actor_sub = _actor_sub(request)
     actor_type = _actor_type(request)
+    proposal_note: str | None = None
+    review_friction: str | None = None
     async with get_pool().acquire() as conn:
         async with conn.transaction():
             current = await conn.fetchrow(
                 """
-                SELECT v.request_id, v.platform, v.status, r.draft_kind
+                SELECT v.request_id, v.platform, v.status, r.draft_kind, r.topic
                 FROM public.alpha_herald_social_draft_variants v
                 JOIN public.alpha_herald_social_draft_requests r
                   ON r.id = v.request_id
@@ -1041,6 +1047,20 @@ async def update_social_draft_status(
             )
             if current is None:
                 raise HTTPException(status_code=404, detail="Social draft not found")
+
+            clean_notes = body.reviewer_notes.strip() if body.reviewer_notes else None
+            review_friction = linkedin_review_friction(
+                status=body.status,
+                reviewer_notes=clean_notes,
+                review_friction=body.review_friction,
+            )
+            if body.status == "rejected":
+                proposal_note = linkedin_feedback_memory_note(
+                    topic=str(current["topic"]),
+                    draft_kind=current["draft_kind"],
+                    reviewer_notes=clean_notes,
+                    review_friction=review_friction,
+                )
 
             await conn.execute(
                 """
@@ -1054,7 +1074,7 @@ async def update_social_draft_status(
                 """,
                 variant_id,
                 body.status,
-                body.reviewer_notes,
+                clean_notes,
                 actor_sub,
             )
             if body.status == "approved" and current["draft_kind"] == "reply":
@@ -1100,10 +1120,67 @@ async def update_social_draft_status(
                 payload={
                     "platform": current["platform"],
                     "from_status": current["status"],
-                    "feedback_provided": bool(body.reviewer_notes),
+                    "feedback_provided": bool(clean_notes),
+                    "review_friction": review_friction,
+                    "spark_memory_proposal_candidate": proposal_note is not None,
                 },
             )
             row = await _fetch_variant(conn, variant_id)
+        if proposal_note:
+            proposal_error: str | None = None
+            try:
+                proposal = propose_personality_memory_from_note(
+                    principal_id=os.environ.get("HERALD_SPARK_PRINCIPAL_ID", "ken"),
+                    note=proposal_note,
+                )
+            except Exception as exc:
+                proposal = None
+                proposal_error = exc.__class__.__name__
+            if proposal is not None:
+                await record_herald_interaction(
+                    conn,
+                    channel="linkedin"
+                    if current["platform"] == "linkedin"
+                    else "social",
+                    interaction_kind="approval",
+                    direction="internal",
+                    lifecycle_event="spark_memory_proposed",
+                    status="pending_review",
+                    primary_ref_type="social_draft_variant",
+                    primary_ref_id=variant_id,
+                    secondary_ref_type="spark_personality_memory_proposal",
+                    secondary_ref_id=proposal.proposal_id,
+                    actor_sub=actor_sub,
+                    actor_type=actor_type,
+                    event_metadata={
+                        "source": "herald_social_rejection_feedback",
+                        "proposal_id": proposal.proposal_id,
+                        "memory_kind": proposal.kind,
+                        "review_friction": review_friction,
+                        "draft_kind": current["draft_kind"],
+                    },
+                )
+            elif proposal_error:
+                await record_herald_interaction(
+                    conn,
+                    channel="linkedin"
+                    if current["platform"] == "linkedin"
+                    else "social",
+                    interaction_kind="approval",
+                    direction="internal",
+                    lifecycle_event="spark_memory_proposal_failed",
+                    status="failed",
+                    primary_ref_type="social_draft_variant",
+                    primary_ref_id=variant_id,
+                    actor_sub=actor_sub,
+                    actor_type=actor_type,
+                    event_metadata={
+                        "source": "herald_social_rejection_feedback",
+                        "error_type": proposal_error,
+                        "review_friction": review_friction,
+                        "draft_kind": current["draft_kind"],
+                    },
+                )
     return _draft_out(row)
 
 

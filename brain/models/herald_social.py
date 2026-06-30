@@ -11,6 +11,7 @@ SocialPlatform = Literal["x", "linkedin"]
 SocialDraftStatus = Literal["needs_review", "approved", "rejected", "archived"]
 SocialDraftKind = Literal["post", "reply"]
 SocialReplyStyle = Literal["strong_short", "practical", "warm"]
+SocialReviewFriction = Literal["as_is", "light_edit", "heavy_rewrite"]
 SocialEngagementStatus = Literal[
     "needs_reply",
     "draft_created",
@@ -67,6 +68,7 @@ class HeraldSocialDraftStatusUpdate(BaseModel):
 
     status: Literal["approved", "rejected", "archived"]
     reviewer_notes: str | None = Field(default=None, max_length=500)
+    review_friction: SocialReviewFriction | None = None
 
 
 class HeraldSocialDraftScheduleUpdate(BaseModel):
@@ -142,6 +144,10 @@ class HeraldLinkedInOperatorDashboardOut(BaseModel):
     approval_backlog: int
     active_thought_leaders: int
     metric_snapshots_30d: int
+    metrics_due_count: int
+    learning_samples_30d: int
+    metrics_learning_ready: bool
+    review_friction_30d: dict[str, int]
 
 
 class HeraldThoughtLeaderTargetCreate(BaseModel):

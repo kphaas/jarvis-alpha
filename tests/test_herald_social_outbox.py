@@ -11,13 +11,17 @@ from brain.services.internet_scout.models import (
     GatewaySearchResult,
 )
 from brain.services.herald_social import (
+    LINKEDIN_LEARNING_MIN_SAMPLES,
     create_social_draft,
     hash_social_draft,
+    linkedin_feedback_memory_note,
     linkedin_engagement_slots_due,
     linkedin_metric_engagement_rate,
     linkedin_metric_engagement_total,
+    linkedin_metric_clears_learning_threshold,
     linkedin_metric_memory_content,
     linkedin_post_urn_from_url,
+    linkedin_review_friction,
     linkedin_target_scout_queries,
     linkedin_weekly_topic,
     normalize_platforms,
@@ -238,6 +242,38 @@ def test_linkedin_metrics_promote_only_strong_feedback_to_spark_memory() -> None
         )
         is None
     )
+    assert linkedin_metric_clears_learning_threshold(
+        engagement_total=LINKEDIN_LEARNING_MIN_SAMPLES,
+        engagement_rate=0.0,
+    )
+
+
+def test_linkedin_rejection_feedback_becomes_reviewed_memory_proposal_note() -> None:
+    friction = linkedin_review_friction(
+        status="rejected",
+        reviewer_notes="Too long. Make comments sharper and less generic.",
+        review_friction=None,
+    )
+    note = linkedin_feedback_memory_note(
+        topic="AI operating model for enterprise transformation",
+        draft_kind="reply",
+        reviewer_notes="Too long. Make comments sharper and less generic.",
+        review_friction=friction,
+    )
+
+    assert friction == "light_edit"
+    assert note is not None
+    assert note.startswith("Avoid repeating this LinkedIn reply draft pattern")
+    assert "reviewer marked light edit" in note
+    assert "Make comments sharper" in note
+    assert (
+        linkedin_review_friction(
+            status="approved",
+            reviewer_notes=None,
+            review_friction=None,
+        )
+        == "as_is"
+    )
 
 
 @pytest.mark.asyncio
@@ -328,6 +364,26 @@ def test_linkedin_engagement_scheduler_is_draft_only_and_capped() -> None:
     assert "engagement_scheduler" in source
     assert "publish_linkedin_text" not in source
     assert "publish_linkedin_comment" not in source
+
+
+def test_linkedin_phase2_learning_loop_is_approval_gated() -> None:
+    route_source = ROUTE.read_text(encoding="utf-8")
+    service_source = SERVICE.read_text(encoding="utf-8")
+
+    assert "propose_personality_memory_from_note" in route_source
+    assert "linkedin_feedback_memory_note" in route_source
+    assert "review_friction" in route_source
+    assert "spark_memory_proposed" in route_source
+    assert "spark_memory_proposal_candidate" in route_source
+    assert "save_personality_memory(" not in route_source
+    assert "LINKEDIN_LEARNING_MIN_SAMPLES = 3" in service_source
+    assert "HAVING count(*) >= $1" in service_source
+    assert (
+        "sum(m.reactions + m.comments + m.reposts + m.profile_clicks) > 0"
+        in service_source
+    )
+    assert "metrics_due_count" in service_source
+    assert "review_friction_30d" in service_source
 
 
 def test_linkedin_target_scout_uses_gateway_search_without_publish() -> None:

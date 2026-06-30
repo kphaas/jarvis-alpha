@@ -33,12 +33,16 @@ from brain.services.spark_voice_ingest import SparkVoiceIngestError
 SocialPlatform = Literal["x", "linkedin"]
 SocialDraftKind = Literal["post", "reply"]
 SocialReplyStyle = Literal["strong_short", "practical", "warm"]
+SocialReviewFriction = Literal["as_is", "light_edit", "heavy_rewrite"]
 SUPPORTED_PLATFORMS: tuple[SocialPlatform, ...] = ("x", "linkedin")
 LINKEDIN_REPLY_STYLES: tuple[SocialReplyStyle, ...] = (
     "strong_short",
     "practical",
     "warm",
 )
+LINKEDIN_LEARNING_MIN_SAMPLES = 3
+LINKEDIN_MEMORY_MIN_ENGAGEMENT_TOTAL = 3
+LINKEDIN_MEMORY_MIN_ENGAGEMENT_RATE = 0.02
 
 _WHITESPACE = re.compile(r"\s+")
 _BANNED_HYPE = re.compile(
@@ -230,6 +234,41 @@ def linkedin_reply_style_from_flags(
     return "strong_short"
 
 
+def linkedin_review_friction(
+    *,
+    status: str,
+    reviewer_notes: str | None,
+    review_friction: SocialReviewFriction | None,
+) -> SocialReviewFriction:
+    if review_friction:
+        return review_friction
+    if status == "approved" and not (reviewer_notes or "").strip():
+        return "as_is"
+    return "light_edit"
+
+
+def linkedin_feedback_memory_note(
+    *,
+    topic: str,
+    draft_kind: SocialDraftKind,
+    reviewer_notes: str | None,
+    review_friction: SocialReviewFriction,
+) -> str | None:
+    clean_notes = _fit(" ".join((reviewer_notes or "").split()), 280)
+    if not clean_notes:
+        return None
+    clean_topic = clean_social_topic(topic)[:140]
+    label = "reply" if draft_kind == "reply" else "post"
+    friction = review_friction.replace("_", " ")
+    return _fit(
+        (
+            f"Avoid repeating this LinkedIn {label} draft pattern for "
+            f"{clean_topic}; reviewer marked {friction} and said: {clean_notes}"
+        ),
+        500,
+    )
+
+
 def linkedin_metric_engagement_total(
     *,
     reactions: int,
@@ -250,6 +289,17 @@ def linkedin_metric_engagement_rate(
     return round(engagement_total / impressions, 4)
 
 
+def linkedin_metric_clears_learning_threshold(
+    *,
+    engagement_total: int,
+    engagement_rate: float,
+) -> bool:
+    return (
+        engagement_total >= LINKEDIN_MEMORY_MIN_ENGAGEMENT_TOTAL
+        or engagement_rate >= LINKEDIN_MEMORY_MIN_ENGAGEMENT_RATE
+    )
+
+
 def linkedin_metric_memory_content(
     *,
     topic: str,
@@ -259,7 +309,10 @@ def linkedin_metric_memory_content(
     impressions: int,
     engagement_rate: float,
 ) -> str | None:
-    if engagement_total < 3 and engagement_rate < 0.02:
+    if not linkedin_metric_clears_learning_threshold(
+        engagement_total=engagement_total,
+        engagement_rate=engagement_rate,
+    ):
         return None
     clean_topic = clean_social_topic(topic)[:140]
     rate = f"{engagement_rate:.1%}" if impressions > 0 else "unmeasured reach"
@@ -873,6 +926,42 @@ async def load_linkedin_operator_dashboard(
         )
         or 0
     )
+    metrics_due_count = int(
+        await conn.fetchval(
+            """
+            SELECT count(*)::int
+            FROM public.alpha_herald_social_draft_variants v
+            LEFT JOIN LATERAL (
+                SELECT max(m.created_at) AS last_metric_at
+                FROM public.alpha_herald_social_metric_snapshots m
+                WHERE m.variant_id = v.id
+            ) latest ON true
+            WHERE v.platform = 'linkedin'
+              AND v.publish_status IN ('manual_published', 'linkedin_published')
+              AND v.published_at <= now() - interval '2 days'
+              AND (
+                  latest.last_metric_at IS NULL
+                  OR latest.last_metric_at <= now() - interval '7 days'
+              )
+            """
+        )
+        or 0
+    )
+    friction_rows = await conn.fetch(
+        """
+        SELECT event_payload->>'review_friction' AS review_friction, count(*)::int AS count
+        FROM public.alpha_herald_social_draft_events
+        WHERE event_type IN ('variant_approved', 'variant_rejected', 'variant_archived')
+          AND created_at >= now() - interval '30 days'
+          AND event_payload ? 'review_friction'
+        GROUP BY event_payload->>'review_friction'
+        """
+    )
+    review_friction = {"as_is": 0, "light_edit": 0, "heavy_rewrite": 0}
+    for row in friction_rows:
+        key = str(row["review_friction"] or "")
+        if key in review_friction:
+            review_friction[key] = int(row["count"] or 0)
     best_topic = await conn.fetchval(
         """
         SELECT r.topic
@@ -880,6 +969,8 @@ async def load_linkedin_operator_dashboard(
         JOIN public.alpha_herald_social_draft_variants v ON v.id = m.variant_id
         JOIN public.alpha_herald_social_draft_requests r ON r.id = v.request_id
         GROUP BY r.topic
+        HAVING count(*) >= $1
+           AND sum(m.reactions + m.comments + m.reposts + m.profile_clicks) > 0
         ORDER BY
           CASE
             WHEN sum(m.impressions) > 0
@@ -891,7 +982,8 @@ async def load_linkedin_operator_dashboard(
           END DESC,
           max(m.created_at) DESC
         LIMIT 1
-        """
+        """,
+        LINKEDIN_LEARNING_MIN_SAMPLES,
     )
     best_reply_style = await conn.fetchval(
         """
@@ -905,10 +997,13 @@ async def load_linkedin_operator_dashboard(
         JOIN public.alpha_herald_social_draft_requests r ON r.id = v.request_id
         WHERE r.draft_kind = 'reply'
         GROUP BY reply_style
+        HAVING count(*) >= $1
+           AND sum(m.reactions + m.comments + m.reposts + m.profile_clicks) > 0
         ORDER BY sum(m.reactions + m.comments + m.reposts + m.profile_clicks) DESC,
                  max(m.created_at) DESC
         LIMIT 1
-        """
+        """,
+        LINKEDIN_LEARNING_MIN_SAMPLES,
     )
     today = cadence["today"]
     last_published_at = cadence["last_published_at"]
@@ -928,6 +1023,10 @@ async def load_linkedin_operator_dashboard(
         "approval_backlog": int(cadence["approval_backlog"] or 0),
         "active_thought_leaders": active_thought_leaders,
         "metric_snapshots_30d": metric_snapshots,
+        "metrics_due_count": metrics_due_count,
+        "learning_samples_30d": metric_snapshots,
+        "metrics_learning_ready": metric_snapshots >= LINKEDIN_LEARNING_MIN_SAMPLES,
+        "review_friction_30d": review_friction,
     }
 
 
