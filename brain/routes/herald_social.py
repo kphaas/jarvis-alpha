@@ -53,6 +53,7 @@ from brain.services.herald_interaction_ledger import (
 from brain.services.herald_social import (
     create_social_draft,
     linkedin_engagement_reply_topic,
+    linkedin_post_urn_from_url,
     linkedin_weekly_topic,
     load_linkedin_operator_dashboard,
     load_herald_spark_context,
@@ -294,6 +295,11 @@ async def create_linkedin_engagement(
     _check_write_scope(request)
     actor_sub = _actor_sub(request)
     actor_type = _actor_type(request)
+    provider_post_urn = (
+        body.provider_post_urn.strip()
+        if body.provider_post_urn
+        else linkedin_post_urn_from_url(body.item_url)
+    )
     async with get_pool().acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow(
@@ -305,6 +311,10 @@ async def create_linkedin_engagement(
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 ON CONFLICT (provider_item_urn) WHERE provider_item_urn IS NOT NULL
                 DO UPDATE SET
+                    provider_post_urn = COALESCE(
+                        EXCLUDED.provider_post_urn,
+                        alpha_herald_social_engagement_items.provider_post_urn
+                    ),
                     item_url = EXCLUDED.item_url,
                     author_name = EXCLUDED.author_name,
                     item_text = EXCLUDED.item_text,
@@ -316,7 +326,7 @@ async def create_linkedin_engagement(
                 body.source,
                 body.account_label.strip(),
                 body.provider_item_urn.strip() if body.provider_item_urn else None,
-                body.provider_post_urn.strip() if body.provider_post_urn else None,
+                provider_post_urn,
                 body.item_url.strip() if body.item_url else None,
                 body.author_name.strip(),
                 body.item_text.strip(),
