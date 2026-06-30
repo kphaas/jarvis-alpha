@@ -235,6 +235,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "security_write",
         "external_call",
     ],
+    "GET /v1/internet-scout/requests": ["read", "security_read"],
     "GET /v1/internet-scout/requests/{request_id}": ["read", "security_read"],
     # --- Honeypot events — T1 read ---
     "GET /v1/honeypot/events": ["read"],
