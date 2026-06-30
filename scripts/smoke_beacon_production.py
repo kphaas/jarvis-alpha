@@ -17,6 +17,7 @@ from urllib.parse import quote, urlparse
 
 DEFAULT_BASE_URL = "https://jarvis-brain.tail40ed36.ts.net:8186"
 DEFAULT_TOKEN_SSH_TARGET = "jarvisbrain@jarvis-brain.tail40ed36.ts.net"
+CRAWLER_SMOKE_URL = "https://example.com/"
 BROWSER_CLICK_SMOKE_REQUEST = {
     "urls": ["https://httpbingo.org/links/2/0"],
     "browser_clicks": [
@@ -155,6 +156,12 @@ def main() -> int:
     if retention.get("mode") != "report_only":
         _emit({"results": results, "error": "retention mode is not report_only"})
         return 3
+
+    try:
+        results["crawler"] = _run_crawler_smoke(base_url, token)
+    except RuntimeError as exc:
+        _emit({"results": results, "error": f"crawler smoke failed: {exc}"})
+        return 11
 
     if not args.skip_agent:
         agent = _call_json(
@@ -363,6 +370,88 @@ def _call_json(
     if not isinstance(payload, dict):
         raise RuntimeError(f"{method} {path} returned non-object JSON")
     return payload
+
+
+def _run_crawler_smoke(base_url: str, token: str) -> dict[str, object]:
+    checks: list[dict[str, object]] = []
+    for name, path, body, fields in (
+        (
+            "scrape",
+            "/v1/internet-scout/crawler/scrape",
+            {
+                "url": CRAWLER_SMOKE_URL,
+                "query": "example domain",
+                "max_bytes": 200_000,
+            },
+            ("request_id", "canonical_url", "host", "text", "content_hash"),
+        ),
+        (
+            "map",
+            "/v1/internet-scout/crawler/map",
+            {
+                "url": CRAWLER_SMOKE_URL,
+                "max_pages": 1,
+                "max_depth": 0,
+                "max_bytes": 200_000,
+            },
+            ("request_id", "seed_url", "seed_host", "page_count", "links"),
+        ),
+        (
+            "crawl",
+            "/v1/internet-scout/crawler/crawl",
+            {
+                "url": CRAWLER_SMOKE_URL,
+                "max_pages": 1,
+                "max_depth": 0,
+                "max_bytes": 200_000,
+            },
+            ("request_id", "seed_url", "seed_host", "page_count", "links"),
+        ),
+        (
+            "extract",
+            "/v1/internet-scout/crawler/extract",
+            {
+                "url": CRAWLER_SMOKE_URL,
+                "query": "example domain",
+                "schema": {"domain": "example domain"},
+                "max_bytes": 200_000,
+            },
+            ("request_id", "canonical_url", "host", "fields"),
+        ),
+    ):
+        payload = _call_json("POST", base_url, path, token, body)
+        missing = [field for field in fields if field not in payload]
+        if missing:
+            raise RuntimeError(f"{name} missing {','.join(missing)}")
+        checks.append(
+            {
+                "name": name,
+                "request_id": payload.get("request_id"),
+                "host": payload.get("host") or payload.get("seed_host"),
+                "cache_hit": payload.get("cache_hit"),
+                "page_count": payload.get("page_count"),
+                "link_count": payload.get("link_count"),
+                "field_count": len(payload.get("fields", []))
+                if isinstance(payload.get("fields"), list)
+                else None,
+            }
+        )
+
+    health = _call_json("GET", base_url, "/v1/internet-scout/health", token)
+    crawler = (health.get("checks") or {}).get("crawler")
+    if not isinstance(crawler, dict) or crawler.get("status") != "ok":
+        raise RuntimeError("crawler health is not ok")
+    metadata = (
+        crawler.get("metadata") if isinstance(crawler.get("metadata"), dict) else {}
+    )
+    return {
+        "url": CRAWLER_SMOKE_URL,
+        "checks": checks,
+        "health_status": crawler.get("status"),
+        "request_count": metadata.get("request_count"),
+        "failed_request_count": metadata.get("failed_request_count"),
+        "blocked_host_count": metadata.get("blocked_host_count"),
+    }
 
 
 def _run_browser_click_smoke(

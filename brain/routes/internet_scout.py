@@ -344,6 +344,52 @@ async def internet_scout_crawler_scrape(
     )
 
 
+@router.post(
+    "/crawler/scrape/browser-approval-request",
+    response_model=InternetScoutBrowserApprovalResponse,
+)
+async def internet_scout_crawler_scrape_browser_approval_request(
+    body: InternetScoutCrawlerScrapeRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> InternetScoutBrowserApprovalResponse:
+    """Queue a browser-rendered crawler scrape; execution stays approval-gated."""
+    check_scopes(request, "internet_scout.research", "admin")
+    safety_plan = InternetScoutOrchestrator().plan(
+        InternetScoutRequest(
+            urls=[body.url],
+            tool_hint=InternetTool.EXTRACT,
+            requester="alpha_ui.beacon_crawler.render_safety",
+        )
+    )
+    if not safety_plan.decision.allowed:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "beacon_crawler_policy_denied",
+                "decision": safety_plan.decision.model_dump(mode="json"),
+            },
+        )
+    browser_body = InternetScoutRequest(
+        query=body.query,
+        urls=[body.url],
+        tool_hint=InternetTool.BROWSER_USE,
+        max_pages=1,
+        max_depth=0,
+        needs_interaction=True,
+        requester="alpha_ui.beacon_crawler.render_scrape",
+    )
+    return await _queue_browser_task_approval(
+        browser_body=browser_body,
+        request=request,
+        extra_metadata={
+            "source": "crawler_render_scrape",
+            "require_screenshot": True,
+            "crawler_operation": "scrape",
+        },
+    )
+
+
 @router.post("/crawler/map", response_model=InternetScoutCrawlerMapResponse)
 async def internet_scout_crawler_map(
     body: InternetScoutCrawlerMapRequest,
@@ -734,6 +780,18 @@ async def internet_scout_browser_approval_request(
     browser_body = body.model_copy(
         update={"tool_hint": InternetTool.BROWSER_USE, "needs_interaction": True}
     )
+    return await _queue_browser_task_approval(
+        browser_body=browser_body,
+        request=request,
+    )
+
+
+async def _queue_browser_task_approval(
+    *,
+    browser_body: InternetScoutRequest,
+    request: Request,
+    extra_metadata: dict[str, object] | None = None,
+) -> InternetScoutBrowserApprovalResponse:
     actor = str(getattr(request.state, "user_id", "unknown"))
     actor_type = _approval_actor_type(request)
     plan = InternetScoutOrchestrator().plan(browser_body)
@@ -769,6 +827,7 @@ async def internet_scout_browser_approval_request(
                 "requires_approval": True,
                 "approval_hash_prefix": preview.approval_hash_prefix,
                 "browser_action_preview": preview.model_dump(mode="json"),
+                **(extra_metadata or {}),
             },
         )
 

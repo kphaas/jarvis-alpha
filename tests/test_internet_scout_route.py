@@ -468,6 +468,80 @@ async def test_internet_scout_crawler_scrape_blocks_unsafe_url(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_internet_scout_crawler_render_scrape_queues_browser_approval(
+    monkeypatch,
+):
+    FakeRepo.created = []
+    FakeRepo.events = []
+    FakeRepo.stored = []
+    queue_id = uuid4()
+    enqueue_calls: list[dict[str, object]] = []
+
+    async def fake_enqueue(conn, **kwargs):
+        enqueue_calls.append(kwargs)
+        return queue_id
+
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+    monkeypatch.setattr(internet_scout, "enqueue_browser_task_approval", fake_enqueue)
+
+    response = (
+        await internet_scout.internet_scout_crawler_scrape_browser_approval_request(
+            InternetScoutCrawlerScrapeRequest(
+                url="https://public.example.test/report",
+                query="render this page",
+            ),
+            _request(scopes=["internet_scout.research"]),
+            _user_id="ken",
+        )
+    )
+
+    assert response.approval_queue_id == queue_id
+    assert response.plan.decision.tool == InternetTool.BROWSER_USE
+    assert response.plan.decision.requires_approval is True
+    assert response.preview.allowed_hosts == ["public.example.test"]
+    assert FakeRepo.created[0]["request"].requester == (
+        "alpha_ui.beacon_crawler.render_scrape"
+    )
+    assert FakeRepo.created[0]["request"].max_pages == 1
+    assert FakeRepo.created[0]["request"].max_depth == 0
+    assert FakeRepo.created[0]["request"].browser_clicks == []
+    assert enqueue_calls[0]["actor_sub"] == "ken"
+    approval_event = next(
+        event
+        for event in FakeRepo.events
+        if event.get("event_type") == "approval_request"
+    )
+    assert approval_event["tool"] == "browser_use"
+    assert approval_event["status"] == "queued"
+    assert approval_event["metadata"]["source"] == "crawler_render_scrape"
+    assert approval_event["metadata"]["require_screenshot"] is True
+    assert FakeRepo.stored == []
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_crawler_render_scrape_blocks_unsafe_url(monkeypatch):
+    FakeRepo.created = []
+    FakeRepo.events = []
+    FakeRepo.stored = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+
+    with pytest.raises(HTTPException) as exc:
+        await internet_scout.internet_scout_crawler_scrape_browser_approval_request(
+            InternetScoutCrawlerScrapeRequest(url="http://localhost/private"),
+            _request(scopes=["internet_scout.research"]),
+            _user_id="ken",
+        )
+
+    assert exc.value.status_code == 403
+    assert "blocked_internal_host" in exc.value.detail["decision"]["blocked_reasons"]
+    assert FakeRepo.created == []
+    assert FakeRepo.events == []
+    assert FakeRepo.stored == []
+
+
+@pytest.mark.asyncio
 async def test_internet_scout_crawler_failure_audit_is_sanitized(monkeypatch):
     FakeRepo.created = []
     FakeRepo.events = []
@@ -1284,6 +1358,13 @@ def test_internet_scout_routes_are_classified():
     assert classify_route(
         "POST",
         "/v1/internet-scout/browser-task/approval-request",
+    ) == [
+        "write",
+        "security_write",
+    ]
+    assert classify_route(
+        "POST",
+        "/v1/internet-scout/crawler/scrape/browser-approval-request",
     ) == [
         "write",
         "security_write",
