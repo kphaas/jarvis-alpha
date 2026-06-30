@@ -435,7 +435,7 @@ async def _execute_crawler(
         if not plan.decision.allowed:
             await repo.record_tool_event(
                 request_id=request_id,
-                tool="crawler",
+                tool=plan.decision.tool.value,
                 event_type=event_type,
                 status="blocked",
                 metadata={
@@ -461,7 +461,7 @@ async def _execute_crawler(
         async with rls_connection(request) as conn:
             await InternetScoutRepository(conn).record_tool_event(
                 request_id=request_id,
-                tool="crawler",
+                tool=plan.decision.tool.value,
                 event_type=event_type,
                 status="started",
                 metadata={"operation": operation},
@@ -506,7 +506,7 @@ async def _execute_crawler(
             await repo.store_packet(request_id=request_id, packet=packet)
             await repo.record_tool_event(
                 request_id=request_id,
-                tool="crawler",
+                tool=plan.decision.tool.value,
                 event_type=event_type,
                 status="succeeded",
                 metadata=metadata,
@@ -519,7 +519,7 @@ async def _execute_crawler(
             repo = InternetScoutRepository(conn)
             await repo.record_tool_event(
                 request_id=request_id,
-                tool="crawler",
+                tool=plan.decision.tool.value,
                 event_type=event_type,
                 status="failed",
                 metadata={
