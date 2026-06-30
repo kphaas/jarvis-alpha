@@ -32,7 +32,9 @@ CacheLookup = Callable[[str, str | None], Awaitable[GatewayExtractResponse | Non
 class InternetScoutCrawler:
     """Small crawler contract; Gateway still owns network egress and parsing."""
 
-    def __init__(self, gateway_client: InternetScoutGatewayClient | None = None) -> None:
+    def __init__(
+        self, gateway_client: InternetScoutGatewayClient | None = None
+    ) -> None:
         self.gateway_client = gateway_client or InternetScoutGatewayClient()
 
     async def scrape(
@@ -42,14 +44,18 @@ class InternetScoutCrawler:
         scout_request: InternetScoutRequest,
         *,
         cache_lookup: CacheLookup | None = None,
-    ) -> tuple[InternetScoutCrawlerScrapeResponse, InternetEvidencePacket, dict[str, object]]:
+    ) -> tuple[
+        InternetScoutCrawlerScrapeResponse, InternetEvidencePacket, dict[str, object]
+    ]:
         cached = (
             None
             if body.force_refresh or cache_lookup is None
             else await cache_lookup(body.url, body.query)
         )
         if cached is not None:
-            packet = packet_from_extract_response(request=scout_request, response=cached)
+            packet = packet_from_extract_response(
+                request=scout_request, response=cached
+            )
             return (
                 _scrape_response_from_extract(
                     request_id=request_id,
@@ -92,7 +98,9 @@ class InternetScoutCrawler:
         body: InternetScoutCrawlerMapRequest,
         request_id,
         scout_request: InternetScoutRequest,
-    ) -> tuple[InternetScoutCrawlerMapResponse, InternetEvidencePacket, dict[str, object]]:
+    ) -> tuple[
+        InternetScoutCrawlerMapResponse, InternetEvidencePacket, dict[str, object]
+    ]:
         crawl = await self.gateway_client.crawl(
             url=body.url,
             max_pages=body.max_pages,
@@ -101,12 +109,16 @@ class InternetScoutCrawler:
         )
         packet = packet_from_crawl_response(request=scout_request, response=crawl)
         response = _map_response_from_crawl(request_id=request_id, crawl=crawl)
-        return response, packet, _metadata(
-            "map",
-            cache_hit=False,
-            page_count=len(crawl.pages),
-            packet=packet,
-            link_count=response.link_count,
+        return (
+            response,
+            packet,
+            _metadata(
+                "map",
+                cache_hit=False,
+                page_count=len(crawl.pages),
+                packet=packet,
+                link_count=response.link_count,
+            ),
         )
 
     async def crawl(
@@ -114,7 +126,9 @@ class InternetScoutCrawler:
         body: InternetScoutCrawlerCrawlRequest,
         request_id,
         scout_request: InternetScoutRequest,
-    ) -> tuple[InternetScoutCrawlerMapResponse, InternetEvidencePacket, dict[str, object]]:
+    ) -> tuple[
+        InternetScoutCrawlerMapResponse, InternetEvidencePacket, dict[str, object]
+    ]:
         response, packet, metadata = await self.map(body, request_id, scout_request)
         metadata["operation"] = "crawl"
         return response, packet, metadata
@@ -126,7 +140,9 @@ class InternetScoutCrawler:
         scout_request: InternetScoutRequest,
         *,
         cache_lookup: CacheLookup | None = None,
-    ) -> tuple[InternetScoutCrawlerExtractResponse, InternetEvidencePacket, dict[str, object]]:
+    ) -> tuple[
+        InternetScoutCrawlerExtractResponse, InternetEvidencePacket, dict[str, object]
+    ]:
         scrape, packet, metadata = await self.scrape(
             body,
             request_id,
@@ -201,7 +217,9 @@ def _map_response_from_crawl(
     request_id,
     crawl,
 ) -> InternetScoutCrawlerMapResponse:
-    links = list(dict.fromkeys(link for page in crawl.pages for link in page.discovered_links))
+    links = list(
+        dict.fromkeys(link for page in crawl.pages for link in page.discovered_links)
+    )
     return InternetScoutCrawlerMapResponse(
         request_id=request_id,
         seed_url=crawl.seed_url,
