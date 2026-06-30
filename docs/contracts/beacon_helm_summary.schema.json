@@ -900,9 +900,88 @@
           "default": 0,
           "title": "Suite Version",
           "type": "integer"
+        },
+        "trend": {
+          "$ref": "#/$defs/HelmBeaconQualityCanaryTrend"
         }
       },
       "title": "HelmBeaconQualityCanarySummary",
+      "type": "object"
+    },
+    "HelmBeaconQualityCanaryTrend": {
+      "properties": {
+        "case_count_delta": {
+          "default": 0,
+          "title": "Case Count Delta",
+          "type": "integer"
+        },
+        "estimated_provider_cost_usd": {
+          "default": 0.0,
+          "title": "Estimated Provider Cost Usd",
+          "type": "number"
+        },
+        "failed_delta": {
+          "default": 0,
+          "title": "Failed Delta",
+          "type": "integer"
+        },
+        "failed_runs": {
+          "default": 0,
+          "title": "Failed Runs",
+          "type": "integer"
+        },
+        "latency_delta_ms": {
+          "default": 0,
+          "title": "Latency Delta Ms",
+          "type": "integer"
+        },
+        "latest_failed": {
+          "default": 0,
+          "title": "Latest Failed",
+          "type": "integer"
+        },
+        "latest_precision": {
+          "default": 0.0,
+          "title": "Latest Precision",
+          "type": "number"
+        },
+        "latest_suite_elapsed_ms": {
+          "default": 0,
+          "title": "Latest Suite Elapsed Ms",
+          "type": "integer"
+        },
+        "pass_rate_percent": {
+          "default": 0,
+          "title": "Pass Rate Percent",
+          "type": "integer"
+        },
+        "passed_delta": {
+          "default": 0,
+          "title": "Passed Delta",
+          "type": "integer"
+        },
+        "passed_runs": {
+          "default": 0,
+          "title": "Passed Runs",
+          "type": "integer"
+        },
+        "precision_delta": {
+          "default": 0.0,
+          "title": "Precision Delta",
+          "type": "number"
+        },
+        "trend": {
+          "default": "unknown",
+          "title": "Trend",
+          "type": "string"
+        },
+        "window_runs": {
+          "default": 0,
+          "title": "Window Runs",
+          "type": "integer"
+        }
+      },
+      "title": "HelmBeaconQualityCanaryTrend",
       "type": "object"
     },
     "HelmBeaconRetentionSummary": {

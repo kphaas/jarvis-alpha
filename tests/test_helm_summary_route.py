@@ -553,6 +553,22 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
                                 "schedule_status": "ok",
                             }
                         ],
+                        "quality_canary_trend": {
+                            "window_runs": 1,
+                            "passed_runs": 1,
+                            "failed_runs": 0,
+                            "pass_rate_percent": 100,
+                            "latest_failed": 0,
+                            "failed_delta": 0,
+                            "passed_delta": 0,
+                            "case_count_delta": 0,
+                            "latest_precision": 0.6957,
+                            "precision_delta": 0.0,
+                            "latest_suite_elapsed_ms": 18,
+                            "latency_delta_ms": 0,
+                            "estimated_provider_cost_usd": 0.0,
+                            "trend": "single_sample",
+                        },
                     },
                 ),
                 "web_cache": InternetScoutHealthCheck(
@@ -733,6 +749,22 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
                 "schedule_status": "ok",
             }
         ],
+        "trend": {
+            "window_runs": 1,
+            "passed_runs": 1,
+            "failed_runs": 0,
+            "pass_rate_percent": 100,
+            "latest_failed": 0,
+            "failed_delta": 0,
+            "passed_delta": 0,
+            "case_count_delta": 0,
+            "latest_precision": 0.6957,
+            "precision_delta": 0.0,
+            "latest_suite_elapsed_ms": 18,
+            "latency_delta_ms": 0,
+            "estimated_provider_cost_usd": 0.0,
+            "trend": "single_sample",
+        },
     }
     assert "secret" not in str(payload)
     assert "api_key" not in str(payload["data_sources"])
