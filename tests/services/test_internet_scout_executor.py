@@ -498,6 +498,49 @@ async def test_executor_uses_extract_gateway_path_for_extract_tool():
 
 
 @pytest.mark.asyncio
+async def test_executor_reuses_web_cache_before_extract_gateway_call():
+    gateway = FakeGatewayClient()
+
+    async def web_cache_extract(
+        url: str,
+        query: str | None,
+    ) -> GatewayExtractResponse | None:
+        assert url == "https://public.example.test/report"
+        assert query is None
+        return GatewayExtractResponse(
+            url=url,
+            host="public.example.test",
+            status_code=200,
+            content_type="text/plain",
+            content_hash="c" * 64,
+            fetched_at=datetime(2026, 6, 6, 13, 0, tzinfo=UTC),
+            extracted_text="Cached Beacon report excerpt.",
+            extractor="beacon_web_cache",
+            extraction_fallback=False,
+            truncated=True,
+            risk_markers=["web_cache_hit", "raw_web_content_is_untrusted"],
+            redirect_chain=[url],
+        )
+
+    executor = InternetScoutExecutor(
+        gateway_client=gateway,
+        web_cache_extract=web_cache_extract,
+    )
+
+    decision, packet = await executor.execute(
+        InternetScoutRequest(
+            urls=["https://public.example.test/report"],
+            tool_hint=InternetTool.EXTRACT,
+        )
+    )
+
+    assert decision.tool == InternetTool.EXTRACT
+    assert gateway.extract_calls == []
+    assert packet.claims[0].citation_text == "Cached Beacon report excerpt."
+    assert packet.sources[0].host == "public.example.test"
+
+
+@pytest.mark.asyncio
 async def test_executor_uses_research_plan_for_deep_search():
     gateway = FakeGatewayClient()
     executor = InternetScoutExecutor(gateway_client=gateway)

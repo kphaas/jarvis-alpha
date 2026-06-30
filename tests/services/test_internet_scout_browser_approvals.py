@@ -46,6 +46,13 @@ def test_browser_task_preview_is_redacted_and_reviewable():
     request = InternetScoutRequest(
         query="reserve a table for Ken at 7pm",
         urls=["https://public.example.test/reserve"],
+        browser_clicks=[
+            {
+                "selector": "a.next-page",
+                "label": "Next page",
+                "expected_host": "public.example.test",
+            }
+        ],
         tool_hint=InternetTool.BROWSER_USE,
         needs_interaction=True,
         max_pages=2,
@@ -63,6 +70,13 @@ def test_browser_task_preview_is_redacted_and_reviewable():
     assert payload["max_pages"] == 2
     assert payload["allowed_hosts"] == ["public.example.test"]
     assert payload["url_hashes"][0].startswith("sha256:")
+    assert payload["click_targets"] == [
+        {
+            "selector": "a.next-page",
+            "label": "Next page",
+            "expected_host": "public.example.test",
+        }
+    ]
     assert payload["same_host_required"] is True
     assert payload["screenshots_required"] is True
     assert payload["screenshot_policy"] == {

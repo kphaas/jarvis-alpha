@@ -37,6 +37,7 @@ import {
   useSparkIMessageOutbox,
   useSparkIMessageTargetPreview,
 } from "../hooks/useSparkDraftReview";
+import { apiJson } from "../lib/apiFetch";
 import { useSparkGuardrails } from "../hooks/useSparkGuardrails";
 import { useAppStore } from "../store";
 import type {
@@ -100,11 +101,24 @@ const TONE_OPTIONS = [
   { label: "Blunt", value: "Make the reply direct and blunt, but still respectful." },
 ];
 
+const SPARK_TRUSTED_LIVE_TARGETS = new Set(["sweta", "meagan"]);
+const SPARK_INLINE_APPROVE_SEND_TARGETS = SPARK_TRUSTED_LIVE_TARGETS;
+
 function feedbackDisplayLabels(values: SparkDraftFeedbackLabel[]) {
   if (!values.length) return null;
   return values
     .map((value) => FEEDBACK_BUTTONS.find((item) => item.value === value)?.label ?? value)
     .join(" + ");
+}
+
+function canInlineApproveSendTarget(value: string | null | undefined) {
+  const target = value?.trim().toLowerCase();
+  return Boolean(target && SPARK_INLINE_APPROVE_SEND_TARGETS.has(target));
+}
+
+function canTrustedLiveTarget(value: string | null | undefined) {
+  const target = value?.trim().toLowerCase();
+  return Boolean(target && SPARK_TRUSTED_LIVE_TARGETS.has(target));
 }
 
 const DEFAULT_FAVORITE_TARGETS: SparkProtectedRelationship[] = [
@@ -1513,12 +1527,12 @@ function FeedbackSelectionHint({
   muted: string;
   selectedCount: number;
 }) {
-  const remaining = Math.max(0, 2 - selectedCount);
+  const remaining = Math.max(0, 3 - selectedCount);
   return (
     <p className={`text-xs ${muted}`}>
       {selectedCount
         ? `${selectedCount} selected, ${remaining} slot${remaining === 1 ? "" : "s"} left.`
-        : "Pick up to 2 signals before retrying."}
+        : "Pick up to 3 signals before retrying."}
     </p>
   );
 }
@@ -1535,6 +1549,9 @@ export default function Spark() {
   );
   const [draftTargetId, setDraftTargetId] = useState<string | null>(null);
   const [detailPanel, setDetailPanel] = useState<DetailPanel | null>(null);
+  const [sparkApprovalPin, setSparkApprovalPin] = useState("");
+  const [sparkApproveSendError, setSparkApproveSendError] = useState<string | null>(null);
+  const [sparkApproveSendLoading, setSparkApproveSendLoading] = useState(false);
   const guardrailsState = useSparkGuardrails();
   const targetState = useSparkIMessageDraftTargets(principalId);
   const outboxState = useSparkIMessageOutbox(principalId);
@@ -1623,8 +1640,24 @@ export default function Spark() {
   const canSendResolvedOutbox = state.hasSendableOutbox(resolvedOutboxId);
   const hasApproval = Boolean(approvalQueueId);
   const hasOutbox = Boolean(resolvedOutboxId);
-  const hasSendResult = Boolean(state.approvedSend);
+  const sendResult = state.trustedLiveSend ?? state.approvedSend;
+  const sendError = state.trustedLiveSendError ?? state.approvedSendError;
+  const hasSendResult = Boolean(sendResult);
   const selectedTone = state.styleAdjustments[0] ?? "";
+  const inlineApproveSendTarget =
+    activeApprovalOutbox?.target_label ?? selectedDraftTarget?.label ?? null;
+  const canInlineApproveSend =
+    Boolean(approvalQueueId && resolvedOutboxId) &&
+    canInlineApproveSendTarget(inlineApproveSendTarget) &&
+    !hasSendResult;
+  const canTrustedLiveSend =
+    Boolean(resolvedOutboxId) &&
+    canTrustedLiveTarget(inlineApproveSendTarget) &&
+    !hasSendResult;
+  const sparkApproveSendBusy =
+    sparkApproveSendLoading ||
+    state.approvedSendLoading ||
+    state.trustedLiveSendLoading;
   const workflowSteps: CockpitStep[] = [
     {
       id: "target",
@@ -1700,7 +1733,7 @@ export default function Spark() {
       id: "send",
       label: "Send",
       detail: hasSendResult
-        ? `Send result: ${state.approvedSend?.outbox_status ?? "done"}`
+        ? `Send result: ${sendResult?.outbox_status ?? "done"}`
         : hasOutbox
           ? activeApprovalOutbox
             ? "Send can resume from the persisted outbox"
@@ -1710,7 +1743,7 @@ export default function Spark() {
             : "Approval required first",
       status: hasSendResult
         ? "complete"
-        : state.approvedSendError
+        : sendError
           ? "error"
           : hasOutbox
             ? "active"
@@ -1720,13 +1753,61 @@ export default function Spark() {
 
   function selectPrincipal(nextPrincipalId: SparkPrincipalId) {
     state.resetDraftSurface();
+    setSparkApprovalPin("");
+    setSparkApproveSendError(null);
     setDraftTargetId(null);
     setPrincipalId(nextPrincipalId);
   }
 
   function selectDraftTarget(nextTargetId: string) {
     state.resetDraftSurface();
+    setSparkApprovalPin("");
+    setSparkApproveSendError(null);
     setDraftTargetId(nextTargetId);
+  }
+
+  async function approveAndSendFromSpark() {
+    if (!approvalQueueId || !resolvedOutboxId || !canInlineApproveSend) return;
+    if (!sparkApprovalPin.trim()) {
+      setSparkApproveSendError("Enter PIN to approve and send.");
+      return;
+    }
+    setSparkApproveSendLoading(true);
+    setSparkApproveSendError(null);
+    try {
+      const unlock = await apiJson<{ approval_token: string }>(
+        "/v1/approvals/unlock",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pin: sparkApprovalPin.trim() }),
+        },
+      );
+      await apiJson<{ decision: string }>(
+        `/v1/approvals/${approvalQueueId}/decide`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Approval-Token": unlock.approval_token,
+          },
+          body: JSON.stringify({ decision: "approved" }),
+        },
+      );
+      setSparkApprovalPin("");
+      state.sendApprovedOutbox(resolvedOutboxId);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("409")) {
+        setSparkApprovalPin("");
+        state.sendApprovedOutbox(resolvedOutboxId);
+        return;
+      }
+      setSparkApproveSendError(
+        error instanceof Error ? error.message : "Approve + Send failed",
+      );
+    } finally {
+      setSparkApproveSendLoading(false);
+    }
   }
 
   return (
@@ -2214,7 +2295,57 @@ export default function Spark() {
                     muted={muted}
                   />
                 )}
-                {resolvedOutboxId && (
+                {canTrustedLiveSend && (
+                  <button
+                    type="button"
+                    onClick={() => state.sendTrustedLiveOutbox(resolvedOutboxId)}
+                    disabled={!canSendResolvedOutbox}
+                    className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${border} ${
+                      canSendResolvedOutbox
+                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                        : "opacity-45"
+                    }`}
+                  >
+                    {state.trustedLiveSendLoading ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
+                    Send trusted live
+                  </button>
+                )}
+                {canInlineApproveSend && !canTrustedLiveSend && (
+                  <div className="space-y-2">
+                    <input
+                      type="password"
+                      value={sparkApprovalPin}
+                      onChange={(event) => setSparkApprovalPin(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") void approveAndSendFromSpark();
+                      }}
+                      placeholder="Approval PIN"
+                      className={`min-h-11 w-full rounded-lg border px-3 text-sm ${border} ${input}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void approveAndSendFromSpark()}
+                      disabled={sparkApproveSendBusy}
+                      className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${border} ${
+                        sparkApproveSendBusy
+                          ? "opacity-45"
+                          : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                      }`}
+                    >
+                      {sparkApproveSendBusy ? (
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                      Approve + Send
+                    </button>
+                  </div>
+                )}
+                {resolvedOutboxId && !canInlineApproveSend && !canTrustedLiveSend && (
                   <button
                     type="button"
                     onClick={() => state.sendApprovedOutbox(resolvedOutboxId)}
@@ -2245,9 +2376,21 @@ export default function Spark() {
                     muted={muted}
                   />
                 )}
-                {state.approvedSendError && (
+                {state.trustedLiveSend && (
+                  <MetricRow
+                    label="Send"
+                    value={state.trustedLiveSend.outbox_status}
+                    muted={muted}
+                  />
+                )}
+                {sendError && (
                   <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
-                    Send blocked until the outbox item is approved and persisted
+                    Send blocked until the outbox item is trusted, approved, and persisted
+                  </div>
+                )}
+                {sparkApproveSendError && (
+                  <div className={`rounded-lg border px-3 py-2 text-sm ${warnClass}`}>
+                    {sparkApproveSendError}
                   </div>
                 )}
               </div>

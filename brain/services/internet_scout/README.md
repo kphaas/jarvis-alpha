@@ -28,6 +28,9 @@ P10/P11:
   strict same-host network allowlists, screenshot review markers,
   content-addressed screenshot storage, no-download/no-form/no-credential-entry
   enforcement, timeout/step caps, and append-only per-action audit events.
+- Approved browser runs can execute a bounded click-only plan using reviewed
+  selectors: no typing, forms, credentials, risky purchase/send/submit targets,
+  downloads, or cross-host navigation.
 - The browser runner is adapter-based and fails closed unless
   `BEACON_BROWSER_RUNTIME=playwright` is configured with the reviewed runtime
   settings.

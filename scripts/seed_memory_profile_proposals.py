@@ -28,11 +28,14 @@ from scripts.smoke_memory_core import (
     _smoke_token,
 )
 
-PROFILE_SEED_VERSION = "ken_profile_v1"
+PROFILE_SEED_VERSION = "ken_profile_v2"
 PROFILE_SOURCE_SURFACE = "profile_seed"
 PROFILE_SOURCE = "explicit"
 PROFILE_PRINCIPAL = "ken"
 VALID_FROM = "2026-06-28T00:00:00Z"
+DEFAULT_PROFILE_SEED_APPROVAL_TTL_MINUTES = 120
+MIN_PROFILE_SEED_APPROVAL_TTL_MINUTES = 10
+MAX_PROFILE_SEED_APPROVAL_TTL_MINUTES = 720
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +45,7 @@ class ProfileNodeSeed:
     label_preview: str
     fact_kind: str
     summary: str
+    source_basis: str = "user_approved_profile_context"
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +55,7 @@ class ProfileEdgeSeed:
     edge_type: str
     fact_kind: str
     summary: str
+    source_basis: str = "user_approved_profile_context"
 
 
 PROFILE_NODES: tuple[ProfileNodeSeed, ...] = (
@@ -67,6 +72,50 @@ PROFILE_NODES: tuple[ProfileNodeSeed, ...] = (
         label_preview="Ken is an AI and business transformation executive.",
         fact_kind="career_positioning",
         summary="Executive positioning for career/profile recall.",
+        source_basis="resume_docx_and_linkedin_profile",
+    ),
+    ProfileNodeSeed(
+        slug="microsoft-managing-director-fsi",
+        node_type="organization",
+        label_preview=(
+            "Ken is Managing Director of Customer Success for Microsoft's "
+            "financial services customers."
+        ),
+        fact_kind="current_role",
+        summary="Current public career role.",
+        source_basis="resume_docx_and_linkedin_profile",
+    ),
+    ProfileNodeSeed(
+        slug="financial-services-transformation",
+        node_type="fact",
+        label_preview=(
+            "Ken leads enterprise AI, cloud, security, and data transformation "
+            "for financial-services customers."
+        ),
+        fact_kind="industry_domain",
+        summary="Financial-services transformation domain.",
+        source_basis="resume_docx_and_linkedin_profile",
+    ),
+    ProfileNodeSeed(
+        slug="azure-consumption-growth",
+        node_type="fact",
+        label_preview=(
+            "Ken's Microsoft teams grew Azure consumption from about $1.8M "
+            "to $14M+ per month."
+        ),
+        fact_kind="career_outcome",
+        summary="Public measurable outcome from Microsoft customer-success work.",
+        source_basis="resume_docx_and_linkedin_profile",
+    ),
+    ProfileNodeSeed(
+        slug="partner-led-adoption-revenue",
+        node_type="fact",
+        label_preview=(
+            "Ken built a partner-led adoption model that added about $30M in revenue."
+        ),
+        fact_kind="career_outcome",
+        summary="Public measurable outcome from partner-led adoption model.",
+        source_basis="resume_docx_and_linkedin_profile",
     ),
     ProfileNodeSeed(
         slug="cloud-security-data-ai",
@@ -74,6 +123,7 @@ PROFILE_NODES: tuple[ProfileNodeSeed, ...] = (
         label_preview="Ken's transformation stack spans Cloud, Security, Data & AI.",
         fact_kind="domain_positioning",
         summary="Career domain positioning.",
+        source_basis="resume_docx_and_linkedin_profile",
     ),
     ProfileNodeSeed(
         slug="at0-private-ai-operating-system",
@@ -81,6 +131,18 @@ PROFILE_NODES: tuple[ProfileNodeSeed, ...] = (
         label_preview="AT0 - Private AI Operating System",
         fact_kind="project",
         summary="Public AT-0 project and proof surface.",
+        source_basis="linkedin_profile_and_public_profile_sites",
+    ),
+    ProfileNodeSeed(
+        slug="ai-governance-operating-model",
+        node_type="fact",
+        label_preview=(
+            "Ken's AI transformation approach emphasizes governed execution, "
+            "human approval, security, cost control, and measurable outcomes."
+        ),
+        fact_kind="operating_model",
+        summary="AI governance and operating-model positioning.",
+        source_basis="linkedin_profile",
     ),
     ProfileNodeSeed(
         slug="chief-ai-officer-roles",
@@ -95,16 +157,113 @@ PROFILE_NODES: tuple[ProfileNodeSeed, ...] = (
         label_preview="Ken's public career surfaces include at-0.com and ken-haas.com.",
         fact_kind="public_profile_surface",
         summary="Career profile routes used as public proof surfaces.",
+        source_basis="linkedin_profile",
+    ),
+    ProfileNodeSeed(
+        slug="ibm-cloud-security-data-ai-leadership",
+        node_type="organization",
+        label_preview=(
+            "Ken held IBM leadership roles across cloud, security, customer "
+            "success, and Data & AI from 2007 to 2022."
+        ),
+        fact_kind="prior_role",
+        summary="Prior IBM leadership background.",
+        source_basis="resume_docx_and_linkedin_profile",
+    ),
+    ProfileNodeSeed(
+        slug="building-future-enterprises",
+        node_type="organization",
+        label_preview=(
+            "Ken co-founded Building Future Enterprises, a nonprofit focused "
+            "on underrepresented groups in business and corporate leadership."
+        ),
+        fact_kind="board_and_community",
+        summary="Community and board profile fact.",
+        source_basis="resume_docx_and_linkedin_profile",
+    ),
+    ProfileNodeSeed(
+        slug="besn-tv-board-advisor",
+        node_type="organization",
+        label_preview="Ken serves on the BESN.TV Board of Advisors.",
+        fact_kind="board_and_community",
+        summary="Board advisor profile fact.",
+        source_basis="linkedin_profile",
+    ),
+    ProfileNodeSeed(
+        slug="education-mba-furman-bs",
+        node_type="fact",
+        label_preview=(
+            "Ken earned an MBA from UNC Kenan-Flagler and a Furman BS in "
+            "Business Administration and Computer Science."
+        ),
+        fact_kind="education",
+        summary="Education profile fact.",
+        source_basis="resume_docx",
+    ),
+    ProfileNodeSeed(
+        slug="security-cloud-certifications",
+        node_type="fact",
+        label_preview=(
+            "Ken's certifications include CISSP, AWS Solutions Architect "
+            "Associate, Azure Fundamentals, and Open Group architecture credentials."
+        ),
+        fact_kind="certifications",
+        summary="Security and cloud certification profile fact.",
+        source_basis="resume_docx",
     ),
 )
 
 PROFILE_EDGES: tuple[ProfileEdgeSeed, ...] = (
     ProfileEdgeSeed(
         from_slug="ken-haas",
+        to_slug="microsoft-managing-director-fsi",
+        edge_type="related_to",
+        fact_kind="current_role",
+        summary=(
+            "Ken's current public role is Microsoft Managing Director of "
+            "Customer Success for FSI."
+        ),
+        source_basis="resume_docx_and_linkedin_profile",
+    ),
+    ProfileEdgeSeed(
+        from_slug="microsoft-managing-director-fsi",
+        to_slug="financial-services-transformation",
+        edge_type="related_to",
+        fact_kind="role_domain",
+        summary="Ken's Microsoft role focuses on financial-services transformation.",
+        source_basis="resume_docx_and_linkedin_profile",
+    ),
+    ProfileEdgeSeed(
+        from_slug="microsoft-managing-director-fsi",
+        to_slug="azure-consumption-growth",
+        edge_type="related_to",
+        fact_kind="role_outcome",
+        summary="Ken's Microsoft role connects to Azure consumption growth.",
+        source_basis="resume_docx_and_linkedin_profile",
+    ),
+    ProfileEdgeSeed(
+        from_slug="microsoft-managing-director-fsi",
+        to_slug="partner-led-adoption-revenue",
+        edge_type="related_to",
+        fact_kind="role_outcome",
+        summary="Ken's Microsoft role connects to partner-led revenue outcomes.",
+        source_basis="resume_docx_and_linkedin_profile",
+    ),
+    ProfileEdgeSeed(
+        from_slug="ken-haas",
         to_slug="at0-private-ai-operating-system",
         edge_type="works_on",
         fact_kind="builder_project",
         summary="Ken works on AT0 as a private AI operating system.",
+        source_basis="linkedin_profile_and_public_profile_sites",
+    ),
+    ProfileEdgeSeed(
+        from_slug="at0-private-ai-operating-system",
+        to_slug="ai-governance-operating-model",
+        edge_type="related_to",
+        fact_kind="project_operating_model",
+        summary="AT0 is public proof of Ken's governed AI operating-model work.",
+        source_basis="linkedin_profile",
     ),
     ProfileEdgeSeed(
         from_slug="ken-haas",
@@ -112,6 +271,7 @@ PROFILE_EDGES: tuple[ProfileEdgeSeed, ...] = (
         edge_type="related_to",
         fact_kind="career_positioning",
         summary="Ken's profile is positioned around AI and business transformation.",
+        source_basis="resume_docx_and_linkedin_profile",
     ),
     ProfileEdgeSeed(
         from_slug="ken-haas",
@@ -119,6 +279,7 @@ PROFILE_EDGES: tuple[ProfileEdgeSeed, ...] = (
         edge_type="related_to",
         fact_kind="domain_positioning",
         summary="Ken's profile connects to Cloud, Security, Data & AI.",
+        source_basis="resume_docx_and_linkedin_profile",
     ),
     ProfileEdgeSeed(
         from_slug="ken-haas",
@@ -133,6 +294,49 @@ PROFILE_EDGES: tuple[ProfileEdgeSeed, ...] = (
         edge_type="belongs_to",
         fact_kind="public_proof_surface",
         summary="AT0 and career sites are public proof surfaces for the profile.",
+        source_basis="linkedin_profile",
+    ),
+    ProfileEdgeSeed(
+        from_slug="ken-haas",
+        to_slug="ibm-cloud-security-data-ai-leadership",
+        edge_type="related_to",
+        fact_kind="prior_role",
+        summary=(
+            "Ken's career graph includes IBM cloud, security, and Data & AI leadership."
+        ),
+        source_basis="resume_docx_and_linkedin_profile",
+    ),
+    ProfileEdgeSeed(
+        from_slug="ken-haas",
+        to_slug="building-future-enterprises",
+        edge_type="related_to",
+        fact_kind="board_and_community",
+        summary="Ken co-founded Building Future Enterprises.",
+        source_basis="resume_docx_and_linkedin_profile",
+    ),
+    ProfileEdgeSeed(
+        from_slug="ken-haas",
+        to_slug="besn-tv-board-advisor",
+        edge_type="related_to",
+        fact_kind="board_and_community",
+        summary="Ken serves on the BESN.TV Board of Advisors.",
+        source_basis="linkedin_profile",
+    ),
+    ProfileEdgeSeed(
+        from_slug="ken-haas",
+        to_slug="education-mba-furman-bs",
+        edge_type="related_to",
+        fact_kind="education",
+        summary="Ken's career graph includes MBA and Furman education facts.",
+        source_basis="resume_docx",
+    ),
+    ProfileEdgeSeed(
+        from_slug="ken-haas",
+        to_slug="security-cloud-certifications",
+        edge_type="related_to",
+        fact_kind="certifications",
+        summary="Ken's career graph includes security and cloud certifications.",
+        source_basis="resume_docx",
     ),
 )
 
@@ -216,7 +420,7 @@ def _node_payload(node: ProfileNodeSeed) -> dict[str, Any]:
             "source_pipeline": "profile_graph_seed",
             "source_candidate_id": f"profile:{PROFILE_SEED_VERSION}:{node.slug}",
             "source_kind": "approved_profile_seed",
-            "source_basis": "user_approved_profile_context",
+            "source_basis": node.source_basis,
             "contains_raw_profile_scrape": False,
         },
     }
@@ -249,7 +453,7 @@ def _edge_payload(
                 f"{edge.from_slug}:{edge.to_slug}:{edge.edge_type}"
             ),
             "source_kind": "approved_profile_seed",
-            "source_basis": "user_approved_profile_context",
+            "source_basis": edge.source_basis,
             "contains_raw_profile_scrape": False,
         },
     }
@@ -295,6 +499,8 @@ def _proposal_summary(result: dict[str, Any]) -> dict[str, Any]:
         "proposal_id": result.get("proposal_id"),
         "approval_queue_id": result.get("approval_queue_id"),
         "parameters_hash": result.get("parameters_hash"),
+        "approval_ttl_minutes": result.get("approval_ttl_minutes"),
+        "approval_ttl_extended": result.get("approval_ttl_extended"),
     }
 
 
@@ -337,6 +543,21 @@ def main() -> int:
         help="HTTP timeout in seconds.",
     )
     parser.add_argument(
+        "--approval-ttl-minutes",
+        type=int,
+        default=int(
+            os.getenv(
+                "MEMORY_PROFILE_SEED_APPROVAL_TTL_MINUTES",
+                str(DEFAULT_PROFILE_SEED_APPROVAL_TTL_MINUTES),
+            )
+        ),
+        help=(
+            "Requested approval window for queued profile seed proposals "
+            f"({MIN_PROFILE_SEED_APPROVAL_TTL_MINUTES}-"
+            f"{MAX_PROFILE_SEED_APPROVAL_TTL_MINUTES} minutes)."
+        ),
+    )
+    parser.add_argument(
         "--queue",
         action="store_true",
         help="Queue proposals through /v1/memory/graph/proposals.",
@@ -355,6 +576,16 @@ def main() -> int:
 
     if args.nodes_only and args.edges_only:
         parser.error("--nodes-only and --edges-only are mutually exclusive")
+    if not (
+        MIN_PROFILE_SEED_APPROVAL_TTL_MINUTES
+        <= args.approval_ttl_minutes
+        <= MAX_PROFILE_SEED_APPROVAL_TTL_MINUTES
+    ):
+        parser.error(
+            "--approval-ttl-minutes must be between "
+            f"{MIN_PROFILE_SEED_APPROVAL_TTL_MINUTES} and "
+            f"{MAX_PROFILE_SEED_APPROVAL_TTL_MINUTES}"
+        )
 
     base_url = args.base_url.rstrip("/")
     node_proposals = (
@@ -413,12 +644,16 @@ def main() -> int:
     assert token is not None
     queued: list[dict[str, Any]] = []
     for proposal in proposals:
+        proposal_request = {
+            **proposal,
+            "approval_ttl_minutes": args.approval_ttl_minutes,
+        }
         result = _call_json(
             "POST",
             base_url,
             "/v1/memory/graph/proposals",
             token,
-            proposal,
+            proposal_request,
             timeout=args.timeout,
         )
         queued.append(
@@ -436,6 +671,7 @@ def main() -> int:
             "status": "queued",
             "principal_id": args.principal_id,
             "queued_count": len(queued),
+            "approval_ttl_minutes": args.approval_ttl_minutes,
             "queued": queued,
             "skipped_edges": skipped_edges,
         }

@@ -42,6 +42,7 @@ from brain.services.spark_outbox_send import (
     SparkOutboxSendResult,
     execute_prepared_spark_imessage_send,
     prepare_approved_spark_imessage_outbox_send,
+    prepare_trusted_live_spark_imessage_outbox_send,
     record_prepared_spark_imessage_send_failure,
     record_prepared_spark_imessage_send_success,
 )
@@ -231,6 +232,7 @@ class SparkIMessageDraftFeedbackRequest(BaseModel):
     approval_ref_hash: str = Field(min_length=1, max_length=160)
     source_reference_hash: str = Field(min_length=1, max_length=160)
     chat_guid_hash: str = Field(min_length=1, max_length=160)
+    draft_text_override: str | None = Field(default=None, max_length=4000)
 
 
 class SparkIMessageDraftFeedbackOut(BaseModel):
@@ -1034,6 +1036,7 @@ async def spark_imessage_draft_feedback(
             approval_ref_hash=payload.approval_ref_hash,
             source_reference_hash=payload.source_reference_hash,
             chat_guid_hash=payload.chat_guid_hash,
+            draft_text_override=payload.draft_text_override,
         )
     except Exception as exc:
         _log_failure(request, exc=exc, status_code=500)
@@ -1174,6 +1177,78 @@ async def spark_imessage_send_approved_outbox(
     try:
         async with rls_connection(request) as conn:
             prepared = await prepare_approved_spark_imessage_outbox_send(
+                conn,
+                outbox_id=outbox_id,
+                actor_sub=actor_sub,
+                actor_type=actor_type,
+                crypto=load_spark_outbox_crypto(),
+            )
+    except Exception as exc:
+        route_error = _send_route_error(exc)
+        _log_send_failure(
+            request,
+            outbox_id=outbox_id,
+            exc=exc,
+            status_code=route_error.status_code,
+        )
+        raise route_error from exc
+
+    try:
+        send_result = await execute_prepared_spark_imessage_send(prepared)
+    except Exception as exc:
+        await _record_send_failure_event(request, prepared=prepared, exc=exc)
+        route_error = _send_route_error(exc)
+        _log_send_failure(
+            request,
+            outbox_id=outbox_id,
+            exc=exc,
+            status_code=route_error.status_code,
+        )
+        raise route_error from exc
+
+    try:
+        async with rls_connection(request) as conn:
+            result = await record_prepared_spark_imessage_send_success(
+                conn,
+                prepared=prepared,
+                send_result=send_result,
+            )
+    except Exception as exc:
+        route_error = _send_route_error(exc)
+        _log_send_failure(
+            request,
+            outbox_id=outbox_id,
+            exc=exc,
+            status_code=route_error.status_code,
+        )
+        raise route_error from exc
+
+    _log_send_success(request, result=result)
+    return SparkIMessageApprovedSendOut(
+        outbox_id=result.outbox_id,
+        outbox_status=result.outbox_status,
+        approval_queue_id=result.approval_queue_id,
+        approval_status=result.approval_status,
+        message_ref_hash=result.message_ref_hash,
+        send_attempt_count=result.send_attempt_count,
+    )
+
+
+@router.post(
+    "/imessage/outbox/{outbox_id}/trusted-live-send",
+    response_model=SparkIMessageApprovedSendOut,
+)
+async def spark_imessage_send_trusted_live_outbox(
+    request: Request,
+    outbox_id: UUID,
+    _: str = Depends(require_auth),
+) -> SparkIMessageApprovedSendOut:
+    _check_send_scopes(request)
+    actor_sub = str(getattr(request.state, "user_id", "unknown"))
+    actor_type = str(getattr(request.state, "actor_type", "unknown"))
+    try:
+        async with rls_connection(request) as conn:
+            prepared = await prepare_trusted_live_spark_imessage_outbox_send(
                 conn,
                 outbox_id=outbox_id,
                 actor_sub=actor_sub,

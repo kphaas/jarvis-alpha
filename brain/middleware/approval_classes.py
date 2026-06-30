@@ -205,6 +205,11 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "external_call",
         "cost_incurring",
     ],
+    "POST /v1/internet-scout/local-llm/tool/stream": [
+        "write",
+        "external_call",
+        "cost_incurring",
+    ],
     "POST /v1/internet-scout/consumers/{consumer}/local-llm/tool": [
         "write",
         "external_call",
@@ -214,6 +219,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "write",
         "security_write",
     ],
+    "GET /v1/internet-scout/browser-task/history": ["read", "security_read"],
     "POST /v1/internet-scout/requests/{request_id}/memory-promotions": [
         "write",
         "security_write",
@@ -367,6 +373,12 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "security_write",
     ],
     "POST /v1/spark/drafts/imessage/outbox/{outbox_id}/send": [
+        "write",
+        "security_write",
+        "external_call",
+        "imessage_send",
+    ],
+    "POST /v1/spark/drafts/imessage/outbox/{outbox_id}/trusted-live-send": [
         "write",
         "security_write",
         "external_call",

@@ -69,6 +69,18 @@ def test_remote_smoke_without_token_source_fails_explicitly(monkeypatch):
         )
 
 
+def test_approval_token_prefers_explicit_env(monkeypatch):
+    monkeypatch.setenv("BEACON_SMOKE_APPROVAL_TOKEN", "approval-token")
+
+    token = smoke_beacon_production._approval_token(
+        profile="ken",
+        base_url=smoke_beacon_production.DEFAULT_BASE_URL,
+        token_ssh_target=None,
+    )
+
+    assert token == "approval-token"
+
+
 def test_health_check_metadata_extracts_browser_runtime_limits():
     metadata = smoke_beacon_production._health_check_metadata(
         {
@@ -179,6 +191,61 @@ def test_source_connector_smoke_verifies_expected_citation_host(monkeypatch):
             "host_verified": True,
             "raw_web_content_is_untrusted": True,
         }
+    ]
+
+
+def test_browser_click_smoke_approves_runs_and_checks_history(monkeypatch):
+    calls = []
+
+    def fake_call_json(method, base_url, path, token, body=None, extra_headers=None):
+        calls.append((method, path, body, extra_headers))
+        if path == "/v1/internet-scout/browser-task/approval-request":
+            return {"approval_queue_id": "queue-1"}
+        if path == "/v1/approvals/queue-1/decide":
+            assert extra_headers == {"X-Approval-Token": "approval-token"}
+            assert body == {"decision": "approved"}
+            return {"decision": "approved"}
+        if path == "/v1/internet-scout/browser-task/run-approved":
+            assert body["max_steps"] == 5
+            assert body["require_screenshot"] is True
+            return {
+                "status": "completed",
+                "request_id": "request-1",
+                "observations": [{"host": "httpbingo.org"}],
+            }
+        if path == "/v1/internet-scout/browser-task/history?limit=50&q=queue-1":
+            return {
+                "history": [
+                    {"event_type": "approval_request", "status": "queued"},
+                    {
+                        "event_type": "browser_run",
+                        "status": "succeeded",
+                        "action_audit_count": 3,
+                    },
+                    {
+                        "event_type": "browser_action",
+                        "status": "succeeded",
+                        "action": "click",
+                    },
+                ]
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(smoke_beacon_production, "_call_json", fake_call_json)
+
+    result = smoke_beacon_production._run_browser_click_smoke(
+        "https://alpha.example.test",
+        "token",
+        approval_token="approval-token",
+    )
+
+    assert result["click_succeeded"] is True
+    assert result["action_audit_count"] == 3
+    assert [call[1] for call in calls] == [
+        "/v1/internet-scout/browser-task/approval-request",
+        "/v1/approvals/queue-1/decide",
+        "/v1/internet-scout/browser-task/run-approved",
+        "/v1/internet-scout/browser-task/history?limit=50&q=queue-1",
     ]
 
 

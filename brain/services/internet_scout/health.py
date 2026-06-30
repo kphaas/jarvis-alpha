@@ -433,6 +433,9 @@ async def _recent_evidence_check(
         _quality_canary_summary(row, checked_at=checked_at)
         for row in quality_canary_rows[:_QUALITY_CANARY_HISTORY_LIMIT]
     ]
+    quality_canary_trend = _quality_canary_trend(
+        quality_canary_rows[:_QUALITY_CANARY_HISTORY_LIMIT],
+    )
     quality_canary = _quality_canary_metadata(
         quality_canary_rows[0] if quality_canary_rows else None,
         checked_at=checked_at,
@@ -461,6 +464,7 @@ async def _recent_evidence_check(
             ),
             "quality_canary": quality_canary,
             "quality_canary_history": quality_canary_history,
+            "quality_canary_trend": quality_canary_trend,
         },
     )
 
@@ -614,6 +618,7 @@ def _quality_canary_check(
             "alert_reason": str(alert_payload.get("reason") or ""),
             "quality_canary": quality_canary,
             "history": recent_evidence_metadata.get("quality_canary_history", []),
+            "trend": recent_evidence_metadata.get("quality_canary_trend", {}),
         },
     )
 
@@ -696,6 +701,106 @@ def _quality_canary_alert(summary: dict[str, object]) -> dict[str, object]:
         "reason": "quality_canary_fresh",
         "severity": "info",
     }
+
+
+def _quality_canary_trend(rows: list[_RequestRow]) -> dict[str, object]:
+    if not rows:
+        return {
+            "window_runs": 0,
+            "passed_runs": 0,
+            "failed_runs": 0,
+            "pass_rate_percent": 0,
+            "trend": "unknown",
+        }
+    summaries = [_quality_canary_trend_summary(row) for row in rows]
+    latest = summaries[0]
+    oldest = summaries[-1]
+    failed_runs = sum(1 for item in summaries if _quality_canary_trend_failed(item))
+    passed_runs = len(summaries) - failed_runs
+    latest_reporting = _answer_reporting(rows[0])
+    oldest_reporting = _answer_reporting(rows[-1])
+    return {
+        "window_runs": len(summaries),
+        "passed_runs": passed_runs,
+        "failed_runs": failed_runs,
+        "pass_rate_percent": round((passed_runs / len(summaries)) * 100),
+        "latest_failed": _int_mapping(latest, "failed"),
+        "failed_delta": _int_mapping(latest, "failed") - _int_mapping(oldest, "failed"),
+        "passed_delta": _int_mapping(latest, "passed") - _int_mapping(oldest, "passed"),
+        "case_count_delta": _int_mapping(latest, "case_count")
+        - _int_mapping(oldest, "case_count"),
+        "latest_precision": _nested_float(
+            latest_reporting,
+            ("citation_precision", "precision"),
+        ),
+        "precision_delta": round(
+            _nested_float(latest_reporting, ("citation_precision", "precision"))
+            - _nested_float(oldest_reporting, ("citation_precision", "precision")),
+            4,
+        ),
+        "latest_suite_elapsed_ms": _nested_int(
+            latest_reporting,
+            ("latency", "suite_elapsed_ms"),
+        ),
+        "latency_delta_ms": _nested_int(
+            latest_reporting,
+            ("latency", "suite_elapsed_ms"),
+        )
+        - _nested_int(oldest_reporting, ("latency", "suite_elapsed_ms")),
+        "estimated_provider_cost_usd": _nested_float(
+            latest_reporting,
+            ("cost", "estimated_provider_cost_usd"),
+        ),
+        "trend": _quality_canary_trend_label(
+            latest_failed=_quality_canary_trend_failed(latest),
+            oldest_failed=_quality_canary_trend_failed(oldest),
+            failed_runs=failed_runs,
+            run_count=len(summaries),
+        ),
+    }
+
+
+def _quality_canary_trend_summary(row: _RequestRow) -> dict[str, object]:
+    metadata = _metadata_object(row["metadata"])
+    return {
+        "status": str(metadata.get("status") or "unknown"),
+        "case_count": _int_mapping(metadata, "case_count"),
+        "passed": _int_mapping(metadata, "passed"),
+        "failed": _int_mapping(metadata, "failed"),
+    }
+
+
+def _quality_canary_trend_failed(summary: dict[str, object]) -> bool:
+    return str(summary.get("status") or "unknown") != "passed" or (
+        _int_mapping(summary, "failed") > 0
+    )
+
+
+def _quality_canary_trend_label(
+    *,
+    latest_failed: bool,
+    oldest_failed: bool,
+    failed_runs: int,
+    run_count: int,
+) -> str:
+    if run_count < 2:
+        return "single_sample"
+    if latest_failed and not oldest_failed:
+        return "regressing"
+    if oldest_failed and not latest_failed:
+        return "improving"
+    if failed_runs:
+        return "stable_with_failures"
+    return "stable"
+
+
+def _answer_reporting(row: _RequestRow) -> dict[str, object]:
+    metadata = _metadata_object(row["metadata"])
+    answer_engine = metadata.get("answer_engine")
+    if not isinstance(answer_engine, dict):
+        return {}
+    reporting = answer_engine.get("reporting")
+    return reporting if isinstance(reporting, dict) else {}
 
 
 def _age_hours(value: object, *, checked_at: datetime) -> int:
@@ -788,6 +893,38 @@ def _int_mapping(payload: dict[str, object], key: str) -> int:
     if isinstance(value, str) and value.isdecimal():
         return int(value)
     return 0
+
+
+def _nested_mapping(payload: dict[str, object], path: tuple[str, ...]) -> object:
+    current: object = payload
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _nested_int(payload: dict[str, object], path: tuple[str, ...]) -> int:
+    value = _nested_mapping(payload, path)
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return 0
+
+
+def _nested_float(payload: dict[str, object], path: tuple[str, ...]) -> float:
+    value = _nested_mapping(payload, path)
+    if isinstance(value, bool) or value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _str_list(value: object) -> list[str]:

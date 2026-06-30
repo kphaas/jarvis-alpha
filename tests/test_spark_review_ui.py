@@ -100,6 +100,13 @@ def test_spark_review_ui_keeps_send_out_of_phase() -> None:
     assert "can_send" in source
     assert "requires_human_approval" in source
     assert "Submit approval" in source
+    assert "SPARK_TRUSTED_LIVE_TARGETS" in source
+    assert "SPARK_INLINE_APPROVE_SEND_TARGETS" in source
+    assert "/v1/spark/drafts/imessage/outbox/${outboxId}/trusted-live-send" in source
+    assert "Send trusted live" in source
+    assert "/v1/approvals/unlock" in source
+    assert "/v1/approvals/${approvalQueueId}/decide" in source
+    assert "Approve + Send" in source
     assert "Send approved" in source
     assert "auto_send_enabled: false" in source
     forbidden = (
@@ -121,6 +128,10 @@ def test_spark_approval_handoff_ui_links_to_spark_review() -> None:
     assert "buildSparkReviewUrl" in approvals_source
     assert "Review Spark" in approvals_source
     assert "Return to Spark send" in approvals_source
+    assert "SPARK_APPROVE_SEND_TARGETS" in approvals_source
+    assert "canApproveAndSendSpark" in approvals_source
+    assert "Approve + Send" in approvals_source
+    assert "/v1/spark/drafts/imessage/outbox/${outboxId}/send" in approvals_source
     assert "useSearchParams" in spark_source
     assert "Approval queue" in spark_source
     assert 'searchParams.get("principal")' in spark_source
@@ -266,11 +277,16 @@ def test_spark_workbench_exposes_thread_memory_debug_and_feedback() -> None:
     assert "Try again with feedback" in source
     assert "regenerateWithFeedback" in source
     assert "one or two short text-message sentences" in source
-    assert "Pick up to 2 signals before retrying." in source
+    assert "draft_text_override" in source
+    assert 'feedbackLabel === "voice_rewrite"' in source
+    assert "Pick up to 3 signals before retrying." in source
     assert "Tone direction" in source
     assert "Send only after approval passes" in source
     assert "Send can resume from the persisted outbox" in source
-    assert "Send blocked until the outbox item is approved and persisted" in source
+    assert (
+        "Send blocked until the outbox item is trusted, approved, and persisted"
+        in source
+    )
     assert "Happier" in source
     assert "Sweeter" in source
     assert "Relaxed" in source

@@ -97,6 +97,10 @@ def test_spark_imessage_draft_route_is_classified_t2_write() -> None:
         "POST",
         "/v1/spark/drafts/imessage/outbox/22222222-2222-4222-8222-222222222222/send",
     )
+    trusted_live_classes = classify_route(
+        "POST",
+        "/v1/spark/drafts/imessage/outbox/22222222-2222-4222-8222-222222222222/trusted-live-send",
+    )
     cancel_classes = classify_route(
         "POST",
         "/v1/spark/drafts/imessage/outbox/22222222-2222-4222-8222-222222222222/cancel",
@@ -110,6 +114,8 @@ def test_spark_imessage_draft_route_is_classified_t2_write() -> None:
         "imessage_send",
     ]
     assert determine_risk_tier(send_classes) == "T4"
+    assert trusted_live_classes == send_classes
+    assert determine_risk_tier(trusted_live_classes) == "T4"
     assert cancel_classes == ["write", "security_write"]
     assert determine_risk_tier(cancel_classes) == "T2"
     assert feedback_classes == ["write", "security_write"]
@@ -151,6 +157,21 @@ async def test_spark_imessage_send_approved_outbox_requires_send_scope() -> None
     for scopes in (["spark.draft"], ["imessage.send"]):
         with pytest.raises(HTTPException) as exc_info:
             await spark_drafts.spark_imessage_send_approved_outbox(
+                _request(scopes),
+                outbox_id,
+                "user",
+            )
+
+        assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_send_trusted_live_outbox_requires_send_scope() -> None:
+    outbox_id = UUID("22222222-2222-4222-8222-222222222222")
+
+    for scopes in (["spark.draft"], ["imessage.send"]):
+        with pytest.raises(HTTPException) as exc_info:
+            await spark_drafts.spark_imessage_send_trusted_live_outbox(
                 _request(scopes),
                 outbox_id,
                 "user",
@@ -855,6 +876,7 @@ async def test_spark_imessage_draft_feedback_records_label_only(
             "approval_ref_hash": "approval-hash",
             "source_reference_hash": "source-hash",
             "chat_guid_hash": "chat-hash",
+            "draft_text_override": None,
         }
     ]
     logs = json.dumps(fake_logger.infos).lower()
@@ -1031,6 +1053,96 @@ async def test_spark_imessage_send_approved_outbox_executes_safe_route(
     )
 
     response = await spark_drafts.spark_imessage_send_approved_outbox(
+        _request(["spark.draft", "imessage.send"]),
+        outbox_id,
+        "user",
+    )
+
+    assert response.outbox_status == "sent"
+    assert response.approval_status == "executed"
+    assert response.message_ref_hash == "message-hash"
+    assert len(prepare_calls) == 1
+    assert execute_calls == [prepared]
+    assert len(success_calls) == 1
+    logs = json.dumps(fake_logger.infos).lower()
+    assert "spark_imessage_approved_send_executed" in logs
+    assert "imessage.send" in logs
+    assert "t4" in logs
+    assert "private inbound body" not in logs
+    assert "approved-chat-guid" not in logs
+    assert "edited draft" not in logs
+    assert "draft_text" not in logs
+
+
+@pytest.mark.asyncio
+async def test_spark_imessage_send_trusted_live_outbox_executes_safe_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_logger = _FakeLogger()
+    fake_conn = object()
+    outbox_id = UUID("22222222-2222-4222-8222-222222222222")
+    crypto_token = object()
+    prepared = SimpleNamespace(item=SimpleNamespace(outbox_id=outbox_id))
+    send_result = SimpleNamespace(
+        status=200,
+        message="Success",
+        message_ref_hash="message-hash",
+    )
+    prepare_calls: list[dict[str, object]] = []
+    execute_calls: list[object] = []
+    success_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(spark_drafts, "logger", fake_logger)
+    monkeypatch.setattr(
+        spark_drafts,
+        "rls_connection",
+        lambda request: _AsyncContext(fake_conn),
+    )
+    monkeypatch.setattr(spark_drafts, "load_spark_outbox_crypto", lambda: crypto_token)
+
+    async def fake_prepare(conn, **kwargs):
+        assert conn is fake_conn
+        prepare_calls.append(kwargs)
+        assert kwargs["outbox_id"] == outbox_id
+        assert kwargs["actor_sub"] == "spark-service"
+        assert kwargs["actor_type"] == "service"
+        assert kwargs["crypto"] is crypto_token
+        return prepared
+
+    async def fake_execute(arg):
+        execute_calls.append(arg)
+        return send_result
+
+    async def fake_record_success(conn, **kwargs):
+        assert conn is fake_conn
+        success_calls.append(kwargs)
+        assert kwargs["prepared"] is prepared
+        assert kwargs["send_result"] is send_result
+        return spark_drafts.SparkOutboxSendResult(
+            outbox_id=str(outbox_id),
+            outbox_status="sent",
+            approval_queue_id="11111111-1111-4111-8111-111111111111",
+            approval_status="executed",
+            message_ref_hash="message-hash",
+            send_attempt_count=1,
+        )
+
+    monkeypatch.setattr(
+        spark_drafts,
+        "prepare_trusted_live_spark_imessage_outbox_send",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        spark_drafts,
+        "execute_prepared_spark_imessage_send",
+        fake_execute,
+    )
+    monkeypatch.setattr(
+        spark_drafts,
+        "record_prepared_spark_imessage_send_success",
+        fake_record_success,
+    )
+
+    response = await spark_drafts.spark_imessage_send_trusted_live_outbox(
         _request(["spark.draft", "imessage.send"]),
         outbox_id,
         "user",

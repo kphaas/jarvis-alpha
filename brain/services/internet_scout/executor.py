@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from fastapi import HTTPException
 from jarvis_common.logging_config import get_logger
 
@@ -47,6 +49,9 @@ from brain.services.internet_scout.source_selection import (
 )
 
 logger = get_logger("alpha_brain")
+WebCacheExtractLookup = Callable[
+    [str, str | None], Awaitable[GatewayExtractResponse | None]
+]
 
 
 class InternetScoutExecutor:
@@ -56,9 +61,11 @@ class InternetScoutExecutor:
         self,
         gateway_client: InternetScoutGatewayClient | None = None,
         free_source_router: FreeSourceRouter | None = None,
+        web_cache_extract: WebCacheExtractLookup | None = None,
     ) -> None:
         self.gateway_client = gateway_client or InternetScoutGatewayClient()
         self.free_source_router = free_source_router or FreeSourceRouter()
+        self.web_cache_extract = web_cache_extract
 
     async def execute(
         self,
@@ -125,6 +132,15 @@ class InternetScoutExecutor:
         if decision.tool == InternetTool.EXTRACT:
             if not request.urls:
                 raise HTTPException(status_code=400, detail="url is required")
+            cached_extract = await self._cached_extract_response(
+                url=request.urls[0],
+                query=request.query,
+            )
+            if cached_extract is not None:
+                return decision, packet_from_extract_response(
+                    request=request,
+                    response=cached_extract,
+                )
             extract_response = await self.gateway_client.extract(
                 url=request.urls[0],
                 max_bytes=DEFAULT_MAX_CONTENT_BYTES,
@@ -317,8 +333,14 @@ class InternetScoutExecutor:
         extract_responses: list[GatewayExtractResponse] = []
         for item in ranked:
             try:
+                cached_extract = await self._cached_extract_response(
+                    url=item.result.url,
+                    query=request.query,
+                )
                 extract_responses.append(
-                    await self.gateway_client.extract(
+                    cached_extract
+                    if cached_extract is not None
+                    else await self.gateway_client.extract(
                         url=item.result.url,
                         max_bytes=DEFAULT_MAX_CONTENT_BYTES,
                     )
@@ -326,6 +348,26 @@ class InternetScoutExecutor:
             except InternetScoutGatewayError:
                 continue
         return extract_responses
+
+    async def _cached_extract_response(
+        self,
+        *,
+        url: str,
+        query: str | None,
+    ) -> GatewayExtractResponse | None:
+        if self.web_cache_extract is None:
+            return None
+        try:
+            return await self.web_cache_extract(url, query)
+        except Exception as exc:
+            logger.warning(
+                "BEACON_WEB_CACHE_FALLBACK",
+                extra={
+                    "event": "BEACON_WEB_CACHE_FALLBACK",
+                    "error_type": type(exc).__name__,
+                },
+            )
+            return None
 
 
 def _source_search_purpose(data_source_id: str) -> ResearchQueryPurpose:

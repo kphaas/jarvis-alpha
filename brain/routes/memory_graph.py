@@ -52,6 +52,8 @@ _ALLOWED_GRAPH_SOURCES = {
     "spark",
     "import",
 }
+_MIN_GRAPH_APPROVAL_TTL_MINUTES = 10
+_MAX_GRAPH_APPROVAL_TTL_MINUTES = 720
 
 
 class MemoryGraphNode(BaseModel):
@@ -179,6 +181,11 @@ class MemoryGraphProposalRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     source_surface: str = Field(default="helm", min_length=2, max_length=80)
     reason: str | None = Field(default=None, max_length=300)
+    approval_ttl_minutes: int | None = Field(
+        default=None,
+        ge=_MIN_GRAPH_APPROVAL_TTL_MINUTES,
+        le=_MAX_GRAPH_APPROVAL_TTL_MINUTES,
+    )
 
     @model_validator(mode="after")
     def validate_payload(self) -> MemoryGraphProposalRequest:
@@ -199,6 +206,36 @@ class MemoryGraphExecuteResponse(BaseModel):
     status: str
     proposal_id: str
     result: dict[str, Any]
+
+
+async def _extend_graph_approval_ttl(
+    conn: Any,
+    *,
+    approval_queue_id: object,
+    parameters_hash: object,
+    ttl_minutes: int,
+) -> bool:
+    if not approval_queue_id or not parameters_hash:
+        return False
+
+    result = await conn.execute(
+        """
+        UPDATE public.alpha_approval_queue
+           SET expires_at = GREATEST(
+                   expires_at,
+                   NOW() + make_interval(mins => $3::int)
+               )
+         WHERE id = $1::uuid
+           AND parameters_hash = $2
+           AND status = 'pending'
+           AND risk_tier = 'T5'
+           AND action_class @> ARRAY['memory_graph_reviewed_write']::text[]
+        """,
+        str(approval_queue_id),
+        str(parameters_hash),
+        ttl_minutes,
+    )
+    return result == "UPDATE 1"
 
 
 @router.get("/graph", response_model=MemoryGraphResponse)
@@ -324,7 +361,10 @@ async def propose_memory_graph_write(
         if body.principal_id
         else _request_user_uuid(request)
     )
-    async with rls_connection(request) as conn:
+    async with platform_admin_connection(
+        source="http",
+        audit_actor=_review_actor(request),
+    ) as conn:
         payload = _json_result(
             await conn.fetchval(
                 """
@@ -347,7 +387,28 @@ async def propose_memory_graph_write(
                 body.reason,
             )
         )
-    status = str(payload.get("status") or "not_queued")
+        status = str(payload.get("status") or "not_queued")
+        ttl_extended = None
+        if body.approval_ttl_minutes is not None and status == "queued":
+            ttl_extended = await _extend_graph_approval_ttl(
+                conn,
+                approval_queue_id=payload.get("approval_queue_id"),
+                parameters_hash=payload.get("parameters_hash"),
+                ttl_minutes=body.approval_ttl_minutes,
+            )
+            payload["approval_ttl_minutes"] = body.approval_ttl_minutes
+            payload["approval_ttl_extended"] = ttl_extended
+            if not ttl_extended:
+                logger.warning(
+                    "MEMORY_GRAPH_APPROVAL_TTL_EXTENSION_MISSED",
+                    extra={
+                        "event": "MEMORY_GRAPH_APPROVAL_TTL_EXTENSION_MISSED",
+                        "principal_id": str(principal_uuid),
+                        "proposal_id": payload.get("proposal_id"),
+                        "approval_queue_id": payload.get("approval_queue_id"),
+                        "approval_ttl_minutes": body.approval_ttl_minutes,
+                    },
+                )
     logger.info(
         "MEMORY_GRAPH_PROPOSAL_CREATED",
         extra={
@@ -357,6 +418,8 @@ async def propose_memory_graph_write(
             "proposed_action": body.proposed_action,
             "object_type": body.object_type,
             "proposal_id": payload.get("proposal_id"),
+            "approval_ttl_minutes": body.approval_ttl_minutes,
+            "approval_ttl_extended": ttl_extended,
         },
     )
     return MemoryGraphProposalResponse(

@@ -8,6 +8,7 @@ strategy, and deep-research coverage.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from time import perf_counter_ns
 
 from brain.services.internet_scout.models import (
     InternetScoutRequest,
@@ -32,6 +33,12 @@ class AnswerEngineEvalResult:
 def run_answer_engine_evals() -> list[AnswerEngineEvalResult]:
     """Run the Beacon answer-engine UX contract benchmark."""
     search_results = run_search_quality_evals()
+    return _answer_engine_results(search_results)
+
+
+def _answer_engine_results(
+    search_results: list[SearchQualityEvalResult],
+) -> list[AnswerEngineEvalResult]:
     by_name = {result.name: result for result in search_results}
     return [
         *_focus_mode_contract_results(),
@@ -41,12 +48,16 @@ def run_answer_engine_evals() -> list[AnswerEngineEvalResult]:
         _deep_research_contract(by_name),
         _provider_telemetry_contract(by_name),
         _evidence_transparency_contract(by_name),
+        *_answer_quality_scenario_contracts(by_name),
     ]
 
 
 def answer_engine_eval_payload() -> dict[str, object]:
     """Return a JSON-safe payload for scripts, CI, and health wiring."""
-    results = run_answer_engine_evals()
+    started_ns = perf_counter_ns()
+    search_results = run_search_quality_evals()
+    results = _answer_engine_results(search_results)
+    elapsed_ms = max(0, round((perf_counter_ns() - started_ns) / 1_000_000))
     failed = [result for result in results if not result.passed]
     return {
         "suite": "beacon_answer_engine",
@@ -55,6 +66,11 @@ def answer_engine_eval_payload() -> dict[str, object]:
         "passed": len(results) - len(failed),
         "failed": len(failed),
         "case_groups": _group_summary(results),
+        "reporting": _reporting_summary(
+            results=results,
+            search_results=search_results,
+            elapsed_ms=elapsed_ms,
+        ),
         "results": [
             {
                 **asdict(result),
@@ -303,6 +319,17 @@ def _deep_research_contract(
         failures.append("answerability")
     if details["research_report_cited_source_count"] < 2:
         failures.append("source_count")
+    if (
+        details["covered_official_target_count"]
+        < details["required_official_target_count"]
+    ):
+        failures.append("official_target_coverage")
+    if len(details["research_report_verified_claims"]) < 2:
+        failures.append("verified_claims")
+    if details["research_report_unsupported_claims"]:
+        failures.append("unsupported_claims")
+    if details["research_report_coverage_warnings"]:
+        failures.append("coverage_warnings")
     return AnswerEngineEvalResult(
         name="deep_research_surfaces_plan_and_coverage",
         eval_group="deep_research",
@@ -313,6 +340,17 @@ def _deep_research_contract(
             "research_report_answerability": details["research_report_answerability"],
             "research_report_cited_source_count": details[
                 "research_report_cited_source_count"
+            ],
+            "required_official_target_count": details["required_official_target_count"],
+            "covered_official_target_count": details["covered_official_target_count"],
+            "research_report_verified_claims": details[
+                "research_report_verified_claims"
+            ],
+            "research_report_unsupported_claims": details[
+                "research_report_unsupported_claims"
+            ],
+            "research_report_coverage_warnings": details[
+                "research_report_coverage_warnings"
             ],
         },
         failures=tuple(failures),
@@ -414,6 +452,121 @@ def _evidence_transparency_contract(
     )
 
 
+def _answer_quality_scenario_contracts(
+    results: dict[str, SearchQualityEvalResult],
+) -> list[AnswerEngineEvalResult]:
+    cases = [
+        {
+            "name": "answer_quality_vendor_comparison_is_strong",
+            "case": "official_vendor_comparison_prefers_provider_docs",
+            "status": "supported",
+            "answerability": "answerable",
+            "label": "strong",
+            "min_score": 90,
+            "min_diversity": 80,
+            "official_coverage": 100,
+            "freshness": 100,
+            "rejected_risk_count": 0,
+        },
+        {
+            "name": "answer_quality_missing_vendor_is_limited",
+            "case": "official_openai_anthropic_comparison_downgrades_when_vendor_missing",
+            "status": "weak",
+            "answerability": "limited",
+            "label": "limited",
+            "max_score": 74,
+            "official_coverage": 50,
+            "required_warning": "Official-source coverage is incomplete.",
+        },
+        {
+            "name": "answer_quality_unsupported_pricing_refuses_low",
+            "case": "unsupported_official_pricing_claim_fails_closed",
+            "status": "insufficient",
+            "answerability": "not_verified",
+            "label": "low",
+            "max_score": 39,
+            "accepted_source_count": 0,
+            "min_rejected_risk_count": 1,
+            "freshness": 0,
+        },
+        {
+            "name": "answer_quality_prompt_injection_refuses_low",
+            "case": "prompt_injection_marker_rejects_citation",
+            "status": "insufficient",
+            "answerability": "not_verified",
+            "label": "low",
+            "max_score": 39,
+            "accepted_source_count": 0,
+            "min_rejected_risk_count": 1,
+        },
+    ]
+    return [_answer_quality_scenario_result(results, case) for case in cases]
+
+
+def _answer_quality_scenario_result(
+    results: dict[str, SearchQualityEvalResult],
+    case: dict[str, object],
+) -> AnswerEngineEvalResult:
+    result = results[str(case["case"])]
+    score = result.details["evidence_transparency"]["answer_quality_score"]
+    failures: list[str] = []
+
+    if result.details["status"] != case["status"]:
+        failures.append(f"status:{result.details['status']}")
+    if result.details["research_report_answerability"] != case["answerability"]:
+        failures.append(
+            f"answerability:{result.details['research_report_answerability']}"
+        )
+    if score["label"] != case["label"]:
+        failures.append(f"label:{score['label']}")
+    if "min_score" in case and score["score"] < case["min_score"]:
+        failures.append(f"score:{score['score']}")
+    if "max_score" in case and score["score"] > case["max_score"]:
+        failures.append(f"score:{score['score']}")
+    if (
+        "min_diversity" in case
+        and score["source_diversity_score"] < case["min_diversity"]
+    ):
+        failures.append(f"source_diversity:{score['source_diversity_score']}")
+    if (
+        "official_coverage" in case
+        and score["official_coverage_score"] != case["official_coverage"]
+    ):
+        failures.append(f"official_coverage:{score['official_coverage_score']}")
+    if "freshness" in case and score["freshness_score"] != case["freshness"]:
+        failures.append(f"freshness:{score['freshness_score']}")
+    if (
+        "rejected_risk_count" in case
+        and score["rejected_risk_count"] != case["rejected_risk_count"]
+    ):
+        failures.append(f"rejected_risk_count:{score['rejected_risk_count']}")
+    if (
+        "min_rejected_risk_count" in case
+        and score["rejected_risk_count"] < case["min_rejected_risk_count"]
+    ):
+        failures.append(f"rejected_risk_count:{score['rejected_risk_count']}")
+    if (
+        "accepted_source_count" in case
+        and score["accepted_source_count"] != case["accepted_source_count"]
+    ):
+        failures.append(f"accepted_source_count:{score['accepted_source_count']}")
+    if "required_warning" in case and case["required_warning"] not in score["warnings"]:
+        failures.append("required_warning")
+
+    return AnswerEngineEvalResult(
+        name=str(case["name"]),
+        eval_group="answer_quality_scenarios",
+        passed=not failures,
+        details={
+            "source_case": result.name,
+            "status": result.details["status"],
+            "answerability": result.details["research_report_answerability"],
+            "score": score,
+        },
+        failures=tuple(failures),
+    )
+
+
 def _group_summary(results: list[AnswerEngineEvalResult]) -> dict[str, object]:
     groups: dict[str, list[AnswerEngineEvalResult]] = {}
     for result in results:
@@ -428,3 +581,93 @@ def _group_summary(results: list[AnswerEngineEvalResult]) -> dict[str, object]:
         }
         for name, items in sorted(groups.items())
     }
+
+
+def _reporting_summary(
+    *,
+    results: list[AnswerEngineEvalResult],
+    search_results: list[SearchQualityEvalResult],
+    elapsed_ms: int,
+) -> dict[str, object]:
+    return {
+        "latency": {
+            "suite_elapsed_ms": elapsed_ms,
+            "case_count": len(results),
+            "avg_case_elapsed_ms": round(elapsed_ms / len(results), 2)
+            if results
+            else 0,
+        },
+        "cost": _cost_report(search_results),
+        "citation_precision": _citation_precision_report(search_results),
+    }
+
+
+def _cost_report(results: list[SearchQualityEvalResult]) -> dict[str, object]:
+    return {
+        "mode": "offline_fixture",
+        "provider_call_count": 0,
+        "estimated_provider_cost_usd": 0.0,
+        "planned_search_count": sum(
+            _int_detail(result, "research_search_budget") for result in results
+        ),
+        "planned_extract_budget": sum(
+            _int_detail(result, "research_max_extracts") for result in results
+        ),
+        "note": "Offline deterministic eval; planned budgets are measured, provider spend is zero.",
+    }
+
+
+def _citation_precision_report(
+    results: list[SearchQualityEvalResult],
+) -> dict[str, object]:
+    accepted = sum(_int_detail(result, "accepted_citation_count") for result in results)
+    rejected = sum(_int_detail(result, "rejected_citation_count") for result in results)
+    total = accepted + rejected
+    return {
+        "accepted_citation_count": accepted,
+        "rejected_citation_count": rejected,
+        "evaluated_citation_count": total,
+        "precision": round(accepted / total, 4) if total else 0.0,
+        "unsupported_claim_count": sum(
+            _int_detail(result, "unsupported_claim_count") for result in results
+        ),
+        "prompt_injection_rejection_count": sum(
+            _int_detail(result, "prompt_injection_rejection_count")
+            for result in results
+        ),
+        "by_group": {
+            group: _citation_precision_report_for_group(items)
+            for group, items in sorted(_search_groups(results).items())
+        },
+    }
+
+
+def _citation_precision_report_for_group(
+    results: list[SearchQualityEvalResult],
+) -> dict[str, object]:
+    accepted = sum(_int_detail(result, "accepted_citation_count") for result in results)
+    rejected = sum(_int_detail(result, "rejected_citation_count") for result in results)
+    total = accepted + rejected
+    return {
+        "case_count": len(results),
+        "accepted_citation_count": accepted,
+        "rejected_citation_count": rejected,
+        "precision": round(accepted / total, 4) if total else 0.0,
+    }
+
+
+def _search_groups(
+    results: list[SearchQualityEvalResult],
+) -> dict[str, list[SearchQualityEvalResult]]:
+    groups: dict[str, list[SearchQualityEvalResult]] = {}
+    for result in results:
+        groups.setdefault(result.eval_group, []).append(result)
+    return groups
+
+
+def _int_detail(result: SearchQualityEvalResult, key: str) -> int:
+    value = result.details.get(key, 0)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0

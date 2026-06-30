@@ -11,6 +11,11 @@ export interface BeaconMode {
   key: BeaconFocusMode
   label: string
   description: string
+  sourcePolicy: string
+  providerStrategy: string
+  extractBudget: string
+  maxPages: number
+  runLabel: string
 }
 
 export interface BeaconHealthCheck {
@@ -94,6 +99,8 @@ export interface BeaconQualitySummary {
   accepted_citation_count: number
   rejected_citation_count: number
   official_source_count: number
+  required_official_target_count: number
+  covered_official_target_count: number
   verified_claim_count: number
   unsupported_claim_count: number
   prompt_injection_rejection_count: number
@@ -146,6 +153,32 @@ export interface BeaconEvidenceTransparency {
   answer_quality_score?: BeaconAnswerQualityScore
 }
 
+export interface BeaconEvidenceBundle {
+  mode: 'citation_evidence_bundle'
+  bundle_version: number
+  generated_at: string
+  request_id: string
+  plan_id?: string | null
+  research_intent: string
+  answerability: 'answerable' | 'limited' | 'not_verified'
+  source_quality_status: 'supported' | 'weak' | 'insufficient'
+  quality_score: BeaconAnswerQualityScore
+  quality: BeaconQualitySummary
+  citations: BeaconCitation[]
+  accepted_sources: BeaconEvidenceTransparencyItem[]
+  rejected_sources: BeaconEvidenceTransparencyItem[]
+  source_rankings: BeaconResearchReport['source_rankings']
+  source_hosts: string[]
+  required_source_hosts: string[]
+  verified_claims: string[]
+  unsupported_claims: string[]
+  contradictions: string[]
+  coverage_warnings: string[]
+  raw_web_content_included: boolean
+  raw_user_query_included: boolean
+  instruction_boundary: string
+}
+
 export interface BeaconSynthesis {
   answerable: boolean
   status: 'supported' | 'weak' | 'insufficient'
@@ -166,8 +199,13 @@ export interface BeaconResearchReport {
   accepted_citation_count: number
   rejected_citation_count: number
   source_hosts: string[]
+  verified_claim_count: number
+  unsupported_claim_count: number
   source_diversity_score: number
   coverage_warnings: string[]
+  verified_claims: string[]
+  unsupported_claims: string[]
+  report_markdown: string
   source_rankings: Array<{
     rank: number
     source_url: string
@@ -192,6 +230,40 @@ export interface BeaconAnswerResponse {
   synthesis: BeaconSynthesis
   research_report: BeaconResearchReport
   evidence_transparency?: BeaconEvidenceTransparency
+  evidence_bundle?: BeaconEvidenceBundle
   answer_context: string
   raw_web_content_is_untrusted: boolean
+}
+
+export interface BeaconResearchProgressEvent {
+  stage: 'queued' | 'planned' | 'executing' | 'synthesizing' | 'completed' | 'failed'
+  status: 'queued' | 'started' | 'completed' | 'failed'
+  detail: string
+  plan_id?: string
+  intent?: string
+  provider_strategy?: string
+  search_providers?: string[]
+  max_searches?: number
+  max_extracts?: number
+  min_accepted_citations?: number
+  expected_source_types?: string[]
+  source_count?: number
+  claim_count?: number
+  request_id?: string
+  error_type?: string
+}
+
+export interface BeaconBrowserApprovalResponse {
+  request_id: string
+  approval_queue_id: string
+  approval_status: 'pending'
+  preview: {
+    approval_hash_prefix: string
+    allowed_hosts: string[]
+    click_targets?: Array<{
+      selector: string
+      label?: string | null
+      expected_host?: string | null
+    }>
+  }
 }

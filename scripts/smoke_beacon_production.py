@@ -13,10 +13,25 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 DEFAULT_BASE_URL = "https://jarvis-brain.tail40ed36.ts.net:8186"
 DEFAULT_TOKEN_SSH_TARGET = "jarvisbrain@jarvis-brain.tail40ed36.ts.net"
+BROWSER_CLICK_SMOKE_REQUEST = {
+    "urls": ["https://httpbingo.org/links/2/0"],
+    "browser_clicks": [
+        {
+            "selector": 'a[href="/links/2/1"]',
+            "label": "Smoke same-host link",
+            "expected_host": "httpbingo.org",
+        }
+    ],
+    "max_pages": 1,
+    "max_depth": 0,
+    "needs_interaction": True,
+    "sensitivity": "normal",
+    "requester": "beacon_browser_action_deploy_smoke",
+}
 SOURCE_CONNECTOR_SMOKE_SPECS = (
     {
         "data_source_id": "pubmed-eutils",
@@ -64,6 +79,11 @@ def main() -> int:
         "--skip-source-connectors",
         action="store_true",
         default=os.getenv("BEACON_SMOKE_SKIP_SOURCE_CONNECTORS", "0") == "1",
+    )
+    parser.add_argument(
+        "--run-browser-click",
+        action="store_true",
+        default=os.getenv("BEACON_SMOKE_RUN_BROWSER_CLICK", "0") == "1",
     )
     parser.add_argument(
         "--token-ssh-target",
@@ -182,6 +202,21 @@ def main() -> int:
                 )
                 return 9
 
+    if args.run_browser_click:
+        try:
+            results["browser_click"] = _run_browser_click_smoke(
+                base_url,
+                token,
+                approval_token=_approval_token(
+                    profile=args.profile,
+                    base_url=base_url,
+                    token_ssh_target=args.token_ssh_target,
+                ),
+            )
+        except RuntimeError as exc:
+            _emit({"results": results, "error": f"browser click smoke failed: {exc}"})
+            return 10
+
     _emit({"results": results, "status": "passed"})
     return 0
 
@@ -238,6 +273,53 @@ def _local_smoke_token(*, profile: str) -> str:
     return generated
 
 
+def _approval_token(
+    *,
+    profile: str,
+    base_url: str,
+    token_ssh_target: str | None,
+) -> str:
+    token = os.getenv("BEACON_SMOKE_APPROVAL_TOKEN")
+    if token:
+        return token
+
+    if _is_local_base_url(base_url):
+        from scripts.financial_approval_operator import _mint_approval_token
+
+        return _mint_approval_token(profile_id=profile)
+
+    if token_ssh_target:
+        generated = subprocess.check_output(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=no",
+                token_ssh_target,
+                "cd ~/jarvis-alpha && set -a && source ~/jarvis/.secrets && "
+                "set +a && .venv/bin/python -c "
+                + shlex.quote(
+                    "from scripts.financial_approval_operator import "
+                    "_mint_approval_token;"
+                    f"print(_mint_approval_token(profile_id={profile!r}))"
+                ),
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if not generated:
+            raise RuntimeError("target approval token generation returned no token")
+        return generated
+
+    raise RuntimeError(
+        "set BEACON_SMOKE_APPROVAL_TOKEN or BEACON_SMOKE_TOKEN_SSH_TARGET "
+        "for browser click smoke"
+    )
+
+
 def _is_local_base_url(base_url: str) -> bool:
     return (
         "://localhost" in base_url
@@ -252,17 +334,21 @@ def _call_json(
     path: str,
     token: str,
     body: dict[str, object] | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> dict[str, object]:
     data = None if body is None else json.dumps(body).encode("utf-8")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
     request = urllib.request.Request(
         f"{base_url}{path}",
         data=data,
         method=method,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        },
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(
@@ -277,6 +363,89 @@ def _call_json(
     if not isinstance(payload, dict):
         raise RuntimeError(f"{method} {path} returned non-object JSON")
     return payload
+
+
+def _run_browser_click_smoke(
+    base_url: str,
+    token: str,
+    *,
+    approval_token: str,
+) -> dict[str, object]:
+    approval = _call_json(
+        "POST",
+        base_url,
+        "/v1/internet-scout/browser-task/approval-request",
+        token,
+        BROWSER_CLICK_SMOKE_REQUEST,
+    )
+    queue_id = str(approval.get("approval_queue_id") or "")
+    if not queue_id:
+        raise RuntimeError("approval request did not return approval_queue_id")
+
+    _call_json(
+        "POST",
+        base_url,
+        f"/v1/approvals/{queue_id}/decide",
+        token,
+        {"decision": "approved"},
+        extra_headers={"X-Approval-Token": approval_token},
+    )
+    run = _call_json(
+        "POST",
+        base_url,
+        "/v1/internet-scout/browser-task/run-approved",
+        token,
+        {
+            "approval_queue_id": queue_id,
+            "browser_request": BROWSER_CLICK_SMOKE_REQUEST,
+            "max_steps": 5,
+            "require_screenshot": True,
+        },
+    )
+    history = _call_json(
+        "GET",
+        base_url,
+        f"/v1/internet-scout/browser-task/history?limit=50&q={quote(queue_id)}",
+        token,
+    )
+    rows = history.get("history") if isinstance(history.get("history"), list) else []
+    browser_run = next(
+        (
+            row
+            for row in rows
+            if isinstance(row, dict)
+            and row.get("event_type") == "browser_run"
+            and row.get("status") == "succeeded"
+        ),
+        {},
+    )
+    click_seen = any(
+        isinstance(row, dict)
+        and row.get("event_type") == "browser_action"
+        and row.get("action") == "click"
+        and row.get("status") == "succeeded"
+        for row in rows
+    )
+    approval_seen = any(
+        isinstance(row, dict)
+        and row.get("event_type") == "approval_request"
+        and row.get("status") == "queued"
+        for row in rows
+    )
+    action_audit_count = _int(browser_run.get("action_audit_count"))
+    if run.get("status") != "completed":
+        raise RuntimeError("browser run did not complete")
+    if not approval_seen or not browser_run or not click_seen or action_audit_count < 1:
+        raise RuntimeError("browser history did not include approval, run, and click")
+    return {
+        "status": run.get("status"),
+        "approval_queue_id": queue_id,
+        "request_id": run.get("request_id"),
+        "observation_count": len(run.get("observations") or []),
+        "action_audit_count": action_audit_count,
+        "history_count": len(rows),
+        "click_succeeded": True,
+    }
 
 
 def _run_source_connector_smokes(

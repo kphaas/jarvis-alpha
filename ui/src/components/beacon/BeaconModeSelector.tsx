@@ -30,6 +30,11 @@ export function BeaconModeSelector({ value, onChange, isDark }: Props) {
             <span className={`mt-1 block text-xs ${active ? 'opacity-80' : 'opacity-55'}`}>
               {mode.description}
             </span>
+            {active && (
+              <span className="mt-2 block text-[10px] font-mono uppercase opacity-65">
+                {mode.sourcePolicy}
+              </span>
+            )}
           </button>
         )
       })}

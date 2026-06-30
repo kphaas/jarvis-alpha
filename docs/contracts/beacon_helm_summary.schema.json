@@ -260,6 +260,103 @@
       "title": "HelmBeaconCostSummary",
       "type": "object"
     },
+    "HelmBeaconDataSourceItem": {
+      "properties": {
+        "api_base_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Base Url"
+        },
+        "auth_type": {
+          "title": "Auth Type",
+          "type": "string"
+        },
+        "domain": {
+          "title": "Domain",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "last_verified": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Verified"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "on_hold": {
+          "default": false,
+          "title": "On Hold",
+          "type": "boolean"
+        },
+        "pricing": {
+          "title": "Pricing",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "domain",
+        "pricing",
+        "auth_type"
+      ],
+      "title": "HelmBeaconDataSourceItem",
+      "type": "object"
+    },
+    "HelmBeaconDataSourceSummary": {
+      "properties": {
+        "active_count": {
+          "default": 0,
+          "title": "Active Count",
+          "type": "integer"
+        },
+        "data_sources": {
+          "items": {
+            "$ref": "#/$defs/HelmBeaconDataSourceItem"
+          },
+          "title": "Data Sources",
+          "type": "array"
+        },
+        "on_hold_count": {
+          "default": 0,
+          "title": "On Hold Count",
+          "type": "integer"
+        },
+        "on_hold_data_source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "On Hold Data Source Ids",
+          "type": "array"
+        },
+        "registry": {
+          "default": "jarvis-data-sources",
+          "title": "Registry",
+          "type": "string"
+        }
+      },
+      "title": "HelmBeaconDataSourceSummary",
+      "type": "object"
+    },
     "HelmBeaconEvidenceSummary": {
       "properties": {
         "blocked": {
@@ -803,9 +900,88 @@
           "default": 0,
           "title": "Suite Version",
           "type": "integer"
+        },
+        "trend": {
+          "$ref": "#/$defs/HelmBeaconQualityCanaryTrend"
         }
       },
       "title": "HelmBeaconQualityCanarySummary",
+      "type": "object"
+    },
+    "HelmBeaconQualityCanaryTrend": {
+      "properties": {
+        "case_count_delta": {
+          "default": 0,
+          "title": "Case Count Delta",
+          "type": "integer"
+        },
+        "estimated_provider_cost_usd": {
+          "default": 0.0,
+          "title": "Estimated Provider Cost Usd",
+          "type": "number"
+        },
+        "failed_delta": {
+          "default": 0,
+          "title": "Failed Delta",
+          "type": "integer"
+        },
+        "failed_runs": {
+          "default": 0,
+          "title": "Failed Runs",
+          "type": "integer"
+        },
+        "latency_delta_ms": {
+          "default": 0,
+          "title": "Latency Delta Ms",
+          "type": "integer"
+        },
+        "latest_failed": {
+          "default": 0,
+          "title": "Latest Failed",
+          "type": "integer"
+        },
+        "latest_precision": {
+          "default": 0.0,
+          "title": "Latest Precision",
+          "type": "number"
+        },
+        "latest_suite_elapsed_ms": {
+          "default": 0,
+          "title": "Latest Suite Elapsed Ms",
+          "type": "integer"
+        },
+        "pass_rate_percent": {
+          "default": 0,
+          "title": "Pass Rate Percent",
+          "type": "integer"
+        },
+        "passed_delta": {
+          "default": 0,
+          "title": "Passed Delta",
+          "type": "integer"
+        },
+        "passed_runs": {
+          "default": 0,
+          "title": "Passed Runs",
+          "type": "integer"
+        },
+        "precision_delta": {
+          "default": 0.0,
+          "title": "Precision Delta",
+          "type": "number"
+        },
+        "trend": {
+          "default": "unknown",
+          "title": "Trend",
+          "type": "string"
+        },
+        "window_runs": {
+          "default": 0,
+          "title": "Window Runs",
+          "type": "integer"
+        }
+      },
+      "title": "HelmBeaconQualityCanaryTrend",
       "type": "object"
     },
     "HelmBeaconRetentionSummary": {
@@ -1020,6 +1196,9 @@
     },
     "cost": {
       "$ref": "#/$defs/HelmBeaconCostSummary"
+    },
+    "data_sources": {
+      "$ref": "#/$defs/HelmBeaconDataSourceSummary"
     },
     "evidence": {
       "$ref": "#/$defs/HelmBeaconEvidenceSummary"

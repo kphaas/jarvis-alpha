@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -44,6 +45,28 @@ def _request(*, scopes: list[str] | None = None, role: str = "user"):
         ),
         url=SimpleNamespace(path="/v1/internet-scout/research"),
     )
+
+
+def _decode_sse_event(chunk: str) -> dict[str, object]:
+    lines = chunk.strip().splitlines()
+    event = next(
+        line.split(":", 1)[1].strip() for line in lines if line.startswith("event:")
+    )
+    data = next(
+        line.split(":", 1)[1].strip() for line in lines if line.startswith("data:")
+    )
+    return {"event": event, "data": json.loads(data)}
+
+
+def test_internet_scout_stream_failure_detail_is_sanitized():
+    detail = internet_scout._stream_failure_detail(
+        RuntimeError("provider failed with secret-token-value")
+    )
+
+    assert detail == {
+        "detail": "Beacon request failed before completion.",
+        "request_id": None,
+    }
 
 
 class FakeRepo:
@@ -132,7 +155,7 @@ class FakeRepo:
 
 
 class FakeExecutor:
-    async def execute(self, body):
+    async def execute(self, body, *, plan=None):
         source = build_source_reference(
             url="https://public.example.test/report",
             content="Beacon source.",
@@ -154,6 +177,82 @@ class FakeExecutor:
 @asynccontextmanager
 async def fake_rls_connection(request):
     yield object()
+
+
+class FakeHistoryConn:
+    instances: list["FakeHistoryConn"] = []
+    approval_queue_id = uuid4()
+    browser_request_id = uuid4()
+    approval_request_id = uuid4()
+
+    def __init__(self) -> None:
+        self.fetch_calls: list[tuple] = []
+
+    async def fetch(self, query, *args):
+        self.fetch_calls.append((query, *args))
+        return [
+            {
+                "request_id": self.browser_request_id,
+                "event_type": "browser_action",
+                "status": "succeeded",
+                "created_at": datetime(2026, 6, 18, 12, 3, tzinfo=UTC),
+                "selected_tool": "browser_use",
+                "request_status": "succeeded",
+                "risk_tier": "T5",
+                "approval_queue_id": str(self.approval_queue_id),
+                "approval_hash_prefix": "abc123abc123",
+                "observation_count": 0,
+                "screenshot_count": 0,
+                "action_audit_count": 0,
+                "action": "navigate",
+                "host": "public.example.test",
+                "blocked_reason": None,
+                "elapsed_ms": 12,
+            },
+            {
+                "request_id": self.browser_request_id,
+                "event_type": "browser_run",
+                "status": "succeeded",
+                "created_at": datetime(2026, 6, 18, 12, 2, tzinfo=UTC),
+                "selected_tool": "browser_use",
+                "request_status": "succeeded",
+                "risk_tier": "T5",
+                "approval_queue_id": str(self.approval_queue_id),
+                "approval_hash_prefix": None,
+                "observation_count": 1,
+                "screenshot_count": 1,
+                "action_audit_count": 2,
+                "action": None,
+                "host": None,
+                "blocked_reason": None,
+                "elapsed_ms": None,
+            },
+            {
+                "request_id": self.approval_request_id,
+                "event_type": "approval_request",
+                "status": "queued",
+                "created_at": datetime(2026, 6, 18, 12, 1, tzinfo=UTC),
+                "selected_tool": "browser_use",
+                "request_status": "blocked",
+                "risk_tier": "T5",
+                "approval_queue_id": str(self.approval_queue_id),
+                "approval_hash_prefix": "abc123abc123",
+                "observation_count": 0,
+                "screenshot_count": 0,
+                "action_audit_count": 0,
+                "action": None,
+                "host": None,
+                "blocked_reason": None,
+                "elapsed_ms": None,
+            },
+        ]
+
+
+@asynccontextmanager
+async def fake_history_connection(request):
+    conn = FakeHistoryConn()
+    FakeHistoryConn.instances.append(conn)
+    yield conn
 
 
 @pytest.mark.asyncio
@@ -242,6 +341,116 @@ async def test_internet_scout_retention_report_is_report_only(monkeypatch):
 
     assert response.mode == "report_only"
     assert response.old_request_count == 7
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_browser_history_returns_recent_audit_events(
+    monkeypatch,
+):
+    FakeHistoryConn.instances = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_history_connection)
+
+    response = await internet_scout.internet_scout_browser_history(
+        _request(scopes=["internet_scout.read"]),
+        _user_id="ken",
+        limit=99,
+    )
+
+    query, event_type, search, limit, offset = FakeHistoryConn.instances[0].fetch_calls[
+        0
+    ]
+    assert response.count == 3
+    assert response.limit == 50
+    assert response.offset == 0
+    assert response.has_more is False
+    assert event_type is None
+    assert search is None
+    assert limit == 51
+    assert offset == 0
+    assert "alpha_internet_tool_events" in query
+    assert response.history[0].event_type == "browser_action"
+    assert response.history[0].action == "navigate"
+    assert response.history[0].host == "public.example.test"
+    assert response.history[0].elapsed_ms == 12
+    assert response.history[0].approval_queue_id == FakeHistoryConn.approval_queue_id
+    assert response.history[1].event_type == "browser_run"
+    assert response.history[1].observation_count == 1
+    assert response.history[1].screenshot_count == 1
+    assert response.history[1].action_audit_count == 2
+    assert response.history[2].event_type == "approval_request"
+    assert response.history[2].approval_hash_prefix == "abc123abc123"
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_browser_history_reports_more_pages(monkeypatch):
+    FakeHistoryConn.instances = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_history_connection)
+
+    response = await internet_scout.internet_scout_browser_history(
+        _request(scopes=["internet_scout.read"]),
+        _user_id="ken",
+        limit=2,
+    )
+
+    assert response.count == 2
+    assert response.has_more is True
+    assert [item.event_type for item in response.history] == [
+        "browser_action",
+        "browser_run",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_browser_history_passes_filters_to_query(monkeypatch):
+    FakeHistoryConn.instances = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_history_connection)
+
+    response = await internet_scout.internet_scout_browser_history(
+        _request(scopes=["internet_scout.read"]),
+        _user_id="ken",
+        limit=12,
+        offset=12,
+        event_type="browser_action",
+        q="Example.TEST",
+    )
+
+    query, event_type, search, limit, offset = FakeHistoryConn.instances[0].fetch_calls[
+        0
+    ]
+    assert response.offset == 12
+    assert event_type == "browser_action"
+    assert search == "%example.test%"
+    assert limit == 13
+    assert offset == 12
+    assert "$1::text IS NULL OR event.event_type = $1" in query
+    assert "LIKE $2" in query
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_browser_history_rejects_unknown_event_type(monkeypatch):
+    FakeHistoryConn.instances = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_history_connection)
+
+    with pytest.raises(HTTPException) as exc:
+        await internet_scout.internet_scout_browser_history(
+            _request(scopes=["internet_scout.read"]),
+            _user_id="ken",
+            event_type="not_browser_history",
+        )
+
+    assert exc.value.status_code == 400
+    assert FakeHistoryConn.instances == []
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_browser_history_requires_read_scope():
+    with pytest.raises(HTTPException) as exc:
+        await internet_scout.internet_scout_browser_history(
+            _request(),
+            _user_id="ken",
+        )
+
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -338,6 +547,40 @@ async def test_internet_scout_local_llm_tool_returns_citation_envelope(monkeypat
     assert response.citations[0].source_url == "https://public.example.test/report"
     assert "Beacon source." in response.answer_context
     assert FakeRepo.stored
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_local_llm_stream_returns_steps_and_bundle(monkeypatch):
+    FakeRepo.created = []
+    FakeRepo.events = []
+    FakeRepo.stored = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+    monkeypatch.setattr(internet_scout, "InternetScoutExecutor", lambda: FakeExecutor())
+
+    chunks = [
+        chunk
+        async for chunk in internet_scout._stream_local_llm_tool(
+            InternetScoutRequest(query="beacon"),
+            _request(scopes=["internet_scout.research"]),
+        )
+    ]
+    events = [_decode_sse_event(chunk) for chunk in chunks]
+
+    assert [event["event"] for event in events] == [
+        "step",
+        "step",
+        "step",
+        "completed",
+    ]
+    assert events[0]["data"]["stage"] == "planned"
+    assert events[1]["data"]["stage"] == "executing"
+    assert events[2]["data"]["stage"] == "synthesizing"
+    assert events[3]["data"]["evidence_bundle"]["raw_web_content_included"] is False
+    assert (
+        events[3]["data"]["evidence_bundle"]["citations"][0]["source_url"]
+        == "https://public.example.test/report"
+    )
 
 
 @pytest.mark.asyncio
@@ -718,6 +961,11 @@ def test_internet_scout_routes_are_classified():
         "external_call",
         "cost_incurring",
     ]
+    assert classify_route("POST", "/v1/internet-scout/local-llm/tool/stream") == [
+        "write",
+        "external_call",
+        "cost_incurring",
+    ]
     assert classify_route(
         "POST",
         "/v1/internet-scout/consumers/family/local-llm/tool",
@@ -732,6 +980,10 @@ def test_internet_scout_routes_are_classified():
     ) == [
         "write",
         "security_write",
+    ]
+    assert classify_route("GET", "/v1/internet-scout/browser-task/history") == [
+        "read",
+        "security_read",
     ]
     assert classify_route(
         "POST",

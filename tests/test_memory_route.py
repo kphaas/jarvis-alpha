@@ -851,6 +851,17 @@ def test_memory_admin_buddy_sql_casts_actor_parameter() -> None:
     assert "'suppressed_by', $3::text" in source
 
 
+def test_memory_admin_inventory_ignores_archived_semantic_rows() -> None:
+    source = (REPO_ROOT / "brain" / "memory" / "memory.py").read_text()
+
+    assert (
+        source.count(
+            "COALESCE(review_status, 'active') IN ('active', 'pending_review')"
+        )
+        >= 2
+    )
+
+
 @pytest.mark.asyncio
 async def test_forget_memory_uses_topic_or_working(monkeypatch: pytest.MonkeyPatch):
     service = FakeMemoryService()

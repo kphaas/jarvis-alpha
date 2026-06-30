@@ -357,6 +357,37 @@ else:
     fi
   fi
 
+  if [[ "${JARVIS_BEACON_BROWSER_CLICK_SMOKE:-0}" == "1" || "${JARVIS_ALPHA_BEACON_BROWSER_CLICK_SMOKE:-0}" == "1" ]]; then
+    local browser_click_start=$SECONDS
+    local browser_click_out
+    local browser_click_ec
+
+    browser_click_out=$(
+      ALPHA_BASE_URL="$settings_base_url" \
+      BEACON_SMOKE_TOKEN_SSH_TARGET="$BRAIN" \
+        python3 "$REPO_DIR/scripts/smoke_beacon_production.py" --skip-agent --run-browser-click 2>&1
+    )
+    browser_click_ec=$?
+    if [ $browser_click_ec -ne 0 ]; then
+      step_fail "beacon browser click" "failed"
+      echo "$browser_click_out" >&2
+      smoke_failed=1
+    else
+      local browser_click_summary
+      browser_click_summary=$(printf '%s\n' "$browser_click_out" | tail -1 | python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+click = payload.get("results", {}).get("browser_click", {})
+print(f"click={click.get('click_succeeded')}; audit={click.get('action_audit_count')}")
+' 2>/dev/null || true)
+      step_ok "beacon browser click" "${browser_click_summary:-passed}" "$(fmt_s $((SECONDS - browser_click_start)))"
+    fi
+  else
+    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "beacon browser click" "SKIPPED (set JARVIS_BEACON_BROWSER_CLICK_SMOKE=1)" ""
+  fi
+
   if [[ "${JARVIS_SKIP_BEACON_ANSWER_EVAL:-0}" == "1" || "${JARVIS_ALPHA_SKIP_BEACON_ANSWER_EVAL:-0}" == "1" ]]; then
     printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "beacon answer eval" "SKIPPED (JARVIS_SKIP_BEACON_ANSWER_EVAL=1)" ""
   else
@@ -382,6 +413,34 @@ payload = json.loads(sys.stdin.read())
 print(f"{payload.get('passed', 0)} checks passed")
 ' 2>/dev/null || true)
       step_ok "beacon answer eval" "${answer_eval_summary:-passed}" "$(fmt_s $((SECONDS - answer_eval_start)))"
+    fi
+  fi
+
+  if [[ "${JARVIS_SKIP_MEMORY_CONTEXT_EVAL:-0}" == "1" || "${JARVIS_ALPHA_SKIP_MEMORY_CONTEXT_EVAL:-0}" == "1" ]]; then
+    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "memory context eval" "SKIPPED (JARVIS_SKIP_MEMORY_CONTEXT_EVAL=1)" ""
+  else
+    local memory_eval_start=$SECONDS
+    local memory_eval_out
+    local memory_eval_ec
+
+    memory_eval_out=$(
+      cd "$REPO_DIR" && uv run --python 3.12 python scripts/eval_memory_context.py 2>&1
+    )
+    memory_eval_ec=$?
+    if [ $memory_eval_ec -ne 0 ]; then
+      step_fail "memory context eval" "failed"
+      echo "$memory_eval_out" >&2
+      smoke_failed=1
+    else
+      local memory_eval_summary
+      memory_eval_summary=$(printf '%s\n' "$memory_eval_out" | tail -1 | python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+print(f"{payload.get('passed', 0)} checks passed")
+' 2>/dev/null || true)
+      step_ok "memory context eval" "${memory_eval_summary:-passed}" "$(fmt_s $((SECONDS - memory_eval_start)))"
     fi
   fi
 

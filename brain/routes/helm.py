@@ -31,6 +31,10 @@ from brain.services.internet_scout.market_brief import (
     MarketBrief,
     latest_market_brief,
 )
+from brain.registry.data_sources import DataSourceEntry, load_data_source_registry
+from brain.services.internet_scout.source_selection import (
+    BEACON_ON_HOLD_DATA_SOURCE_IDS,
+)
 from jarvis_common.logging_config import get_logger
 
 router = APIRouter(prefix="/v1/helm", tags=["helm"])
@@ -233,6 +237,25 @@ class HelmBeaconCostSummary(BaseModel):
     )
 
 
+class HelmBeaconDataSourceItem(BaseModel):
+    id: str
+    name: str
+    domain: str
+    pricing: str
+    auth_type: str
+    api_base_url: str | None = None
+    last_verified: str | None = None
+    on_hold: bool = False
+
+
+class HelmBeaconDataSourceSummary(BaseModel):
+    registry: str = "jarvis-data-sources"
+    active_count: int = 0
+    on_hold_count: int = 0
+    data_sources: list[HelmBeaconDataSourceItem] = Field(default_factory=list)
+    on_hold_data_source_ids: list[str] = Field(default_factory=list)
+
+
 class HelmBeaconRetentionSummary(BaseModel):
     mode: str
     evidence_retention_days: int
@@ -286,12 +309,32 @@ class HelmBeaconQualityCanaryHistoryItem(BaseModel):
     schedule_status: str = "unknown"
 
 
+class HelmBeaconQualityCanaryTrend(BaseModel):
+    window_runs: int = 0
+    passed_runs: int = 0
+    failed_runs: int = 0
+    pass_rate_percent: int = 0
+    latest_failed: int = 0
+    failed_delta: int = 0
+    passed_delta: int = 0
+    case_count_delta: int = 0
+    latest_precision: float = 0.0
+    precision_delta: float = 0.0
+    latest_suite_elapsed_ms: int = 0
+    latency_delta_ms: int = 0
+    estimated_provider_cost_usd: float = 0.0
+    trend: str = "unknown"
+
+
 class HelmBeaconQualityCanarySummary(HelmBeaconQualityCanaryHistoryItem):
     stale_after_hours: int = 0
     alert: HelmBeaconQualityCanaryAlert = Field(
         default_factory=HelmBeaconQualityCanaryAlert
     )
     history: list[HelmBeaconQualityCanaryHistoryItem] = Field(default_factory=list)
+    trend: HelmBeaconQualityCanaryTrend = Field(
+        default_factory=HelmBeaconQualityCanaryTrend
+    )
 
 
 class HelmBeaconSummary(BaseModel):
@@ -312,6 +355,9 @@ class HelmBeaconSummary(BaseModel):
     approvals: HelmBeaconApprovalSummary
     quality_canary: HelmBeaconQualityCanarySummary = Field(
         default_factory=HelmBeaconQualityCanarySummary
+    )
+    data_sources: HelmBeaconDataSourceSummary = Field(
+        default_factory=HelmBeaconDataSourceSummary
     )
     raw_web_content_is_untrusted: bool = True
 
@@ -428,12 +474,33 @@ def _metadata_int(metadata: Mapping[str, object], key: str) -> int:
     return 0
 
 
+def _metadata_float(metadata: Mapping[str, object], key: str) -> float:
+    value = _metadata_value(metadata, key)
+    if isinstance(value, bool) or value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _metadata_bool(metadata: Mapping[str, object], key: str) -> bool:
     return bool(_metadata_value(metadata, key))
 
 
 def _metadata_str_list(metadata: Mapping[str, object], key: str) -> list[str]:
     value = _metadata_value(metadata, key)
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item)]
+
+
+def _json_str_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if str(item)]
@@ -746,6 +813,7 @@ def _beacon_quality_canary(
         _beacon_quality_canary_history_item(item)
         for item in _metadata_mapping_list(metadata, "quality_canary_history")
     ]
+    trend = _mapping_value(metadata.get("quality_canary_trend"))
     return HelmBeaconQualityCanarySummary(
         status=_metadata_str(quality_canary, "status", "unknown") or "unknown",
         suite=_metadata_str(
@@ -779,6 +847,7 @@ def _beacon_quality_canary(
             severity=_metadata_str(alert, "severity", "warning") or "warning",
         ),
         history=history,
+        trend=_beacon_quality_canary_trend(trend),
     )
 
 
@@ -803,6 +872,30 @@ def _beacon_quality_canary_history_item(
         next_due_at=_metadata_str(metadata, "next_due_at"),
         schedule_status=_metadata_str(metadata, "schedule_status", "unknown")
         or "unknown",
+    )
+
+
+def _beacon_quality_canary_trend(
+    metadata: Mapping[str, object],
+) -> HelmBeaconQualityCanaryTrend:
+    return HelmBeaconQualityCanaryTrend(
+        window_runs=_metadata_int(metadata, "window_runs"),
+        passed_runs=_metadata_int(metadata, "passed_runs"),
+        failed_runs=_metadata_int(metadata, "failed_runs"),
+        pass_rate_percent=_metadata_int(metadata, "pass_rate_percent"),
+        latest_failed=_metadata_int(metadata, "latest_failed"),
+        failed_delta=_metadata_int(metadata, "failed_delta"),
+        passed_delta=_metadata_int(metadata, "passed_delta"),
+        case_count_delta=_metadata_int(metadata, "case_count_delta"),
+        latest_precision=_metadata_float(metadata, "latest_precision"),
+        precision_delta=_metadata_float(metadata, "precision_delta"),
+        latest_suite_elapsed_ms=_metadata_int(metadata, "latest_suite_elapsed_ms"),
+        latency_delta_ms=_metadata_int(metadata, "latency_delta_ms"),
+        estimated_provider_cost_usd=_metadata_float(
+            metadata,
+            "estimated_provider_cost_usd",
+        ),
+        trend=_metadata_str(metadata, "trend", "unknown") or "unknown",
     )
 
 
@@ -876,6 +969,85 @@ async def _beacon_pending_browser_approvals(conn) -> HelmBeaconApprovalSummary:
     )
 
 
+async def _beacon_data_sources(conn) -> HelmBeaconDataSourceSummary:
+    try:
+        rows = await conn.fetch(
+            """
+            SELECT
+                metadata->'manifest'->'egress'->'data_source_ids'
+                    AS data_source_ids,
+                metadata->'on_hold_data_source_ids' AS on_hold_data_source_ids
+              FROM public.alpha_skill_registry
+             WHERE skill_name IN (
+                       'internet_scout.search',
+                       'internet_scout.deep_research'
+                   )
+               AND status = 'active'
+               AND metadata->'manifest'->'egress'->>'provider' = 'beacon'
+             ORDER BY skill_name
+            """
+        )
+    except Exception as exc:
+        logger.warning("helm beacon data-source query unavailable: %s", exc)
+        rows = []
+
+    active_ids: list[str] = []
+    on_hold_ids = list(BEACON_ON_HOLD_DATA_SOURCE_IDS)
+    for row in rows:
+        active_ids.extend(_json_str_list(_row_value(row, "data_source_ids")))
+        on_hold_ids.extend(_json_str_list(_row_value(row, "on_hold_data_source_ids")))
+
+    unique_active_ids = list(dict.fromkeys(active_ids))
+    unique_on_hold_ids = list(dict.fromkeys(on_hold_ids))
+    on_hold_set = set(unique_on_hold_ids)
+
+    try:
+        registry = load_data_source_registry()
+    except Exception as exc:
+        logger.warning("helm beacon data-source registry unavailable: %s", exc)
+        registry = {}
+
+    data_sources = [
+        _beacon_data_source_item(source_id, registry.get(source_id), on_hold=False)
+        for source_id in unique_active_ids
+        if source_id not in on_hold_set
+    ]
+
+    return HelmBeaconDataSourceSummary(
+        active_count=len(data_sources),
+        on_hold_count=len(unique_on_hold_ids),
+        data_sources=data_sources,
+        on_hold_data_source_ids=unique_on_hold_ids,
+    )
+
+
+def _beacon_data_source_item(
+    source_id: str,
+    entry: DataSourceEntry | None,
+    *,
+    on_hold: bool,
+) -> HelmBeaconDataSourceItem:
+    if entry is None:
+        return HelmBeaconDataSourceItem(
+            id=source_id,
+            name=source_id,
+            domain="unknown",
+            pricing="unknown",
+            auth_type="unknown",
+            on_hold=on_hold,
+        )
+    return HelmBeaconDataSourceItem(
+        id=entry.id,
+        name=entry.name,
+        domain=entry.domain,
+        pricing=entry.pricing,
+        auth_type=entry.auth_type,
+        api_base_url=entry.api_base_url,
+        last_verified=entry.last_verified.isoformat(),
+        on_hold=on_hold,
+    )
+
+
 def _unavailable_beacon_summary() -> HelmBeaconSummary:
     return HelmBeaconSummary(
         status="degraded",
@@ -939,6 +1111,7 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
         _mapping_value(web_cache_check.metadata) if web_cache_check is not None else {}
     )
     approvals = await _beacon_pending_browser_approvals(conn)
+    data_sources = await _beacon_data_sources(conn)
 
     return HelmBeaconSummary(
         status=health.status,
@@ -1049,6 +1222,7 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
         ),
         approvals=approvals,
         quality_canary=_beacon_quality_canary(evidence_metadata),
+        data_sources=data_sources,
     )
 
 

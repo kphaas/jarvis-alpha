@@ -33,6 +33,7 @@ def _request(*, scopes: list[str] | None = None, role: str = "user"):
 class FakeGraphConn:
     def __init__(self) -> None:
         self.fetchval_calls: list[tuple[str, tuple[object, ...]]] = []
+        self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
 
     async def fetchval(self, query: str, *args: object) -> dict:
         self.fetchval_calls.append((query, args))
@@ -120,6 +121,12 @@ class FakeGraphConn:
                 "operation": "create_node",
             }
         raise AssertionError(f"unexpected query: {query}")
+
+    async def execute(self, query: str, *args: object) -> str:
+        self.execute_calls.append((query, args))
+        if "alpha_approval_queue" in query:
+            return "UPDATE 1"
+        raise AssertionError(f"unexpected execute: {query}")
 
 
 class FakeGraphError(Exception):
@@ -233,10 +240,12 @@ async def test_memory_graph_propose_requires_write_scope_and_queues(
     conn = FakeGraphConn()
 
     @asynccontextmanager
-    async def context(_request: object):
+    async def context(*, source: str, audit_actor: str):
+        assert source == "http"
+        assert audit_actor == "ken"
         yield conn
 
-    monkeypatch.setattr(memory_graph, "rls_connection", context)
+    monkeypatch.setattr(memory_graph, "platform_admin_connection", context)
     body = memory_graph.MemoryGraphProposalRequest(
         proposed_action="create_node",
         object_type="node",
@@ -256,6 +265,46 @@ async def test_memory_graph_propose_requires_write_scope_and_queues(
     assert response.status == "queued"
     assert response.result["proposal_id"] == str(PROPOSAL_ID)
     assert "propose_memory_graph_write" in conn.fetchval_calls[0][0]
+    assert conn.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_memory_graph_propose_extends_requested_approval_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = FakeGraphConn()
+
+    @asynccontextmanager
+    async def context(*, source: str, audit_actor: str):
+        assert source == "http"
+        assert audit_actor == "ken"
+        yield conn
+
+    monkeypatch.setattr(memory_graph, "platform_admin_connection", context)
+    body = memory_graph.MemoryGraphProposalRequest(
+        proposed_action="create_edge",
+        object_type="edge",
+        payload={
+            "from_node_id": NODE_ID,
+            "to_node_id": "55555555-5555-4555-8555-555555555555",
+            "edge_type": "related_to",
+        },
+        approval_ttl_minutes=120,
+    )
+
+    response = await memory_graph.propose_memory_graph_write(
+        body=body,
+        request=_request(scopes=["memory.write"]),
+    )
+
+    assert response.status == "queued"
+    assert response.result["approval_ttl_minutes"] == 120
+    assert response.result["approval_ttl_extended"] is True
+    assert len(conn.execute_calls) == 1
+    query, args = conn.execute_calls[0]
+    assert "alpha_approval_queue" in query
+    assert "memory_graph_reviewed_write" in query
+    assert args == (str(APPROVAL_ID), "b" * 64, 120)
 
 
 def test_memory_graph_proposal_rejects_invalid_node_payloads() -> None:

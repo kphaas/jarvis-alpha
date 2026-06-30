@@ -11,14 +11,21 @@ from brain.services.internet_scout.browser_runner import (
     BrowserRuntimeUnavailableError,
     BrowserScreenshotStore,
     BrowserTaskRunner,
+    _approved_click_target_snapshot,
     browser_hourly_run_limit,
     browser_max_steps_limit,
     build_browser_sandbox_policy,
     build_browser_task_runner_from_env,
+    classify_disallowed_browser_click_target,
     classify_disallowed_browser_controls,
+)
+from brain.services.internet_scout.browser_approvals import (
+    browser_task_approval_preview,
+    browser_task_parameters_hash,
 )
 from brain.services.internet_scout.evidence import content_hash
 from brain.services.internet_scout.models import (
+    BrowserClickTarget,
     BrowserRunObservation,
     BrowserSandboxPolicy,
     InternetScoutRequest,
@@ -145,6 +152,104 @@ def test_browser_control_classifier_blocks_credentials_before_forms():
         == "browser_forms_blocked"
     )
     assert classify_disallowed_browser_controls([]) is None
+
+
+def test_browser_click_classifier_blocks_cross_host_and_risky_targets():
+    assert (
+        classify_disallowed_browser_click_target(
+            {"tag": "a", "href": "https://other.example.test/path", "text": "More"},
+            allowed_hosts=["public.example.test"],
+        )
+        == "browser_click_cross_host_blocked"
+    )
+    assert (
+        classify_disallowed_browser_click_target(
+            {"tag": "button", "text": "Buy now"},
+            allowed_hosts=["public.example.test"],
+        )
+        == "browser_click_risky_target_blocked"
+    )
+    assert (
+        classify_disallowed_browser_click_target(
+            {"tag": "input", "type": "button", "text": "Continue"},
+            allowed_hosts=["public.example.test"],
+        )
+        == "browser_click_form_control_blocked"
+    )
+    assert (
+        classify_disallowed_browser_click_target(
+            {
+                "tag": "a",
+                "href": "https://public.example.test/menu",
+                "text": "Menu",
+            },
+            allowed_hosts=["public.example.test"],
+        )
+        is None
+    )
+
+
+def test_browser_click_targets_are_covered_by_approval_preview_and_hash():
+    request = InternetScoutRequest(
+        urls=["https://public.example.test/start"],
+        browser_clicks=[{"selector": "a.menu", "label": "Menu"}],
+        tool_hint=InternetTool.BROWSER_USE,
+        needs_interaction=True,
+    )
+    plan = InternetScoutOrchestrator().plan(request)
+
+    preview = browser_task_approval_preview(request, plan.decision)
+
+    assert "click_only" in preview.risk_labels
+    assert "approved_selectors_only" in preview.risk_labels
+    assert any(item["step"] == "click" for item in preview.action_timeline)
+    assert browser_task_parameters_hash(request, plan.decision) != (
+        browser_task_parameters_hash(
+            request.model_copy(update={"browser_clicks": []}), plan.decision
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_approved_click_snapshot_accepts_playwright_first_property():
+    class FakeLocator:
+        @property
+        def first(self):
+            return self
+
+        async def wait_for(self, *, state: str) -> None:
+            assert state == "visible"
+
+        async def evaluate(self, _script: str) -> dict[str, str]:
+            return {
+                "tag": "a",
+                "type": "",
+                "role": "",
+                "name": "",
+                "id": "",
+                "ariaLabel": "",
+                "text": "menu",
+                "href": "https://public.example.test/menu",
+                "contentEditable": "",
+            }
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.locator_obj = FakeLocator()
+
+        def locator(self, selector: str) -> FakeLocator:
+            assert selector == "a.menu"
+            return self.locator_obj
+
+    snapshot = await _approved_click_target_snapshot(
+        FakePage(),
+        click=BrowserClickTarget(
+            selector="a.menu", expected_host="public.example.test"
+        ),
+        sandbox=BrowserSandboxPolicy(allowed_hosts=["public.example.test"]),
+    )
+
+    assert snapshot["href"] == "https://public.example.test/menu"
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from typing import Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import asyncpg
 
@@ -31,6 +31,9 @@ from brain.services.spark_voice_ingest import (
     SparkApprovedSourceRecord,
     load_approved_voice_sources,
 )
+
+# ponytail: keep trusted live send as a tiny adult allow-list until contacts are user-managed.
+SPARK_TRUSTED_LIVE_TARGETS = frozenset({"sweta", "meagan"})
 
 
 class SparkOutboxSendError(RuntimeError):
@@ -148,6 +151,37 @@ async def prepare_approved_spark_imessage_outbox_send(
     )
 
 
+async def prepare_trusted_live_spark_imessage_outbox_send(
+    conn: asyncpg.Connection,
+    *,
+    outbox_id: UUID,
+    actor_sub: str,
+    actor_type: str,
+    crypto: SparkOutboxCrypto,
+    approved_sources: tuple[SparkApprovedSourceRecord, ...] | None = None,
+) -> PreparedSparkOutboxSend:
+    item = await fetch_spark_outbox_item_for_send(conn, outbox_id=outbox_id)
+    if item is None:
+        raise SparkOutboxSendError("spark_outbox_not_found")
+    _validate_trusted_live_sendable(item)
+
+    if item.approval_status == "pending":
+        await _approve_trusted_live_outbox_queue(
+            conn,
+            item=item,
+            actor_sub=actor_sub,
+        )
+
+    return await prepare_approved_spark_imessage_outbox_send(
+        conn,
+        outbox_id=outbox_id,
+        actor_sub=actor_sub,
+        actor_type=actor_type,
+        crypto=crypto,
+        approved_sources=approved_sources,
+    )
+
+
 async def execute_prepared_spark_imessage_send(
     prepared: PreparedSparkOutboxSend,
     *,
@@ -241,6 +275,48 @@ def _validate_sendable(item: SparkOutboxSendItem) -> None:
         raise SparkOutboxSendError("spark_outbox_approval_not_ready")
     if item.approval_parameters_hash != item.approval_row_parameters_hash:
         raise SparkOutboxSendError("spark_outbox_approval_hash_mismatch")
+
+
+def is_trusted_live_spark_target(value: str | None) -> bool:
+    target = (value or "").strip().lower()
+    return bool(target and target in SPARK_TRUSTED_LIVE_TARGETS)
+
+
+def _validate_trusted_live_sendable(item: SparkOutboxSendItem) -> None:
+    if item.channel != "imessage":
+        raise SparkOutboxSendError("spark_outbox_channel_not_imessage")
+    if item.status in {"sent", "cancelled"}:
+        raise SparkOutboxSendError("spark_outbox_already_final")
+    if item.status == "sending":
+        raise SparkOutboxSendError("spark_outbox_send_in_progress")
+    if item.approval_parameters_hash != item.approval_row_parameters_hash:
+        raise SparkOutboxSendError("spark_outbox_approval_hash_mismatch")
+    if item.approval_status not in {"pending", "approved"}:
+        raise SparkOutboxSendError("spark_outbox_approval_not_ready")
+    if not is_trusted_live_spark_target(item.target_label):
+        raise SparkOutboxSendError("spark_outbox_trusted_live_target_not_allowed")
+
+
+async def _approve_trusted_live_outbox_queue(
+    conn: asyncpg.Connection,
+    *,
+    item: SparkOutboxSendItem,
+    actor_sub: str,
+) -> None:
+    try:
+        rows = await conn.fetch(
+            "SELECT * FROM public.decide_approval($1::uuid, $2, $3, $4)",
+            item.approval_queue_id,
+            "approved",
+            actor_sub,
+            uuid4().hex,
+        )
+    except Exception as exc:
+        if "APPROVAL_ALREADY_DECIDED" in str(exc):
+            return
+        raise
+    if not rows:
+        raise SparkOutboxSendError("spark_outbox_trusted_live_approval_failed")
 
 
 def _sha256_text(value: str) -> str:

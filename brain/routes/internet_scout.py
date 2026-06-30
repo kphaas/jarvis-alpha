@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 from brain.db.rls import platform_admin_connection, rls_connection
 from brain.middleware.jwt_auth import require_auth
@@ -40,6 +43,8 @@ from brain.services.internet_scout.models import (
     BrowserActionAuditEvent,
     InternetScoutAgentResponse,
     InternetScoutBrowserApprovalResponse,
+    InternetScoutBrowserHistoryItem,
+    InternetScoutBrowserHistoryResponse,
     InternetScoutBrowserRunRequest,
     InternetScoutBrowserRunResponse,
     InternetScoutConsumerRequest,
@@ -66,6 +71,12 @@ from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
 router = APIRouter(prefix="/v1/internet-scout", tags=["internet-scout"])
+
+BROWSER_HISTORY_EVENT_TYPES = {
+    "approval_request",
+    "browser_run",
+    "browser_action",
+}
 
 
 @router.get("/health", response_model=InternetScoutHealthResponse)
@@ -131,6 +142,24 @@ async def internet_scout_local_llm_tool(
     return build_local_llm_response(stored)
 
 
+@router.post("/local-llm/tool/stream")
+async def internet_scout_local_llm_tool_stream(
+    body: InternetScoutRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> StreamingResponse:
+    """Stream Beacon research lifecycle events before the final citation envelope."""
+    check_scopes(request, "internet_scout.research", "admin")
+    return StreamingResponse(
+        _stream_local_llm_tool(body, request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/agent/run", response_model=InternetScoutAgentResponse)
 async def internet_scout_agent_run(
     body: InternetScoutRequest,
@@ -158,6 +187,97 @@ async def internet_scout_agent_run(
         },
     )
     return response
+
+
+async def _stream_local_llm_tool(
+    body: InternetScoutRequest,
+    request: Request,
+) -> AsyncIterator[str]:
+    plan = InternetScoutOrchestrator().plan(body)
+    yield _sse_event(
+        "step",
+        {
+            "stage": "planned",
+            "status": "completed",
+            "detail": "Research plan prepared.",
+            "plan_id": plan.research.plan_id,
+            "intent": plan.research.intent,
+            "max_searches": plan.research.max_searches,
+            "max_extracts": plan.research.max_extracts,
+            "min_accepted_citations": (
+                plan.research.stop_criteria.min_accepted_citations
+            ),
+            "expected_source_types": plan.research.expected_source_types,
+        },
+    )
+    yield _sse_event(
+        "step",
+        {
+            "stage": "executing",
+            "status": "started",
+            "detail": "Provider route and extract path running.",
+            "provider_strategy": plan.research.provider_strategy,
+            "search_providers": plan.research.search_providers,
+        },
+    )
+    try:
+        stored = await _execute_and_store_research(body, request)
+        yield _sse_event(
+            "step",
+            {
+                "stage": "synthesizing",
+                "status": "started",
+                "detail": "Ranking citations and building evidence bundle.",
+                "source_count": len(stored.evidence.sources),
+                "claim_count": len(stored.evidence.claims),
+            },
+        )
+        response = build_local_llm_response(stored)
+        yield _sse_event(
+            "completed",
+            response.model_dump(mode="json"),
+        )
+    except Exception as exc:
+        logger.warning(
+            "BEACON_LOCAL_LLM_STREAM_FAIL",
+            extra={
+                "event": "BEACON_LOCAL_LLM_STREAM_FAIL",
+                "stage": "failed",
+                "error_type": type(exc).__name__,
+            },
+        )
+        failure_detail = _stream_failure_detail(exc)
+        yield _sse_event(
+            "failed",
+            {
+                "stage": "failed",
+                "status": "failed",
+                "detail": failure_detail["detail"],
+                "error_type": type(exc).__name__,
+                "request_id": failure_detail.get("request_id"),
+            },
+        )
+
+
+def _sse_event(event: str, payload: dict[str, object]) -> str:
+    data = json.dumps(payload, default=str, separators=(",", ":"))
+    return f"event: {event}\ndata: {data}\n\n"
+
+
+def _stream_failure_detail(exc: Exception) -> dict[str, str | None]:
+    if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
+        request_id = exc.detail.get("request_id")
+        error = str(exc.detail.get("error") or "beacon_stream_failed")
+        return {
+            "detail": error,
+            "request_id": str(request_id) if request_id else None,
+        }
+    if isinstance(exc, HTTPException):
+        return {"detail": str(exc.detail)[:240], "request_id": None}
+    return {
+        "detail": "Beacon request failed before completion.",
+        "request_id": None,
+    }
 
 
 @router.post(
@@ -228,7 +348,15 @@ async def _execute_and_store_research(
                 status="started",
             )
 
-        _decision, packet = await InternetScoutExecutor().execute(body)
+        async def web_cache_extract(url: str, query: str | None):
+            async with rls_connection(request) as cache_conn:
+                return await InternetScoutRepository(
+                    cache_conn
+                ).web_cache_extract_response(url=url, query=query)
+
+        executor = InternetScoutExecutor()
+        executor.web_cache_extract = web_cache_extract
+        _decision, packet = await executor.execute(body, plan=plan)
 
         async with rls_connection(request) as conn:
             repo = InternetScoutRepository(conn)
@@ -560,6 +688,143 @@ async def internet_scout_browser_run_approved(
     return result
 
 
+@router.get(
+    "/browser-task/history",
+    response_model=InternetScoutBrowserHistoryResponse,
+)
+async def internet_scout_browser_history(
+    request: Request,
+    _user_id: str = Depends(require_auth),
+    limit: int = 20,
+    offset: int = 0,
+    event_type: str | None = None,
+    q: str | None = None,
+) -> InternetScoutBrowserHistoryResponse:
+    """Return recent Beacon browser approval/run audit events for operator review."""
+    check_scopes(request, "internet_scout.read", "admin")
+    safe_limit = min(max(limit, 1), 50)
+    safe_offset = max(offset, 0)
+    normalized_event_type = event_type or None
+    if normalized_event_type and len(normalized_event_type) > 64:
+        raise HTTPException(
+            status_code=400, detail="Invalid browser history event type"
+        )
+    if (
+        normalized_event_type
+        and normalized_event_type not in BROWSER_HISTORY_EVENT_TYPES
+    ):
+        raise HTTPException(
+            status_code=400, detail="Invalid browser history event type"
+        )
+    if q and len(q) > 120:
+        raise HTTPException(
+            status_code=400, detail="Browser history search is too long"
+        )
+    search = q.strip().lower() if q else ""
+    search_pattern = f"%{search}%" if search else None
+    async with rls_connection(request) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                event.request_id,
+                event.event_type,
+                event.status,
+                event.created_at,
+                request.selected_tool,
+                request.status AS request_status,
+                request.policy_tier AS risk_tier,
+                event.metadata->>'approval_queue_id' AS approval_queue_id,
+                event.metadata->>'approval_hash_prefix' AS approval_hash_prefix,
+                CASE
+                    WHEN event.metadata->>'observation_count' ~ '^[0-9]+$'
+                    THEN (event.metadata->>'observation_count')::integer
+                    ELSE 0
+                END AS observation_count,
+                CASE
+                    WHEN event.metadata->>'screenshot_count' ~ '^[0-9]+$'
+                    THEN (event.metadata->>'screenshot_count')::integer
+                    ELSE 0
+                END AS screenshot_count,
+                CASE
+                    WHEN event.metadata->>'action_audit_count' ~ '^[0-9]+$'
+                    THEN (event.metadata->>'action_audit_count')::integer
+                    ELSE 0
+                END AS action_audit_count,
+                event.metadata->>'action' AS action,
+                event.metadata->>'host' AS host,
+                event.metadata->>'blocked_reason' AS blocked_reason,
+                CASE
+                    WHEN event.metadata->>'elapsed_ms' ~ '^[0-9]+$'
+                    THEN (event.metadata->>'elapsed_ms')::integer
+                    ELSE NULL
+                END AS elapsed_ms
+            FROM public.alpha_internet_tool_events AS event
+            JOIN public.alpha_internet_requests AS request
+              ON request.id = event.request_id
+            WHERE event.tool = 'browser_use'
+              AND event.event_type IN (
+                  'approval_request',
+                  'browser_run',
+                  'browser_action'
+              )
+              AND ($1::text IS NULL OR event.event_type = $1)
+              AND (
+                  $2::text IS NULL
+                  OR lower(
+                      event.request_id::text || ' ' ||
+                      event.event_type || ' ' ||
+                      event.status || ' ' ||
+                      request.status || ' ' ||
+                      COALESCE(request.policy_tier::text, '') || ' ' ||
+                      COALESCE(event.metadata->>'approval_queue_id', '') || ' ' ||
+                      COALESCE(event.metadata->>'approval_hash_prefix', '') || ' ' ||
+                      COALESCE(event.metadata->>'action', '') || ' ' ||
+                      COALESCE(event.metadata->>'host', '') || ' ' ||
+                      COALESCE(event.metadata->>'blocked_reason', '')
+                  ) LIKE $2
+              )
+            ORDER BY event.created_at DESC, event.id DESC
+            LIMIT $3
+            OFFSET $4
+            """,
+            normalized_event_type,
+            search_pattern,
+            safe_limit + 1,
+            safe_offset,
+        )
+    page_rows = rows[:safe_limit]
+    history = [
+        InternetScoutBrowserHistoryItem(
+            request_id=row["request_id"],
+            approval_queue_id=_optional_uuid(row["approval_queue_id"]),
+            event_type=row["event_type"],
+            status=row["status"],
+            created_at=row["created_at"],
+            selected_tool=row["selected_tool"],
+            request_status=row["request_status"],
+            risk_tier=row["risk_tier"],
+            approval_hash_prefix=row["approval_hash_prefix"],
+            observation_count=int(row["observation_count"] or 0),
+            screenshot_count=int(row["screenshot_count"] or 0),
+            action_audit_count=int(row["action_audit_count"] or 0),
+            action=row["action"],
+            host=row["host"],
+            blocked_reason=row["blocked_reason"],
+            elapsed_ms=(
+                int(row["elapsed_ms"]) if row["elapsed_ms"] is not None else None
+            ),
+        )
+        for row in page_rows
+    ]
+    return InternetScoutBrowserHistoryResponse(
+        history=history,
+        count=len(history),
+        limit=safe_limit,
+        offset=safe_offset,
+        has_more=len(rows) > safe_limit,
+    )
+
+
 @router.get("/requests/{request_id}", response_model=InternetScoutStoredResponse)
 async def internet_scout_request(
     request_id: UUID,
@@ -638,3 +903,12 @@ def _approval_actor_type(request: Request) -> str:
     if actor_type not in {"user", "service", "agent"}:
         return "user"
     return actor_type
+
+
+def _optional_uuid(value: object) -> UUID | None:
+    if value is None:
+        return None
+    try:
+        return UUID(str(value))
+    except ValueError:
+        return None

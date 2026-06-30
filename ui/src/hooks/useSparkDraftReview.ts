@@ -211,6 +211,8 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
             approval_ref_hash: draftMutation.data!.approval_ref_hash,
             source_reference_hash: draftMutation.data!.source_reference_hash,
             chat_guid_hash: draftMutation.data!.chat_guid_hash,
+            draft_text_override:
+              feedbackLabel === "voice_rewrite" ? draftText.trim() || null : null,
           };
           return apiJson<SparkIMessageDraftFeedbackResponse>(
             "/v1/spark/drafts/imessage/feedback",
@@ -246,10 +248,26 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     },
   });
 
+  const trustedLiveSendMutation = useMutation({
+    mutationFn: (outboxId: string) =>
+      apiJson<SparkIMessageApprovedSendResponse>(
+        `/v1/spark/drafts/imessage/outbox/${outboxId}/trusted-live-send`,
+        {
+          method: "POST",
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["spark", "imessage-outbox", principalId],
+      });
+    },
+  });
+
   function generateDraft() {
     approvalMutation.reset();
     feedbackMutation.reset();
     approvedSendMutation.reset();
+    trustedLiveSendMutation.reset();
     setSelectedFeedbackLabels([]);
     setLastSubmittedFeedbackLabels([]);
     draftMutation.mutate(
@@ -269,6 +287,7 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     }
     approvalMutation.reset();
     approvedSendMutation.reset();
+    trustedLiveSendMutation.reset();
     await feedbackMutation.mutateAsync(selectedFeedbackLabels);
     draftMutation.mutate(
       baseRequest(
@@ -285,6 +304,7 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     approvalMutation.reset();
     feedbackMutation.reset();
     approvedSendMutation.reset();
+    trustedLiveSendMutation.reset();
     comparisonMutation.mutate();
   }
 
@@ -307,7 +327,7 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
       if (current.includes(feedbackLabel)) {
         return current.filter((item) => item !== feedbackLabel);
       }
-      if (current.length >= 2) {
+      if (current.length >= 3) {
         return current;
       }
       return [...current, feedbackLabel];
@@ -322,9 +342,21 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     approvedSendMutation.mutate(resolvedOutboxId);
   }
 
+  function sendTrustedLiveOutbox(outboxId?: string | null) {
+    const resolvedOutboxId = outboxId ?? approvalMutation.data?.outbox_id;
+    if (!resolvedOutboxId) {
+      throw new Error("no_outbox_for_send");
+    }
+    trustedLiveSendMutation.mutate(resolvedOutboxId);
+  }
+
   function hasSendableOutbox(outboxId?: string | null) {
     const resolvedOutboxId = outboxId ?? approvalMutation.data?.outbox_id;
-    return Boolean(resolvedOutboxId) && !approvedSendMutation.isPending;
+    return (
+      Boolean(resolvedOutboxId) &&
+      !approvedSendMutation.isPending &&
+      !trustedLiveSendMutation.isPending
+    );
   }
 
   function resetDraftSurface() {
@@ -337,6 +369,7 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     approvalMutation.reset();
     feedbackMutation.reset();
     approvedSendMutation.reset();
+    trustedLiveSendMutation.reset();
   }
 
   return {
@@ -378,11 +411,17 @@ export function useSparkDraftReview(principalId = "ken", approvalId: string | nu
     approvedSendLoading: approvedSendMutation.isPending,
     approvedSendError: approvedSendMutation.error,
     sendApprovedOutbox,
+    trustedLiveSend: trustedLiveSendMutation.data ?? null,
+    trustedLiveSendLoading: trustedLiveSendMutation.isPending,
+    trustedLiveSendError: trustedLiveSendMutation.error,
+    sendTrustedLiveOutbox,
     hasSendableOutbox,
     canSendApprovedOutbox:
-      Boolean(approvalMutation.data?.outbox_id) && !approvedSendMutation.isPending,
+      Boolean(approvalMutation.data?.outbox_id) &&
+      !approvedSendMutation.isPending &&
+      !trustedLiveSendMutation.isPending,
     resetDraftSurface,
-    canSelectMoreFeedback: selectedFeedbackLabels.length < 2,
+    canSelectMoreFeedback: selectedFeedbackLabels.length < 3,
     feedbackRecorded:
       lastSubmittedFeedbackLabels.length > 0 &&
       Boolean(feedbackMutation.data?.responses.every((item) => item.feedback_recorded)),
