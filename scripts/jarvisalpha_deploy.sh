@@ -320,6 +320,42 @@ print(f"{len(passed)} checks passed")
     fi
   fi
 
+  if [[ "${JARVIS_SKIP_MEMORY_ASK_SMOKE:-0}" == "1" || "${JARVIS_ALPHA_SKIP_MEMORY_ASK_SMOKE:-0}" == "1" ]]; then
+    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "memory ask smoke" "SKIPPED (JARVIS_SKIP_MEMORY_ASK_SMOKE=1)" ""
+  else
+    local memory_ask_start=$SECONDS
+    local memory_ask_out
+    local memory_ask_ec
+
+    memory_ask_out=$(
+      HELM_MEMORY_ASK_SMOKE_BASE_URL="$settings_base_url" \
+      HELM_MEMORY_ASK_SMOKE_TOKEN_SSH_TARGET="$BRAIN" \
+        python3 "$REPO_DIR/scripts/smoke_helm_memory_ask_session.py" 2>&1
+    )
+    memory_ask_ec=$?
+    if [ $memory_ask_ec -ne 0 ]; then
+      step_fail "memory ask smoke" "failed"
+      echo "$memory_ask_out" >&2
+      smoke_failed=1
+    else
+      local memory_ask_summary
+      memory_ask_summary=$(printf '%s\n' "$memory_ask_out" | tail -1 | python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+checks = payload.get("checks", {})
+passed = [
+    name
+    for name, check in checks.items()
+    if check is True
+]
+print(f"{len(passed)} checks passed")
+' 2>/dev/null || true)
+      step_ok "memory ask smoke" "${memory_ask_summary:-passed}" "$(fmt_s $((SECONDS - memory_ask_start)))"
+    fi
+  fi
+
   if [[ "${JARVIS_SKIP_BEACON_SMOKE:-0}" == "1" || "${JARVIS_ALPHA_SKIP_BEACON_SMOKE:-0}" == "1" ]]; then
     printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "beacon smoke" "SKIPPED (JARVIS_SKIP_BEACON_SMOKE=1)" ""
   else

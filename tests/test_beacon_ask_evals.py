@@ -331,6 +331,72 @@ def test_eval_sports_schedule_without_beacon_short_circuits_stale_answer() -> No
     assert "3 PM" not in response
 
 
+def test_eval_current_profile_memory_prefers_memory_over_web_suggestion() -> None:
+    query = (
+        "What current Ken career/profile facts are in memory? "
+        "Answer in 3 short bullets and label anything old as historical."
+    )
+    suggestion = suggest_web_for_chat(
+        query=query,
+        internet_mode="none",
+        sensitivity="normal",
+    )
+
+    assert suggestion is not None
+    assert suggestion.reason == "current_information_likely"
+    assert chat._should_short_circuit_web_suggestion(suggestion) is True
+    assert (
+        chat._should_prefer_memory_over_web_suggestion(
+            user_msg=query,
+            memory_context="[ALWAYS KNOWN]\n- Ken has approved career facts.",
+            web_suggestion=suggestion,
+            internet_context=None,
+        )
+        is True
+    )
+
+
+def test_eval_public_current_fact_still_uses_web_boundary() -> None:
+    query = "Who is the current CEO of OpenAI?"
+    suggestion = suggest_web_for_chat(
+        query=query,
+        internet_mode="none",
+        sensitivity="normal",
+    )
+
+    assert suggestion is not None
+    assert suggestion.reason == "current_information_likely"
+    assert (
+        chat._should_prefer_memory_over_web_suggestion(
+            user_msg=query,
+            memory_context="[ALWAYS KNOWN]\n- Ken has approved career facts.",
+            web_suggestion=suggestion,
+            internet_context=None,
+        )
+        is False
+    )
+
+
+def test_eval_explicit_web_profile_query_keeps_web_suggestion() -> None:
+    query = "Search the web for current Ken career/profile facts."
+    suggestion = suggest_web_for_chat(
+        query=query,
+        internet_mode="none",
+        sensitivity="normal",
+    )
+
+    assert suggestion is not None
+    assert (
+        chat._should_prefer_memory_over_web_suggestion(
+            user_msg=query,
+            memory_context="[ALWAYS KNOWN]\n- Ken has approved career facts.",
+            web_suggestion=suggestion,
+            internet_context=None,
+        )
+        is False
+    )
+
+
 def test_eval_avatar_web_howto_is_self_query_not_stale_fact() -> None:
     query = "In avatar mode, how do I make you search the internet?"
     suggestion = suggest_web_for_chat(
