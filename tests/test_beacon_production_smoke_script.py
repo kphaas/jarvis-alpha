@@ -194,6 +194,79 @@ def test_source_connector_smoke_verifies_expected_citation_host(monkeypatch):
     ]
 
 
+def test_crawler_smoke_checks_four_endpoints_and_health(monkeypatch):
+    calls = []
+
+    def fake_call_json(method, base_url, path, token, body=None):
+        calls.append((method, path, body))
+        if path == "/v1/internet-scout/crawler/scrape":
+            return {
+                "request_id": "scrape-1",
+                "canonical_url": "https://example.com/",
+                "host": "example.com",
+                "text": "Example Domain",
+                "content_hash": "a" * 64,
+            }
+        if path in {
+            "/v1/internet-scout/crawler/map",
+            "/v1/internet-scout/crawler/crawl",
+        }:
+            return {
+                "request_id": path.rsplit("/", 1)[-1] + "-1",
+                "seed_url": "https://example.com/",
+                "seed_host": "example.com",
+                "page_count": 1,
+                "link_count": 0,
+                "links": [],
+            }
+        if path == "/v1/internet-scout/crawler/extract":
+            return {
+                "request_id": "extract-1",
+                "canonical_url": "https://example.com/",
+                "host": "example.com",
+                "fields": [{"field": "domain", "found": True}],
+            }
+        if path == "/v1/internet-scout/health":
+            return {
+                "checks": {
+                    "crawler": {
+                        "status": "ok",
+                        "metadata": {
+                            "request_count": 4,
+                            "failed_request_count": 0,
+                            "blocked_host_count": 0,
+                        },
+                    }
+                }
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(smoke_beacon_production, "_call_json", fake_call_json)
+
+    result = smoke_beacon_production._run_crawler_smoke(
+        "https://alpha.example.test",
+        "token",
+    )
+
+    assert result["health_status"] == "ok"
+    assert result["failed_request_count"] == 0
+    assert [item["name"] for item in result["checks"]] == [
+        "scrape",
+        "map",
+        "crawl",
+        "extract",
+    ]
+    assert [call[1] for call in calls] == [
+        "/v1/internet-scout/crawler/scrape",
+        "/v1/internet-scout/crawler/map",
+        "/v1/internet-scout/crawler/crawl",
+        "/v1/internet-scout/crawler/extract",
+        "/v1/internet-scout/health",
+    ]
+    assert calls[0][2]["max_bytes"] == 200_000
+    assert calls[1][2]["max_pages"] == 1
+
+
 def test_browser_click_smoke_approves_runs_and_checks_history(monkeypatch):
     calls = []
 
