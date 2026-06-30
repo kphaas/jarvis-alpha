@@ -24,6 +24,7 @@ from brain.services.spark_memory_grounding import (
 from brain.services.spark_personality_memory import (
     fetch_personality_memory,
     personality_memory_context,
+    save_personality_memory,
 )
 from brain.services.spark_voice_ingest import SparkVoiceIngestError
 
@@ -94,6 +95,16 @@ class EngagementScoutOutcome:
     skipped_count: int
     reason: str
     item_ids: tuple[UUID, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LinkedInMetricOutcome:
+    metric_id: UUID
+    variant_id: UUID
+    engagement_total: int
+    engagement_rate: float
+    spark_memory_saved: bool
+    spark_memory_content: str | None
 
 
 def clean_social_topic(topic: str) -> str:
@@ -204,6 +215,60 @@ def linkedin_engagement_slots_due(isodow: int) -> int:
     if isodow < 5:
         return 2
     return 3
+
+
+def linkedin_reply_style_from_flags(
+    flags: list[str] | tuple[str, ...],
+) -> SocialReplyStyle:
+    if "reply_style_warm" in flags:
+        return "warm"
+    if "reply_style_practical" in flags:
+        return "practical"
+    return "strong_short"
+
+
+def linkedin_metric_engagement_total(
+    *,
+    reactions: int,
+    comments: int,
+    reposts: int,
+    profile_clicks: int,
+) -> int:
+    return (
+        max(0, reactions) + max(0, comments) + max(0, reposts) + max(0, profile_clicks)
+    )
+
+
+def linkedin_metric_engagement_rate(
+    *, engagement_total: int, impressions: int
+) -> float:
+    if impressions <= 0:
+        return 0.0
+    return round(engagement_total / impressions, 4)
+
+
+def linkedin_metric_memory_content(
+    *,
+    topic: str,
+    draft_kind: SocialDraftKind,
+    reply_style: SocialReplyStyle,
+    engagement_total: int,
+    impressions: int,
+    engagement_rate: float,
+) -> str | None:
+    if engagement_total < 3 and engagement_rate < 0.02:
+        return None
+    clean_topic = clean_social_topic(topic)[:140]
+    rate = f"{engagement_rate:.1%}" if impressions > 0 else "unmeasured reach"
+    if draft_kind == "reply":
+        return (
+            f"LinkedIn replies in {reply_style.replace('_', ' ')} style worked for "
+            f"{clean_topic}; result was {engagement_total} engagements at {rate}."
+        )[:500]
+    return (
+        f"LinkedIn posts on {clean_topic} worked; result was "
+        f"{engagement_total} engagements at {rate}. Favor this topic pattern."
+    )[:500]
 
 
 def linkedin_target_scout_queries(
@@ -574,6 +639,274 @@ async def draft_linkedin_engagement_replies_if_due(
         tuple(item_ids),
         tuple(variant_ids),
     )
+
+
+async def record_linkedin_metric_snapshot(
+    conn: asyncpg.Connection,
+    *,
+    variant_id: UUID,
+    actor_sub: str,
+    actor_type: str,
+    engagement_item_id: UUID | None = None,
+    metric_source: Literal["manual", "linkedin_api"] = "manual",
+    impressions: int = 0,
+    reactions: int = 0,
+    comments: int = 0,
+    reposts: int = 0,
+    profile_clicks: int = 0,
+    captured_on: date | None = None,
+    notes: str | None = None,
+) -> LinkedInMetricOutcome:
+    engagement_total = linkedin_metric_engagement_total(
+        reactions=reactions,
+        comments=comments,
+        reposts=reposts,
+        profile_clicks=profile_clicks,
+    )
+    engagement_rate = linkedin_metric_engagement_rate(
+        engagement_total=engagement_total,
+        impressions=impressions,
+    )
+    async with conn.transaction():
+        draft = await conn.fetchrow(
+            """
+            SELECT v.id, v.content_hash, v.safety_flags, r.topic, r.draft_kind
+            FROM public.alpha_herald_social_draft_variants v
+            JOIN public.alpha_herald_social_draft_requests r
+              ON r.id = v.request_id
+            WHERE v.id = $1
+              AND v.platform = 'linkedin'
+            """,
+            variant_id,
+        )
+        if draft is None:
+            raise ValueError("linkedin_metric_variant_not_found")
+        metric_id = await conn.fetchval(
+            """
+            INSERT INTO public.alpha_herald_social_metric_snapshots (
+                variant_id, engagement_item_id, metric_source, impressions,
+                reactions, comments, reposts, profile_clicks, captured_on,
+                recorded_by, notes
+            )
+            VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8,
+                COALESCE($9, current_date), $10, $11
+            )
+            RETURNING id
+            """,
+            variant_id,
+            engagement_item_id,
+            metric_source,
+            impressions,
+            reactions,
+            comments,
+            reposts,
+            profile_clicks,
+            captured_on,
+            actor_sub,
+            notes.strip() if notes else None,
+        )
+        await record_herald_interaction(
+            conn,
+            channel="linkedin",
+            interaction_kind="metric",
+            direction="internal",
+            lifecycle_event="metric_recorded",
+            status="recorded",
+            primary_ref_type="social_metric_snapshot",
+            primary_ref_id=metric_id,
+            secondary_ref_type="social_draft_variant",
+            secondary_ref_id=variant_id,
+            actor_sub=actor_sub,
+            actor_type=actor_type,
+            event_metadata={
+                "metric_source": metric_source,
+                "engagement_total": engagement_total,
+                "engagement_rate": engagement_rate,
+            },
+        )
+
+    reply_style = linkedin_reply_style_from_flags(list(draft["safety_flags"] or []))
+    memory = linkedin_metric_memory_content(
+        topic=str(draft["topic"]),
+        draft_kind=str(draft["draft_kind"]),  # type: ignore[arg-type]
+        reply_style=reply_style,
+        engagement_total=engagement_total,
+        impressions=impressions,
+        engagement_rate=engagement_rate,
+    )
+    spark_saved = False
+    if memory:
+        try:
+            async with conn.transaction():
+                result = await save_personality_memory(
+                    conn,
+                    principal_id=os.environ.get("HERALD_SPARK_PRINCIPAL_ID", "ken"),
+                    kind="preference",
+                    content=memory,
+                    source="spark_feedback",
+                    evidence_ref_hash=str(draft["content_hash"]),
+                    approved_by=actor_sub,
+                    importance_score=0.72,
+                )
+                spark_saved = bool(result.get("saved"))
+                if spark_saved:
+                    await record_herald_interaction(
+                        conn,
+                        channel="linkedin",
+                        interaction_kind="metric",
+                        direction="internal",
+                        lifecycle_event="metric_spark_memory_saved",
+                        status="saved",
+                        primary_ref_type="social_metric_snapshot",
+                        primary_ref_id=metric_id,
+                        secondary_ref_type="social_draft_variant",
+                        secondary_ref_id=variant_id,
+                        actor_sub=actor_sub,
+                        actor_type=actor_type,
+                        event_metadata={"memory_kind": "preference"},
+                    )
+        except Exception:
+            spark_saved = False
+
+    return LinkedInMetricOutcome(
+        metric_id=metric_id,
+        variant_id=variant_id,
+        engagement_total=engagement_total,
+        engagement_rate=engagement_rate,
+        spark_memory_saved=spark_saved,
+        spark_memory_content=memory if spark_saved else None,
+    )
+
+
+async def load_linkedin_operator_dashboard(
+    conn: asyncpg.Connection,
+) -> dict[str, object]:
+    cadence = await conn.fetchrow(
+        """
+        SELECT current_date AS today,
+               max(v.published_at) FILTER (
+                   WHERE v.platform = 'linkedin'
+                     AND v.publish_status IN ('manual_published', 'linkedin_published')
+               ) AS last_published_at,
+               count(*) FILTER (
+                   WHERE v.platform = 'linkedin'
+                     AND v.status = 'needs_review'
+               )::int AS approval_backlog,
+               count(*) FILTER (
+                   WHERE v.platform = 'linkedin'
+                     AND v.status IN ('needs_review', 'approved')
+                     AND v.publish_status NOT IN ('manual_published', 'linkedin_published')
+                     AND r.campaign = 'linkedin-weekly-brand'
+               )::int AS active_weekly_drafts
+        FROM public.alpha_herald_social_draft_variants v
+        JOIN public.alpha_herald_social_draft_requests r
+          ON r.id = v.request_id
+        """
+    )
+    created_comments = await conn.fetchval(
+        """
+        SELECT count(*)::int
+        FROM public.alpha_herald_social_draft_variants v
+        JOIN public.alpha_herald_social_draft_requests r
+          ON r.id = v.request_id
+        WHERE r.campaign = 'linkedin-engagement-inbox'
+          AND r.draft_kind = 'reply'
+          AND v.platform = 'linkedin'
+          AND v.created_at >= date_trunc('week', now())
+          AND (
+              v.status IN ('needs_review', 'approved')
+              OR v.publish_status IN ('manual_published', 'linkedin_published')
+          )
+        """
+    )
+    isodow = int(await conn.fetchval("SELECT EXTRACT(ISODOW FROM current_date)::int"))
+    targets_ready = int(
+        await conn.fetchval(
+            """
+            SELECT count(*)::int
+            FROM public.alpha_herald_social_engagement_items
+            WHERE status = 'needs_reply'
+            """
+        )
+        or 0
+    )
+    active_thought_leaders = int(
+        await conn.fetchval(
+            """
+            SELECT count(*)::int
+            FROM public.alpha_herald_thought_leader_targets
+            WHERE status = 'active'
+            """
+        )
+        or 0
+    )
+    metric_snapshots = int(
+        await conn.fetchval(
+            """
+            SELECT count(*)::int
+            FROM public.alpha_herald_social_metric_snapshots
+            WHERE created_at >= now() - interval '30 days'
+            """
+        )
+        or 0
+    )
+    best_topic = await conn.fetchval(
+        """
+        SELECT r.topic
+        FROM public.alpha_herald_social_metric_snapshots m
+        JOIN public.alpha_herald_social_draft_variants v ON v.id = m.variant_id
+        JOIN public.alpha_herald_social_draft_requests r ON r.id = v.request_id
+        GROUP BY r.topic
+        ORDER BY
+          CASE
+            WHEN sum(m.impressions) > 0
+            THEN (
+              sum(m.reactions + m.comments + m.reposts + m.profile_clicks)::float
+              / sum(m.impressions)
+            )
+            ELSE sum(m.reactions + m.comments + m.reposts + m.profile_clicks)::float
+          END DESC,
+          max(m.created_at) DESC
+        LIMIT 1
+        """
+    )
+    best_reply_style = await conn.fetchval(
+        """
+        SELECT CASE
+                 WHEN 'reply_style_warm' = ANY(v.safety_flags) THEN 'warm'
+                 WHEN 'reply_style_practical' = ANY(v.safety_flags) THEN 'practical'
+                 ELSE 'strong_short'
+               END AS reply_style
+        FROM public.alpha_herald_social_metric_snapshots m
+        JOIN public.alpha_herald_social_draft_variants v ON v.id = m.variant_id
+        JOIN public.alpha_herald_social_draft_requests r ON r.id = v.request_id
+        WHERE r.draft_kind = 'reply'
+        GROUP BY reply_style
+        ORDER BY sum(m.reactions + m.comments + m.reposts + m.profile_clicks) DESC,
+                 max(m.created_at) DESC
+        LIMIT 1
+        """
+    )
+    today = cadence["today"]
+    last_published_at = cadence["last_published_at"]
+    post_due = bool(cadence["active_weekly_drafts"] == 0)
+    if last_published_at is not None:
+        post_due = post_due and (today - last_published_at.date()).days >= 7
+    comments_due = max(
+        0,
+        min(3, linkedin_engagement_slots_due(isodow)) - int(created_comments or 0),
+    )
+    return {
+        "post_due": post_due,
+        "comments_due": comments_due,
+        "best_topic": best_topic or linkedin_weekly_topic(today),
+        "best_reply_style": best_reply_style or "strong_short",
+        "targets_ready": targets_ready,
+        "approval_backlog": int(cadence["approval_backlog"] or 0),
+        "active_thought_leaders": active_thought_leaders,
+        "metric_snapshots_30d": metric_snapshots,
+    }
 
 
 async def scout_linkedin_engagement_targets(

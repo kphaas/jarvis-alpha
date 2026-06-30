@@ -245,6 +245,48 @@ interface LinkedInScoutResponse {
   item_ids: string[]
 }
 
+interface LinkedInOperatorDashboard {
+  post_due: boolean
+  comments_due: number
+  best_topic: string
+  best_reply_style: 'strong_short' | 'practical' | 'warm'
+  targets_ready: number
+  approval_backlog: number
+  active_thought_leaders: number
+  metric_snapshots_30d: number
+}
+
+interface LinkedInMetricResponse {
+  engagement_total: number
+  engagement_rate: number
+  spark_memory_saved: boolean
+}
+
+interface ThoughtLeaderTarget {
+  id: string
+  person_name: string
+  company_name: string | null
+  role_title: string | null
+  profile_url: string | null
+  topics: string[]
+  priority: number
+  relationship_notes: string | null
+  last_interaction_at: string | null
+  status: 'active' | 'paused' | 'archived'
+}
+
+interface ThoughtLeaderTargetList {
+  targets: ThoughtLeaderTarget[]
+}
+
+interface MetricDraftInput {
+  impressions: string
+  reactions: string
+  comments: string
+  reposts: string
+  profile_clicks: string
+}
+
 const ALL_MAILBOXES = 'all'
 
 function timeText(value: string | null) {
@@ -287,6 +329,17 @@ function replyStyleLabel(flags: string[]) {
   return null
 }
 
+function replyStyleText(value?: string | null) {
+  if (value === 'strong_short') return 'Strong short'
+  if (value === 'warm') return 'Warm'
+  return 'Practical'
+}
+
+function metricNumber(value: string | undefined) {
+  const parsed = Number.parseInt(value || '0', 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
 function Pill({ label }: { label: string }) {
   return (
     <span className={`rounded-md border px-2 py-1 text-[10px] font-mono uppercase ${classTone(label)}`}>
@@ -322,16 +375,23 @@ export default function Herald() {
   const [socialDrafts, setSocialDrafts] = useState<SocialDraft[]>([])
   const [linkedinCadence, setLinkedinCadence] = useState<LinkedInCadence | null>(null)
   const [linkedinReadPlan, setLinkedinReadPlan] = useState<LinkedInReadPlan | null>(null)
+  const [linkedinOperatorDashboard, setLinkedinOperatorDashboard] = useState<LinkedInOperatorDashboard | null>(null)
   const [engagementItems, setEngagementItems] = useState<SocialEngagement[]>([])
+  const [thoughtLeaders, setThoughtLeaders] = useState<ThoughtLeaderTarget[]>([])
   const [socialTopic, setSocialTopic] = useState('')
   const [socialSelectedPlatforms, setSocialSelectedPlatforms] = useState<SocialPlatformKey[]>(['x', 'linkedin'])
   const [engagementAuthor, setEngagementAuthor] = useState('')
   const [engagementUrl, setEngagementUrl] = useState('')
   const [engagementContext, setEngagementContext] = useState('')
   const [scoutTopics, setScoutTopics] = useState('AI and enterprise transformation, AT0 private AI progress')
+  const [thoughtLeaderName, setThoughtLeaderName] = useState('')
+  const [thoughtLeaderCompany, setThoughtLeaderCompany] = useState('')
+  const [thoughtLeaderTopics, setThoughtLeaderTopics] = useState('enterprise AI, business transformation')
+  const [thoughtLeaderNotes, setThoughtLeaderNotes] = useState('')
   const [scheduleDates, setScheduleDates] = useState<Record<string, string>>({})
   const [publishedUrls, setPublishedUrls] = useState<Record<string, string>>({})
   const [socialDraftFeedback, setSocialDraftFeedback] = useState<Record<string, string>>({})
+  const [metricInputs, setMetricInputs] = useState<Record<string, MetricDraftInput>>({})
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
   const [actingDraftId, setActingDraftId] = useState<string | null>(null)
@@ -339,6 +399,8 @@ export default function Herald() {
   const [creatingLinkedinWeekly, setCreatingLinkedinWeekly] = useState(false)
   const [creatingEngagementDraft, setCreatingEngagementDraft] = useState(false)
   const [scoutingLinkedinTargets, setScoutingLinkedinTargets] = useState(false)
+  const [creatingThoughtLeader, setCreatingThoughtLeader] = useState(false)
+  const [recordingMetricId, setRecordingMetricId] = useState<string | null>(null)
   const [actingSocialDraftId, setActingSocialDraftId] = useState<string | null>(null)
   const [actingEngagementId, setActingEngagementId] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -357,7 +419,9 @@ export default function Herald() {
         socialDraftRes,
         linkedinCadenceRes,
         linkedinReadPlanRes,
+        linkedinOperatorDashboardRes,
         engagementRes,
+        thoughtLeaderRes,
       ] = await Promise.all([
         apiJson<MailboxList>('/v1/at0-mail/mailboxes'),
         apiJson<Dashboard>('/v1/at0-mail/dashboard'),
@@ -368,7 +432,9 @@ export default function Herald() {
         apiJson<SocialDraftList>('/v1/herald/social/drafts?status=all&limit=12'),
         apiJson<LinkedInCadence>('/v1/herald/social/linkedin/cadence'),
         apiJson<LinkedInReadPlan>('/v1/herald/social/linkedin/read-plan'),
+        apiJson<LinkedInOperatorDashboard>('/v1/herald/social/linkedin/operator-dashboard'),
         apiJson<SocialEngagementList>('/v1/herald/social/linkedin/engagements?status=all&limit=12'),
+        apiJson<ThoughtLeaderTargetList>('/v1/herald/social/linkedin/thought-leaders?status=active&limit=8'),
       ])
       setMailboxes(mailboxRes.mailboxes)
       if (selectedMailbox !== ALL_MAILBOXES && !mailboxRes.mailboxes.includes(selectedMailbox)) {
@@ -382,7 +448,9 @@ export default function Herald() {
       setSocialDrafts(socialDraftRes.drafts)
       setLinkedinCadence(linkedinCadenceRes)
       setLinkedinReadPlan(linkedinReadPlanRes)
+      setLinkedinOperatorDashboard(linkedinOperatorDashboardRes)
       setEngagementItems(engagementRes.items)
+      setThoughtLeaders(thoughtLeaderRes.targets)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load Herald')
@@ -592,6 +660,41 @@ export default function Herald() {
     }
   }
 
+  const createThoughtLeaderTarget = async () => {
+    const name = thoughtLeaderName.trim()
+    if (!name) {
+      setError('Thought leader name required')
+      return
+    }
+    const topics = thoughtLeaderTopics
+      .split(/[\n,]/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+    setCreatingThoughtLeader(true)
+    setNotice(null)
+    try {
+      await apiJson<ThoughtLeaderTarget>('/v1/herald/social/linkedin/thought-leaders', {
+        method: 'POST',
+        body: JSON.stringify({
+          person_name: name,
+          company_name: thoughtLeaderCompany.trim() || undefined,
+          topics,
+          priority: 3,
+          relationship_notes: thoughtLeaderNotes.trim() || undefined,
+        }),
+      })
+      setThoughtLeaderName('')
+      setThoughtLeaderCompany('')
+      setThoughtLeaderNotes('')
+      setNotice('Thought leader target added')
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Thought leader add failed')
+    } finally {
+      setCreatingThoughtLeader(false)
+    }
+  }
+
   const draftLinkedinEngagementReply = async (itemId: string) => {
     setActingEngagementId(itemId)
     setNotice(null)
@@ -726,6 +829,63 @@ export default function Herald() {
       await load()
     } finally {
       setActingSocialDraftId(null)
+    }
+  }
+
+  const setMetricInput = (draftId: string, field: keyof MetricDraftInput, value: string) => {
+    setMetricInputs((current) => {
+      const input = current[draftId] ?? {
+        impressions: '',
+        reactions: '',
+        comments: '',
+        reposts: '',
+        profile_clicks: '',
+      }
+      return {
+        ...current,
+        [draftId]: {
+          ...input,
+          [field]: value,
+        },
+      }
+    })
+  }
+
+  const recordSocialMetrics = async (draftId: string) => {
+    const input = metricInputs[draftId] ?? {
+      impressions: '',
+      reactions: '',
+      comments: '',
+      reposts: '',
+      profile_clicks: '',
+    }
+    setRecordingMetricId(draftId)
+    setNotice(null)
+    try {
+      const result = await apiJson<LinkedInMetricResponse>('/v1/herald/social/linkedin/metrics', {
+        method: 'POST',
+        body: JSON.stringify({
+          variant_id: draftId,
+          impressions: metricNumber(input.impressions),
+          reactions: metricNumber(input.reactions),
+          comments: metricNumber(input.comments),
+          reposts: metricNumber(input.reposts),
+          profile_clicks: metricNumber(input.profile_clicks),
+        }),
+      })
+      setMetricInputs((current) => {
+        const next = { ...current }
+        delete next[draftId]
+        return next
+      })
+      setNotice(
+        `Metrics recorded: ${result.engagement_total} engagements${result.spark_memory_saved ? ' · Spark updated' : ''}`,
+      )
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Metric record failed')
+    } finally {
+      setRecordingMetricId(null)
     }
   }
 
@@ -872,6 +1032,28 @@ export default function Herald() {
                 {profile.display_name}
               </label>
             ))}
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+          {[
+            ['Post due', linkedinOperatorDashboard?.post_due ? 'Yes' : 'No'],
+            ['Comments due', linkedinOperatorDashboard?.comments_due ?? 0],
+            ['Targets ready', linkedinOperatorDashboard?.targets_ready ?? 0],
+            ['Approval backlog', linkedinOperatorDashboard?.approval_backlog ?? 0],
+            ['Thought leaders', linkedinOperatorDashboard?.active_thought_leaders ?? 0],
+            ['Metrics 30d', linkedinOperatorDashboard?.metric_snapshots_30d ?? 0],
+          ].map(([label, value]) => (
+            <div key={label} className={`rounded-lg border p-3 ${border} ${strongPanel}`}>
+              <p className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>{label}</p>
+              <p className={`mt-2 text-lg font-bold ${strong}`}>{value}</p>
+            </div>
+          ))}
+        </div>
+        <div className={`mt-3 rounded-lg border p-3 text-xs ${border} ${strongPanel}`}>
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            <span>Best topic <span className={strong}>{linkedinOperatorDashboard?.best_topic ?? 'TBD'}</span></span>
+            <span>Best style <span className={strong}>{replyStyleText(linkedinOperatorDashboard?.best_reply_style)}</span></span>
           </div>
         </div>
 
@@ -1042,6 +1224,72 @@ export default function Herald() {
               </div>
             </div>
 
+            <div className={`mt-5 rounded-lg border p-3 ${border} ${panel}`}>
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                <span className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+                  Thought-leader target graph
+                </span>
+              </div>
+              <div className="mt-3 grid gap-2">
+                <input
+                  value={thoughtLeaderName}
+                  onChange={(event) => setThoughtLeaderName(event.target.value)}
+                  className={`min-h-10 rounded-lg border px-3 text-sm outline-none ${border} ${strongPanel} ${strong}`}
+                  placeholder="Person"
+                />
+                <input
+                  value={thoughtLeaderCompany}
+                  onChange={(event) => setThoughtLeaderCompany(event.target.value)}
+                  className={`min-h-10 rounded-lg border px-3 text-sm outline-none ${border} ${strongPanel} ${strong}`}
+                  placeholder="Company"
+                />
+                <input
+                  value={thoughtLeaderTopics}
+                  onChange={(event) => setThoughtLeaderTopics(event.target.value)}
+                  className={`min-h-10 rounded-lg border px-3 text-sm outline-none ${border} ${strongPanel} ${strong}`}
+                  placeholder="Topics"
+                />
+                <textarea
+                  value={thoughtLeaderNotes}
+                  onChange={(event) => setThoughtLeaderNotes(event.target.value)}
+                  rows={3}
+                  className={`resize-none rounded-lg border px-3 py-2 text-sm outline-none ${border} ${strongPanel} ${strong}`}
+                  placeholder="Relationship notes"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={createThoughtLeaderTarget}
+                disabled={creatingThoughtLeader}
+                className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-45"
+              >
+                {creatingThoughtLeader ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                Add target
+              </button>
+              <div className="mt-4 space-y-2">
+                {thoughtLeaders.map((target) => (
+                  <div key={target.id} className={`rounded-lg border p-3 ${border} ${strongPanel}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Pill label={`P${target.priority}`} />
+                      <span className={`text-sm font-bold ${strong}`}>{target.person_name}</span>
+                      {target.company_name && <span className={`text-xs ${muted}`}>{target.company_name}</span>}
+                    </div>
+                    {target.relationship_notes && (
+                      <p className={`mt-2 line-clamp-2 text-xs ${muted}`}>{target.relationship_notes}</p>
+                    )}
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {target.topics.slice(0, 3).map((topic) => (
+                        <span key={topic} className={`rounded-md border px-2 py-1 text-[10px] ${border} ${panel}`}>
+                          {topic}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <div className="mt-5 space-y-3">
               {socialProfiles.map((profile) => (
                 <div key={profile.platform} className={`rounded-lg border p-3 ${border} ${panel}`}>
@@ -1174,6 +1422,40 @@ export default function Herald() {
                         Mark published
                       </button>
                     </div>
+                  </div>
+                )}
+                {draft.platform === 'linkedin' && ['manual_published', 'linkedin_published'].includes(draft.publish_status) && (
+                  <div className={`mt-3 rounded-lg border p-3 ${border} ${panel}`}>
+                    <div className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>Analytics feedback loop</div>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-5">
+                      {[
+                        ['impressions', 'Impressions'],
+                        ['reactions', 'Reactions'],
+                        ['comments', 'Comments'],
+                        ['reposts', 'Reposts'],
+                        ['profile_clicks', 'Clicks'],
+                      ].map(([field, label]) => (
+                        <input
+                          key={field}
+                          type="number"
+                          min="0"
+                          inputMode="numeric"
+                          value={metricInputs[draft.id]?.[field as keyof MetricDraftInput] ?? ''}
+                          onChange={(event) => setMetricInput(draft.id, field as keyof MetricDraftInput, event.target.value)}
+                          className={`min-h-10 rounded-lg border px-2 text-sm outline-none ${border} ${strongPanel} ${strong}`}
+                          placeholder={label}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => recordSocialMetrics(draft.id)}
+                      disabled={recordingMetricId === draft.id}
+                      className="mt-2 inline-flex min-h-10 items-center gap-2 rounded-lg bg-emerald-600 px-3 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-45"
+                    >
+                      {recordingMetricId === draft.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                      Record metrics
+                    </button>
                   </div>
                 )}
                 {draft.status === 'needs_review' && (
