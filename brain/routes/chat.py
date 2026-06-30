@@ -46,6 +46,10 @@ from brain.services.internet_scout.web_suggestion import (
     WebSuggestionMode,
     suggest_web_for_chat,
 )
+from brain.services.memory_web_policy import (
+    should_prefer_memory_over_web_suggestion as _should_prefer_memory_over_web_suggestion,
+    should_short_circuit_web_suggestion as _should_short_circuit_web_suggestion,
+)
 from jarvis_common.logging_config import get_logger
 
 router = APIRouter(tags=["chat"])
@@ -126,31 +130,6 @@ SOURCE_LINE_RE = re.compile(
     r"(?im)^\s*(?:sources?|citations?|references?|websites?|links?)\s*:.*(?:\n|$)"
 )
 BRACKET_CITATION_RE = re.compile(r"\s*\[(?:\d+(?:\s*,\s*\d+)*)\]")
-LOCAL_WEB_HOWTO_RE = re.compile(
-    r"\bhow\s+(?:do|can|should)\s+i\b[^.!?\n]{0,120}"
-    r"\b(?:make\s+you\s+)?(?:search|browse|use\s+(?:the\s+)?web|"
-    r"access\s+(?:the\s+)?internet|turn\s+on\s+(?:web\s+search|beacon)|"
-    r"enable\s+(?:web\s+search|beacon)|use\s+beacon)\b",
-    re.IGNORECASE,
-)
-LOCAL_SELF_CAPABILITY_RE = re.compile(
-    r"\b(?:what\s+can\s+you\s+do|what\s+you\s+can\s+do|"
-    r"what\s+are\s+your\s+capabilit(?:y|ies)|"
-    r"(?:your\s+)?current\s+capabilit(?:y|ies)|"
-    r"can\s+you\s+know\s+yourself|know\s+yourself|"
-    r"what\s+do\s+you\s+know\s+about\s+me)\b",
-    re.IGNORECASE,
-)
-CURRENT_FACT_SHORT_CIRCUIT_RE = re.compile(
-    r"\b("
-    r"today|tomorrow|tonight|yesterday|latest|current|recent|right\s+now|"
-    r"this\s+week|this\s+month|next|what\s+time|when|schedule|score|status|"
-    r"weather|news|price|market|ceo|release\s+notes|changelog|version|"
-    r"game|match|fixture|kick\s*off|opponent|play|playing|standings|"
-    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday"
-    r")\b",
-    re.IGNORECASE,
-)
 LEADING_MARKDOWN_HEADING_RE = re.compile(
     r"(?s)^\s*(?:#{1,6}\s+[^\n]{1,80}\n+|\*\*[A-Z][^*\n]{3,80}\*\*\s*:?\s*)"
 )
@@ -461,22 +440,6 @@ def _response_style_prompt(
     if style:
         lines.append(f"- Personality: {style}")
     return "\n".join(lines)
-
-
-def _should_short_circuit_web_suggestion(
-    suggestion: WebSuggestion | None,
-) -> bool:
-    if not suggestion:
-        return False
-    if suggestion.reason == "sports_schedule_likely":
-        return True
-    if suggestion.reason != "current_information_likely":
-        return False
-
-    query = " ".join(suggestion.query.split())
-    if LOCAL_WEB_HOWTO_RE.search(query) or LOCAL_SELF_CAPABILITY_RE.search(query):
-        return False
-    return bool(CURRENT_FACT_SHORT_CIRCUIT_RE.search(query))
 
 
 def _conversation_quality_response(
@@ -1549,6 +1512,22 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 requested_mode=body.internet_mode,
                 thread_id=thread_id,
             )
+    if _should_prefer_memory_over_web_suggestion(
+        user_msg=user_msg,
+        memory_context=context,
+        web_suggestion=web_suggestion,
+        internet_context=internet_context,
+    ):
+        logger.info(
+            "BEACON_CHAT_WEB_SUGGESTION_SUPPRESSED_FOR_MEMORY_RECALL",
+            extra={
+                "event": "BEACON_CHAT_WEB_SUGGESTION_SUPPRESSED_FOR_MEMORY_RECALL",
+                "thread_id": thread_id,
+                "reason": web_suggestion.reason if web_suggestion else None,
+                "confidence": web_suggestion.confidence if web_suggestion else None,
+            },
+        )
+        web_suggestion = None
     at0_self_context: str | None = None
     if at0_self_requested:
         try:
