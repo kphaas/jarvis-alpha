@@ -88,7 +88,13 @@ def test_approvals_page_surfaces_browser_execution_history() -> None:
     assert "Browser execution history" in source
     assert "History summary" in source
     assert "latest page only" in source
-    assert "Evidence trail" in source
+    assert "historyDisplayStatus" in source
+    assert "executed" in source
+    assert "denied" in source
+    assert "expired" in source
+    assert "} obs" in source
+    assert "} shots" in source
+    assert "} audit" in source
     assert "Technical audit" in source
     assert "historyHasMore" in source
     assert "Search request, approval, host" in source
@@ -101,7 +107,7 @@ def test_approvals_page_surfaces_browser_execution_history() -> None:
     assert "interface BrowserHistoryItem" in source
     assert "approval_queue_id" in source
     assert "browser_action" in source
-    assert "audited actions" in source
+    assert "Audited actions" in source
     assert "Browser history unavailable" in source
 
 
