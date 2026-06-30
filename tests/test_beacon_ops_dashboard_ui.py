@@ -29,10 +29,15 @@ def test_beacon_ops_dashboard_surfaces_core_slo_sections() -> None:
     assert "Cost Guard" in source
     assert "Citation Quality" in source
     assert "Browser Approvals" in source
+    assert "Crawler" in source
     assert "Data Sources" in source
     assert "Web Cache" in source
     assert "web_cache.active_entry_count" in source
     assert "web_cache.total_hit_count" in source
+    assert "crawler.cache_hit_rate_percent" in source
+    assert "crawler.blocked_host_count" in source
+    assert "crawler.max_pages_without_approval" in source
+    assert "crawler.credential_entry_allowed" in source
     assert "web_cache.raw_user_query_stored" in source
     assert "Show details" in source
     assert "Hide details" in source

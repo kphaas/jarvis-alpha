@@ -249,6 +249,20 @@ def _fake_beacon_summary() -> helm.HelmBeaconSummary:
             last_hit_at=datetime(2026, 6, 12, 18, 55, tzinfo=UTC).isoformat(),
             last_seen_at=datetime(2026, 6, 12, 18, 58, tzinfo=UTC).isoformat(),
         ),
+        crawler=helm.HelmBeaconCrawlerSummary(
+            status="warning",
+            request_count=4,
+            succeeded_request_count=2,
+            failed_request_count=1,
+            blocked_host_count=1,
+            cache_hit_count=1,
+            cache_miss_count=1,
+            cache_hit_rate_percent=50,
+            failed_page_count=1,
+            source_count=3,
+            claim_count=5,
+            last_run_at=datetime(2026, 6, 12, 18, 56, tzinfo=UTC).isoformat(),
+        ),
         retention=helm.HelmBeaconRetentionSummary(
             mode="report_only",
             evidence_retention_days=30,
@@ -378,6 +392,9 @@ async def test_helm_summary_returns_redacted_counts(monkeypatch) -> None:
     assert payload["beacon"]["quality_canary"]["failed"] == 0
     assert payload["beacon"]["web_cache"]["active_entry_count"] == 4
     assert payload["beacon"]["web_cache"]["raw_user_query_stored"] is False
+    assert payload["beacon"]["crawler"]["status"] == "warning"
+    assert payload["beacon"]["crawler"]["cache_hit_rate_percent"] == 50
+    assert payload["beacon"]["crawler"]["credential_entry_allowed"] is False
     assert payload["beacon"]["raw_web_content_is_untrusted"] is True
     assert "description" not in str(payload)
     assert "actor_sub" not in str(payload)
@@ -589,6 +606,32 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
                         "rerank": "local_quality_term_rerank",
                     },
                 ),
+                "crawler": InternetScoutHealthCheck(
+                    ok=True,
+                    status="warning",
+                    detail="Beacon crawler is bounded and audited.",
+                    metadata={
+                        "mode": "gateway_bounded_crawler",
+                        "window_hours": 24,
+                        "request_count": 4,
+                        "succeeded_request_count": 2,
+                        "failed_request_count": 1,
+                        "blocked_host_count": 1,
+                        "cache_hit_count": 1,
+                        "cache_miss_count": 1,
+                        "cache_hit_rate_percent": 50,
+                        "failed_page_count": 1,
+                        "source_count": 3,
+                        "claim_count": 5,
+                        "last_run_at": checked_at.isoformat(),
+                        "max_pages_without_approval": 10,
+                        "max_depth_without_approval": 2,
+                        "same_host_required": True,
+                        "forms_allowed": False,
+                        "credential_entry_allowed": False,
+                        "raw_web_content_is_untrusted": True,
+                    },
+                ),
             },
             retention=InternetScoutRetentionReport(
                 evidence_retention_days=30,
@@ -688,6 +731,28 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
         "raw_web_content_is_untrusted": True,
         "index": "search_terms_gin",
         "rerank": "local_quality_term_rerank",
+    }
+    assert payload["crawler"] == {
+        "status": "warning",
+        "mode": "gateway_bounded_crawler",
+        "window_hours": 24,
+        "request_count": 4,
+        "succeeded_request_count": 2,
+        "failed_request_count": 1,
+        "blocked_host_count": 1,
+        "cache_hit_count": 1,
+        "cache_miss_count": 1,
+        "cache_hit_rate_percent": 50,
+        "failed_page_count": 1,
+        "source_count": 3,
+        "claim_count": 5,
+        "last_run_at": checked_at.isoformat(),
+        "max_pages_without_approval": 10,
+        "max_depth_without_approval": 2,
+        "same_host_required": True,
+        "forms_allowed": False,
+        "credential_entry_allowed": False,
+        "raw_web_content_is_untrusted": True,
     }
     assert payload["approvals"] == {
         "pending_browser_approvals": 2,
@@ -804,6 +869,7 @@ async def test_beacon_summary_degrades_when_health_unavailable(monkeypatch) -> N
     assert payload["provider"]["status"] == "unavailable"
     assert payload["browser"]["runtime"] == "disabled"
     assert payload["evidence"]["status"] == "unavailable"
+    assert payload["crawler"]["status"] == "unavailable"
     assert payload["raw_web_content_is_untrusted"] is True
     assert "gateway secret should not leak" not in str(payload)
 

@@ -26,6 +26,7 @@ class FakeConn:
         suggestion_row: dict[str, int] | None = None,
         acceptance_row: dict[str, int] | None = None,
         web_cache_row: dict[str, object] | None = None,
+        crawler_row: dict[str, object] | None = None,
         quality_canary_row: dict[str, object] | None = None,
         quality_canary_rows: list[dict[str, object]] | None = None,
         expired_request_ids: list[object] | None = None,
@@ -82,6 +83,18 @@ class FakeConn:
             "last_hit_at": now,
             "last_seen_at": now,
         }
+        self.crawler_row = crawler_row or {
+            "request_count": 4,
+            "succeeded_request_count": 2,
+            "failed_request_count": 1,
+            "blocked_host_count": 1,
+            "cache_hit_count": 1,
+            "cache_miss_count": 1,
+            "failed_page_count": 1,
+            "source_count": 3,
+            "claim_count": 5,
+            "last_run_at": now,
+        }
         self.quality_canary_row = quality_canary_row or {
             "request_id": uuid4(),
             "status": "succeeded",
@@ -134,6 +147,8 @@ class FakeConn:
         return []
 
     async def fetchrow(self, query: str, *args):
+        if "event_type LIKE 'crawler_%'" in query:
+            return self.crawler_row
         if "FROM public.alpha_internet_web_cache" in query:
             return self.web_cache_row
         if "quality_canary" in query:
@@ -358,6 +373,29 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
     assert response.checks["web_cache"].status == "ok"
     assert response.checks["web_cache"].metadata["active_entry_count"] == 4
     assert response.checks["web_cache"].metadata["raw_user_query_stored"] is False
+    assert response.checks["crawler"].ok is True
+    assert response.checks["crawler"].status == "warning"
+    assert response.checks["crawler"].metadata == {
+        "mode": "gateway_bounded_crawler",
+        "window_hours": 24,
+        "request_count": 4,
+        "succeeded_request_count": 2,
+        "failed_request_count": 1,
+        "blocked_host_count": 1,
+        "cache_hit_count": 1,
+        "cache_miss_count": 1,
+        "cache_hit_rate_percent": 50,
+        "failed_page_count": 1,
+        "source_count": 3,
+        "claim_count": 5,
+        "last_run_at": response.checks["crawler"].metadata["last_run_at"],
+        "max_pages_without_approval": 10,
+        "max_depth_without_approval": 2,
+        "same_host_required": True,
+        "forms_allowed": False,
+        "credential_entry_allowed": False,
+        "raw_web_content_is_untrusted": True,
+    }
     assert response.checks["recent_evidence"].metadata["blocked"] == 1
     source_quality = response.checks["recent_evidence"].metadata["source_quality"]
     assert source_quality == {

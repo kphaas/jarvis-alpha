@@ -18,11 +18,13 @@ from brain.services.internet_scout.models import (
     BrowserSandboxPolicy,
     EvidenceClaim,
     InternetEvidencePacket,
-    InternetScoutHealthCheck,
-    InternetScoutHealthResponse,
     InternetScoutBrowserRunRequest,
     InternetScoutBrowserRunResponse,
     InternetScoutConsumerRequest,
+    InternetScoutCrawlerScrapeRequest,
+    InternetScoutCrawlerScrapeResponse,
+    InternetScoutHealthCheck,
+    InternetScoutHealthResponse,
     InternetScoutMemoryPromotion,
     InternetScoutMemoryPromotionCandidate,
     InternetScoutMemoryPromotionCreateRequest,
@@ -117,6 +119,9 @@ class FakeRepo:
             ],
         )
 
+    async def web_cache_extract_response(self, **kwargs):
+        return None
+
     async def create_memory_promotions(self, **kwargs):
         self.created.append({"memory_promotions": kwargs})
         return [
@@ -172,6 +177,52 @@ class FakeExecutor:
                 )
             ],
         )
+
+
+class FakeCrawler:
+    async def scrape(self, body, request_id, scout_request, *, cache_lookup=None):
+        source = build_source_reference(
+            url="https://public.example.test/report",
+            content="Crawler source.",
+        )
+        packet = InternetEvidencePacket(
+            request=scout_request,
+            sources=[source],
+            claims=[
+                EvidenceClaim(
+                    claim="Crawler source.",
+                    source_url=source.url,
+                    citation_text="Crawler source.",
+                    confidence="medium",
+                )
+            ],
+        )
+        return (
+            InternetScoutCrawlerScrapeResponse(
+                request_id=request_id,
+                canonical_url=source.url,
+                host=source.host,
+                fetched_at=source.fetched_at,
+                text="Crawler source.",
+                links=["https://public.example.test/docs"],
+                content_hash=source.content_hash,
+            ),
+            packet,
+            {
+                "operation": "scrape",
+                "cache_hit": False,
+                "source_count": 1,
+                "claim_count": 1,
+                "same_host_required": True,
+                "forms_allowed": False,
+                "credential_entry_allowed": False,
+            },
+        )
+
+
+class FakeFailingCrawler:
+    async def scrape(self, body, request_id, scout_request, *, cache_lookup=None):
+        raise RuntimeError("gateway failed with secret-token-value")
 
 
 @asynccontextmanager
@@ -349,6 +400,91 @@ async def test_internet_scout_research_stores_evidence(monkeypatch):
     assert FakeRepo.created[0]["user_id"] == "ken"
     assert any(event.get("status") == "succeeded" for event in FakeRepo.events)
     assert FakeRepo.stored
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_crawler_scrape_stores_cacheable_audit(monkeypatch):
+    FakeRepo.created = []
+    FakeRepo.events = []
+    FakeRepo.stored = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+    monkeypatch.setattr(internet_scout, "InternetScoutCrawler", lambda: FakeCrawler())
+
+    response = await internet_scout.internet_scout_crawler_scrape(
+        InternetScoutCrawlerScrapeRequest(url="https://public.example.test/report"),
+        _request(scopes=["internet_scout.research"]),
+        _user_id="ken",
+    )
+
+    assert response.request_id == FakeRepo.request_id
+    assert response.host == "public.example.test"
+    assert response.raw_web_content_is_untrusted is True
+    assert FakeRepo.created[0]["request"].requester == "alpha_ui.beacon_crawler.scrape"
+    assert FakeRepo.created[0]["decision"].tool == InternetTool.EXTRACT
+    assert FakeRepo.stored[0]["packet"].claims[0].citation_text == "Crawler source."
+    crawler_event = next(
+        event
+        for event in FakeRepo.events
+        if event.get("event_type") == "crawler_scrape"
+        and event.get("status") == "succeeded"
+    )
+    assert crawler_event["tool"] == "crawler"
+    assert crawler_event["metadata"]["cache_hit"] is False
+    assert crawler_event["metadata"]["credential_entry_allowed"] is False
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_crawler_scrape_blocks_unsafe_url(monkeypatch):
+    FakeRepo.created = []
+    FakeRepo.events = []
+    FakeRepo.stored = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+
+    with pytest.raises(HTTPException) as exc:
+        await internet_scout.internet_scout_crawler_scrape(
+            InternetScoutCrawlerScrapeRequest(url="http://localhost/private"),
+            _request(scopes=["internet_scout.research"]),
+            _user_id="ken",
+        )
+
+    assert exc.value.status_code == 403
+    blocked_event = next(
+        event for event in FakeRepo.events if event.get("status") == "blocked"
+    )
+    assert blocked_event["event_type"] == "crawler_scrape"
+    assert "blocked_internal_host" in blocked_event["metadata"]["blocked_reasons"]
+    assert FakeRepo.stored == []
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_crawler_failure_audit_is_sanitized(monkeypatch):
+    FakeRepo.created = []
+    FakeRepo.events = []
+    FakeRepo.stored = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+    monkeypatch.setattr(
+        internet_scout,
+        "InternetScoutCrawler",
+        lambda: FakeFailingCrawler(),
+    )
+
+    with pytest.raises(RuntimeError):
+        await internet_scout.internet_scout_crawler_scrape(
+            InternetScoutCrawlerScrapeRequest(url="https://public.example.test/report"),
+            _request(scopes=["internet_scout.research"]),
+            _user_id="ken",
+        )
+
+    failed_event = next(
+        event for event in FakeRepo.events if event.get("status") == "failed"
+    )
+    assert failed_event["error_text"] == "Beacon crawler request failed."
+    assert failed_event["metadata"]["error_type"] == "RuntimeError"
+    assert "secret-token-value" not in str(FakeRepo.events)
+    assert "secret-token-value" not in str(FakeRepo.created)
 
 
 @pytest.mark.asyncio
@@ -1129,6 +1265,13 @@ def test_internet_scout_routes_are_classified():
         "external_call",
         "cost_incurring",
     ]
+    for path in (
+        "/v1/internet-scout/crawler/scrape",
+        "/v1/internet-scout/crawler/map",
+        "/v1/internet-scout/crawler/crawl",
+        "/v1/internet-scout/crawler/extract",
+    ):
+        assert classify_route("POST", path) == ["write", "external_call"]
     assert classify_route(
         "POST",
         "/v1/internet-scout/browser-task/approval-request",
