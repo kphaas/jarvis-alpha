@@ -94,9 +94,26 @@ def test_beacon_page_can_queue_browser_action_approvals() -> None:
     source = BEACON_PAGE.read_text(encoding="utf-8")
     types = BEACON_TYPES.read_text(encoding="utf-8")
 
-    assert "Browser action approval" in source
+    assert "Browser click-only request" in source
     assert "/v1/internet-scout/browser-task/approval-request" in source
     assert "browser_clicks" in source
-    assert "Queue approval" in source
+    assert "Queue click approval" in source
+    assert "Click only" in source
+    assert "No typing/forms" in source
+    assert "Expected host must match the URL host for click-only requests." in source
+    assert "operator approve or deny" in source
     assert 'to="/approvals"' in source
     assert "BeaconBrowserApprovalResponse" in types
+
+
+def test_beacon_page_has_searchable_saved_history() -> None:
+    source = BEACON_PAGE.read_text(encoding="utf-8")
+    types = BEACON_TYPES.read_text(encoding="utf-8")
+
+    assert "Saved Beacon history" in source
+    assert "/v1/internet-scout/requests?" in source
+    assert "Search request id, requester, host, claim, status" in source
+    assert "Search history" in source
+    assert "BeaconHistoryRow" in source
+    assert "BeaconRequestHistoryResponse" in types
+    assert "source_hosts" in types

@@ -235,6 +235,36 @@ export interface BeaconAnswerResponse {
   raw_web_content_is_untrusted: boolean
 }
 
+export interface BeaconRequestHistoryItem {
+  request_id: string
+  requester: string
+  selected_tool: string
+  sensitivity: string
+  status: string
+  risk_tier: string
+  created_at: string
+  updated_at: string
+  has_query: boolean
+  url_count: number
+  max_pages: number
+  max_depth: number
+  needs_interaction: boolean
+  source_count: number
+  claim_count: number
+  event_count: number
+  source_hosts: string[]
+  latest_event_type?: string | null
+  latest_event_status?: string | null
+}
+
+export interface BeaconRequestHistoryResponse {
+  history: BeaconRequestHistoryItem[]
+  count: number
+  limit: number
+  offset: number
+  has_more: boolean
+}
+
 export interface BeaconResearchProgressEvent {
   stage: 'queued' | 'planned' | 'executing' | 'synthesizing' | 'completed' | 'failed'
   status: 'queued' | 'started' | 'completed' | 'failed'

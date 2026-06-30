@@ -248,10 +248,72 @@ class FakeHistoryConn:
         ]
 
 
+class FakeRequestHistoryConn:
+    instances: list["FakeRequestHistoryConn"] = []
+    request_id = uuid4()
+
+    def __init__(self) -> None:
+        self.fetch_calls: list[tuple] = []
+
+    async def fetch(self, query, *args):
+        self.fetch_calls.append((query, *args))
+        return [
+            {
+                "request_id": self.request_id,
+                "requester": "alpha_ui.beacon_answer_engine.deep_research",
+                "selected_tool": "search",
+                "sensitivity": "normal",
+                "status": "succeeded",
+                "risk_tier": "T1",
+                "created_at": datetime(2026, 6, 18, 13, 5, tzinfo=UTC),
+                "updated_at": datetime(2026, 6, 18, 13, 6, tzinfo=UTC),
+                "has_query": True,
+                "url_count": 0,
+                "max_pages": 4,
+                "max_depth": 0,
+                "needs_interaction": False,
+                "source_count": 3,
+                "claim_count": 5,
+                "event_count": 2,
+                "source_hosts": ["docs.example.test", "status.example.test"],
+                "latest_event_type": "gateway_call",
+                "latest_event_status": "succeeded",
+            },
+            {
+                "request_id": uuid4(),
+                "requester": "alpha_ui.beacon_browser_action",
+                "selected_tool": "browser_use",
+                "sensitivity": "normal",
+                "status": "blocked",
+                "risk_tier": "T5",
+                "created_at": datetime(2026, 6, 18, 12, 5, tzinfo=UTC),
+                "updated_at": datetime(2026, 6, 18, 12, 5, tzinfo=UTC),
+                "has_query": False,
+                "url_count": 1,
+                "max_pages": 1,
+                "max_depth": 0,
+                "needs_interaction": True,
+                "source_count": 0,
+                "claim_count": 0,
+                "event_count": 1,
+                "source_hosts": [],
+                "latest_event_type": "approval_request",
+                "latest_event_status": "blocked",
+            },
+        ]
+
+
 @asynccontextmanager
 async def fake_history_connection(request):
     conn = FakeHistoryConn()
     FakeHistoryConn.instances.append(conn)
+    yield conn
+
+
+@asynccontextmanager
+async def fake_request_history_connection(request):
+    conn = FakeRequestHistoryConn()
+    FakeRequestHistoryConn.instances.append(conn)
     yield conn
 
 
@@ -446,6 +508,99 @@ async def test_internet_scout_browser_history_rejects_unknown_event_type(monkeyp
 async def test_internet_scout_browser_history_requires_read_scope():
     with pytest.raises(HTTPException) as exc:
         await internet_scout.internet_scout_browser_history(
+            _request(),
+            _user_id="ken",
+        )
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_request_history_returns_saved_requests(monkeypatch):
+    FakeRequestHistoryConn.instances = []
+    monkeypatch.setattr(
+        internet_scout, "rls_connection", fake_request_history_connection
+    )
+
+    response = await internet_scout.internet_scout_request_history(
+        _request(scopes=["internet_scout.read"]),
+        _user_id="ken",
+        limit=99,
+    )
+
+    query, status, search, limit, offset = FakeRequestHistoryConn.instances[
+        0
+    ].fetch_calls[0]
+    assert response.count == 2
+    assert response.limit == 50
+    assert response.offset == 0
+    assert response.has_more is False
+    assert status is None
+    assert search is None
+    assert limit == 51
+    assert offset == 0
+    assert "alpha_internet_requests" in query
+    assert "alpha_internet_sources" in query
+    assert "alpha_internet_evidence" in query
+    assert response.history[0].request_id == FakeRequestHistoryConn.request_id
+    assert response.history[0].selected_tool == "search"
+    assert response.history[0].source_count == 3
+    assert response.history[0].claim_count == 5
+    assert response.history[0].latest_event_type == "gateway_call"
+    assert response.history[1].selected_tool == "browser_use"
+    assert response.history[1].needs_interaction is True
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_request_history_passes_filters_to_query(monkeypatch):
+    FakeRequestHistoryConn.instances = []
+    monkeypatch.setattr(
+        internet_scout, "rls_connection", fake_request_history_connection
+    )
+
+    response = await internet_scout.internet_scout_request_history(
+        _request(scopes=["internet_scout.read"]),
+        _user_id="ken",
+        limit=12,
+        offset=12,
+        status="succeeded",
+        q="Docs.EXAMPLE",
+    )
+
+    query, status, search, limit, offset = FakeRequestHistoryConn.instances[
+        0
+    ].fetch_calls[0]
+    assert response.offset == 12
+    assert status == "succeeded"
+    assert search == "%docs.example%"
+    assert limit == 13
+    assert offset == 12
+    assert "$1::text IS NULL OR request.status = $1" in query
+    assert "LIKE $2" in query
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_request_history_rejects_unknown_status(monkeypatch):
+    FakeRequestHistoryConn.instances = []
+    monkeypatch.setattr(
+        internet_scout, "rls_connection", fake_request_history_connection
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await internet_scout.internet_scout_request_history(
+            _request(scopes=["internet_scout.read"]),
+            _user_id="ken",
+            status="not_real",
+        )
+
+    assert exc.value.status_code == 400
+    assert FakeRequestHistoryConn.instances == []
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_request_history_requires_read_scope():
+    with pytest.raises(HTTPException) as exc:
+        await internet_scout.internet_scout_request_history(
             _request(),
             _user_id="ken",
         )
@@ -982,6 +1137,10 @@ def test_internet_scout_routes_are_classified():
         "security_write",
     ]
     assert classify_route("GET", "/v1/internet-scout/browser-task/history") == [
+        "read",
+        "security_read",
+    ]
+    assert classify_route("GET", "/v1/internet-scout/requests") == [
         "read",
         "security_read",
     ]
