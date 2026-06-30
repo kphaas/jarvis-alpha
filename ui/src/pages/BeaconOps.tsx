@@ -135,6 +135,29 @@ interface HelmBeaconWebCacheSummary {
   rerank: string
 }
 
+interface HelmBeaconCrawlerSummary {
+  status: string
+  mode: string
+  window_hours: number
+  request_count: number
+  succeeded_request_count: number
+  failed_request_count: number
+  blocked_host_count: number
+  cache_hit_count: number
+  cache_miss_count: number
+  cache_hit_rate_percent: number
+  failed_page_count: number
+  source_count: number
+  claim_count: number
+  last_run_at: string | null
+  max_pages_without_approval: number
+  max_depth_without_approval: number
+  same_host_required: boolean
+  forms_allowed: boolean
+  credential_entry_allowed: boolean
+  raw_web_content_is_untrusted: boolean
+}
+
 interface HelmBeaconApprovalSummary {
   pending_browser_approvals: number
   next_expires_at: string | null
@@ -200,6 +223,7 @@ interface HelmBeaconSummary {
   cost: HelmBeaconCostSummary
   citation_quality: HelmBeaconCitationQualitySummary
   web_cache: HelmBeaconWebCacheSummary
+  crawler: HelmBeaconCrawlerSummary
   approvals: HelmBeaconApprovalSummary
   quality_canary: HelmBeaconQualityCanarySummary
   data_sources: HelmBeaconDataSourceSummary
@@ -268,6 +292,7 @@ export default function BeaconOps() {
     [beacon],
   )
   const costTone = useMemo(() => normalizeTone(beacon?.cost.status), [beacon])
+  const crawlerTone = useMemo(() => normalizeTone(beacon?.crawler.status), [beacon])
   const browserTone = useMemo(
     () => approvalsStatus(beacon?.approvals, beacon?.browser),
     [beacon],
@@ -308,7 +333,7 @@ export default function BeaconOps() {
         <LoadingGrid isDark={isDark} />
       ) : beacon ? (
         <>
-          <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
             <MetricCard
               icon={Clock3}
               label="Answer Latency"
@@ -347,6 +372,14 @@ export default function BeaconOps() {
               value={`${beacon.approvals.pending_browser_approvals} pending`}
               detail={beacon.approvals.highest_pending_risk_tier ?? 'no risk queue'}
               tone={browserTone}
+              isDark={isDark}
+            />
+            <MetricCard
+              icon={Globe2}
+              label="Crawler"
+              value={beacon.crawler.status}
+              detail={`${beacon.crawler.cache_hit_rate_percent}% cache / ${beacon.crawler.blocked_host_count} blocked`}
+              tone={crawlerTone}
               isDark={isDark}
             />
           </section>
@@ -455,13 +488,14 @@ export default function BeaconOps() {
                   <h2 className="text-sm font-semibold uppercase tracking-wide">Operational Details</h2>
                 </div>
                 <p className={`mt-1 text-xs ${muted}`}>
-                  Cost, citation, browser runtime, evidence, canary, and operator action.
+                  Cost, citation, browser runtime, crawler, evidence, canary, and operator action.
                 </p>
               </div>
-              <div className="grid flex-1 gap-3 sm:grid-cols-4">
+              <div className="grid flex-1 gap-3 sm:grid-cols-5">
                 <KeyValue label="Requests" value={String(beacon.cost.beacon_request_count)} muted={muted} />
                 <KeyValue label="Evidence" value={`${beacon.evidence.succeeded}/${beacon.evidence.total}`} muted={muted} />
                 <KeyValue label="Cache" value={`${beacon.web_cache.active_entry_count} active / ${beacon.web_cache.total_hit_count} hits`} muted={muted} />
+                <KeyValue label="Crawler" value={`${beacon.crawler.request_count} runs`} muted={muted} />
                 <KeyValue label="Action" value={actions[0]?.label ?? 'None'} muted={muted} />
               </div>
               <button
@@ -510,7 +544,7 @@ export default function BeaconOps() {
                 </Panel>
               </section>
 
-              <section className="grid gap-4 xl:grid-cols-3">
+              <section className="grid gap-4 xl:grid-cols-4">
                 <Panel title="Browser Runtime" icon={MousePointerClick} isDark={isDark}>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <KeyValue label="Runtime" value={beacon.browser.runtime} muted={muted} />
@@ -519,6 +553,19 @@ export default function BeaconOps() {
                     <KeyValue label="Version ok" value={beacon.browser.playwright_version_ok ? 'yes' : 'no'} muted={muted} />
                     <KeyValue label="Screenshots" value={beacon.browser.screenshot_store_ready ? 'ready' : 'not ready'} muted={muted} />
                     <KeyValue label="Cap" value={`${beacon.browser.max_runs_per_hour}/h`} muted={muted} />
+                  </div>
+                </Panel>
+
+                <Panel title="Crawler" icon={Globe2} isDark={isDark}>
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                    <KeyValue label="Status" value={beacon.crawler.status} muted={muted} />
+                    <KeyValue label="Runs" value={String(beacon.crawler.request_count)} muted={muted} />
+                    <KeyValue label="Cache hit" value={`${beacon.crawler.cache_hit_rate_percent}%`} muted={muted} />
+                    <KeyValue label="Blocked hosts" value={String(beacon.crawler.blocked_host_count)} muted={muted} />
+                    <KeyValue label="Failed pages" value={String(beacon.crawler.failed_page_count)} muted={muted} />
+                    <KeyValue label="Cap" value={`${beacon.crawler.max_pages_without_approval}p / d${beacon.crawler.max_depth_without_approval}`} muted={muted} />
+                    <KeyValue label="Forms" value={beacon.crawler.forms_allowed ? 'allowed' : 'blocked'} muted={muted} />
+                    <KeyValue label="Credentials" value={beacon.crawler.credential_entry_allowed ? 'allowed' : 'blocked'} muted={muted} />
                   </div>
                 </Panel>
 
@@ -621,8 +668,8 @@ export default function BeaconOps() {
 function LoadingGrid({ isDark }: { isDark: boolean }) {
   const block = isDark ? 'bg-white/5' : 'bg-[#141414]/5'
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-      {Array.from({ length: 5 }).map((_, index) => (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+      {Array.from({ length: 6 }).map((_, index) => (
         <div key={index} className={`h-28 animate-pulse rounded-lg ${block}`} />
       ))}
     </div>
@@ -808,6 +855,8 @@ function operatorActions(beacon: HelmBeaconSummary): Array<{ label: string; tone
   }
   if (beacon.citation_quality.insufficient > 0) actions.push({ label: 'Citation gaps', tone: 'warning' })
   if (beacon.approvals.pending_browser_approvals > 0) actions.push({ label: 'Review browser queue', tone: 'warning' })
+  if (beacon.crawler.failed_request_count > 0) actions.push({ label: 'Crawler failures', tone: 'warning' })
+  if (beacon.crawler.blocked_host_count > 0) actions.push({ label: 'Crawler blocks', tone: 'warning' })
   if (beacon.quality_canary.failed > 0) actions.push({ label: 'Canary failed', tone: 'degraded' })
   if (actions.length === 0) actions.push({ label: 'No immediate action', tone: 'ok' })
   return actions

@@ -16,6 +16,10 @@ from brain.services.internet_scout.models import (
     InternetScoutHealthCheck,
     InternetScoutHealthResponse,
 )
+from brain.services.internet_scout.policy import (
+    CRAWL_MAX_DEPTH_WITHOUT_APPROVAL,
+    CRAWL_MAX_PAGES_WITHOUT_APPROVAL,
+)
 from brain.services.internet_scout.retention import build_retention_report
 
 _REQUIRED_TABLES = (
@@ -56,6 +60,7 @@ async def build_beacon_health(
         "browser_runtime": _browser_runtime_check(),
         "recent_evidence": await _recent_evidence_check(conn, checked_at=checked_at),
         "web_cache": await _web_cache_check(conn),
+        "crawler": await _crawler_check(conn),
     }
     checks["quality_canary"] = _quality_canary_check(
         checks["recent_evidence"].metadata,
@@ -100,6 +105,105 @@ async def _web_cache_check(conn) -> InternetScoutHealthCheck:
         else "Beacon web cache is ready and waiting for warm evidence.",
         metadata=metadata,
     )
+
+
+async def _crawler_check(conn) -> InternetScoutHealthCheck:
+    if not await _table_exists(conn, "alpha_internet_tool_events"):
+        return InternetScoutHealthCheck(
+            ok=False,
+            status="unavailable",
+            detail="Beacon crawler audit table is missing.",
+            metadata={"table": "alpha_internet_tool_events"},
+        )
+    metadata = await _crawler_metadata(conn)
+    failed = _int_mapping(metadata, "failed_request_count")
+    blocked = _int_mapping(metadata, "blocked_host_count")
+    status = "warning" if failed or blocked else "ok"
+    return InternetScoutHealthCheck(
+        ok=True,
+        status=status,
+        detail="Beacon crawler is bounded and audited.",
+        metadata=metadata,
+    )
+
+
+async def _crawler_metadata(conn) -> dict[str, object]:
+    row = await conn.fetchrow(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE event_type LIKE 'crawler_%')::INTEGER
+                AS request_count,
+            COUNT(*) FILTER (
+                WHERE event_type LIKE 'crawler_%' AND status = 'succeeded'
+            )::INTEGER AS succeeded_request_count,
+            COUNT(*) FILTER (
+                WHERE event_type LIKE 'crawler_%' AND status = 'failed'
+            )::INTEGER AS failed_request_count,
+            COUNT(*) FILTER (
+                WHERE event_type LIKE 'crawler_%' AND status = 'blocked'
+            )::INTEGER AS blocked_host_count,
+            COUNT(*) FILTER (
+                WHERE event_type LIKE 'crawler_%'
+                  AND metadata->>'cache_hit' = 'true'
+            )::INTEGER AS cache_hit_count,
+            COUNT(*) FILTER (
+                WHERE event_type LIKE 'crawler_%'
+                  AND metadata->>'cache_hit' = 'false'
+            )::INTEGER AS cache_miss_count,
+            COALESCE(SUM(
+                CASE
+                    WHEN metadata->>'failed_page_count' ~ '^[0-9]+$'
+                    THEN (metadata->>'failed_page_count')::INTEGER
+                    ELSE 0
+                END
+            ), 0)::INTEGER AS failed_page_count,
+            COALESCE(SUM(
+                CASE
+                    WHEN metadata->>'source_count' ~ '^[0-9]+$'
+                    THEN (metadata->>'source_count')::INTEGER
+                    ELSE 0
+                END
+            ), 0)::INTEGER AS source_count,
+            COALESCE(SUM(
+                CASE
+                    WHEN metadata->>'claim_count' ~ '^[0-9]+$'
+                    THEN (metadata->>'claim_count')::INTEGER
+                    ELSE 0
+                END
+            ), 0)::INTEGER AS claim_count,
+            MAX(created_at) AS last_run_at
+        FROM public.alpha_internet_tool_events
+        WHERE created_at >= NOW() - INTERVAL '24 hours'
+        """
+    )
+    hits = _int_row(row, "cache_hit_count") if row else 0
+    misses = _int_row(row, "cache_miss_count") if row else 0
+    cache_total = hits + misses
+    return {
+        "mode": "gateway_bounded_crawler",
+        "window_hours": 24,
+        "request_count": _int_row(row, "request_count") if row else 0,
+        "succeeded_request_count": _int_row(row, "succeeded_request_count")
+        if row
+        else 0,
+        "failed_request_count": _int_row(row, "failed_request_count") if row else 0,
+        "blocked_host_count": _int_row(row, "blocked_host_count") if row else 0,
+        "cache_hit_count": hits,
+        "cache_miss_count": misses,
+        "cache_hit_rate_percent": round((hits / cache_total) * 100)
+        if cache_total
+        else 0,
+        "failed_page_count": _int_row(row, "failed_page_count") if row else 0,
+        "source_count": _int_row(row, "source_count") if row else 0,
+        "claim_count": _int_row(row, "claim_count") if row else 0,
+        "last_run_at": _datetime_or_none(row["last_run_at"]) if row else None,
+        "max_pages_without_approval": CRAWL_MAX_PAGES_WITHOUT_APPROVAL,
+        "max_depth_without_approval": CRAWL_MAX_DEPTH_WITHOUT_APPROVAL,
+        "same_host_required": True,
+        "forms_allowed": False,
+        "credential_entry_allowed": False,
+        "raw_web_content_is_untrusted": True,
+    }
 
 
 async def _web_cache_metadata(conn) -> dict[str, object]:

@@ -19,7 +19,7 @@ visible to the user.
 |---|---|---|
 | Answer engine UX | Perplexity, Perplexica/Vane | Fast cited answers, focus modes, source cards, session history, transparent confidence and limitations. |
 | Deep research agent | LangChain Open Deep Research, report-generating agents | Plan, subquestions, parallel search/extract, critique, synthesis, structured report, exportable sources. |
-| Agent search API | Tavily-style search/extract/crawl/research APIs | Reliable search, extraction, crawl, caching, indexing, low-latency retries, clear usage/cost telemetry. |
+| Agent search API | Tavily-style search/extract/crawl/research APIs | Reliable search, scrape, map, extraction, crawl, caching, indexing, low-latency retries, clear usage/cost telemetry. |
 | Browser action agent | browser-use, agent-browser, computer-use style tools | Structured action space, element snapshots, click/type/fill primitives, recovery loops, strict approvals for risky actions. |
 | Private metasearch | SearXNG-backed search stacks | Self-hosted/free metasearch before paid providers, privacy-preserving provider fanout, configurable result sources. |
 
@@ -62,6 +62,7 @@ References:
 | Deep research productization | Contracts, planner, reports, canaries, live step streaming, cockpit progress, redacted citation/evidence bundle metadata, and markdown/JSON export are visible in the Beacon UI. | Complete | UI shows plan, subquestions, progress, coverage warnings, report, source table, live trace, redaction metadata, and export path. |
 | Research benchmark breadth | Deterministic quality canaries, answer-eval reporting, scheduled trend summaries, and compact Ops trend drilldown exist. | Complete | Eval harness covers current facts, official docs, local/weather, shopping, adversarial pages, insufficient-evidence refusal, answer-quality score regressions, latency, zero-spend cost posture, citation precision, 7-run scheduled trend summaries, and operator drilldown. |
 | Durable web cache/index | Beacon has a DB-backed public-web evidence cache with TTL, URL dedupe, search-term GIN index, local quality/term rerank, hit telemetry, Ops status, and runtime extract reuse before Gateway calls. | Complete | Evidence cache has TTL, dedupe, reuse policy, optional embeddings/rerank index, and cache hit telemetry. |
+| Crawler API | Beacon has a PR-stage crawler facade for scrape, map, crawl, and schema extraction using Gateway-owned egress, durable cache reuse, strict same-host caps, audit events, and Ops summary metadata. | Partial | Crawler endpoints are merged, deployed, smoke-tested, and visible in Beacon Ops with cache hit rate, blocked hosts, crawl caps, failed pages, and evidence quality. |
 | Browser action UX | Approval payloads include v2 review metadata, and the Approvals UI now shows a compact review summary, action timeline, host allowlist, screenshot policy, risk labels, blocked capabilities, click targets, and the approve/deny decision boundary. | Complete | Approvals UI shows action timeline, pre/post screenshots, host allowlist, risk labels, and one-click deny/approve. |
 | Browser action capability | Browser execution supports a bounded approved-selector click path, and the Beacon request form now exposes click-only guardrails, host checks, and approval preview. | Partial | Click-only v2 supports approved element snapshots, same-host navigation, no credentials, no purchases, screenshots before/after, and per-click audit. |
 | MCP/tool ecosystem | Beacon now has a documented internal tool ecosystem contract for policy-scoped consumers, but no public MCP server adapter yet. | Partial | Beacon exposes policy-scoped tool contracts for approved internal agents and optional MCP-facing consumers. |
@@ -83,6 +84,7 @@ References:
 | 8 | Browser approval UX v2 | Complete | Approval contracts include action timeline, screenshot policy, host allowlist, URL hashes, risk labels, click targets, and deny/approve-compatible metadata rendered in a compact review UI. |
 | 9 | Browser click-only v2 | Partial | Backend runner supports approved selectors, no typing, no credentials/forms/purchases, no cross-host jumps, screenshots before/after, per-click audit, and compact operator request preview. |
 | 10 | Ops/SLO dashboard | Complete | Beacon Ops reports latency, cost guard, quality canary, provider state, browser approvals, and next operator action. |
+| 11 | Crawler API | Partial | Beacon exposes scrape/map/crawl/extract over bounded Gateway egress, reuses durable cache, records audit events, and reports crawler health in Ops after deploy smoke. |
 
 ## UX Improvement Notes
 
@@ -116,6 +118,6 @@ operator depth rather than basic answer visibility.
 
 The next best production workstream is:
 
-1. Deploy and smoke browser click-only operator request UX v2.
-2. Decide whether MCP needs a real server adapter or the internal route contract is enough.
-3. Add provider/cost fields to saved history after the execution path records them per request.
+1. Merge, deploy, and smoke crawler scrape/map/crawl/extract plus Beacon Ops status.
+2. Add browser-rendered scrape screenshots only behind the existing approval/sandbox boundary.
+3. Decide whether MCP needs a real server adapter or the internal route contract is enough.
