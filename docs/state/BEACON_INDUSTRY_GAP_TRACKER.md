@@ -62,7 +62,7 @@ References:
 | Deep research productization | Contracts, planner, reports, and canaries exist; the UI now shows a first cockpit slice, but live progress and export are still missing. | Partial | UI shows plan, subquestions, progress, coverage warnings, report, source table, and export path. |
 | Research benchmark breadth | Deterministic quality canaries, answer-eval reporting, scheduled trend summaries, and compact Ops trend drilldown exist. | Complete | Eval harness covers current facts, official docs, local/weather, shopping, adversarial pages, insufficient-evidence refusal, answer-quality score regressions, latency, zero-spend cost posture, citation precision, 7-run scheduled trend summaries, and operator drilldown. |
 | Durable web cache/index | Beacon now has a DB-backed public-web evidence cache with TTL, URL dedupe, search-term GIN index, local quality/term rerank, and hit telemetry. Runtime reuse is still limited to the backend cache contract. | Partial | Evidence cache has TTL, dedupe, reuse policy, optional embeddings/rerank index, and cache hit telemetry. |
-| Browser action UX | Approval payloads now include v2 review metadata: action timeline, host allowlist, URL hashes, screenshot policy, risk labels, and blocked capabilities. Helm still needs the richer visual treatment. | Partial | Approvals UI shows action timeline, pre/post screenshots, host allowlist, risk labels, and one-click deny/approve. |
+| Browser action UX | Approval payloads include v2 review metadata, and the Approvals UI now shows a compact review summary, action timeline, host allowlist, screenshot policy, risk labels, blocked capabilities, click targets, and the approve/deny decision boundary. | Complete | Approvals UI shows action timeline, pre/post screenshots, host allowlist, risk labels, and one-click deny/approve. |
 | Browser action capability | Browser execution now supports a bounded approved-selector click path, but operator request UX is still thin. | Partial | Click-only v2 supports approved element snapshots, same-host navigation, no credentials, no purchases, screenshots before/after, and per-click audit. |
 | MCP/tool ecosystem | Beacon is mostly internal Alpha routes, not a tool marketplace style integration layer. | Not started | Beacon exposes policy-scoped tool contracts for approved internal agents and optional MCP-facing consumers. |
 | Product-mode defaults | Focus mode request contract and Beacon UI selector are in progress. | Partial | Mode selector maps to source policies, provider strategy, extraction budget, and UI labels. |
@@ -80,7 +80,7 @@ References:
 | 5 | Eval harness v1 | Complete | Scheduled canary status is surfaced through Beacon health and Helm summary; answer-quality scenarios cover strong vendor comparisons, missing official coverage, unsupported pricing refusal, and prompt-injection refusal; eval payload reports latency, zero-spend cost posture, planned budgets, citation precision, 7-run trend deltas, and compact Ops drilldown. |
 | 6 | Deep research cockpit | Partial | UI renders research plan, subquestions, warnings, final report summary, and ranked sources; progress and exportable citations remain. |
 | 7 | Cache/rerank/index layer | Partial | Beacon stores recent public evidence snippets with TTL, URL dedupe, indexed search terms, local rerank metadata, and cache-hit counters. |
-| 8 | Browser approval UX v2 | Partial | Approval contracts include action timeline, screenshot policy, host allowlist, URL hashes, risk labels, and deny/approve-compatible metadata. |
+| 8 | Browser approval UX v2 | Complete | Approval contracts include action timeline, screenshot policy, host allowlist, URL hashes, risk labels, click targets, and deny/approve-compatible metadata rendered in a compact review UI. |
 | 9 | Browser click-only v2 | Partial | Backend runner supports approved selectors, no typing, no credentials/forms/purchases, no cross-host jumps, screenshots before/after, and per-click audit; operator request UX remains. |
 | 10 | Ops/SLO dashboard | Complete | Beacon Ops reports latency, cost guard, quality canary, provider state, browser approvals, and next operator action. |
 
@@ -116,6 +116,6 @@ operator depth rather than basic answer visibility.
 
 The next best production workstream is:
 
-1. Helm rendering for Browser approval UX v2 and Beacon cache status.
-2. Runtime cache reuse for extract/fetch paths plus cache-hit smoke coverage.
-3. Browser approval UX: richer visual review for action timeline, screenshots, and host allowlist.
+1. Beacon cache status and runtime cache reuse for extract/fetch paths plus cache-hit smoke coverage.
+2. Deep research progress/export polish.
+3. Operator request UX for browser click-only v2.
