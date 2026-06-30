@@ -29,6 +29,11 @@ def test_beacon_deep_research_cockpit_shows_plan_and_ranked_sources() -> None:
 
     assert "Deep research cockpit" in source
     assert "Plan, coverage, and source ranking" in source
+    assert "Exportable citation bundle" in source
+    assert "Bundle redacted" in source
+    assert "Review raw fields" in source
+    assert "raw_web_content_included" in source
+    assert "raw_user_query_included" in source
     assert "Progress" in source
     assert "Export report" in source
     assert "Export evidence" in source
@@ -53,9 +58,36 @@ def test_beacon_page_streams_deep_research_steps() -> None:
 
     assert "/v1/internet-scout/local-llm/tool/stream" in source
     assert "Live research trace" in source
+    assert "Export ready" in source
+    assert "providerRoute" in source
     assert "parseBeaconStreamFrame" in source
     assert "evidence_bundle" in source
     assert "BeaconResearchProgressEvent" in types
+    assert "max_searches" in types
+    assert "expected_source_types" in types
+
+
+def test_beacon_page_surfaces_product_mode_defaults() -> None:
+    source = BEACON_PAGE.read_text(encoding="utf-8")
+    config = (
+        REPO_ROOT / "ui" / "src" / "components" / "beacon" / "modeConfig.ts"
+    ).read_text(encoding="utf-8")
+    types = BEACON_TYPES.read_text(encoding="utf-8")
+
+    assert "BeaconModeRunContract" in source
+    assert "Source policy" in source
+    assert "Provider route" in source
+    assert "Extract budget" in source
+    assert "Page cap" in source
+    assert "activeMode.maxPages" in source
+    assert "runLabel" in config
+    assert "sourcePolicy" in config
+    assert "providerStrategy" in config
+    assert "extractBudget" in config
+    assert "SearXNG + Brave + Perplexity fanout" in config
+    assert "Free source router" in config
+    assert "maxPages: 4" in config
+    assert "sourcePolicy: string" in types
 
 
 def test_beacon_page_can_queue_browser_action_approvals() -> None:
