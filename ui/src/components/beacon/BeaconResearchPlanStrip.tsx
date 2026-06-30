@@ -14,6 +14,13 @@ export function BeaconResearchPlanStrip({ plan, report, quality, isDark }: Props
   const panel = isDark ? 'bg-white/5' : 'bg-white/50'
   const mutedPanel = isDark ? 'bg-black/20' : 'bg-white/40'
   const warnings = [...report.coverage_warnings, ...report.limitations]
+  const citationTarget = Math.max(plan.stop_criteria.min_accepted_citations, 1)
+  const citationProgress = Math.min(report.accepted_citation_count, citationTarget)
+  const progressLabel = `${citationProgress}/${citationTarget} citations`
+  const exportMarkdown =
+    report.report_markdown ||
+    `# ${report.title}\n\n${report.summary || 'No report summary generated.'}\n`
+  const exportHref = `data:text/markdown;charset=utf-8,${encodeURIComponent(exportMarkdown)}`
 
   return (
     <section className={`rounded-lg border p-4 ${border} ${panel}`}>
@@ -22,9 +29,21 @@ export function BeaconResearchPlanStrip({ plan, report, quality, isDark }: Props
           <p className="text-[10px] font-mono uppercase tracking-widest opacity-45">Deep research cockpit</p>
           <h3 className="mt-1 text-sm font-semibold">Plan, coverage, and source ranking</h3>
         </div>
-        <span className={`rounded border px-2 py-1 text-[10px] font-mono uppercase tracking-widest ${border}`}>
-          {report.answerability.replaceAll('_', ' ')}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`rounded border px-2 py-1 text-[10px] font-mono uppercase ${border}`}>
+            Progress {progressLabel}
+          </span>
+          <a
+            href={exportHref}
+            download="beacon-research-report.md"
+            className={`rounded border px-2 py-1 text-[10px] font-mono uppercase transition hover:opacity-75 ${border}`}
+          >
+            Export report
+          </a>
+          <span className={`rounded border px-2 py-1 text-[10px] font-mono uppercase ${border}`}>
+            {report.answerability.replaceAll('_', ' ')}
+          </span>
+        </div>
       </div>
 
       <div className="grid gap-3 lg:grid-cols-4">

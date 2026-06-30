@@ -236,7 +236,15 @@ async def _execute_and_store_research(
                 status="started",
             )
 
-        _decision, packet = await InternetScoutExecutor().execute(body)
+        async def web_cache_extract(url: str, query: str | None):
+            async with rls_connection(request) as cache_conn:
+                return await InternetScoutRepository(
+                    cache_conn
+                ).web_cache_extract_response(url=url, query=query)
+
+        executor = InternetScoutExecutor()
+        executor.web_cache_extract = web_cache_extract
+        _decision, packet = await executor.execute(body, plan=plan)
 
         async with rls_connection(request) as conn:
             repo = InternetScoutRepository(conn)

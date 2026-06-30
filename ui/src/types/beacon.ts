@@ -174,6 +174,7 @@ export interface BeaconResearchReport {
   coverage_warnings: string[]
   verified_claims: string[]
   unsupported_claims: string[]
+  report_markdown: string
   source_rankings: Array<{
     rank: number
     source_url: string

@@ -30,6 +30,19 @@ class FakeConn:
             return {"id": self.request_id}
         if "INSERT INTO public.alpha_internet_sources" in query:
             return {"id": self.source_id}
+        if "FROM public.alpha_internet_web_cache" in query:
+            return {
+                "id": self.cache_entry_id,
+                "url": "https://platform.openai.com/docs/api-reference/responses",
+                "host": "platform.openai.com",
+                "title": "OpenAI Responses API",
+                "content_hash": "b" * 64,
+                "excerpt": "OpenAI Responses API reference documentation.",
+                "search_terms": ["openai", "responses", "api", "reference"],
+                "fetched_at": datetime.now(UTC),
+                "expires_at": datetime.now(UTC),
+                "access_count": 2,
+            }
         if "FROM public.alpha_internet_requests" in query:
             return {
                 "requester": "test",
@@ -264,6 +277,24 @@ async def test_repository_loads_ranked_web_cache_and_records_hits():
     assert ranked[0].entry.id == conn.cache_entry_id
     assert ranked[0].source_quality == "official"
     assert ranked[0].matched_terms == ("api", "openai", "responses")
+    assert any(
+        "access_count = access_count + 1" in call[0] for call in conn.execute_calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_repository_reuses_web_cache_by_direct_url_without_query():
+    conn = FakeConn()
+    response = await InternetScoutRepository(conn).web_cache_extract_response(
+        url="https://platform.openai.com/docs/api-reference/responses",
+        query=None,
+    )
+
+    assert response is not None
+    assert response.extractor == "beacon_web_cache"
+    assert response.extracted_text == "OpenAI Responses API reference documentation."
+    assert "web_cache_hit" in response.risk_markers
+    assert conn.fetch_calls == []
     assert any(
         "access_count = access_count + 1" in call[0] for call in conn.execute_calls
     )

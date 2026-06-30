@@ -29,6 +29,9 @@ def test_beacon_deep_research_cockpit_shows_plan_and_ranked_sources() -> None:
 
     assert "Deep research cockpit" in source
     assert "Plan, coverage, and source ranking" in source
+    assert "Progress" in source
+    assert "Export report" in source
+    assert "beacon-research-report.md" in source
     assert "Subquestions" in source
     assert "Ranked sources" in source
     assert "source_rankings" in source
@@ -36,6 +39,7 @@ def test_beacon_deep_research_cockpit_shows_plan_and_ranked_sources() -> None:
     assert "Eval gates" in source
     assert "covered_official_target_count" in source
     assert "verified_claim_count" in source
+    assert "report_markdown" in BEACON_TYPES.read_text(encoding="utf-8")
 
 
 def test_beacon_page_can_queue_browser_action_approvals() -> None:

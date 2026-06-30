@@ -59,9 +59,9 @@ References:
 | Perplexity-class UX | Beacon now has an answer-first workspace, but saved runs and operator workflows are still not unified into one cockpit. | Partial | Beacon UI has search mode controls, answer workspace, source cards, history, confidence, warning chips, answer-quality score, evidence transparency, and deep research report rendering. |
 | UX visibility into evidence | Source ranking, rejected-source reasons, freshness, official-host match, claim support, and compact answer-quality scoring are now visible in the Beacon UI. | Complete | UI shows source quality, official/primary/general badges, rejected-source reasons, freshness, citation support status, and answer-quality rollup after deployed smoke. |
 | Private/free metasearch | Gateway now routes through self-hosted SearXNG before Brave and Perplexity. | Complete | Gateway has SearXNG provider adapter, health, spend-free routing, tests, and smoke coverage. |
-| Deep research productization | Contracts, planner, reports, and canaries exist; the UI now shows a first cockpit slice, but live progress and export are still missing. | Partial | UI shows plan, subquestions, progress, coverage warnings, report, source table, and export path. |
+| Deep research productization | Contracts, planner, reports, canaries, cockpit progress, and markdown export exist. Live step streaming is still missing. | Partial | UI shows plan, subquestions, progress, coverage warnings, report, source table, and export path. |
 | Research benchmark breadth | Deterministic quality canaries, answer-eval reporting, scheduled trend summaries, and compact Ops trend drilldown exist. | Complete | Eval harness covers current facts, official docs, local/weather, shopping, adversarial pages, insufficient-evidence refusal, answer-quality score regressions, latency, zero-spend cost posture, citation precision, 7-run scheduled trend summaries, and operator drilldown. |
-| Durable web cache/index | Beacon now has a DB-backed public-web evidence cache with TTL, URL dedupe, search-term GIN index, local quality/term rerank, and hit telemetry. Runtime reuse is still limited to the backend cache contract. | Partial | Evidence cache has TTL, dedupe, reuse policy, optional embeddings/rerank index, and cache hit telemetry. |
+| Durable web cache/index | Beacon has a DB-backed public-web evidence cache with TTL, URL dedupe, search-term GIN index, local quality/term rerank, hit telemetry, Ops status, and runtime extract reuse before Gateway calls. | Complete | Evidence cache has TTL, dedupe, reuse policy, optional embeddings/rerank index, and cache hit telemetry. |
 | Browser action UX | Approval payloads include v2 review metadata, and the Approvals UI now shows a compact review summary, action timeline, host allowlist, screenshot policy, risk labels, blocked capabilities, click targets, and the approve/deny decision boundary. | Complete | Approvals UI shows action timeline, pre/post screenshots, host allowlist, risk labels, and one-click deny/approve. |
 | Browser action capability | Browser execution now supports a bounded approved-selector click path, but operator request UX is still thin. | Partial | Click-only v2 supports approved element snapshots, same-host navigation, no credentials, no purchases, screenshots before/after, and per-click audit. |
 | MCP/tool ecosystem | Beacon is mostly internal Alpha routes, not a tool marketplace style integration layer. | Not started | Beacon exposes policy-scoped tool contracts for approved internal agents and optional MCP-facing consumers. |
@@ -78,8 +78,8 @@ References:
 | 3 | Beacon answer-engine UX v1 | Partial | UI has focus modes, answer workspace, source cards, history, confidence/limitations, visible cost/provider state, answer-quality score, and evidence transparency. |
 | 4 | Evidence transparency UX | Complete | Users can inspect source quality, rejected-source reasons, freshness, official-host match, claim support, and answer-quality rollup in the deployed Beacon UI. |
 | 5 | Eval harness v1 | Complete | Scheduled canary status is surfaced through Beacon health and Helm summary; answer-quality scenarios cover strong vendor comparisons, missing official coverage, unsupported pricing refusal, and prompt-injection refusal; eval payload reports latency, zero-spend cost posture, planned budgets, citation precision, 7-run trend deltas, and compact Ops drilldown. |
-| 6 | Deep research cockpit | Partial | UI renders research plan, subquestions, warnings, final report summary, and ranked sources; progress and exportable citations remain. |
-| 7 | Cache/rerank/index layer | Partial | Beacon stores recent public evidence snippets with TTL, URL dedupe, indexed search terms, local rerank metadata, and cache-hit counters. |
+| 6 | Deep research cockpit | Partial | UI renders research plan, subquestions, progress, warnings, final report summary, ranked sources, and markdown export; live step streaming remains. |
+| 7 | Cache/rerank/index layer | Complete | Beacon stores recent public evidence snippets with TTL, URL dedupe, indexed search terms, local rerank metadata, cache-hit counters, Ops status, and runtime extract reuse. |
 | 8 | Browser approval UX v2 | Complete | Approval contracts include action timeline, screenshot policy, host allowlist, URL hashes, risk labels, click targets, and deny/approve-compatible metadata rendered in a compact review UI. |
 | 9 | Browser click-only v2 | Partial | Backend runner supports approved selectors, no typing, no credentials/forms/purchases, no cross-host jumps, screenshots before/after, and per-click audit; operator request UX remains. |
 | 10 | Ops/SLO dashboard | Complete | Beacon Ops reports latency, cost guard, quality canary, provider state, browser approvals, and next operator action. |
@@ -116,6 +116,6 @@ operator depth rather than basic answer visibility.
 
 The next best production workstream is:
 
-1. Beacon cache status and runtime cache reuse for extract/fetch paths plus cache-hit smoke coverage.
-2. Deep research progress/export polish.
-3. Operator request UX for browser click-only v2.
+1. Deep research live step streaming and exportable citation bundle.
+2. Operator request UX for browser click-only v2.
+3. MCP/tool ecosystem contracts for policy-scoped consumers.

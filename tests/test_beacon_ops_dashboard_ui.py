@@ -30,6 +30,10 @@ def test_beacon_ops_dashboard_surfaces_core_slo_sections() -> None:
     assert "Citation Quality" in source
     assert "Browser Approvals" in source
     assert "Data Sources" in source
+    assert "Web Cache" in source
+    assert "web_cache.active_entry_count" in source
+    assert "web_cache.total_hit_count" in source
+    assert "web_cache.raw_user_query_stored" in source
     assert "Show details" in source
     assert "Hide details" in source
     assert "aria-expanded={dataSourcesOpen}" in source
