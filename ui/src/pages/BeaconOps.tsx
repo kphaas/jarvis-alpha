@@ -130,18 +130,48 @@ interface HelmBeaconApprovalSummary {
   highest_pending_risk_tier: string | null
 }
 
-interface HelmBeaconQualityCanarySummary {
+interface HelmBeaconQualityCanaryHistoryItem {
   status: string
+  suite: string
+  suite_version: number
   case_count: number
   passed: number
   failed: number
+  failure_names: string[]
+  request_id: string | null
+  last_run_at: string | null
   age_hours: number
+  expected_interval_hours: number
+  next_due_at: string | null
+  schedule_status: string
+}
+
+interface HelmBeaconQualityCanaryTrend {
+  window_runs: number
+  passed_runs: number
+  failed_runs: number
+  pass_rate_percent: number
+  latest_failed: number
+  failed_delta: number
+  passed_delta: number
+  case_count_delta: number
+  latest_precision: number
+  precision_delta: number
+  latest_suite_elapsed_ms: number
+  latency_delta_ms: number
+  estimated_provider_cost_usd: number
+  trend: string
+}
+
+interface HelmBeaconQualityCanarySummary extends HelmBeaconQualityCanaryHistoryItem {
   stale_after_hours: number
   alert: {
     status: string
     reason: string
     severity: string
   }
+  history: HelmBeaconQualityCanaryHistoryItem[]
+  trend: HelmBeaconQualityCanaryTrend
 }
 
 interface HelmBeaconSummary {
@@ -177,6 +207,7 @@ export default function BeaconOps() {
   const [error, setError] = useState('')
   const [dataSourcesOpen, setDataSourcesOpen] = useState(false)
   const [operationalDetailsOpen, setOperationalDetailsOpen] = useState(false)
+  const [canaryTrendOpen, setCanaryTrendOpen] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -495,6 +526,48 @@ export default function BeaconOps() {
                     <KeyValue label="Age" value={`${beacon.quality_canary.age_hours}h`} muted={muted} />
                     <KeyValue label="Alert" value={beacon.quality_canary.alert.reason.replace(/_/g, ' ')} muted={muted} />
                   </div>
+                  <div className={`mt-4 rounded-lg border p-3 ${border} ${isDark ? 'bg-black/10' : 'bg-[#141414]/5'}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+                          Benchmark trend
+                        </div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <StatusPill
+                            label={beacon.quality_canary.trend.trend.replace(/_/g, ' ')}
+                            tone={canaryTrendTone(beacon.quality_canary.trend)}
+                            isDark={isDark}
+                          />
+                          <span className={`text-xs ${muted}`}>
+                            {beacon.quality_canary.trend.window_runs} runs / {beacon.quality_canary.trend.pass_rate_percent}% pass
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        aria-expanded={canaryTrendOpen}
+                        aria-controls="beacon-canary-trend-details"
+                        onClick={() => setCanaryTrendOpen((open) => !open)}
+                        className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 text-xs font-mono uppercase tracking-widest transition ${border} ${panel}`}
+                      >
+                        {canaryTrendOpen ? 'Hide trend' : 'Show trend'}
+                        <ChevronDown className={`h-4 w-4 transition ${canaryTrendOpen ? 'rotate-180' : ''}`} />
+                      </button>
+                    </div>
+                    <CanarySparkline canary={beacon.quality_canary} isDark={isDark} muted={muted} />
+                    {canaryTrendOpen && (
+                      <div id="beacon-canary-trend-details" className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <KeyValue label="Passed runs" value={String(beacon.quality_canary.trend.passed_runs)} muted={muted} />
+                        <KeyValue label="Failed runs" value={String(beacon.quality_canary.trend.failed_runs)} muted={muted} />
+                        <KeyValue label="Failed delta" value={formatSignedNumber(beacon.quality_canary.trend.failed_delta)} muted={muted} />
+                        <KeyValue label="Case delta" value={formatSignedNumber(beacon.quality_canary.trend.case_count_delta)} muted={muted} />
+                        <KeyValue label="Citation precision" value={formatPercent(beacon.quality_canary.trend.latest_precision)} muted={muted} />
+                        <KeyValue label="Precision delta" value={formatSignedPercent(beacon.quality_canary.trend.precision_delta)} muted={muted} />
+                        <KeyValue label="Eval latency" value={formatMs(beacon.quality_canary.trend.latest_suite_elapsed_ms)} muted={muted} />
+                        <KeyValue label="Cost estimate" value={formatUsd(beacon.quality_canary.trend.estimated_provider_cost_usd)} muted={muted} />
+                      </div>
+                    )}
+                  </div>
                 </Panel>
 
                 <Panel title="Operator Action" icon={AlertTriangle} isDark={isDark}>
@@ -603,6 +676,44 @@ function StatusPill({ label, tone, isDark }: { label: string; tone: Tone; isDark
   )
 }
 
+function CanarySparkline({
+  canary,
+  isDark,
+  muted,
+}: {
+  canary: HelmBeaconQualityCanarySummary
+  isDark: boolean
+  muted: string
+}) {
+  const border = isDark ? 'border-white/10' : 'border-[#141414]/10'
+  const history = [...canary.history].reverse()
+
+  if (history.length === 0) {
+    return <div className={`mt-3 text-xs ${muted}`}>No scheduled benchmark history yet.</div>
+  }
+
+  return (
+    <div className="mt-3 flex h-16 items-end gap-1" aria-label="Beacon benchmark pass-rate history">
+      {history.map((run, index) => {
+        const passRate = canaryHistoryPassRate(run)
+        const failed = run.failed > 0 || run.status !== 'passed'
+        return (
+          <div key={run.request_id ?? `${run.last_run_at ?? 'run'}-${index}`} className="flex h-full flex-1 flex-col gap-1">
+            <div className="flex h-12 items-end">
+              <div
+                title={`${formatDateTime(run.last_run_at)} / ${passRate}% pass / ${run.failed} failed`}
+                className={`w-full rounded-t border ${border} ${failed ? 'bg-rose-500/70' : 'bg-emerald-500/70'}`}
+                style={{ height: `${Math.max(10, passRate)}%` }}
+              />
+            </div>
+            <span className={`text-[9px] font-mono ${muted}`}>{index + 1}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function StatusDot({ tone }: { tone: Tone }) {
   const color = {
     ok: 'bg-emerald-500',
@@ -646,6 +757,17 @@ function toneClass(tone: Tone, isDark: boolean): string {
     : 'border-[#141414]/10 bg-[#141414]/5 text-zinc-600'
 }
 
+function canaryHistoryPassRate(run: HelmBeaconQualityCanaryHistoryItem): number {
+  if (run.case_count <= 0) return 0
+  return Math.round((run.passed / run.case_count) * 100)
+}
+
+function canaryTrendTone(trend: HelmBeaconQualityCanaryTrend): Tone {
+  if (trend.failed_runs > 0 || trend.latest_failed > 0 || trend.trend === 'regressing') return 'warning'
+  if (trend.window_runs === 0 || trend.trend === 'unknown') return 'unknown'
+  return 'ok'
+}
+
 function operatorActions(beacon: HelmBeaconSummary): Array<{ label: string; tone: Tone }> {
   const actions: Array<{ label: string; tone: Tone }> = []
   if (latencyStatus(beacon.latency) === 'warning') actions.push({ label: 'Latency watch', tone: 'warning' })
@@ -682,4 +804,22 @@ function formatDateTime(value: string | null | undefined): string {
 function formatNullableBool(value: boolean | null): string {
   if (value === null) return 'unknown'
   return value ? 'yes' : 'no'
+}
+
+function formatSignedNumber(value: number): string {
+  return value > 0 ? `+${value}` : String(value)
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(value * 100)}%`
+}
+
+function formatSignedPercent(value: number): string {
+  return `${value > 0 ? '+' : ''}${Math.round(value * 100)}%`
+}
+
+function formatUsd(value: number): string {
+  if (value <= 0) return '$0.00'
+  if (value < 0.01) return '<$0.01'
+  return `$${value.toFixed(2)}`
 }
