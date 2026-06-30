@@ -177,13 +177,27 @@ function eventLabel(value: string): string {
 }
 
 function historyStatusClass(status: string): string {
-  if (status === 'succeeded' || status === 'queued') {
+  if (status === 'executed' || status === 'succeeded' || status === 'queued' || status === 'requested') {
     return 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30'
   }
-  if (status === 'failed' || status === 'blocked') {
+  if (status === 'failed' || status === 'blocked' || status === 'denied') {
     return 'text-rose-400 bg-rose-500/15 border-rose-500/30'
   }
   return 'text-amber-400 bg-amber-500/15 border-amber-500/30'
+}
+
+function historyDisplayStatus(item: BrowserHistoryItem): string {
+  const requestStatus = item.request_status.toLowerCase()
+  const eventStatus = item.status.toLowerCase()
+  if (requestStatus === 'denied' || eventStatus === 'denied') return 'denied'
+  if (requestStatus === 'expired' || eventStatus === 'expired') return 'expired'
+  if (requestStatus === 'blocked' || eventStatus === 'blocked') return 'blocked'
+  if (requestStatus === 'failed' || eventStatus === 'failed') return 'failed'
+  if (eventStatus === 'succeeded' || requestStatus === 'succeeded') {
+    return item.event_type === 'approval_request' ? 'requested' : 'executed'
+  }
+  if (eventStatus === 'queued' || requestStatus === 'queued') return 'requested'
+  return eventStatus || requestStatus || 'unknown'
 }
 
 function summarizeBrowserHistory(history: BrowserHistoryItem[]): BrowserHistorySummary {
@@ -590,21 +604,21 @@ export default function Approvals() {
               {browserHistory.map((item) => (
                 <div
                   key={`${item.request_id}-${item.event_type}-${item.status}-${item.created_at}`}
-                  className={`rounded-xl border ${border} p-3 ${isDark ? 'bg-black/20' : 'bg-white/60'}`}
+                  className={`rounded-xl border ${border} px-3 py-2.5 ${isDark ? 'bg-black/20' : 'bg-white/60'}`}
                 >
-                  <div className="flex items-start gap-3">
-                    <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${border} ${isDark ? 'bg-white/5 text-cyan-300' : 'bg-cyan-50 text-cyan-700'}`}>
+                  <div className="flex items-start gap-2.5">
+                    <div className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border ${border} ${isDark ? 'bg-white/5 text-cyan-300' : 'bg-cyan-50 text-cyan-700'}`}>
                       {historyEventIcon(item.event_type)}
                     </div>
-                    <div className="min-w-0 flex-1 space-y-3">
+                    <div className="min-w-0 flex-1 space-y-2">
                       <div className="flex items-start justify-between gap-3 flex-wrap">
                         <div className="space-y-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-xs font-bold capitalize">
                               {eventLabel(item.event_type)}
                             </span>
-                            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${historyStatusClass(item.status)}`}>
-                              {item.status}
+                            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${historyStatusClass(historyDisplayStatus(item))}`}>
+                              {historyDisplayStatus(item)}
                             </span>
                             {item.risk_tier && tierBadge(item.risk_tier)}
                           </div>
@@ -619,37 +633,29 @@ export default function Approvals() {
                         </span>
                       </div>
 
-                      <div className={`rounded-lg px-3 py-2 ${isDark ? 'bg-black/30' : 'bg-black/5'}`}>
-                        <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold">
-                          <Eye className="h-3.5 w-3.5 text-cyan-400" />
-                          Evidence trail
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap text-[11px]">
-                          <span className="inline-flex items-center gap-1 rounded-md border border-current/15 px-2 py-1">
-                            <Eye className="h-3 w-3" />
-                            {item.observation_count} observations
+                      <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
+                        <span className="inline-flex items-center gap-1 rounded-md border border-current/15 px-2 py-1">
+                          <Eye className="h-3 w-3" />
+                          {item.observation_count} obs
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-md border border-current/15 px-2 py-1">
+                          <Camera className="h-3 w-3" />
+                          {item.screenshot_count} shots
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-md border border-current/15 px-2 py-1">
+                          <ListChecks className="h-3 w-3" />
+                          {item.action_audit_count} audit
+                        </span>
+                        {item.event_type === 'browser_action' && (
+                          <span className="inline-flex items-center gap-1 rounded-md border border-current/15 px-2 py-1 font-mono">
+                            <MousePointerClick className="w-3 h-3 text-cyan-400 shrink-0" />
+                            {item.action ?? 'action'}
                           </span>
-                          <span className="inline-flex items-center gap-1 rounded-md border border-current/15 px-2 py-1">
-                            <Camera className="h-3 w-3" />
-                            {item.screenshot_count} screenshots
-                          </span>
-                          <span className="inline-flex items-center gap-1 rounded-md border border-current/15 px-2 py-1">
-                            <ListChecks className="h-3 w-3" />
-                            {item.action_audit_count} audited actions
-                          </span>
-                          {item.elapsed_ms !== null && (
-                            <span className="ml-auto font-mono opacity-55">{item.elapsed_ms}ms</span>
-                          )}
-                        </div>
+                        )}
+                        {item.elapsed_ms !== null && (
+                          <span className="rounded-md border border-current/15 px-2 py-1 font-mono opacity-70">{item.elapsed_ms}ms</span>
+                        )}
                       </div>
-
-                      {item.event_type === 'browser_action' && (
-                        <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs ${isDark ? 'bg-black/30' : 'bg-black/5'}`}>
-                          <MousePointerClick className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                          <span className="font-mono">{item.action ?? 'action'}</span>
-                          {item.host && <span className="opacity-60">on {item.host}</span>}
-                        </div>
-                      )}
 
                       {item.blocked_reason && (
                         <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-400">
@@ -657,7 +663,7 @@ export default function Approvals() {
                         </div>
                       )}
 
-                      <details className={`rounded-lg border px-3 py-2 text-[11px] ${border}`}>
+                      <details className={`rounded-lg border px-2.5 py-1.5 text-[11px] ${border}`}>
                         <summary className="cursor-pointer select-none font-bold">Technical audit</summary>
                         <div className="mt-2 flex items-center gap-x-3 gap-y-1 flex-wrap opacity-60">
                           <span className="font-mono">request {shortId(item.request_id)}</span>
