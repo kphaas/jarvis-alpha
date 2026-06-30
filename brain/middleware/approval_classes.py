@@ -215,6 +215,10 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "external_call",
         "cost_incurring",
     ],
+    "POST /v1/internet-scout/crawler/scrape": ["write", "external_call"],
+    "POST /v1/internet-scout/crawler/map": ["write", "external_call"],
+    "POST /v1/internet-scout/crawler/crawl": ["write", "external_call"],
+    "POST /v1/internet-scout/crawler/extract": ["write", "external_call"],
     "POST /v1/internet-scout/browser-task/approval-request": [
         "write",
         "security_write",

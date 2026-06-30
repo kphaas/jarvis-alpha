@@ -7,7 +7,7 @@ from enum import Enum
 from uuid import UUID
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ApprovalTier = Literal["T1", "T2", "T3", "T4", "T5"]
 Sensitivity = Literal["normal", "privacy", "legal", "financial", "minor"]
@@ -360,6 +360,107 @@ class GatewayCrawlResponse(BaseModel):
     max_pages: int = Field(ge=1, le=10)
     max_depth: int = Field(ge=0, le=2)
     pages: list[GatewayCrawlPage] = Field(default_factory=list, max_length=10)
+
+
+class InternetScoutCrawlerScrapeRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2000)
+    query: str | None = Field(default=None, max_length=500)
+    force_refresh: bool = False
+    max_bytes: int = Field(default=1_000_000, ge=1, le=1_000_000)
+
+    @field_validator("query")
+    @classmethod
+    def _blank_query_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+
+class InternetScoutCrawlerMapRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2000)
+    max_pages: int = Field(default=10, ge=1, le=10)
+    max_depth: int = Field(default=1, ge=0, le=2)
+    max_bytes: int = Field(default=1_000_000, ge=1, le=1_000_000)
+
+
+class InternetScoutCrawlerCrawlRequest(InternetScoutCrawlerMapRequest):
+    max_pages: int = Field(default=5, ge=1, le=10)
+
+
+class InternetScoutCrawlerExtractRequest(InternetScoutCrawlerScrapeRequest):
+    model_config = ConfigDict(populate_by_name=True)
+
+    extract_schema: dict[str, str] = Field(
+        default_factory=dict,
+        alias="schema",
+        max_length=20,
+    )
+
+
+class InternetScoutCrawlerPage(BaseModel):
+    url: str
+    host: str
+    depth: int = Field(ge=0, le=2)
+    status_code: int
+    fetched_at: datetime
+    content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    text: str = Field(default="", max_length=5000)
+    links: list[str] = Field(default_factory=list, max_length=25)
+    extractor: str = Field(default="", max_length=80)
+    truncated: bool = False
+    risk_markers: list[str] = Field(default_factory=list, max_length=20)
+
+
+class InternetScoutCrawlerScrapeResponse(BaseModel):
+    request_id: UUID
+    cache_hit: bool = False
+    canonical_url: str
+    host: str
+    title: str | None = None
+    fetched_at: datetime
+    text: str = Field(default="", max_length=5000)
+    links: list[str] = Field(default_factory=list, max_length=25)
+    screenshot_ref: str | None = None
+    content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    risk_markers: list[str] = Field(default_factory=list, max_length=20)
+    raw_web_content_is_untrusted: bool = True
+
+
+class InternetScoutCrawlerMapResponse(BaseModel):
+    request_id: UUID
+    seed_url: str
+    seed_host: str
+    page_count: int = Field(ge=0, le=10)
+    link_count: int = Field(ge=0, le=250)
+    max_pages: int = Field(ge=1, le=10)
+    max_depth: int = Field(ge=0, le=2)
+    pages: list[InternetScoutCrawlerPage] = Field(default_factory=list, max_length=10)
+    links: list[str] = Field(default_factory=list, max_length=250)
+    raw_web_content_is_untrusted: bool = True
+
+
+class InternetScoutCrawlerFieldEvidence(BaseModel):
+    field: str = Field(min_length=1, max_length=80)
+    found: bool = False
+    value: str | None = Field(default=None, max_length=500)
+    source_url: str
+    evidence_text: str | None = Field(default=None, max_length=500)
+    start_char: int | None = Field(default=None, ge=0)
+    end_char: int | None = Field(default=None, ge=0)
+
+
+class InternetScoutCrawlerExtractResponse(BaseModel):
+    request_id: UUID
+    cache_hit: bool = False
+    canonical_url: str
+    host: str
+    fetched_at: datetime
+    fields: list[InternetScoutCrawlerFieldEvidence] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+    raw_web_content_is_untrusted: bool = True
 
 
 class InternetScoutStoredResponse(BaseModel):

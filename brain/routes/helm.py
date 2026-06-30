@@ -153,6 +153,29 @@ class HelmBeaconWebCacheSummary(BaseModel):
     rerank: str = "local_quality_term_rerank"
 
 
+class HelmBeaconCrawlerSummary(BaseModel):
+    status: str = "unknown"
+    mode: str = "gateway_bounded_crawler"
+    window_hours: int = 24
+    request_count: int = 0
+    succeeded_request_count: int = 0
+    failed_request_count: int = 0
+    blocked_host_count: int = 0
+    cache_hit_count: int = 0
+    cache_miss_count: int = 0
+    cache_hit_rate_percent: int = 0
+    failed_page_count: int = 0
+    source_count: int = 0
+    claim_count: int = 0
+    last_run_at: str | None = None
+    max_pages_without_approval: int = 10
+    max_depth_without_approval: int = 2
+    same_host_required: bool = True
+    forms_allowed: bool = False
+    credential_entry_allowed: bool = False
+    raw_web_content_is_untrusted: bool = True
+
+
 class HelmBeaconProviderSummary(BaseModel):
     status: str
     provider_order: list[str] = Field(default_factory=list)
@@ -351,6 +374,7 @@ class HelmBeaconSummary(BaseModel):
     web_cache: HelmBeaconWebCacheSummary = Field(
         default_factory=HelmBeaconWebCacheSummary
     )
+    crawler: HelmBeaconCrawlerSummary = Field(default_factory=HelmBeaconCrawlerSummary)
     retention: HelmBeaconRetentionSummary
     approvals: HelmBeaconApprovalSummary
     quality_canary: HelmBeaconQualityCanarySummary = Field(
@@ -802,6 +826,54 @@ def _beacon_web_cache(
     )
 
 
+def _beacon_crawler(
+    check_status: str,
+    metadata: Mapping[str, object],
+) -> HelmBeaconCrawlerSummary:
+    return HelmBeaconCrawlerSummary(
+        status=check_status,
+        mode=_metadata_str(metadata, "mode", "gateway_bounded_crawler")
+        or "gateway_bounded_crawler",
+        window_hours=_metadata_int(metadata, "window_hours") or 24,
+        request_count=_metadata_int(metadata, "request_count"),
+        succeeded_request_count=_metadata_int(metadata, "succeeded_request_count"),
+        failed_request_count=_metadata_int(metadata, "failed_request_count"),
+        blocked_host_count=_metadata_int(metadata, "blocked_host_count"),
+        cache_hit_count=_metadata_int(metadata, "cache_hit_count"),
+        cache_miss_count=_metadata_int(metadata, "cache_miss_count"),
+        cache_hit_rate_percent=_metadata_int(metadata, "cache_hit_rate_percent"),
+        failed_page_count=_metadata_int(metadata, "failed_page_count"),
+        source_count=_metadata_int(metadata, "source_count"),
+        claim_count=_metadata_int(metadata, "claim_count"),
+        last_run_at=_metadata_str(metadata, "last_run_at"),
+        max_pages_without_approval=_metadata_int(
+            metadata,
+            "max_pages_without_approval",
+        )
+        or 10,
+        max_depth_without_approval=_metadata_int(
+            metadata,
+            "max_depth_without_approval",
+        )
+        or 2,
+        same_host_required=(
+            _metadata_bool(metadata, "same_host_required")
+            if "same_host_required" in metadata
+            else True
+        ),
+        forms_allowed=_metadata_bool(metadata, "forms_allowed"),
+        credential_entry_allowed=_metadata_bool(
+            metadata,
+            "credential_entry_allowed",
+        ),
+        raw_web_content_is_untrusted=(
+            _metadata_bool(metadata, "raw_web_content_is_untrusted")
+            if "raw_web_content_is_untrusted" in metadata
+            else True
+        ),
+    )
+
+
 def _beacon_quality_canary(
     metadata: Mapping[str, object],
 ) -> HelmBeaconQualityCanarySummary:
@@ -1083,6 +1155,7 @@ def _unavailable_beacon_summary() -> HelmBeaconSummary:
         ),
         approvals=HelmBeaconApprovalSummary(),
         quality_canary=HelmBeaconQualityCanarySummary(),
+        crawler=HelmBeaconCrawlerSummary(status="unavailable"),
     )
 
 
@@ -1097,6 +1170,7 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
     browser_check = health.checks.get("browser_runtime")
     evidence_check = health.checks.get("recent_evidence")
     web_cache_check = health.checks.get("web_cache")
+    crawler_check = health.checks.get("crawler")
 
     gateway_metadata = (
         _mapping_value(gateway_check.metadata) if gateway_check is not None else {}
@@ -1109,6 +1183,9 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
     )
     web_cache_metadata = (
         _mapping_value(web_cache_check.metadata) if web_cache_check is not None else {}
+    )
+    crawler_metadata = (
+        _mapping_value(crawler_check.metadata) if crawler_check is not None else {}
     )
     approvals = await _beacon_pending_browser_approvals(conn)
     data_sources = await _beacon_data_sources(conn)
@@ -1211,6 +1288,10 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
         web_cache=_beacon_web_cache(
             web_cache_check.status if web_cache_check is not None else "unavailable",
             web_cache_metadata,
+        ),
+        crawler=_beacon_crawler(
+            crawler_check.status if crawler_check is not None else "unavailable",
+            crawler_metadata,
         ),
         retention=HelmBeaconRetentionSummary(
             mode=health.retention.mode,

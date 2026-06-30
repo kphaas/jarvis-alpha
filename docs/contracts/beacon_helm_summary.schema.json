@@ -260,6 +260,119 @@
       "title": "HelmBeaconCostSummary",
       "type": "object"
     },
+    "HelmBeaconCrawlerSummary": {
+      "properties": {
+        "blocked_host_count": {
+          "default": 0,
+          "title": "Blocked Host Count",
+          "type": "integer"
+        },
+        "cache_hit_count": {
+          "default": 0,
+          "title": "Cache Hit Count",
+          "type": "integer"
+        },
+        "cache_hit_rate_percent": {
+          "default": 0,
+          "title": "Cache Hit Rate Percent",
+          "type": "integer"
+        },
+        "cache_miss_count": {
+          "default": 0,
+          "title": "Cache Miss Count",
+          "type": "integer"
+        },
+        "claim_count": {
+          "default": 0,
+          "title": "Claim Count",
+          "type": "integer"
+        },
+        "credential_entry_allowed": {
+          "default": false,
+          "title": "Credential Entry Allowed",
+          "type": "boolean"
+        },
+        "failed_page_count": {
+          "default": 0,
+          "title": "Failed Page Count",
+          "type": "integer"
+        },
+        "failed_request_count": {
+          "default": 0,
+          "title": "Failed Request Count",
+          "type": "integer"
+        },
+        "forms_allowed": {
+          "default": false,
+          "title": "Forms Allowed",
+          "type": "boolean"
+        },
+        "last_run_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Run At"
+        },
+        "max_depth_without_approval": {
+          "default": 2,
+          "title": "Max Depth Without Approval",
+          "type": "integer"
+        },
+        "max_pages_without_approval": {
+          "default": 10,
+          "title": "Max Pages Without Approval",
+          "type": "integer"
+        },
+        "mode": {
+          "default": "gateway_bounded_crawler",
+          "title": "Mode",
+          "type": "string"
+        },
+        "raw_web_content_is_untrusted": {
+          "default": true,
+          "title": "Raw Web Content Is Untrusted",
+          "type": "boolean"
+        },
+        "request_count": {
+          "default": 0,
+          "title": "Request Count",
+          "type": "integer"
+        },
+        "same_host_required": {
+          "default": true,
+          "title": "Same Host Required",
+          "type": "boolean"
+        },
+        "source_count": {
+          "default": 0,
+          "title": "Source Count",
+          "type": "integer"
+        },
+        "status": {
+          "default": "unknown",
+          "title": "Status",
+          "type": "string"
+        },
+        "succeeded_request_count": {
+          "default": 0,
+          "title": "Succeeded Request Count",
+          "type": "integer"
+        },
+        "window_hours": {
+          "default": 24,
+          "title": "Window Hours",
+          "type": "integer"
+        }
+      },
+      "title": "HelmBeaconCrawlerSummary",
+      "type": "object"
+    },
     "HelmBeaconDataSourceItem": {
       "properties": {
         "api_base_url": {
@@ -1196,6 +1309,9 @@
     },
     "cost": {
       "$ref": "#/$defs/HelmBeaconCostSummary"
+    },
+    "crawler": {
+      "$ref": "#/$defs/HelmBeaconCrawlerSummary"
     },
     "data_sources": {
       "$ref": "#/$defs/HelmBeaconDataSourceSummary"

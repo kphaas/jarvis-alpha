@@ -35,6 +35,7 @@ from brain.services.internet_scout.consumers import (
     BeaconConsumerPolicyError,
     build_consumer_internet_request,
 )
+from brain.services.internet_scout.crawler import InternetScoutCrawler
 from brain.services.internet_scout.executor import InternetScoutExecutor
 from brain.services.internet_scout.local_llm import build_local_llm_response
 from brain.services.internet_scout.health import build_beacon_health
@@ -48,6 +49,13 @@ from brain.services.internet_scout.models import (
     InternetScoutBrowserRunRequest,
     InternetScoutBrowserRunResponse,
     InternetScoutConsumerRequest,
+    InternetScoutCrawlerCrawlRequest,
+    InternetScoutCrawlerExtractRequest,
+    InternetScoutCrawlerExtractResponse,
+    InternetScoutCrawlerMapRequest,
+    InternetScoutCrawlerMapResponse,
+    InternetScoutCrawlerScrapeRequest,
+    InternetScoutCrawlerScrapeResponse,
     InternetScoutHealthResponse,
     InternetScoutLocalLLMResponse,
     InternetScoutMemoryPromotionCreateRequest,
@@ -80,6 +88,12 @@ BROWSER_HISTORY_EVENT_TYPES = {
     "browser_action",
 }
 REQUEST_HISTORY_STATUSES = {"running", "succeeded", "failed", "blocked"}
+CRAWLER_EVENTS = {
+    "scrape": "crawler_scrape",
+    "map": "crawler_map",
+    "crawl": "crawler_crawl",
+    "extract": "crawler_extract",
+}
 
 
 @router.get("/health", response_model=InternetScoutHealthResponse)
@@ -307,6 +321,215 @@ async def internet_scout_consumer_local_llm_tool(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     stored = await _execute_and_store_research(scout_request, request)
     return build_local_llm_response(stored)
+
+
+@router.post("/crawler/scrape", response_model=InternetScoutCrawlerScrapeResponse)
+async def internet_scout_crawler_scrape(
+    body: InternetScoutCrawlerScrapeRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> InternetScoutCrawlerScrapeResponse:
+    """Scrape one public URL through Beacon cache and Gateway egress."""
+    check_scopes(request, "internet_scout.research", "admin")
+    return await _execute_crawler(
+        operation="scrape",
+        body=body,
+        scout_request=InternetScoutRequest(
+            query=body.query,
+            urls=[body.url],
+            tool_hint=InternetTool.EXTRACT,
+            requester="alpha_ui.beacon_crawler.scrape",
+        ),
+        request=request,
+    )
+
+
+@router.post("/crawler/map", response_model=InternetScoutCrawlerMapResponse)
+async def internet_scout_crawler_map(
+    body: InternetScoutCrawlerMapRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> InternetScoutCrawlerMapResponse:
+    """Map same-host links with bounded public crawl caps."""
+    check_scopes(request, "internet_scout.research", "admin")
+    return await _execute_crawler(
+        operation="map",
+        body=body,
+        scout_request=InternetScoutRequest(
+            urls=[body.url],
+            tool_hint=InternetTool.CRAWL,
+            max_pages=body.max_pages,
+            max_depth=body.max_depth,
+            requester="alpha_ui.beacon_crawler.map",
+        ),
+        request=request,
+    )
+
+
+@router.post("/crawler/crawl", response_model=InternetScoutCrawlerMapResponse)
+async def internet_scout_crawler_crawl(
+    body: InternetScoutCrawlerCrawlRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> InternetScoutCrawlerMapResponse:
+    """Crawl same-host public pages with strict page/depth caps."""
+    check_scopes(request, "internet_scout.research", "admin")
+    return await _execute_crawler(
+        operation="crawl",
+        body=body,
+        scout_request=InternetScoutRequest(
+            urls=[body.url],
+            tool_hint=InternetTool.CRAWL,
+            max_pages=body.max_pages,
+            max_depth=body.max_depth,
+            requester="alpha_ui.beacon_crawler.crawl",
+        ),
+        request=request,
+    )
+
+
+@router.post("/crawler/extract", response_model=InternetScoutCrawlerExtractResponse)
+async def internet_scout_crawler_extract(
+    body: InternetScoutCrawlerExtractRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> InternetScoutCrawlerExtractResponse:
+    """Extract simple schema fields with evidence snippets from scraped text."""
+    check_scopes(request, "internet_scout.research", "admin")
+    return await _execute_crawler(
+        operation="extract",
+        body=body,
+        scout_request=InternetScoutRequest(
+            query=body.query,
+            urls=[body.url],
+            tool_hint=InternetTool.EXTRACT,
+            requester="alpha_ui.beacon_crawler.extract",
+        ),
+        request=request,
+    )
+
+
+async def _execute_crawler(
+    *,
+    operation: str,
+    body: (
+        InternetScoutCrawlerScrapeRequest
+        | InternetScoutCrawlerMapRequest
+        | InternetScoutCrawlerCrawlRequest
+        | InternetScoutCrawlerExtractRequest
+    ),
+    scout_request: InternetScoutRequest,
+    request: Request,
+):
+    actor = str(getattr(request.state, "user_id", "unknown"))
+    plan = InternetScoutOrchestrator().plan(scout_request)
+    event_type = CRAWLER_EVENTS[operation]
+
+    async with rls_connection(request) as conn:
+        repo = InternetScoutRepository(conn)
+        request_id = await repo.create_request(
+            user_id=actor,
+            request=scout_request,
+            decision=plan.decision,
+        )
+        if not plan.decision.allowed:
+            await repo.record_tool_event(
+                request_id=request_id,
+                tool="crawler",
+                event_type=event_type,
+                status="blocked",
+                metadata={
+                    "operation": operation,
+                    "blocked_reasons": plan.decision.blocked_reasons,
+                    "same_host_required": True,
+                    "forms_allowed": False,
+                    "credential_entry_allowed": False,
+                },
+            )
+
+    if not plan.decision.allowed:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "beacon_crawler_policy_denied",
+                "request_id": str(request_id),
+                "decision": plan.decision.model_dump(mode="json"),
+            },
+        )
+
+    try:
+        async with rls_connection(request) as conn:
+            await InternetScoutRepository(conn).record_tool_event(
+                request_id=request_id,
+                tool="crawler",
+                event_type=event_type,
+                status="started",
+                metadata={"operation": operation},
+            )
+
+        async def cache_lookup(url: str, query: str | None):
+            async with rls_connection(request) as cache_conn:
+                return await InternetScoutRepository(
+                    cache_conn
+                ).web_cache_extract_response(url=url, query=query)
+
+        crawler = InternetScoutCrawler()
+        if operation == "scrape":
+            response, packet, metadata = await crawler.scrape(
+                body,
+                request_id,
+                scout_request,
+                cache_lookup=cache_lookup,
+            )
+        elif operation == "map":
+            response, packet, metadata = await crawler.map(
+                body,
+                request_id,
+                scout_request,
+            )
+        elif operation == "crawl":
+            response, packet, metadata = await crawler.crawl(
+                body,
+                request_id,
+                scout_request,
+            )
+        else:
+            response, packet, metadata = await crawler.extract(
+                body,
+                request_id,
+                scout_request,
+                cache_lookup=cache_lookup,
+            )
+
+        async with rls_connection(request) as conn:
+            repo = InternetScoutRepository(conn)
+            await repo.store_packet(request_id=request_id, packet=packet)
+            await repo.record_tool_event(
+                request_id=request_id,
+                tool="crawler",
+                event_type=event_type,
+                status="succeeded",
+                metadata=metadata,
+            )
+            await repo.mark_request_succeeded(request_id)
+        return response
+    except Exception as exc:
+        safe_error_text = "Beacon crawler request failed."
+        async with rls_connection(request) as conn:
+            repo = InternetScoutRepository(conn)
+            await repo.record_tool_event(
+                request_id=request_id,
+                tool="crawler",
+                event_type=event_type,
+                status="failed",
+                metadata={
+                    "operation": operation,
+                    "error_type": exc.__class__.__name__,
+                },
+                error_text=safe_error_text,
+            )
+            await repo.mark_request_failed(request_id, safe_error_text)
+        raise
 
 
 async def _execute_and_store_research(
