@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock, Fingerprint, Sparkles, Activity, MousePointerClick } from 'lucide-react'
+import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock, Fingerprint, Sparkles, Activity, MousePointerClick, Camera, ListChecks, Eye } from 'lucide-react'
 import { BeaconBrowserApprovalPanel, type BeaconApprovalContext } from '../components/beacon/BeaconBrowserApprovalPanel'
 import { apiJson } from '../lib/apiFetch'
 import { useAppStore } from '../store'
@@ -70,6 +70,15 @@ interface BrowserHistoryResponse {
   limit: number
   offset: number
   has_more: boolean
+}
+
+interface BrowserHistorySummary {
+  approvalRequests: number
+  browserRuns: number
+  browserActions: number
+  screenshots: number
+  auditedActions: number
+  blockedOrFailed: number
 }
 
 interface DecideResponse {
@@ -175,6 +184,34 @@ function historyStatusClass(status: string): string {
     return 'text-rose-400 bg-rose-500/15 border-rose-500/30'
   }
   return 'text-amber-400 bg-amber-500/15 border-amber-500/30'
+}
+
+function summarizeBrowserHistory(history: BrowserHistoryItem[]): BrowserHistorySummary {
+  return history.reduce(
+    (summary, item) => ({
+      approvalRequests: summary.approvalRequests + (item.event_type === 'approval_request' ? 1 : 0),
+      browserRuns: summary.browserRuns + (item.event_type === 'browser_run' ? 1 : 0),
+      browserActions: summary.browserActions + (item.event_type === 'browser_action' ? 1 : 0),
+      screenshots: summary.screenshots + item.screenshot_count,
+      auditedActions: summary.auditedActions + item.action_audit_count,
+      blockedOrFailed: summary.blockedOrFailed + (item.status === 'blocked' || item.status === 'failed' ? 1 : 0),
+    }),
+    {
+      approvalRequests: 0,
+      browserRuns: 0,
+      browserActions: 0,
+      screenshots: 0,
+      auditedActions: 0,
+      blockedOrFailed: 0,
+    }
+  )
+}
+
+function historyEventIcon(eventType: string) {
+  if (eventType === 'approval_request') return <ShieldCheck className="h-4 w-4" />
+  if (eventType === 'browser_run') return <Activity className="h-4 w-4" />
+  if (eventType === 'browser_action') return <MousePointerClick className="h-4 w-4" />
+  return <Fingerprint className="h-4 w-4" />
 }
 
 export default function Approvals() {
@@ -363,6 +400,7 @@ export default function Approvals() {
   const count = data?.count ?? 0
   const historyStart = browserHistory.length > 0 ? historyOffset + 1 : 0
   const historyEnd = historyOffset + browserHistory.length
+  const historySummary = summarizeBrowserHistory(browserHistory)
 
   return (
     <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 max-w-4xl">
@@ -525,62 +563,115 @@ export default function Approvals() {
 
           {!historyError && browserHistory.length > 0 && (
             <div className="space-y-2">
+              <div className={`grid gap-2 rounded-xl border p-3 ${border} ${isDark ? 'bg-black/20' : 'bg-white/60'}`}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <ListChecks className="h-3.5 w-3.5 text-cyan-400" />
+                    <span className="text-[11px] font-bold">History summary</span>
+                  </div>
+                  <span className="text-[10px] font-mono opacity-45">latest page only</span>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                  {[
+                    ['Approval requests', historySummary.approvalRequests],
+                    ['Browser runs', historySummary.browserRuns],
+                    ['Action events', historySummary.browserActions],
+                    ['Audited actions', historySummary.auditedActions],
+                    ['Screenshots', historySummary.screenshots],
+                    ['Blocked or failed', historySummary.blockedOrFailed],
+                  ].map(([label, value]) => (
+                    <div key={label} className={`rounded-lg border px-3 py-2 ${border} ${isDark ? 'bg-white/5' : 'bg-[#141414]/5'}`}>
+                      <div className="text-[10px] font-mono uppercase opacity-45">{label}</div>
+                      <div className="mt-1 text-sm font-bold">{value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
               {browserHistory.map((item) => (
                 <div
                   key={`${item.request_id}-${item.event_type}-${item.status}-${item.created_at}`}
                   className={`rounded-xl border ${border} p-3 ${isDark ? 'bg-black/20' : 'bg-white/60'}`}
                 >
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-bold capitalize">
-                          {eventLabel(item.event_type)}
-                        </span>
-                        <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${historyStatusClass(item.status)}`}>
-                          {item.status}
-                        </span>
-                        {item.risk_tier && tierBadge(item.risk_tier)}
-                      </div>
-                      <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] opacity-50">
-                        <span className="font-mono">request {shortId(item.request_id)}</span>
-                        {item.approval_queue_id && (
-                          <span className="font-mono">approval {shortId(item.approval_queue_id)}</span>
-                        )}
-                        {item.approval_hash_prefix && (
-                          <span className="font-mono">hash {item.approval_hash_prefix}</span>
-                        )}
-                        <span>{new Date(item.created_at).toLocaleString()}</span>
-                      </div>
+                  <div className="flex items-start gap-3">
+                    <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${border} ${isDark ? 'bg-white/5 text-cyan-300' : 'bg-cyan-50 text-cyan-700'}`}>
+                      {historyEventIcon(item.event_type)}
                     </div>
-                    <span className="text-[10px] font-mono uppercase opacity-40">
-                      {item.request_status}
-                    </span>
-                  </div>
+                    <div className="min-w-0 flex-1 space-y-3">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-bold capitalize">
+                              {eventLabel(item.event_type)}
+                            </span>
+                            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${historyStatusClass(item.status)}`}>
+                              {item.status}
+                            </span>
+                            {item.risk_tier && tierBadge(item.risk_tier)}
+                          </div>
+                          <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] opacity-55">
+                            <span>{new Date(item.created_at).toLocaleString()}</span>
+                            <span className="font-mono">{item.selected_tool}</span>
+                            {item.host && <span className="font-mono">host {item.host}</span>}
+                          </div>
+                        </div>
+                        <span className="text-[10px] font-mono uppercase opacity-45">
+                          {item.request_status}
+                        </span>
+                      </div>
 
-                  {item.event_type === 'browser_action' && (
-                    <div className={`mt-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs ${isDark ? 'bg-black/30' : 'bg-black/5'}`}>
-                      <MousePointerClick className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                      <span className="font-mono">{item.action ?? 'action'}</span>
-                      {item.host && <span className="opacity-60">on {item.host}</span>}
-                      {item.elapsed_ms !== null && (
-                        <span className="ml-auto font-mono opacity-50">{item.elapsed_ms}ms</span>
+                      <div className={`rounded-lg px-3 py-2 ${isDark ? 'bg-black/30' : 'bg-black/5'}`}>
+                        <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold">
+                          <Eye className="h-3.5 w-3.5 text-cyan-400" />
+                          Evidence trail
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                          <span className="inline-flex items-center gap-1 rounded-md border border-current/15 px-2 py-1">
+                            <Eye className="h-3 w-3" />
+                            {item.observation_count} observations
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded-md border border-current/15 px-2 py-1">
+                            <Camera className="h-3 w-3" />
+                            {item.screenshot_count} screenshots
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded-md border border-current/15 px-2 py-1">
+                            <ListChecks className="h-3 w-3" />
+                            {item.action_audit_count} audited actions
+                          </span>
+                          {item.elapsed_ms !== null && (
+                            <span className="ml-auto font-mono opacity-55">{item.elapsed_ms}ms</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {item.event_type === 'browser_action' && (
+                        <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs ${isDark ? 'bg-black/30' : 'bg-black/5'}`}>
+                          <MousePointerClick className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                          <span className="font-mono">{item.action ?? 'action'}</span>
+                          {item.host && <span className="opacity-60">on {item.host}</span>}
+                        </div>
                       )}
-                    </div>
-                  )}
 
-                  {(item.observation_count > 0 || item.screenshot_count > 0 || item.action_audit_count > 0) && (
-                    <div className="mt-3 flex items-center gap-3 flex-wrap text-[11px] opacity-60">
-                      <span>{item.observation_count} observations</span>
-                      <span>{item.screenshot_count} screenshots</span>
-                      <span>{item.action_audit_count} audited actions</span>
-                    </div>
-                  )}
+                      {item.blocked_reason && (
+                        <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-400">
+                          blocked: {item.blocked_reason}
+                        </div>
+                      )}
 
-                  {item.blocked_reason && (
-                    <div className="mt-3 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-400">
-                      blocked: {item.blocked_reason}
+                      <details className={`rounded-lg border px-3 py-2 text-[11px] ${border}`}>
+                        <summary className="cursor-pointer select-none font-bold">Technical audit</summary>
+                        <div className="mt-2 flex items-center gap-x-3 gap-y-1 flex-wrap opacity-60">
+                          <span className="font-mono">request {shortId(item.request_id)}</span>
+                          {item.approval_queue_id && (
+                            <span className="font-mono">approval {shortId(item.approval_queue_id)}</span>
+                          )}
+                          {item.approval_hash_prefix && (
+                            <span className="font-mono">hash {item.approval_hash_prefix}</span>
+                          )}
+                          <span className="font-mono">tool {item.selected_tool}</span>
+                        </div>
+                      </details>
                     </div>
-                  )}
+                  </div>
                 </div>
               ))}
             </div>

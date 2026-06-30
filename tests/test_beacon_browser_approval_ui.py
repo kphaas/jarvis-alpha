@@ -84,10 +84,16 @@ def test_approvals_page_surfaces_browser_execution_history() -> None:
     assert "historyParams.set('q', trimmedQuery)" in source
     assert "historyParams.set('event_type', historyEventType)" in source
     assert "Browser execution history" in source
+    assert "History summary" in source
+    assert "latest page only" in source
+    assert "Evidence trail" in source
+    assert "Technical audit" in source
     assert "historyHasMore" in source
     assert "Search request, approval, host" in source
     assert "Approval requests" in source
     assert "Browser runs" in source
+    assert "Action events" in source
+    assert "Blocked or failed" in source
     assert "Previous" in source
     assert "Next" in source
     assert "interface BrowserHistoryItem" in source
