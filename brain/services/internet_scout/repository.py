@@ -267,25 +267,27 @@ class InternetScoutRepository:
         url: str,
         query: str | None,
     ) -> GatewayExtractResponse | None:
-        ranked = await self.load_ranked_web_cache(query=query, max_results=10)
         url_key = cache_url_key(url)
+        row = await self.conn.fetchrow(
+            """
+            SELECT id, url, host, title, content_hash, excerpt, search_terms,
+                   fetched_at, expires_at, access_count
+            FROM public.alpha_internet_web_cache
+            WHERE url_key = $1
+              AND expires_at > NOW()
+            """,
+            url_key,
+        )
+        if row:
+            entry = _web_cache_entry_from_row(row)
+            await self.record_web_cache_hits([entry.id])
+            return _web_cache_entry_extract_response(entry)
+
+        ranked = await self.load_ranked_web_cache(query=query, max_results=10)
         for item in ranked:
             if cache_url_key(item.entry.url) != url_key:
                 continue
-            return GatewayExtractResponse(
-                url=item.entry.url,
-                host=item.entry.host,
-                status_code=200,
-                content_type="text/plain",
-                content_hash=item.entry.content_hash,
-                fetched_at=item.entry.fetched_at,
-                extracted_text=item.entry.excerpt,
-                extractor="beacon_web_cache",
-                extraction_fallback=False,
-                truncated=True,
-                risk_markers=["web_cache_hit", "raw_web_content_is_untrusted"],
-                redirect_chain=[item.entry.url],
-            )
+            return _web_cache_entry_extract_response(item.entry)
         return None
 
     async def load_packet(self, request_id: UUID) -> InternetEvidencePacket | None:
@@ -591,6 +593,23 @@ def _web_cache_entry_from_row(row: Any) -> WebCacheEntry:
         fetched_at=row["fetched_at"],
         expires_at=row["expires_at"],
         access_count=_int_json(row["access_count"], default=0),
+    )
+
+
+def _web_cache_entry_extract_response(entry: WebCacheEntry) -> GatewayExtractResponse:
+    return GatewayExtractResponse(
+        url=entry.url,
+        host=entry.host,
+        status_code=200,
+        content_type="text/plain",
+        content_hash=entry.content_hash,
+        fetched_at=entry.fetched_at,
+        extracted_text=entry.excerpt,
+        extractor="beacon_web_cache",
+        extraction_fallback=False,
+        truncated=True,
+        risk_markers=["web_cache_hit", "raw_web_content_is_untrusted"],
+        redirect_chain=[entry.url],
     )
 
 

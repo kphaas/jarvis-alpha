@@ -132,7 +132,7 @@ class FakeRepo:
 
 
 class FakeExecutor:
-    async def execute(self, body):
+    async def execute(self, body, *, plan=None):
         source = build_source_reference(
             url="https://public.example.test/report",
             content="Beacon source.",

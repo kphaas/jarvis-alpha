@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock3,
+  Database,
   DollarSign,
   Gauge,
   Globe2,
@@ -119,6 +120,21 @@ interface HelmBeaconCitationQualitySummary {
   prompt_injection_rejection_count: number
 }
 
+interface HelmBeaconWebCacheSummary {
+  status: string
+  mode: string
+  ttl_hours: number
+  active_entry_count: number
+  expired_entry_count: number
+  total_hit_count: number
+  last_hit_at: string | null
+  last_seen_at: string | null
+  raw_user_query_stored: boolean
+  raw_web_content_is_untrusted: boolean
+  index: string
+  rerank: string
+}
+
 interface HelmBeaconApprovalSummary {
   pending_browser_approvals: number
   next_expires_at: string | null
@@ -183,6 +199,7 @@ interface HelmBeaconSummary {
   latency: HelmBeaconLatencySummary
   cost: HelmBeaconCostSummary
   citation_quality: HelmBeaconCitationQualitySummary
+  web_cache: HelmBeaconWebCacheSummary
   approvals: HelmBeaconApprovalSummary
   quality_canary: HelmBeaconQualityCanarySummary
   data_sources: HelmBeaconDataSourceSummary
@@ -441,9 +458,10 @@ export default function BeaconOps() {
                   Cost, citation, browser runtime, evidence, canary, and operator action.
                 </p>
               </div>
-              <div className="grid flex-1 gap-3 sm:grid-cols-3">
+              <div className="grid flex-1 gap-3 sm:grid-cols-4">
                 <KeyValue label="Requests" value={String(beacon.cost.beacon_request_count)} muted={muted} />
                 <KeyValue label="Evidence" value={`${beacon.evidence.succeeded}/${beacon.evidence.total}`} muted={muted} />
+                <KeyValue label="Cache" value={`${beacon.web_cache.active_entry_count} active / ${beacon.web_cache.total_hit_count} hits`} muted={muted} />
                 <KeyValue label="Action" value={actions[0]?.label ?? 'None'} muted={muted} />
               </div>
               <button
@@ -492,7 +510,7 @@ export default function BeaconOps() {
                 </Panel>
               </section>
 
-              <section className="grid gap-4 xl:grid-cols-2">
+              <section className="grid gap-4 xl:grid-cols-3">
                 <Panel title="Browser Runtime" icon={MousePointerClick} isDark={isDark}>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <KeyValue label="Runtime" value={beacon.browser.runtime} muted={muted} />
@@ -501,6 +519,17 @@ export default function BeaconOps() {
                     <KeyValue label="Version ok" value={beacon.browser.playwright_version_ok ? 'yes' : 'no'} muted={muted} />
                     <KeyValue label="Screenshots" value={beacon.browser.screenshot_store_ready ? 'ready' : 'not ready'} muted={muted} />
                     <KeyValue label="Cap" value={`${beacon.browser.max_runs_per_hour}/h`} muted={muted} />
+                  </div>
+                </Panel>
+
+                <Panel title="Web Cache" icon={Database} isDark={isDark}>
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                    <KeyValue label="Status" value={beacon.web_cache.status} muted={muted} />
+                    <KeyValue label="Active" value={String(beacon.web_cache.active_entry_count)} muted={muted} />
+                    <KeyValue label="Hits" value={String(beacon.web_cache.total_hit_count)} muted={muted} />
+                    <KeyValue label="TTL" value={`${beacon.web_cache.ttl_hours}h`} muted={muted} />
+                    <KeyValue label="Last hit" value={formatDateTime(beacon.web_cache.last_hit_at)} muted={muted} />
+                    <KeyValue label="Raw query" value={beacon.web_cache.raw_user_query_stored ? 'stored' : 'not stored'} muted={muted} />
                   </div>
                 </Panel>
 
