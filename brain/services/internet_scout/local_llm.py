@@ -8,6 +8,7 @@ from typing import Literal
 from brain.services.internet_scout.models import (
     InternetScoutAnswerQualityScore,
     InternetScoutCitationQualitySummary,
+    InternetScoutEvidenceBundle,
     InternetScoutEvidenceTransparency,
     InternetScoutEvidenceTransparencyItem,
     InternetScoutLocalLLMCitation,
@@ -65,6 +66,20 @@ def build_local_llm_response(
         memory_boundary=memory_boundary,
     )
 
+    evidence_transparency = _evidence_transparency(
+        stored=stored,
+        citations=citations,
+        evaluation=evaluation,
+    )
+    evidence_bundle = _evidence_bundle(
+        stored=stored,
+        citations=citations,
+        quality=evaluation.summary,
+        memory_boundary=memory_boundary,
+        research_report=research_report,
+        evidence_transparency=evidence_transparency,
+    )
+
     return InternetScoutLocalLLMResponse(
         request_id=stored.request_id,
         plan=stored.plan,
@@ -74,11 +89,8 @@ def build_local_llm_response(
         synthesis=synthesis,
         memory_boundary=memory_boundary,
         research_report=research_report,
-        evidence_transparency=_evidence_transparency(
-            stored=stored,
-            citations=citations,
-            evaluation=evaluation,
-        ),
+        evidence_transparency=evidence_transparency,
+        evidence_bundle=evidence_bundle,
         answer_context=_answer_context(citations, query=stored.evidence.request.query),
     )
 
@@ -264,6 +276,37 @@ def _report_answerability(
     if synthesis.required_behavior == "answer_with_limitations":
         return "limited"
     return "not_verified"
+
+
+def _evidence_bundle(
+    *,
+    stored: InternetScoutStoredResponse,
+    citations: list[InternetScoutLocalLLMCitation],
+    quality: InternetScoutCitationQualitySummary,
+    memory_boundary: InternetScoutMemoryBoundary,
+    research_report: InternetScoutResearchReport,
+    evidence_transparency: InternetScoutEvidenceTransparency,
+) -> InternetScoutEvidenceBundle:
+    return InternetScoutEvidenceBundle(
+        request_id=stored.request_id,
+        plan_id=research_report.plan_id,
+        research_intent=research_report.research_intent,
+        answerability=research_report.answerability,
+        source_quality_status=research_report.source_quality_status,
+        quality_score=evidence_transparency.answer_quality_score,
+        quality=quality,
+        citations=citations,
+        accepted_sources=evidence_transparency.accepted_sources,
+        rejected_sources=evidence_transparency.rejected_sources,
+        source_rankings=research_report.source_rankings,
+        source_hosts=research_report.source_hosts,
+        required_source_hosts=research_report.required_source_hosts,
+        verified_claims=research_report.verified_claims,
+        unsupported_claims=research_report.unsupported_claims,
+        contradictions=research_report.contradictions,
+        coverage_warnings=research_report.coverage_warnings,
+        memory_boundary=memory_boundary,
+    )
 
 
 def _report_findings(

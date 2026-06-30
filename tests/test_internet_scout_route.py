@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -44,6 +45,28 @@ def _request(*, scopes: list[str] | None = None, role: str = "user"):
         ),
         url=SimpleNamespace(path="/v1/internet-scout/research"),
     )
+
+
+def _decode_sse_event(chunk: str) -> dict[str, object]:
+    lines = chunk.strip().splitlines()
+    event = next(
+        line.split(":", 1)[1].strip() for line in lines if line.startswith("event:")
+    )
+    data = next(
+        line.split(":", 1)[1].strip() for line in lines if line.startswith("data:")
+    )
+    return {"event": event, "data": json.loads(data)}
+
+
+def test_internet_scout_stream_failure_detail_is_sanitized():
+    detail = internet_scout._stream_failure_detail(
+        RuntimeError("provider failed with secret-token-value")
+    )
+
+    assert detail == {
+        "detail": "Beacon request failed before completion.",
+        "request_id": None,
+    }
 
 
 class FakeRepo:
@@ -527,6 +550,40 @@ async def test_internet_scout_local_llm_tool_returns_citation_envelope(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_internet_scout_local_llm_stream_returns_steps_and_bundle(monkeypatch):
+    FakeRepo.created = []
+    FakeRepo.events = []
+    FakeRepo.stored = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+    monkeypatch.setattr(internet_scout, "InternetScoutExecutor", lambda: FakeExecutor())
+
+    chunks = [
+        chunk
+        async for chunk in internet_scout._stream_local_llm_tool(
+            InternetScoutRequest(query="beacon"),
+            _request(scopes=["internet_scout.research"]),
+        )
+    ]
+    events = [_decode_sse_event(chunk) for chunk in chunks]
+
+    assert [event["event"] for event in events] == [
+        "step",
+        "step",
+        "step",
+        "completed",
+    ]
+    assert events[0]["data"]["stage"] == "planned"
+    assert events[1]["data"]["stage"] == "executing"
+    assert events[2]["data"]["stage"] == "synthesizing"
+    assert events[3]["data"]["evidence_bundle"]["raw_web_content_included"] is False
+    assert (
+        events[3]["data"]["evidence_bundle"]["citations"][0]["source_url"]
+        == "https://public.example.test/report"
+    )
+
+
+@pytest.mark.asyncio
 async def test_internet_scout_agent_run_returns_production_envelope(monkeypatch):
     FakeRepo.created = []
     FakeRepo.events = []
@@ -900,6 +957,11 @@ def test_internet_scout_routes_are_classified():
         "cost_incurring",
     ]
     assert classify_route("POST", "/v1/internet-scout/local-llm/tool") == [
+        "write",
+        "external_call",
+        "cost_incurring",
+    ]
+    assert classify_route("POST", "/v1/internet-scout/local-llm/tool/stream") == [
         "write",
         "external_call",
         "cost_incurring",

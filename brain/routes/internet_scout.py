@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 from brain.db.rls import platform_admin_connection, rls_connection
 from brain.middleware.jwt_auth import require_auth
@@ -139,6 +142,24 @@ async def internet_scout_local_llm_tool(
     return build_local_llm_response(stored)
 
 
+@router.post("/local-llm/tool/stream")
+async def internet_scout_local_llm_tool_stream(
+    body: InternetScoutRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> StreamingResponse:
+    """Stream Beacon research lifecycle events before the final citation envelope."""
+    check_scopes(request, "internet_scout.research", "admin")
+    return StreamingResponse(
+        _stream_local_llm_tool(body, request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/agent/run", response_model=InternetScoutAgentResponse)
 async def internet_scout_agent_run(
     body: InternetScoutRequest,
@@ -166,6 +187,97 @@ async def internet_scout_agent_run(
         },
     )
     return response
+
+
+async def _stream_local_llm_tool(
+    body: InternetScoutRequest,
+    request: Request,
+) -> AsyncIterator[str]:
+    plan = InternetScoutOrchestrator().plan(body)
+    yield _sse_event(
+        "step",
+        {
+            "stage": "planned",
+            "status": "completed",
+            "detail": "Research plan prepared.",
+            "plan_id": plan.research.plan_id,
+            "intent": plan.research.intent,
+            "max_searches": plan.research.max_searches,
+            "max_extracts": plan.research.max_extracts,
+            "min_accepted_citations": (
+                plan.research.stop_criteria.min_accepted_citations
+            ),
+            "expected_source_types": plan.research.expected_source_types,
+        },
+    )
+    yield _sse_event(
+        "step",
+        {
+            "stage": "executing",
+            "status": "started",
+            "detail": "Provider route and extract path running.",
+            "provider_strategy": plan.research.provider_strategy,
+            "search_providers": plan.research.search_providers,
+        },
+    )
+    try:
+        stored = await _execute_and_store_research(body, request)
+        yield _sse_event(
+            "step",
+            {
+                "stage": "synthesizing",
+                "status": "started",
+                "detail": "Ranking citations and building evidence bundle.",
+                "source_count": len(stored.evidence.sources),
+                "claim_count": len(stored.evidence.claims),
+            },
+        )
+        response = build_local_llm_response(stored)
+        yield _sse_event(
+            "completed",
+            response.model_dump(mode="json"),
+        )
+    except Exception as exc:
+        logger.warning(
+            "BEACON_LOCAL_LLM_STREAM_FAIL",
+            extra={
+                "event": "BEACON_LOCAL_LLM_STREAM_FAIL",
+                "stage": "failed",
+                "error_type": type(exc).__name__,
+            },
+        )
+        failure_detail = _stream_failure_detail(exc)
+        yield _sse_event(
+            "failed",
+            {
+                "stage": "failed",
+                "status": "failed",
+                "detail": failure_detail["detail"],
+                "error_type": type(exc).__name__,
+                "request_id": failure_detail.get("request_id"),
+            },
+        )
+
+
+def _sse_event(event: str, payload: dict[str, object]) -> str:
+    data = json.dumps(payload, default=str, separators=(",", ":"))
+    return f"event: {event}\ndata: {data}\n\n"
+
+
+def _stream_failure_detail(exc: Exception) -> dict[str, str | None]:
+    if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
+        request_id = exc.detail.get("request_id")
+        error = str(exc.detail.get("error") or "beacon_stream_failed")
+        return {
+            "detail": error,
+            "request_id": str(request_id) if request_id else None,
+        }
+    if isinstance(exc, HTTPException):
+        return {"detail": str(exc.detail)[:240], "request_id": None}
+    return {
+        "detail": "Beacon request failed before completion.",
+        "request_id": None,
+    }
 
 
 @router.post(

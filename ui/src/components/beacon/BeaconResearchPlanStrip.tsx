@@ -1,15 +1,16 @@
-import { AlertTriangle, Compass, Database, GitBranch, ListChecks, Quote, Timer } from 'lucide-react'
+import { AlertTriangle, Compass, Database, FileJson, GitBranch, ListChecks, Quote, Timer } from 'lucide-react'
 import type { ReactNode } from 'react'
-import type { BeaconQualitySummary, BeaconResearchPlan, BeaconResearchReport } from '../../types/beacon'
+import type { BeaconEvidenceBundle, BeaconQualitySummary, BeaconResearchPlan, BeaconResearchReport } from '../../types/beacon'
 
 interface Props {
   plan: BeaconResearchPlan
   report: BeaconResearchReport
   quality: BeaconQualitySummary
+  evidenceBundle?: BeaconEvidenceBundle
   isDark: boolean
 }
 
-export function BeaconResearchPlanStrip({ plan, report, quality, isDark }: Props) {
+export function BeaconResearchPlanStrip({ plan, report, quality, evidenceBundle, isDark }: Props) {
   const border = isDark ? 'border-white/10' : 'border-[#141414]/10'
   const panel = isDark ? 'bg-white/5' : 'bg-white/50'
   const mutedPanel = isDark ? 'bg-black/20' : 'bg-white/40'
@@ -21,6 +22,9 @@ export function BeaconResearchPlanStrip({ plan, report, quality, isDark }: Props
     report.report_markdown ||
     `# ${report.title}\n\n${report.summary || 'No report summary generated.'}\n`
   const exportHref = `data:text/markdown;charset=utf-8,${encodeURIComponent(exportMarkdown)}`
+  const evidenceHref = evidenceBundle
+    ? `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(evidenceBundle, null, 2))}`
+    : ''
 
   return (
     <section className={`rounded-lg border p-4 ${border} ${panel}`}>
@@ -40,6 +44,16 @@ export function BeaconResearchPlanStrip({ plan, report, quality, isDark }: Props
           >
             Export report
           </a>
+          {evidenceBundle && (
+            <a
+              href={evidenceHref}
+              download="beacon-evidence-bundle.json"
+              className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-mono uppercase transition hover:opacity-75 ${border}`}
+            >
+              <FileJson className="h-3 w-3" />
+              Export evidence
+            </a>
+          )}
           <span className={`rounded border px-2 py-1 text-[10px] font-mono uppercase ${border}`}>
             {report.answerability.replaceAll('_', ' ')}
           </span>
