@@ -18,6 +18,21 @@ from brain.services.memory_web_policy import (
     should_short_circuit_web_suggestion,
 )
 
+SCOREBOARD_DIMENSIONS: dict[str, tuple[str, ...]] = {
+    "current_vs_old": (
+        "current_prompt_excludes_historical_graph",
+        "historical_prompt_includes_historical_graph",
+        "change_prompt_includes_historical_graph",
+        "graph_current_line_is_labeled",
+        "graph_historical_edge_is_labeled",
+    ),
+    "deleted_memories": ("semantic_delete_archives",),
+    "do_not_remember": ("forget_requires_topic_or_working_scope",),
+    "profile_recall": ("ask_profile_memory_recall_uses_memory_before_web_fallback",),
+    "at0_system_recall": ("at0_prompt_includes_system_principal",),
+    "mixed_ken_at0": ("mixed_ken_at0_prompt_selects_system_and_current_graph",),
+}
+
 
 @dataclass(frozen=True)
 class MemoryContextEvalResult:
@@ -37,6 +52,7 @@ def run_memory_context_evals() -> list[MemoryContextEvalResult]:
         _historical_prompt_includes_history(),
         _change_prompt_includes_history(),
         _at0_prompt_includes_system_principal(),
+        _mixed_ken_at0_prompt_selects_system_and_current_graph(),
         _graph_current_line_contract(),
         _graph_historical_edge_line_contract(),
         _context_section_order_contract(),
@@ -55,6 +71,7 @@ def memory_context_eval_payload() -> dict[str, object]:
         "passed": len(results) - len(failed),
         "failed": len(failed),
         "case_groups": _group_summary(results),
+        "scoreboard": _scoreboard(results),
         "results": [
             {
                 **asdict(result),
@@ -158,6 +175,29 @@ def _at0_prompt_includes_system_principal() -> MemoryContextEvalResult:
         failures=()
         if include_system is True
         else ("at0_system_principal_not_selected",),
+    )
+
+
+def _mixed_ken_at0_prompt_selects_system_and_current_graph() -> MemoryContextEvalResult:
+    prompt = "What can AT-0 Memory do for Ken's current career profile?"
+    include_system = MemoryService._include_at0_system_graph(prompt)
+    include_history = MemoryService._include_historical_graph(prompt)
+    failures: list[str] = []
+    if include_system is not True:
+        failures.append("at0_system_principal_not_selected_for_mixed_prompt")
+    if include_history is not False:
+        failures.append("current_mixed_prompt_includes_historical_graph")
+
+    return MemoryContextEvalResult(
+        name="mixed_ken_at0_prompt_selects_system_and_current_graph",
+        eval_group="auto_context",
+        passed=not failures,
+        details={
+            "prompt": prompt,
+            "include_at0_system_graph": include_system,
+            "include_historical_graph": include_history,
+        },
+        failures=tuple(failures),
     )
 
 
@@ -302,3 +342,27 @@ def _group_summary(results: list[MemoryContextEvalResult]) -> dict[str, dict[str
         group["case_count"] += 1
         group["passed" if result.passed else "failed"] += 1
     return summary
+
+
+def _scoreboard(results: list[MemoryContextEvalResult]) -> dict[str, dict[str, object]]:
+    by_name = {result.name: result for result in results}
+    scoreboard: dict[str, dict[str, object]] = {}
+    for dimension, case_names in SCOREBOARD_DIMENSIONS.items():
+        cases = [by_name[name] for name in case_names if name in by_name]
+        passed = sum(1 for case in cases if case.passed)
+        failed_cases = [case for case in cases if not case.passed]
+        missing = [name for name in case_names if name not in by_name]
+        failures = {
+            case.name: list(case.failures) for case in failed_cases if case.failures
+        }
+        if missing:
+            failures["missing_cases"] = missing
+        scoreboard[dimension] = {
+            "status": "failed" if failed_cases or missing else "passed",
+            "case_count": len(case_names),
+            "passed": passed,
+            "failed": len(failed_cases) + len(missing),
+            "cases": list(case_names),
+            "failures": failures,
+        }
+    return scoreboard
