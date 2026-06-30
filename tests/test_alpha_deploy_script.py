@@ -34,6 +34,7 @@ def test_alpha_deploy_runs_cheap_smokes_after_fanout() -> None:
     assert "JARVIS_SKIP_MEMORY_GRAPH_SMOKE" in text
     assert "JARVIS_ALPHA_SKIP_MEMORY_GRAPH_SMOKE" in text
     assert "smoke_helm_memory_ask_session.py" in text
+    assert "MEMORY_ASK_PYTHON" in text
     assert "JARVIS_SKIP_MEMORY_ASK_SMOKE" in text
     assert "JARVIS_ALPHA_SKIP_MEMORY_ASK_SMOKE" in text
     assert "smoke_beacon_production.py" in text
@@ -59,7 +60,7 @@ def test_alpha_deploy_runs_cheap_smokes_after_fanout() -> None:
     memory_script = text.index('python3 "$REPO_DIR/scripts/smoke_memory_core.py"')
     graph_script = text.index('python3 "$REPO_DIR/scripts/smoke_memory_graph.py"')
     memory_ask_script = text.index(
-        'python3 "$REPO_DIR/scripts/smoke_helm_memory_ask_session.py"'
+        '"$MEMORY_ASK_PYTHON" "$REPO_DIR/scripts/smoke_helm_memory_ask_session.py"'
     )
     beacon_script = text.index(
         'python3 "$REPO_DIR/scripts/smoke_beacon_production.py" --skip-agent'
