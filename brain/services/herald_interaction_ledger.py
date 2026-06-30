@@ -144,7 +144,9 @@ def _social_metadata(payload: dict[str, object]) -> dict[str, object]:
         "provider_comment_urn",
         "provider_post_urn",
         "publish_target",
+        "review_friction",
         "scheduled_for",
+        "spark_memory_proposal_candidate",
         "spark_input",
         "trigger",
     }

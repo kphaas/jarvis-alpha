@@ -140,6 +140,7 @@ interface HealthResponse {
 }
 
 type SocialPlatformKey = 'x' | 'linkedin'
+type ReviewFriction = 'as_is' | 'light_edit' | 'heavy_rewrite'
 
 interface SocialPlatformProfile {
   platform: SocialPlatformKey
@@ -254,6 +255,10 @@ interface LinkedInOperatorDashboard {
   approval_backlog: number
   active_thought_leaders: number
   metric_snapshots_30d: number
+  metrics_due_count: number
+  learning_samples_30d: number
+  metrics_learning_ready: boolean
+  review_friction_30d: Record<ReviewFriction, number>
 }
 
 interface LinkedInMetricResponse {
@@ -391,6 +396,7 @@ export default function Herald() {
   const [scheduleDates, setScheduleDates] = useState<Record<string, string>>({})
   const [publishedUrls, setPublishedUrls] = useState<Record<string, string>>({})
   const [socialDraftFeedback, setSocialDraftFeedback] = useState<Record<string, string>>({})
+  const [socialDraftFriction, setSocialDraftFriction] = useState<Record<string, ReviewFriction>>({})
   const [metricInputs, setMetricInputs] = useState<Record<string, MetricDraftInput>>({})
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
@@ -747,6 +753,7 @@ export default function Herald() {
 
   const setSocialDraftStatus = async (draftId: string, status: 'approved' | 'rejected' | 'archived') => {
     const reviewerNotes = socialDraftFeedback[draftId]?.trim()
+    const reviewFriction = socialDraftFriction[draftId] ?? (reviewerNotes ? 'light_edit' : 'as_is')
     setActingSocialDraftId(draftId)
     setNotice(null)
     try {
@@ -755,9 +762,15 @@ export default function Herald() {
         body: JSON.stringify({
           status,
           reviewer_notes: reviewerNotes || undefined,
+          review_friction: reviewFriction,
         }),
       })
       setSocialDraftFeedback((current) => {
+        const next = { ...current }
+        delete next[draftId]
+        return next
+      })
+      setSocialDraftFriction((current) => {
         const next = { ...current }
         delete next[draftId]
         return next
@@ -1042,7 +1055,7 @@ export default function Herald() {
             ['Targets ready', linkedinOperatorDashboard?.targets_ready ?? 0],
             ['Approval backlog', linkedinOperatorDashboard?.approval_backlog ?? 0],
             ['Thought leaders', linkedinOperatorDashboard?.active_thought_leaders ?? 0],
-            ['Metrics 30d', linkedinOperatorDashboard?.metric_snapshots_30d ?? 0],
+            ['Metrics due', linkedinOperatorDashboard?.metrics_due_count ?? 0],
           ].map(([label, value]) => (
             <div key={label} className={`rounded-lg border p-3 ${border} ${strongPanel}`}>
               <p className={`text-[10px] font-mono uppercase tracking-widest ${muted}`}>{label}</p>
@@ -1054,6 +1067,8 @@ export default function Herald() {
           <div className="flex flex-wrap gap-x-4 gap-y-1">
             <span>Best topic <span className={strong}>{linkedinOperatorDashboard?.best_topic ?? 'TBD'}</span></span>
             <span>Best style <span className={strong}>{replyStyleText(linkedinOperatorDashboard?.best_reply_style)}</span></span>
+            <span>Metrics 30d <span className={strong}>{linkedinOperatorDashboard?.metric_snapshots_30d ?? 0}</span></span>
+            <span>Learning ready <span className={strong}>{linkedinOperatorDashboard?.metrics_learning_ready ? 'Yes' : 'No'}</span></span>
           </div>
         </div>
 
@@ -1460,6 +1475,21 @@ export default function Herald() {
                 )}
                 {draft.status === 'needs_review' && (
                   <div className="mt-3 space-y-2">
+                    <label className={`block text-[10px] font-mono uppercase tracking-widest ${muted}`}>
+                      Review friction
+                      <select
+                        value={socialDraftFriction[draft.id] ?? 'as_is'}
+                        onChange={(event) => setSocialDraftFriction((current) => ({
+                          ...current,
+                          [draft.id]: event.target.value as ReviewFriction,
+                        }))}
+                        className={`mt-1 min-h-10 w-full rounded-lg border px-3 text-sm normal-case tracking-normal outline-none ${border} ${strongPanel} ${strong}`}
+                      >
+                        <option value="as_is">As-is</option>
+                        <option value="light_edit">Light edit</option>
+                        <option value="heavy_rewrite">Heavy rewrite</option>
+                      </select>
+                    </label>
                     <textarea
                       value={socialDraftFeedback[draft.id] ?? ''}
                       onChange={(event) => setSocialDraftFeedback((current) => ({
