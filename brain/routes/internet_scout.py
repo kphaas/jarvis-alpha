@@ -55,6 +55,8 @@ from brain.services.internet_scout.models import (
     InternetScoutMemoryPromotionReviewRequest,
     InternetScoutMemoryPromotionReviewResponse,
     InternetScoutRequest,
+    InternetScoutRequestHistoryItem,
+    InternetScoutRequestHistoryResponse,
     InternetScoutRetentionDeleteRequest,
     InternetScoutRetentionDeleteResponse,
     InternetScoutRetentionReport,
@@ -77,6 +79,7 @@ BROWSER_HISTORY_EVENT_TYPES = {
     "browser_run",
     "browser_action",
 }
+REQUEST_HISTORY_STATUSES = {"running", "succeeded", "failed", "blocked"}
 
 
 @router.get("/health", response_model=InternetScoutHealthResponse)
@@ -817,6 +820,173 @@ async def internet_scout_browser_history(
         for row in page_rows
     ]
     return InternetScoutBrowserHistoryResponse(
+        history=history,
+        count=len(history),
+        limit=safe_limit,
+        offset=safe_offset,
+        has_more=len(rows) > safe_limit,
+    )
+
+
+@router.get("/requests", response_model=InternetScoutRequestHistoryResponse)
+async def internet_scout_request_history(
+    request: Request,
+    _user_id: str = Depends(require_auth),
+    limit: int = 12,
+    offset: int = 0,
+    status: str | None = None,
+    q: str | None = None,
+) -> InternetScoutRequestHistoryResponse:
+    """Return searchable saved Beacon request history without raw query text."""
+    check_scopes(request, "internet_scout.read", "admin")
+    safe_limit = min(max(limit, 1), 50)
+    safe_offset = max(offset, 0)
+    normalized_status = status or None
+    if normalized_status and normalized_status not in REQUEST_HISTORY_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid Beacon history status")
+    if q and len(q) > 120:
+        raise HTTPException(status_code=400, detail="Beacon history search is too long")
+    search = q.strip().lower() if q else ""
+    search_pattern = f"%{search}%" if search else None
+
+    async with rls_connection(request) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                request.id AS request_id,
+                request.requester,
+                request.selected_tool,
+                request.sensitivity,
+                request.status,
+                request.policy_tier AS risk_tier,
+                request.created_at,
+                request.updated_at,
+                COALESCE((request.request_shape->>'has_query')::boolean, false)
+                    AS has_query,
+                COALESCE((request.request_shape->>'url_count')::integer, 0)
+                    AS url_count,
+                COALESCE((request.request_shape->>'max_pages')::integer, 1)
+                    AS max_pages,
+                COALESCE((request.request_shape->>'max_depth')::integer, 0)
+                    AS max_depth,
+                COALESCE(
+                    (request.request_shape->>'needs_interaction')::boolean,
+                    false
+                ) AS needs_interaction,
+                COALESCE(source_summary.source_count, 0) AS source_count,
+                COALESCE(claim_summary.claim_count, 0) AS claim_count,
+                COALESCE(event_summary.event_count, 0) AS event_count,
+                COALESCE(source_summary.source_hosts, ARRAY[]::text[])
+                    AS source_hosts,
+                latest_event.event_type AS latest_event_type,
+                latest_event.status AS latest_event_status
+            FROM public.alpha_internet_requests AS request
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*)::integer AS source_count,
+                       ARRAY(
+                           SELECT DISTINCT source.host
+                           FROM public.alpha_internet_sources AS source
+                           WHERE source.request_id = request.id
+                           ORDER BY source.host
+                           LIMIT 20
+                       ) AS source_hosts
+                FROM public.alpha_internet_sources AS source
+                WHERE source.request_id = request.id
+            ) AS source_summary ON true
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*)::integer AS claim_count
+                FROM public.alpha_internet_evidence AS evidence
+                WHERE evidence.request_id = request.id
+            ) AS claim_summary ON true
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*)::integer AS event_count
+                FROM public.alpha_internet_tool_events AS event
+                WHERE event.request_id = request.id
+            ) AS event_summary ON true
+            LEFT JOIN LATERAL (
+                SELECT event.event_type, event.status
+                FROM public.alpha_internet_tool_events AS event
+                WHERE event.request_id = request.id
+                ORDER BY event.created_at DESC, event.id DESC
+                LIMIT 1
+            ) AS latest_event ON true
+            WHERE ($1::text IS NULL OR request.status = $1)
+              AND (
+                  $2::text IS NULL
+                  OR lower(
+                      request.id::text || ' ' ||
+                      request.requester || ' ' ||
+                      request.selected_tool || ' ' ||
+                      request.sensitivity || ' ' ||
+                      request.status || ' ' ||
+                      request.policy_tier || ' ' ||
+                      request.policy_reason || ' ' ||
+                      COALESCE(latest_event.event_type, '') || ' ' ||
+                      COALESCE(latest_event.status, '')
+                  ) LIKE $2
+                  OR EXISTS (
+                      SELECT 1
+                      FROM public.alpha_internet_sources AS source
+                      WHERE source.request_id = request.id
+                        AND lower(
+                            source.host || ' ' || COALESCE(source.title, '')
+                        ) LIKE $2
+                  )
+                  OR EXISTS (
+                      SELECT 1
+                      FROM public.alpha_internet_evidence AS evidence
+                      WHERE evidence.request_id = request.id
+                        AND lower(
+                            evidence.claim || ' ' || evidence.confidence
+                        ) LIKE $2
+                  )
+                  OR EXISTS (
+                      SELECT 1
+                      FROM public.alpha_internet_tool_events AS event
+                      WHERE event.request_id = request.id
+                        AND lower(
+                            event.event_type || ' ' ||
+                            event.status || ' ' ||
+                            event.metadata::text
+                        ) LIKE $2
+                  )
+              )
+            ORDER BY request.created_at DESC, request.id DESC
+            LIMIT $3
+            OFFSET $4
+            """,
+            normalized_status,
+            search_pattern,
+            safe_limit + 1,
+            safe_offset,
+        )
+
+    page_rows = rows[:safe_limit]
+    history = [
+        InternetScoutRequestHistoryItem(
+            request_id=row["request_id"],
+            requester=row["requester"],
+            selected_tool=row["selected_tool"],
+            sensitivity=row["sensitivity"],
+            status=row["status"],
+            risk_tier=row["risk_tier"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            has_query=bool(row["has_query"]),
+            url_count=int(row["url_count"] or 0),
+            max_pages=int(row["max_pages"] or 1),
+            max_depth=int(row["max_depth"] or 0),
+            needs_interaction=bool(row["needs_interaction"]),
+            source_count=int(row["source_count"] or 0),
+            claim_count=int(row["claim_count"] or 0),
+            event_count=int(row["event_count"] or 0),
+            source_hosts=list(row["source_hosts"] or []),
+            latest_event_type=row["latest_event_type"],
+            latest_event_status=row["latest_event_status"],
+        )
+        for row in page_rows
+    ]
+    return InternetScoutRequestHistoryResponse(
         history=history,
         count=len(history),
         limit=safe_limit,

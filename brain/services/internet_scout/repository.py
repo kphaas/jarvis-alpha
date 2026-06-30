@@ -545,6 +545,7 @@ def _request_shape(request: InternetScoutRequest) -> JsonObject:
         "has_query": bool(request.query),
         "url_count": len(request.urls),
         "tool_hint": request.tool_hint.value if request.tool_hint else None,
+        "focus_mode": request.focus_mode,
         "max_pages": request.max_pages,
         "max_depth": request.max_depth,
         "needs_interaction": request.needs_interaction,
