@@ -347,6 +347,14 @@ def test_linkedin_cadence_counts_live_and_manual_publish_receipts() -> None:
     assert "'manual_published', 'linkedin_published'" in source
 
 
+def test_manual_publish_receipt_clears_stale_publish_error() -> None:
+    source = ROUTE.read_text(encoding="utf-8")
+
+    assert "SET publish_status = 'manual_published'" in source
+    assert "publish_error_type = NULL" in source
+    assert "publish_error_message = NULL" in source
+
+
 def test_platform_normalization_deduplicates_and_rejects_unknowns() -> None:
     assert normalize_platforms(["X", "linkedin", "x"]) == ("x", "linkedin")
 

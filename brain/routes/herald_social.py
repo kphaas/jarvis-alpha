@@ -1316,6 +1316,8 @@ async def mark_linkedin_draft_manually_published(
                 SET publish_status = 'manual_published',
                     published_at = now(),
                     published_url = $2,
+                    publish_error_type = NULL,
+                    publish_error_message = NULL,
                     updated_at = now()
                 WHERE id = $1
                 """,
