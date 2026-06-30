@@ -1,6 +1,8 @@
 import {
   AlertTriangle,
+  CheckCircle2,
   Clock,
+  Eye,
   Globe2,
   MousePointerClick,
   ShieldCheck,
@@ -96,6 +98,12 @@ export function BeaconBrowserApprovalPanel({
     ? 'bg-cyan-500/10 border-cyan-400/25 text-cyan-100'
     : 'bg-cyan-50 border-cyan-300 text-cyan-900'
   const muted = isDark ? 'text-white/55' : 'text-[#141414]/55'
+  const safeCallout = isDark
+    ? 'bg-emerald-500/10 border-emerald-400/25 text-emerald-100'
+    : 'bg-emerald-50 border-emerald-300 text-emerald-950'
+  const cautionCallout = isDark
+    ? 'bg-amber-500/10 border-amber-400/25 text-amber-100'
+    : 'bg-amber-50 border-amber-300 text-amber-950'
 
   const capabilityRows = [
     ['Downloads', beacon.downloads_allowed ? 'allowed' : 'blocked'],
@@ -140,6 +148,34 @@ export function BeaconBrowserApprovalPanel({
     ],
   ]
 
+  const reviewSummaryRows = [
+    {
+      label: 'Same-host lock',
+      value: beacon.same_host_required ? 'on' : 'off',
+      safe: beacon.same_host_required,
+    },
+    {
+      label: 'Host scope',
+      value: allowedHosts.length > 0 ? `${allowedHosts.length} hosts` : 'not reported',
+      safe: allowedHosts.length > 0,
+    },
+    {
+      label: 'Screenshots staged',
+      value: beacon.screenshots_required ? 'required' : 'optional',
+      safe: beacon.screenshots_required,
+    },
+    {
+      label: 'Click targets',
+      value: clickTargets.length > 0 ? `${clickTargets.length} reviewed` : 'none',
+      safe: clickTargets.length > 0 || !beacon.needs_interaction,
+    },
+    {
+      label: 'No credential entry',
+      value: beacon.credential_entry_allowed ? 'not enforced' : 'enforced',
+      safe: !beacon.credential_entry_allowed,
+    },
+  ]
+
   return (
     <div className={`rounded-xl border p-3 space-y-3 ${card}`}>
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -158,6 +194,28 @@ export function BeaconBrowserApprovalPanel({
         <div className={`text-[10px] font-mono ${muted}`}>
           hash {beacon.approval_hash_prefix}
           {beacon.request_id ? ` · request ${beacon.request_id.slice(0, 8)}` : ''}
+        </div>
+      </div>
+
+      <div className={`rounded-lg border p-3 ${card}`}>
+        <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold">
+          <Eye className="h-3.5 w-3.5 text-cyan-400" />
+          Review summary
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          {reviewSummaryRows.map((row) => (
+            <div
+              key={row.label}
+              className={`rounded-md border px-2.5 py-2 text-[11px] ${
+                row.safe ? safeCallout : cautionCallout
+              }`}
+            >
+              <div className="font-mono text-[10px] uppercase opacity-70">
+                {row.label}
+              </div>
+              <div className="mt-0.5 font-bold">{row.value}</div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -247,9 +305,14 @@ export function BeaconBrowserApprovalPanel({
       </div>
 
       <div className={`rounded-lg border p-3 space-y-2 ${card}`}>
-        <div className="flex items-center gap-1.5 text-[11px] font-bold">
-          <Clock className="w-3.5 h-3.5 text-cyan-400" />
-          Action timeline
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-[11px] font-bold">
+            <Clock className="w-3.5 h-3.5 text-cyan-400" />
+            Action timeline
+          </div>
+          <span className={`rounded-md border px-2 py-1 text-[10px] font-mono ${chip}`}>
+            {actionTimeline.length} reviewed steps
+          </span>
         </div>
         <div className="space-y-2">
           {actionTimeline.length > 0 ? actionTimeline.map((step, index) => (
@@ -257,11 +320,11 @@ export function BeaconBrowserApprovalPanel({
               <span className={`h-5 w-5 rounded-full border text-center leading-5 font-mono ${chip}`}>
                 {index + 1}
               </span>
-              <div>
-                <div className="font-bold">
+              <div className={`rounded-md border px-2 py-1.5 ${card}`}>
+                <div className="flex flex-wrap items-center gap-2 font-bold">
                   {humanizeBeaconValue(step.step)}
                   {step.status ? (
-                    <span className={`ml-2 font-mono font-normal ${muted}`}>
+                    <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] font-normal ${chip}`}>
                       {humanizeBeaconValue(step.status)}
                     </span>
                   ) : null}
@@ -302,8 +365,14 @@ export function BeaconBrowserApprovalPanel({
         </details>
       )}
 
-      <div className={`text-[11px] ${muted}`}>
-        Approve runs only this reviewed browser plan. Deny leaves the browser runtime untouched.
+      <div className={`rounded-lg border p-3 text-[11px] ${safeCallout}`}>
+        <div className="mb-1 flex items-center gap-1.5 font-bold">
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          Decision boundary
+        </div>
+        <div>
+          Approve runs only this reviewed browser plan. Deny leaves the browser runtime untouched.
+        </div>
       </div>
     </div>
   )

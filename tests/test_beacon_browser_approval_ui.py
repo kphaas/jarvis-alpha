@@ -38,6 +38,11 @@ def test_beacon_browser_approval_ui_has_operator_review_sections() -> None:
     source = PANEL.read_text(encoding="utf-8")
 
     assert "Beacon browser approval" in source
+    assert "Review summary" in source
+    assert "Same-host lock" in source
+    assert "Screenshots staged" in source
+    assert "Click targets" in source
+    assert "No credential entry" in source
     assert "Host allowlist" in source
     assert "URL hashes" in source
     assert "Screenshot review" in source
@@ -47,6 +52,7 @@ def test_beacon_browser_approval_ui_has_operator_review_sections() -> None:
     assert "Action timeline" in source
     assert "Approved click targets" in source
     assert "expected host" in source
+    assert "Decision boundary" in source
     assert "Approve runs only this reviewed browser plan" in source
     assert "Deny leaves the browser runtime untouched" in source
 
