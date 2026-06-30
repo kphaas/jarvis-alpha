@@ -763,7 +763,18 @@ export default function Approvals() {
               <span className="font-mono">{timeLeft(item.expires_at)}</span>
               <span className="font-mono opacity-60">by {item.actor_sub}</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div
+              className={`flex items-center gap-2 flex-wrap ${
+                item.beacon
+                  ? `rounded-xl border p-2 ${isDark ? 'border-emerald-400/20 bg-emerald-500/5' : 'border-emerald-300 bg-emerald-50'}`
+                  : ''
+              }`}
+            >
+              {item.beacon && (
+                <div className={`mr-1 text-[11px] font-mono ${isDark ? 'text-emerald-100/75' : 'text-emerald-950/70'}`}>
+                  Decision applies to the reviewed Beacon browser plan
+                </div>
+              )}
               {item.privacy && (
                 <Link
                   to={`/privacy?case=${item.privacy.case_id}&approval=${item.id}`}
@@ -798,7 +809,7 @@ export default function Approvals() {
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-40"
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
-                Approve
+                {item.beacon ? 'Approve plan' : 'Approve'}
               </button>
               <button
                 disabled={acting === item.id}
@@ -806,7 +817,7 @@ export default function Approvals() {
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition-colors disabled:opacity-40"
               >
                 <ShieldX className="w-3.5 h-3.5" />
-                Deny
+                {item.beacon ? 'Deny plan' : 'Deny'}
               </button>
             </div>
           </div>

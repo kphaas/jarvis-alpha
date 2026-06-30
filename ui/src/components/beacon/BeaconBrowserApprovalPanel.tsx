@@ -5,8 +5,8 @@ import {
   Eye,
   Globe2,
   MousePointerClick,
-  ShieldCheck,
   ShieldX,
+  Camera,
 } from 'lucide-react'
 
 interface BeaconScreenshotPolicy {
@@ -113,39 +113,47 @@ export function BeaconBrowserApprovalPanel({
   ]
 
   const screenshotRows = [
-    ['Required', beacon.screenshots_required ? 'yes' : 'no'],
-    [
-      'Before navigation',
-      policyBoolLabel(
+    {
+      label: 'Required',
+      value: beacon.screenshots_required ? 'required' : 'optional',
+      safe: beacon.screenshots_required,
+    },
+    {
+      label: 'Before navigation',
+      value: policyBoolLabel(
         screenshotPolicy.before_navigation_required,
         'required',
         'not required'
       ),
-    ],
-    [
-      'After observation',
-      policyBoolLabel(
+      safe: screenshotPolicy.before_navigation_required === true,
+    },
+    {
+      label: 'After observation',
+      value: policyBoolLabel(
         screenshotPolicy.after_observation_required,
         'required',
         'not required'
       ),
-    ],
-    [
-      'Available after run',
-      policyBoolLabel(
+      safe: screenshotPolicy.after_observation_required === true,
+    },
+    {
+      label: 'Available after run',
+      value: policyBoolLabel(
         screenshotPolicy.screenshots_available_after_run,
         'yes',
         'no'
       ),
-    ],
-    [
-      'Refs',
-      policyBoolLabel(
+      safe: screenshotPolicy.screenshots_available_after_run === true,
+    },
+    {
+      label: 'Refs',
+      value: policyBoolLabel(
         screenshotPolicy.screenshot_refs_redacted_until_execution,
         'redacted until execution',
         'not redacted'
       ),
-    ],
+      safe: screenshotPolicy.screenshot_refs_redacted_until_execution !== false,
+    },
   ]
 
   const reviewSummaryRows = [
@@ -251,14 +259,21 @@ export function BeaconBrowserApprovalPanel({
 
         <div className={`rounded-lg border p-3 space-y-2 ${card}`}>
           <div className="flex items-center gap-1.5 text-[11px] font-bold">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <Camera className="w-3.5 h-3.5 text-emerald-400" />
             Screenshot review
           </div>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
-            {screenshotRows.map(([label, value]) => (
-              <div key={label} className="contents">
-                <span className={muted}>{label}</span>
-                <span className="font-mono">{value}</span>
+          <div className="grid gap-1.5 sm:grid-cols-2">
+            {screenshotRows.map((row) => (
+              <div
+                key={row.label}
+                className={`rounded-md border px-2 py-1.5 text-[11px] ${
+                  row.safe ? safeCallout : cautionCallout
+                }`}
+              >
+                <div className="font-mono text-[10px] uppercase opacity-70">
+                  {row.label}
+                </div>
+                <div className="font-bold">{row.value}</div>
               </div>
             ))}
           </div>
@@ -346,32 +361,54 @@ export function BeaconBrowserApprovalPanel({
         </div>
       </div>
 
-      {clickTargets.length > 0 && (
-        <details className={`rounded-lg border p-3 ${card}`}>
+      {(clickTargets.length > 0 || beacon.needs_interaction) && (
+        <details open className={`rounded-lg border p-3 ${card}`}>
           <summary className="cursor-pointer text-[11px] font-bold">
-            Approved click targets · {clickTargets.length}
+            Click target review · {clickTargets.length} approved
           </summary>
-          <div className="mt-2 space-y-2">
-            {clickTargets.map((target, index) => (
-              <div key={`${target.selector}-${index}`} className={`rounded-md border p-2 text-[11px] ${card}`}>
-                <div className="font-bold">{target.label || `Target ${index + 1}`}</div>
-                <div className={`font-mono break-all ${muted}`}>{target.selector}</div>
-                {target.expected_host && (
-                  <div className={`font-mono ${muted}`}>expected host: {target.expected_host}</div>
-                )}
-              </div>
-            ))}
-          </div>
+          {clickTargets.length > 0 ? (
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+              {clickTargets.map((target, index) => (
+                <div key={`${target.selector}-${index}`} className={`rounded-md border p-2 text-[11px] ${card}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="font-bold">{target.label || `Target ${index + 1}`}</div>
+                    {target.expected_host && (
+                      <span className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] ${chip}`}>
+                        {target.expected_host}
+                      </span>
+                    )}
+                  </div>
+                  <div className={`mt-1 rounded border px-2 py-1 font-mono break-all ${muted}`}>
+                    {target.selector}
+                  </div>
+                  {target.expected_host && (
+                    <div className={`mt-1 font-mono ${muted}`}>expected host: {target.expected_host} · same host only</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className={`mt-2 rounded-md border px-2 py-1.5 text-[11px] ${cautionCallout}`}>
+              Interaction requested, but no click targets were reported.
+            </div>
+          )}
         </details>
       )}
 
       <div className={`rounded-lg border p-3 text-[11px] ${safeCallout}`}>
-        <div className="mb-1 flex items-center gap-1.5 font-bold">
+        <div className="mb-2 flex items-center gap-1.5 font-bold">
           <CheckCircle2 className="h-3.5 w-3.5" />
           Decision boundary
         </div>
-        <div>
-          Approve runs only this reviewed browser plan. Deny leaves the browser runtime untouched.
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div className="rounded-md border border-current/20 px-2 py-1.5">
+            <div className="font-bold">Approve</div>
+            <div>Runs only this reviewed browser plan.</div>
+          </div>
+          <div className="rounded-md border border-current/20 px-2 py-1.5">
+            <div className="font-bold">Deny</div>
+            <div>Leaves the browser runtime untouched.</div>
+          </div>
         </div>
       </div>
     </div>

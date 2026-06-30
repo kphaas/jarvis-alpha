@@ -50,11 +50,13 @@ def test_beacon_browser_approval_ui_has_operator_review_sections() -> None:
     assert "Credential entry" in source
     assert "Risk labels" in source
     assert "Action timeline" in source
-    assert "Approved click targets" in source
+    assert "Click target review" in source
+    assert "same host only" in source
+    assert "Interaction requested, but no click targets were reported." in source
     assert "expected host" in source
     assert "Decision boundary" in source
-    assert "Approve runs only this reviewed browser plan" in source
-    assert "Deny leaves the browser runtime untouched" in source
+    assert "Runs only this reviewed browser plan" in source
+    assert "Leaves the browser runtime untouched" in source
 
 
 def test_beacon_browser_approval_ui_keeps_url_and_screenshot_refs_redacted() -> None:
@@ -101,3 +103,11 @@ def test_approvals_page_surfaces_browser_execution_history() -> None:
     assert "browser_action" in source
     assert "audited actions" in source
     assert "Browser history unavailable" in source
+
+
+def test_approvals_page_marks_beacon_decision_boundary() -> None:
+    source = APPROVALS.read_text(encoding="utf-8")
+
+    assert "Decision applies to the reviewed Beacon browser plan" in source
+    assert "item.beacon ? 'Approve plan' : 'Approve'" in source
+    assert "item.beacon ? 'Deny plan' : 'Deny'" in source
