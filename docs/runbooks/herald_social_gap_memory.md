@@ -1,6 +1,6 @@
 # Herald Social Gap Memory
 
-Updated: 2026-06-28
+Updated: 2026-06-30
 
 ## Purpose
 
@@ -16,7 +16,7 @@ code, tests or smoke coverage, and a runbook/update that proves the behavior.
 | HSG-002 | Social connector layer | Partial | At least one approved connector path exists for read + draft/schedule/publish handoff, with token scope docs, health check, and policy limits. Prefer Postiz/Buffer before direct browser automation. |
 | HSG-003 | Social approval outbox | Done | Herald can create platform-specific social drafts, queue them for approve/reject, preserve versions, and block every outbound action until explicit approval. |
 | HSG-004 | Social inbox UI | Partial | `/herald` separates email from social channels and lets Ken triage account/platform streams without autonomous replies, likes, follows, or DMs. |
-| HSG-005 | Analytics feedback loop | Open | Herald stores per-account/per-post metric snapshots, shows trend context, and emits a weekly digest that feeds future drafting recommendations. |
+| HSG-005 | Analytics feedback loop | Done | Herald stores per-account/per-post metric snapshots, shows trend context, and emits a weekly digest that feeds future drafting recommendations. |
 | HSG-006 | Brand and voice memory per platform | Done | AT0 Spark has platform-specific voice rules, audience notes, safety lint, and repeat-post prevention that are visible in the draft workflow. |
 
 ## Council 4-Lens Review
@@ -53,3 +53,4 @@ manual receipt workflow are deployed and smoke-tested:
 | 2026-06-28 | HSG-004 | Partial: added Brain LaunchAgent `com.jarvis.alpha.herald-linkedin-engagement-scheduler` to draft up to 3 LinkedIn replies per week from existing `needs_reply` items. It does not discover posts or publish comments. |
 | 2026-06-28 | HSG-004 | Partial: added `com.jarvis.alpha.herald-linkedin-target-scout` and `/v1/herald/social/linkedin/engagements/scout` so Herald can discover public AI/business-transformation targets through Gateway Internet Scout and queue them for review. No logged-in scraping or autonomous comment/publish. |
 | 2026-06-28 | HSG-001 | Added append-only `alpha_herald_interaction_ledger`, `brain/services/herald_interaction_ledger.py`, and hooks for AT-0 mail messages/drafts/sends plus social drafts, approvals, LinkedIn engagement items, scout targets, and publish outcomes. |
+| 2026-06-30 | HSG-005 | Added `alpha_herald_social_metric_snapshots`, manual/API metric recording, metrics-due and learning-ready dashboard fields, review-friction tracking, Spark memory proposals from rejected drafts, thresholded best topic/style ranking, and `/v1/herald/social/linkedin/analytics-digest` with smoke coverage. |

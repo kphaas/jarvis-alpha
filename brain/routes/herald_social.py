@@ -12,6 +12,7 @@ from brain.db.pool import get_pool
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
 from brain.models.herald_social import (
+    HeraldLinkedInAnalyticsDigestOut,
     HeraldLinkedInCadenceOut,
     HeraldLinkedInIngestRequest,
     HeraldLinkedInIngestResponse,
@@ -58,6 +59,7 @@ from brain.services.herald_social import (
     linkedin_post_urn_from_url,
     linkedin_review_friction,
     linkedin_weekly_topic,
+    load_linkedin_analytics_digest,
     load_linkedin_operator_dashboard,
     load_herald_spark_context,
     normalize_platforms,
@@ -259,6 +261,19 @@ async def get_linkedin_operator_dashboard(
     async with get_pool().acquire() as conn:
         payload = await load_linkedin_operator_dashboard(conn)
     return HeraldLinkedInOperatorDashboardOut(**payload)
+
+
+@router.get(
+    "/linkedin/analytics-digest", response_model=HeraldLinkedInAnalyticsDigestOut
+)
+async def get_linkedin_analytics_digest(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> HeraldLinkedInAnalyticsDigestOut:
+    _check_read_scope(request)
+    async with get_pool().acquire() as conn:
+        payload = await load_linkedin_analytics_digest(conn)
+    return HeraldLinkedInAnalyticsDigestOut(**payload)
 
 
 @router.get("/linkedin/engagements", response_model=HeraldSocialEngagementList)

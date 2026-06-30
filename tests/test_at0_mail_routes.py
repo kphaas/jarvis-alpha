@@ -63,6 +63,10 @@ def test_herald_social_routes_are_classified() -> None:
         "read",
         "security_read",
     ]
+    assert classify_route("GET", "/v1/herald/social/linkedin/analytics-digest") == [
+        "read",
+        "security_read",
+    ]
     assert classify_route("GET", "/v1/herald/social/linkedin/engagements") == [
         "read",
         "security_read",

@@ -104,6 +104,7 @@ def test_herald_social_outbox_smoke_covers_draft_only_flow() -> None:
     for path in (
         "/v1/herald/social/platforms",
         "/v1/herald/social/linkedin/cadence",
+        "/v1/herald/social/linkedin/analytics-digest",
         "/v1/herald/social/linkedin/weekly",
         "/v1/herald/social/linkedin/engagements",
         "/v1/herald/social/linkedin/engagements/${ENGAGEMENT_ID}/draft-reply",

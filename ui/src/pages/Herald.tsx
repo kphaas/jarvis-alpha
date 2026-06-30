@@ -261,6 +261,17 @@ interface LinkedInOperatorDashboard {
   review_friction_30d: Record<ReviewFriction, number>
 }
 
+interface LinkedInAnalyticsDigest {
+  week_of: string
+  headline: string
+  recommendations: string[]
+  best_topic: string
+  best_reply_style: 'strong_short' | 'practical' | 'warm'
+  metrics_due_count: number
+  metric_snapshots_30d: number
+  metrics_learning_ready: boolean
+}
+
 interface LinkedInMetricResponse {
   engagement_total: number
   engagement_rate: number
@@ -381,6 +392,7 @@ export default function Herald() {
   const [linkedinCadence, setLinkedinCadence] = useState<LinkedInCadence | null>(null)
   const [linkedinReadPlan, setLinkedinReadPlan] = useState<LinkedInReadPlan | null>(null)
   const [linkedinOperatorDashboard, setLinkedinOperatorDashboard] = useState<LinkedInOperatorDashboard | null>(null)
+  const [linkedinAnalyticsDigest, setLinkedinAnalyticsDigest] = useState<LinkedInAnalyticsDigest | null>(null)
   const [engagementItems, setEngagementItems] = useState<SocialEngagement[]>([])
   const [thoughtLeaders, setThoughtLeaders] = useState<ThoughtLeaderTarget[]>([])
   const [socialTopic, setSocialTopic] = useState('')
@@ -426,6 +438,7 @@ export default function Herald() {
         linkedinCadenceRes,
         linkedinReadPlanRes,
         linkedinOperatorDashboardRes,
+        linkedinAnalyticsDigestRes,
         engagementRes,
         thoughtLeaderRes,
       ] = await Promise.all([
@@ -439,6 +452,7 @@ export default function Herald() {
         apiJson<LinkedInCadence>('/v1/herald/social/linkedin/cadence'),
         apiJson<LinkedInReadPlan>('/v1/herald/social/linkedin/read-plan'),
         apiJson<LinkedInOperatorDashboard>('/v1/herald/social/linkedin/operator-dashboard'),
+        apiJson<LinkedInAnalyticsDigest>('/v1/herald/social/linkedin/analytics-digest'),
         apiJson<SocialEngagementList>('/v1/herald/social/linkedin/engagements?status=all&limit=12'),
         apiJson<ThoughtLeaderTargetList>('/v1/herald/social/linkedin/thought-leaders?status=active&limit=8'),
       ])
@@ -455,6 +469,7 @@ export default function Herald() {
       setLinkedinCadence(linkedinCadenceRes)
       setLinkedinReadPlan(linkedinReadPlanRes)
       setLinkedinOperatorDashboard(linkedinOperatorDashboardRes)
+      setLinkedinAnalyticsDigest(linkedinAnalyticsDigestRes)
       setEngagementItems(engagementRes.items)
       setThoughtLeaders(thoughtLeaderRes.targets)
       setError(null)
@@ -1069,6 +1084,7 @@ export default function Herald() {
             <span>Best style <span className={strong}>{replyStyleText(linkedinOperatorDashboard?.best_reply_style)}</span></span>
             <span>Metrics 30d <span className={strong}>{linkedinOperatorDashboard?.metric_snapshots_30d ?? 0}</span></span>
             <span>Learning ready <span className={strong}>{linkedinOperatorDashboard?.metrics_learning_ready ? 'Yes' : 'No'}</span></span>
+            <span>Weekly digest <span className={strong}>{linkedinAnalyticsDigest?.headline ?? 'TBD'}</span></span>
           </div>
         </div>
 
