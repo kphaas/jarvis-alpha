@@ -85,6 +85,14 @@ class FakeRepo:
         return self.request_id
 
     async def record_tool_event(self, **kwargs):
+        if "tool" in kwargs:
+            assert kwargs["tool"] in {
+                "search",
+                "fetch",
+                "extract",
+                "crawl",
+                "browser_use",
+            }
         self.events.append(kwargs)
 
     async def store_packet(self, **kwargs):
@@ -429,7 +437,7 @@ async def test_internet_scout_crawler_scrape_stores_cacheable_audit(monkeypatch)
         if event.get("event_type") == "crawler_scrape"
         and event.get("status") == "succeeded"
     )
-    assert crawler_event["tool"] == "crawler"
+    assert crawler_event["tool"] == "extract"
     assert crawler_event["metadata"]["cache_hit"] is False
     assert crawler_event["metadata"]["credential_entry_allowed"] is False
 
@@ -454,6 +462,7 @@ async def test_internet_scout_crawler_scrape_blocks_unsafe_url(monkeypatch):
         event for event in FakeRepo.events if event.get("status") == "blocked"
     )
     assert blocked_event["event_type"] == "crawler_scrape"
+    assert blocked_event["tool"] == "extract"
     assert "blocked_internal_host" in blocked_event["metadata"]["blocked_reasons"]
     assert FakeRepo.stored == []
 
