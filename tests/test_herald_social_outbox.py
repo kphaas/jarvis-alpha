@@ -343,8 +343,13 @@ def test_linkedin_target_scout_uses_gateway_search_without_publish() -> None:
 
 def test_linkedin_cadence_counts_live_and_manual_publish_receipts() -> None:
     source = ROUTE.read_text(encoding="utf-8")
+    service_source = SERVICE.read_text(encoding="utf-8")
 
     assert "'manual_published', 'linkedin_published'" in source
+    assert "r.draft_kind = 'post'" in source
+    assert "r.campaign = 'linkedin-weekly-brand'" in source
+    assert "r.draft_kind = 'post'" in service_source
+    assert "r.campaign = 'linkedin-weekly-brand'" in service_source
 
 
 def test_manual_publish_receipt_clears_stale_publish_error() -> None:

@@ -332,11 +332,15 @@ async def create_weekly_linkedin_draft_if_due(
             SELECT current_date AS today,
                    max(v.published_at) FILTER (
                        WHERE v.platform = 'linkedin'
+                         AND r.draft_kind = 'post'
+                         AND r.campaign = 'linkedin-weekly-brand'
                          AND v.publish_status IN (
                              'manual_published', 'linkedin_published'
                          )
                    ) AS last_published_at
             FROM public.alpha_herald_social_draft_variants v
+            JOIN public.alpha_herald_social_draft_requests r
+              ON r.id = v.request_id
             """
         )
         today = cadence["today"]
@@ -803,6 +807,8 @@ async def load_linkedin_operator_dashboard(
         SELECT current_date AS today,
                max(v.published_at) FILTER (
                    WHERE v.platform = 'linkedin'
+                     AND r.draft_kind = 'post'
+                     AND r.campaign = 'linkedin-weekly-brand'
                      AND v.publish_status IN ('manual_published', 'linkedin_published')
                ) AS last_published_at,
                count(*) FILTER (

@@ -179,21 +179,29 @@ async def get_linkedin_cadence(
             SELECT current_date AS today,
                    max(v.published_at) FILTER (
                        WHERE v.platform = 'linkedin'
+                         AND r.draft_kind = 'post'
+                         AND r.campaign = 'linkedin-weekly-brand'
                          AND v.publish_status IN (
                              'manual_published', 'linkedin_published'
                          )
                    ) AS last_published_at,
                    min(v.scheduled_for) FILTER (
                        WHERE v.platform = 'linkedin'
+                         AND r.draft_kind = 'post'
+                         AND r.campaign = 'linkedin-weekly-brand'
                          AND v.publish_status = 'scheduled'
                          AND v.scheduled_for >= current_date
                    ) AS next_scheduled_for,
                    count(*) FILTER (
                        WHERE v.platform = 'linkedin'
+                         AND r.draft_kind = 'post'
+                         AND r.campaign = 'linkedin-weekly-brand'
                          AND v.status = 'approved'
                          AND v.publish_status IN ('not_scheduled', 'scheduled')
                    )::int AS approved_ready_count
             FROM public.alpha_herald_social_draft_variants v
+            JOIN public.alpha_herald_social_draft_requests r
+              ON r.id = v.request_id
             """
         )
     today = row["today"]
