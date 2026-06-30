@@ -36,6 +36,11 @@ def test_beacon_ops_dashboard_surfaces_core_slo_sections() -> None:
     assert "Operational Details" in source
     assert "beacon-operational-details" in source
     assert "aria-expanded={operationalDetailsOpen}" in source
+    assert "aria-expanded={canaryTrendOpen}" in source
+    assert "Beacon benchmark pass-rate history" in source
+    assert "beacon-canary-trend-details" in source
+    assert "latest_precision" in source
+    assert "estimated_provider_cost_usd" in source
     assert "Operator Action" in source
     assert "exact_cost_available" in source
     assert "budget_capped_backup_provider_count" in source
