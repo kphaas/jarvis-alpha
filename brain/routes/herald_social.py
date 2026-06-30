@@ -53,6 +53,7 @@ from brain.services.herald_interaction_ledger import (
 )
 from brain.services.herald_social import (
     create_social_draft,
+    hash_social_draft,
     linkedin_feedback_memory_note,
     linkedin_engagement_reply_topic,
     linkedin_post_urn_from_url,
@@ -63,6 +64,7 @@ from brain.services.herald_social import (
     normalize_platforms,
     record_linkedin_metric_snapshot,
     scout_linkedin_engagement_targets,
+    social_review_edit_metrics,
 )
 from brain.services.internet_scout.gateway_client import InternetScoutGatewayError
 from brain.services.spark_personality_memory import propose_personality_memory_from_note
@@ -1036,7 +1038,8 @@ async def update_social_draft_status(
         async with conn.transaction():
             current = await conn.fetchrow(
                 """
-                SELECT v.request_id, v.platform, v.status, r.draft_kind, r.topic
+                SELECT v.request_id, v.platform, v.status, v.draft_text,
+                       v.content_hash, r.draft_kind, r.topic
                 FROM public.alpha_herald_social_draft_variants v
                 JOIN public.alpha_herald_social_draft_requests r
                   ON r.id = v.request_id
@@ -1061,6 +1064,15 @@ async def update_social_draft_status(
                     reviewer_notes=clean_notes,
                     review_friction=review_friction,
                 )
+            reviewed_text, edit_distance, edit_ratio = social_review_edit_metrics(
+                original_text=str(current["draft_text"]),
+                reviewed_text=body.reviewed_text,
+            )
+            next_draft_text = str(current["draft_text"])
+            next_content_hash = str(current["content_hash"])
+            if body.status == "approved" and reviewed_text:
+                next_draft_text = reviewed_text
+                next_content_hash = hash_social_draft(reviewed_text)
 
             await conn.execute(
                 """
@@ -1068,6 +1080,8 @@ async def update_social_draft_status(
                 SET status = $2,
                     reviewer_notes = $3,
                     reviewed_by = $4,
+                    draft_text = $5,
+                    content_hash = $6,
                     reviewed_at = now(),
                     updated_at = now()
                 WHERE id = $1
@@ -1076,6 +1090,8 @@ async def update_social_draft_status(
                 body.status,
                 clean_notes,
                 actor_sub,
+                next_draft_text,
+                next_content_hash,
             )
             if body.status == "approved" and current["draft_kind"] == "reply":
                 await conn.execute(
@@ -1122,6 +1138,12 @@ async def update_social_draft_status(
                     "from_status": current["status"],
                     "feedback_provided": bool(clean_notes),
                     "review_friction": review_friction,
+                    "review_edit_distance": edit_distance,
+                    "review_edit_ratio": edit_ratio,
+                    "reviewed_text_provided": reviewed_text is not None,
+                    "reviewed_content_hash": hash_social_draft(reviewed_text)
+                    if reviewed_text
+                    else None,
                     "spark_memory_proposal_candidate": proposal_note is not None,
                 },
             )

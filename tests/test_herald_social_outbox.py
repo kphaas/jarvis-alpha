@@ -26,6 +26,7 @@ from brain.services.herald_social import (
     linkedin_weekly_topic,
     normalize_platforms,
     scout_linkedin_engagement_targets,
+    social_review_edit_metrics,
 )
 
 
@@ -276,6 +277,22 @@ def test_linkedin_rejection_feedback_becomes_reviewed_memory_proposal_note() -> 
     )
 
 
+def test_social_review_edit_metrics_tracks_review_distance() -> None:
+    reviewed_text, distance, ratio = social_review_edit_metrics(
+        original_text="Strong point. Approval gates matter.",
+        reviewed_text="Strong point. Approval gates matter in production.",
+    )
+
+    assert reviewed_text == "Strong point. Approval gates matter in production."
+    assert distance > 0
+    assert 0 < ratio < 1
+    assert social_review_edit_metrics(original_text="No edit.", reviewed_text=None) == (
+        None,
+        0,
+        0.0,
+    )
+
+
 @pytest.mark.asyncio
 async def test_linkedin_target_scout_queues_local_review_items_only() -> None:
     class FakeSearchClient:
@@ -373,6 +390,11 @@ def test_linkedin_phase2_learning_loop_is_approval_gated() -> None:
     assert "propose_personality_memory_from_note" in route_source
     assert "linkedin_feedback_memory_note" in route_source
     assert "review_friction" in route_source
+    assert "social_review_edit_metrics" in route_source
+    assert "review_edit_distance" in route_source
+    assert "review_edit_ratio" in route_source
+    assert "reviewed_content_hash" in route_source
+    assert "reviewed_text" in route_source
     assert "spark_memory_proposed" in route_source
     assert "spark_memory_proposal_candidate" in route_source
     assert "save_personality_memory(" not in route_source
