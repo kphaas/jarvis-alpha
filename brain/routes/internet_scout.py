@@ -54,6 +54,8 @@ from brain.services.internet_scout.models import (
     InternetScoutCrawlerExtractResponse,
     InternetScoutCrawlerMapRequest,
     InternetScoutCrawlerMapResponse,
+    InternetScoutCrawlerRenderResponse,
+    InternetScoutCrawlerRenderRunRequest,
     InternetScoutCrawlerScrapeRequest,
     InternetScoutCrawlerScrapeResponse,
     InternetScoutHealthResponse,
@@ -355,6 +357,77 @@ async def internet_scout_crawler_scrape_browser_approval_request(
 ) -> InternetScoutBrowserApprovalResponse:
     """Queue a browser-rendered crawler scrape; execution stays approval-gated."""
     check_scopes(request, "internet_scout.research", "admin")
+    _ensure_crawler_url_allowed(body)
+    return await _queue_browser_task_approval(
+        browser_body=_crawler_render_browser_request(body),
+        request=request,
+        extra_metadata={
+            "source": "crawler_render_scrape",
+            "require_screenshot": True,
+            "crawler_operation": "scrape",
+        },
+    )
+
+
+@router.post(
+    "/crawler/scrape/browser-run-approved",
+    response_model=InternetScoutCrawlerRenderResponse,
+)
+async def internet_scout_crawler_scrape_browser_run_approved(
+    body: InternetScoutCrawlerRenderRunRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> InternetScoutCrawlerRenderResponse:
+    """Run an approved browser-rendered scrape and return crawler-shaped output."""
+    check_scopes(request, "internet_scout.research", "admin")
+    _ensure_crawler_url_allowed(body.scrape)
+    result = await _run_approved_browser_task(
+        InternetScoutBrowserRunRequest(
+            approval_queue_id=body.approval_queue_id,
+            browser_request=_crawler_render_browser_request(body.scrape),
+            max_steps=body.max_steps,
+            require_screenshot=True,
+        ),
+        request,
+    )
+    observation = result.observations[0]
+    return InternetScoutCrawlerRenderResponse(
+        request_id=result.request_id,
+        approval_queue_id=result.approval_queue_id,
+        cache_hit=False,
+        canonical_url=observation.url,
+        host=observation.host,
+        title=observation.title,
+        fetched_at=observation.fetched_at,
+        text=observation.visible_text,
+        links=[],
+        screenshot_ref=observation.screenshot_ref,
+        content_hash=observation.content_hash,
+        risk_markers=observation.risk_markers,
+        evidence_path=f"/v1/internet-scout/requests/{result.request_id}",
+        audit_path=(
+            f"/v1/internet-scout/browser-task/history?q={result.approval_queue_id}"
+        ),
+        action_audit_count=len(result.action_audit),
+        evidence_source_count=len(result.evidence.sources),
+    )
+
+
+def _crawler_render_browser_request(
+    body: InternetScoutCrawlerScrapeRequest,
+) -> InternetScoutRequest:
+    return InternetScoutRequest(
+        query=body.query,
+        urls=[body.url],
+        tool_hint=InternetTool.BROWSER_USE,
+        max_pages=1,
+        max_depth=0,
+        needs_interaction=True,
+        requester="alpha_ui.beacon_crawler.render_scrape",
+    )
+
+
+def _ensure_crawler_url_allowed(body: InternetScoutCrawlerScrapeRequest) -> None:
     safety_plan = InternetScoutOrchestrator().plan(
         InternetScoutRequest(
             urls=[body.url],
@@ -370,24 +443,6 @@ async def internet_scout_crawler_scrape_browser_approval_request(
                 "decision": safety_plan.decision.model_dump(mode="json"),
             },
         )
-    browser_body = InternetScoutRequest(
-        query=body.query,
-        urls=[body.url],
-        tool_hint=InternetTool.BROWSER_USE,
-        max_pages=1,
-        max_depth=0,
-        needs_interaction=True,
-        requester="alpha_ui.beacon_crawler.render_scrape",
-    )
-    return await _queue_browser_task_approval(
-        browser_body=browser_body,
-        request=request,
-        extra_metadata={
-            "source": "crawler_render_scrape",
-            "require_screenshot": True,
-            "crawler_operation": "scrape",
-        },
-    )
 
 
 @router.post("/crawler/map", response_model=InternetScoutCrawlerMapResponse)
@@ -860,6 +915,13 @@ async def internet_scout_browser_run_approved(
 ) -> InternetScoutBrowserRunResponse:
     """Execute an already-approved browser task through the P8 sandbox."""
     check_scopes(request, "internet_scout.research", "admin")
+    return await _run_approved_browser_task(body, request)
+
+
+async def _run_approved_browser_task(
+    body: InternetScoutBrowserRunRequest,
+    request: Request,
+) -> InternetScoutBrowserRunResponse:
     browser_body = normalize_browser_request(body.browser_request)
     actor = str(getattr(request.state, "user_id", "unknown"))
     plan = InternetScoutOrchestrator().plan(browser_body)
