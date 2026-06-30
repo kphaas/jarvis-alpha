@@ -20,9 +20,15 @@ BEACON_QUALITY_CANARY_EXPECTED_INTERVAL_HOURS = 24
 
 async def run_quality_canary_once(conn) -> dict[str, object]:
     """Run the offline benchmark and persist redacted canary metadata."""
+    from brain.services.internet_scout.answer_engine_evals import (
+        answer_engine_eval_payload,
+    )
+
     results = run_search_quality_evals()
+    answer_eval = answer_engine_eval_payload()
     failed = [result for result in results if not result.passed]
-    status = "succeeded" if not failed else "failed"
+    answer_failed = int(answer_eval.get("failed") or 0)
+    status = "succeeded" if not failed and answer_failed == 0 else "failed"
     request = InternetScoutRequest(
         query=BEACON_QUALITY_CANARY_QUERY,
         tool_hint=InternetTool.SEARCH,
@@ -37,7 +43,11 @@ async def run_quality_canary_once(conn) -> dict[str, object]:
         decision=plan.decision,
         status_override=status,
     )
-    metadata = _quality_canary_metadata(results=results, request_id=request_id)
+    metadata = _quality_canary_metadata(
+        results=results,
+        request_id=request_id,
+        answer_eval=answer_eval,
+    )
     await repo.record_tool_event(
         request_id=request_id,
         tool=plan.decision.tool.value,
@@ -52,18 +62,28 @@ def _quality_canary_metadata(
     *,
     results: list[SearchQualityEvalResult],
     request_id: UUID,
+    answer_eval: dict[str, object],
 ) -> dict[str, object]:
     failed = [result for result in results if not result.passed]
+    answer_failed = int(answer_eval.get("failed") or 0)
     return {
         "suite": "beacon_search_quality",
         "suite_version": 2,
         "request_id": str(request_id),
-        "status": "passed" if not failed else "failed",
+        "status": "passed" if not failed and answer_failed == 0 else "failed",
         "case_count": len(results),
         "passed": len(results) - len(failed),
         "failed": len(failed),
         "failure_names": [result.name for result in failed[:20]],
         "case_groups": _group_summary(results),
+        "answer_engine": {
+            "status": str(answer_eval.get("status") or "unknown"),
+            "passed": int(answer_eval.get("passed") or 0),
+            "failed": answer_failed,
+            "reporting": answer_eval.get("reporting")
+            if isinstance(answer_eval.get("reporting"), dict)
+            else {},
+        },
         "scheduled_eval": {
             "runner": "scripts/run_beacon_quality_canary.py",
             "launch_script": "scripts/start_alpha_beacon_quality_canary.sh",

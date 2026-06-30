@@ -36,6 +36,15 @@ async def test_quality_canary_persists_redacted_metadata() -> None:
     assert metadata["case_count"] >= 30
     assert metadata["failed"] == 0
     assert metadata["request_id"] == str(conn.request_id)
+    assert metadata["answer_engine"]["status"] == "passed"
+    assert metadata["answer_engine"]["failed"] == 0
+    assert metadata["answer_engine"]["reporting"]["cost"]["provider_call_count"] == 0
+    assert (
+        metadata["answer_engine"]["reporting"]["citation_precision"][
+            "evaluated_citation_count"
+        ]
+        > 0
+    )
     assert metadata["scheduled_eval"] == {
         "runner": "scripts/run_beacon_quality_canary.py",
         "launch_script": "scripts/start_alpha_beacon_quality_canary.sh",

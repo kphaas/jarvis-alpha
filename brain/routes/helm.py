@@ -309,12 +309,32 @@ class HelmBeaconQualityCanaryHistoryItem(BaseModel):
     schedule_status: str = "unknown"
 
 
+class HelmBeaconQualityCanaryTrend(BaseModel):
+    window_runs: int = 0
+    passed_runs: int = 0
+    failed_runs: int = 0
+    pass_rate_percent: int = 0
+    latest_failed: int = 0
+    failed_delta: int = 0
+    passed_delta: int = 0
+    case_count_delta: int = 0
+    latest_precision: float = 0.0
+    precision_delta: float = 0.0
+    latest_suite_elapsed_ms: int = 0
+    latency_delta_ms: int = 0
+    estimated_provider_cost_usd: float = 0.0
+    trend: str = "unknown"
+
+
 class HelmBeaconQualityCanarySummary(HelmBeaconQualityCanaryHistoryItem):
     stale_after_hours: int = 0
     alert: HelmBeaconQualityCanaryAlert = Field(
         default_factory=HelmBeaconQualityCanaryAlert
     )
     history: list[HelmBeaconQualityCanaryHistoryItem] = Field(default_factory=list)
+    trend: HelmBeaconQualityCanaryTrend = Field(
+        default_factory=HelmBeaconQualityCanaryTrend
+    )
 
 
 class HelmBeaconSummary(BaseModel):
@@ -452,6 +472,16 @@ def _metadata_int(metadata: Mapping[str, object], key: str) -> int:
         except (TypeError, ValueError):
             return 0
     return 0
+
+
+def _metadata_float(metadata: Mapping[str, object], key: str) -> float:
+    value = _metadata_value(metadata, key)
+    if isinstance(value, bool) or value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _metadata_bool(metadata: Mapping[str, object], key: str) -> bool:
@@ -783,6 +813,7 @@ def _beacon_quality_canary(
         _beacon_quality_canary_history_item(item)
         for item in _metadata_mapping_list(metadata, "quality_canary_history")
     ]
+    trend = _mapping_value(metadata.get("quality_canary_trend"))
     return HelmBeaconQualityCanarySummary(
         status=_metadata_str(quality_canary, "status", "unknown") or "unknown",
         suite=_metadata_str(
@@ -816,6 +847,7 @@ def _beacon_quality_canary(
             severity=_metadata_str(alert, "severity", "warning") or "warning",
         ),
         history=history,
+        trend=_beacon_quality_canary_trend(trend),
     )
 
 
@@ -840,6 +872,30 @@ def _beacon_quality_canary_history_item(
         next_due_at=_metadata_str(metadata, "next_due_at"),
         schedule_status=_metadata_str(metadata, "schedule_status", "unknown")
         or "unknown",
+    )
+
+
+def _beacon_quality_canary_trend(
+    metadata: Mapping[str, object],
+) -> HelmBeaconQualityCanaryTrend:
+    return HelmBeaconQualityCanaryTrend(
+        window_runs=_metadata_int(metadata, "window_runs"),
+        passed_runs=_metadata_int(metadata, "passed_runs"),
+        failed_runs=_metadata_int(metadata, "failed_runs"),
+        pass_rate_percent=_metadata_int(metadata, "pass_rate_percent"),
+        latest_failed=_metadata_int(metadata, "latest_failed"),
+        failed_delta=_metadata_int(metadata, "failed_delta"),
+        passed_delta=_metadata_int(metadata, "passed_delta"),
+        case_count_delta=_metadata_int(metadata, "case_count_delta"),
+        latest_precision=_metadata_float(metadata, "latest_precision"),
+        precision_delta=_metadata_float(metadata, "precision_delta"),
+        latest_suite_elapsed_ms=_metadata_int(metadata, "latest_suite_elapsed_ms"),
+        latency_delta_ms=_metadata_int(metadata, "latency_delta_ms"),
+        estimated_provider_cost_usd=_metadata_float(
+            metadata,
+            "estimated_provider_cost_usd",
+        ),
+        trend=_metadata_str(metadata, "trend", "unknown") or "unknown",
     )
 
 

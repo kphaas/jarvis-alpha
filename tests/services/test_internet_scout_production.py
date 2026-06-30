@@ -440,6 +440,10 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
         ]
         == 34
     )
+    assert (
+        response.checks["recent_evidence"].metadata["quality_canary_trend"]["trend"]
+        == "single_sample"
+    )
     assert response.retention.mode == "report_only"
 
 
@@ -521,6 +525,77 @@ async def test_health_parses_quality_canary_json_metadata(monkeypatch):
             "reason": "quality_canary_fresh",
             "severity": "info",
         },
+    }
+
+
+@pytest.mark.asyncio
+async def test_health_reports_quality_canary_history_trend(monkeypatch):
+    monkeypatch.setattr(
+        beacon_health,
+        "browser_runtime_health",
+        lambda: {
+            "ok": True,
+            "runtime": "playwright",
+            "runtime_enabled": True,
+            "playwright_version_ok": True,
+            "screenshot_dir_writable": True,
+        },
+    )
+    now = datetime.now(UTC)
+
+    def row(*, passed: int, failed: int, precision: float, elapsed_ms: int, hours: int):
+        return {
+            "request_id": uuid4(),
+            "status": "succeeded" if failed == 0 else "failed",
+            "created_at": now - timedelta(hours=hours),
+            "metadata": {
+                "suite": "beacon_search_quality",
+                "suite_version": 2,
+                "case_count": passed + failed,
+                "passed": passed,
+                "failed": failed,
+                "failure_names": [],
+                "status": "passed" if failed == 0 else "failed",
+                "case_groups": {},
+                "answer_engine": {
+                    "status": "passed" if failed == 0 else "failed",
+                    "passed": 15,
+                    "failed": failed,
+                    "reporting": {
+                        "latency": {"suite_elapsed_ms": elapsed_ms},
+                        "cost": {"estimated_provider_cost_usd": 0.0},
+                        "citation_precision": {"precision": precision},
+                    },
+                },
+            },
+        }
+
+    response = await beacon_health.build_beacon_health(
+        FakeConn(
+            quality_canary_rows=[
+                row(passed=40, failed=0, precision=0.9, elapsed_ms=20, hours=1),
+                row(passed=38, failed=2, precision=0.75, elapsed_ms=30, hours=25),
+            ]
+        ),
+        gateway_client=FakeGatewayClient(),
+    )
+
+    trend = response.checks["recent_evidence"].metadata["quality_canary_trend"]
+    assert trend == {
+        "window_runs": 2,
+        "passed_runs": 1,
+        "failed_runs": 1,
+        "pass_rate_percent": 50,
+        "latest_failed": 0,
+        "failed_delta": -2,
+        "passed_delta": 2,
+        "case_count_delta": 0,
+        "latest_precision": 0.9,
+        "precision_delta": 0.15,
+        "latest_suite_elapsed_ms": 20,
+        "latency_delta_ms": -10,
+        "estimated_provider_cost_usd": 0.0,
+        "trend": "improving",
     }
 
 
