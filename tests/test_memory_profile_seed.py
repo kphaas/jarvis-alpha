@@ -146,12 +146,14 @@ def test_profile_semantic_projection_builds_editable_facts() -> None:
         PROFILE_SEMANTIC_SOURCE_ACTION
     }
     assert "Ken Haas" not in {request["fact"] for request in requests}
-    assert _request_for_slug(requests, "microsoft-managing-director-fsi")[
-        "category"
-    ] == "person"
-    assert _request_for_slug(requests, "at0-private-ai-operating-system")[
-        "category"
-    ] == "project"
+    assert (
+        _request_for_slug(requests, "microsoft-managing-director-fsi")["category"]
+        == "person"
+    )
+    assert (
+        _request_for_slug(requests, "at0-private-ai-operating-system")["category"]
+        == "project"
+    )
 
 
 def test_profile_semantic_projection_skips_existing_projection() -> None:

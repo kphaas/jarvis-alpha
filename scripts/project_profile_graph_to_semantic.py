@@ -122,7 +122,9 @@ def _existing_projection_keys(
     semantic_payload: dict[str, Any],
     profile_seed_version: str,
 ) -> dict[str, set[str]]:
-    rows = semantic_payload.get("semantic") if isinstance(semantic_payload, dict) else []
+    rows = (
+        semantic_payload.get("semantic") if isinstance(semantic_payload, dict) else []
+    )
     thread_ids: set[str] = set()
     message_ids: set[str] = set()
     prefix = f"profile:{profile_seed_version}:"
@@ -260,7 +262,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--token-ssh-target",
-        default=os.getenv("MEMORY_PROFILE_SEMANTIC_TOKEN_SSH_TARGET", DEFAULT_SSH_TARGET),
+        default=os.getenv(
+            "MEMORY_PROFILE_SEMANTIC_TOKEN_SSH_TARGET", DEFAULT_SSH_TARGET
+        ),
         help="SSH target used to generate a short-lived bearer token.",
     )
     parser.add_argument(
@@ -290,7 +294,9 @@ def main() -> int:
     parser.add_argument(
         "--max-create",
         type=int,
-        default=int(os.getenv("MEMORY_PROFILE_SEMANTIC_MAX_CREATE", str(DEFAULT_MAX_CREATE))),
+        default=int(
+            os.getenv("MEMORY_PROFILE_SEMANTIC_MAX_CREATE", str(DEFAULT_MAX_CREATE))
+        ),
         help="Maximum semantic rows to create in one run.",
     )
     parser.add_argument(
