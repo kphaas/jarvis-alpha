@@ -368,6 +368,39 @@ class InternetScoutStoredResponse(BaseModel):
     evidence: InternetEvidencePacket
 
 
+class InternetScoutRequestHistoryItem(BaseModel):
+    request_id: UUID
+    requester: str = Field(max_length=96)
+    selected_tool: str = Field(max_length=64)
+    sensitivity: Sensitivity
+    status: str = Field(max_length=64)
+    risk_tier: ApprovalTier
+    created_at: datetime
+    updated_at: datetime
+    has_query: bool = False
+    url_count: int = Field(default=0, ge=0, le=20)
+    max_pages: int = Field(default=1, ge=1, le=50)
+    max_depth: int = Field(default=0, ge=0, le=5)
+    needs_interaction: bool = False
+    source_count: int = Field(default=0, ge=0)
+    claim_count: int = Field(default=0, ge=0)
+    event_count: int = Field(default=0, ge=0)
+    source_hosts: list[str] = Field(default_factory=list, max_length=20)
+    latest_event_type: str | None = Field(default=None, max_length=64)
+    latest_event_status: str | None = Field(default=None, max_length=64)
+
+
+class InternetScoutRequestHistoryResponse(BaseModel):
+    history: list[InternetScoutRequestHistoryItem] = Field(
+        default_factory=list,
+        max_length=50,
+    )
+    count: int = Field(default=0, ge=0, le=50)
+    limit: int = Field(default=20, ge=1, le=50)
+    offset: int = Field(default=0, ge=0)
+    has_more: bool = False
+
+
 class InternetScoutBrowserApprovalPreview(BaseModel):
     """Redacted browser-use approval contract for operator review surfaces."""
 

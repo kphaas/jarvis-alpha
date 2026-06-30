@@ -17,6 +17,7 @@ from brain.services.herald_social import (
     linkedin_metric_engagement_rate,
     linkedin_metric_engagement_total,
     linkedin_metric_memory_content,
+    linkedin_post_urn_from_url,
     linkedin_target_scout_queries,
     linkedin_weekly_topic,
     normalize_platforms,
@@ -189,6 +190,22 @@ def test_linkedin_target_scout_queries_focus_on_brand_topics() -> None:
     assert "http" not in queries[0].lower()
 
 
+def test_linkedin_post_urn_from_url_extracts_publishable_activity_urn() -> None:
+    assert (
+        linkedin_post_urn_from_url(
+            "https://www.linkedin.com/posts/nick-kervin-6b06874_ai-is-reshaping-activity-7473177453939613696-QL_R"
+        )
+        == "urn:li:activity:7473177453939613696"
+    )
+    assert (
+        linkedin_post_urn_from_url(
+            "https://www.linkedin.com/feed/update/urn%3Ali%3Aactivity%3A7473177453939613696/"
+        )
+        == "urn:li:activity:7473177453939613696"
+    )
+    assert linkedin_post_urn_from_url("https://www.linkedin.com/in/someone") is None
+
+
 def test_linkedin_metrics_promote_only_strong_feedback_to_spark_memory() -> None:
     total = linkedin_metric_engagement_total(
         reactions=5,
@@ -237,8 +254,8 @@ async def test_linkedin_target_scout_queues_local_review_items_only() -> None:
                 results=[
                     GatewaySearchResult(
                         title="AI operating model discussion",
-                        url="https://social.example/member-post",
-                        host="social.example",
+                        url="https://www.linkedin.com/posts/example_ai-operating-model-activity-7473177453939613696-QL_R",
+                        host="www.linkedin.com",
                         description="A useful thread on approval gates.",
                     ),
                     GatewaySearchResult(
@@ -278,7 +295,11 @@ async def test_linkedin_target_scout_queues_local_review_items_only() -> None:
     assert outcome.skipped_count == 1
     assert outcome.reason == "created"
     assert conn.rows[0][0].startswith("herald:scout:")
-    assert conn.rows[0][1] == "https://social.example/member-post"
+    assert conn.rows[0][1] == "urn:li:activity:7473177453939613696"
+    assert (
+        conn.rows[0][2]
+        == "https://www.linkedin.com/posts/example_ai-operating-model-activity-7473177453939613696-QL_R"
+    )
     assert conn.events[0][0:5] == (
         "linkedin",
         "engagement",
@@ -322,8 +343,21 @@ def test_linkedin_target_scout_uses_gateway_search_without_publish() -> None:
 
 def test_linkedin_cadence_counts_live_and_manual_publish_receipts() -> None:
     source = ROUTE.read_text(encoding="utf-8")
+    service_source = SERVICE.read_text(encoding="utf-8")
 
     assert "'manual_published', 'linkedin_published'" in source
+    assert "r.draft_kind = 'post'" in source
+    assert "r.campaign = 'linkedin-weekly-brand'" in source
+    assert "r.draft_kind = 'post'" in service_source
+    assert "r.campaign = 'linkedin-weekly-brand'" in service_source
+
+
+def test_manual_publish_receipt_clears_stale_publish_error() -> None:
+    source = ROUTE.read_text(encoding="utf-8")
+
+    assert "SET publish_status = 'manual_published'" in source
+    assert "publish_error_type = NULL" in source
+    assert "publish_error_message = NULL" in source
 
 
 def test_platform_normalization_deduplicates_and_rejects_unknowns() -> None:

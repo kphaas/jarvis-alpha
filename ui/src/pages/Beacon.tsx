@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2, Loader2, MousePointerClick, PlayCircle, RefreshCw, Search, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, History, Loader2, MousePointerClick, PlayCircle, RefreshCw, Search, ShieldCheck } from 'lucide-react'
 import { BeaconAnswerSummary } from '../components/beacon/BeaconAnswerSummary'
 import { BeaconEvidenceTransparencyPanel } from '../components/beacon/BeaconEvidenceTransparencyPanel'
 import { BeaconHealthRail } from '../components/beacon/BeaconHealthRail'
@@ -17,6 +17,8 @@ import type {
   BeaconFocusMode,
   BeaconHealthPayload,
   BeaconMode,
+  BeaconRequestHistoryItem,
+  BeaconRequestHistoryResponse,
   BeaconResearchProgressEvent,
 } from '../types/beacon'
 
@@ -41,7 +43,21 @@ export default function Beacon() {
   const [health, setHealth] = useState<BeaconHealthPayload | null>(null)
   const [healthLoading, setHealthLoading] = useState(true)
   const [healthError, setHealthError] = useState(false)
+  const [historyDraftQuery, setHistoryDraftQuery] = useState('')
+  const [historyQuery, setHistoryQuery] = useState('')
+  const [historyStatus, setHistoryStatus] = useState('all')
+  const [historyOffset, setHistoryOffset] = useState(0)
+  const [historyRows, setHistoryRows] = useState<BeaconRequestHistoryItem[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState('')
+  const [historyHasMore, setHistoryHasMore] = useState(false)
   const activeMode = useMemo(() => BEACON_MODES.find((item) => item.key === mode) ?? BEACON_MODES[0], [mode])
+  const browserHost = useMemo(() => parseUrlHost(browserUrl), [browserUrl])
+  const reviewedHost = expectedHost.trim().toLowerCase() || browserHost.host
+  const hostMismatch = Boolean(
+    browserHost.host && expectedHost.trim() && browserHost.host !== expectedHost.trim().toLowerCase()
+  )
+  const browserUrlInvalid = Boolean(browserUrl.trim() && !browserHost.valid)
 
   const fetchHealth = useCallback(() => {
     setHealthLoading(true)
@@ -58,6 +74,32 @@ export default function Beacon() {
   useEffect(() => {
     fetchHealth()
   }, [fetchHealth])
+
+  const fetchHistory = useCallback(() => {
+    setHistoryLoading(true)
+    setHistoryError('')
+    const params = new URLSearchParams({
+      limit: '12',
+      offset: String(historyOffset),
+    })
+    if (historyStatus !== 'all') params.set('status', historyStatus)
+    if (historyQuery.trim()) params.set('q', historyQuery.trim())
+    apiJson<BeaconRequestHistoryResponse>(`/v1/internet-scout/requests?${params.toString()}`)
+      .then((payload) => {
+        setHistoryRows(payload.history ?? [])
+        setHistoryHasMore(payload.has_more)
+      })
+      .catch((error) => {
+        setHistoryRows([])
+        setHistoryHasMore(false)
+        setHistoryError(error instanceof Error ? error.message : 'Beacon history unavailable')
+      })
+      .finally(() => setHistoryLoading(false))
+  }, [historyOffset, historyQuery, historyStatus])
+
+  useEffect(() => {
+    fetchHistory()
+  }, [fetchHistory])
 
   const runBeacon = async () => {
     const trimmed = query.trim()
@@ -174,10 +216,16 @@ export default function Beacon() {
     const selector = clickSelector.trim()
     if (!url || !selector || approvalLoading) return
     let host = expectedHost.trim()
+    let urlHost = ''
     try {
-      host ||= new URL(url).host
+      urlHost = new URL(url).host.toLowerCase()
+      host ||= urlHost
     } catch {
       setApprovalError('Enter a valid public URL.')
+      return
+    }
+    if (host.toLowerCase() !== urlHost) {
+      setApprovalError('Expected host must match the URL host for click-only requests.')
       return
     }
     setApprovalLoading(true)
@@ -263,60 +311,163 @@ export default function Beacon() {
 
       <details className={`rounded-lg border p-4 ${border} ${panel}`}>
         <summary className="cursor-pointer text-sm font-semibold">
-          Browser action approval
+          Browser click-only request
         </summary>
-        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(180px,240px)]">
-          <input
-            value={browserUrl}
-            onChange={(event) => setBrowserUrl(event.target.value)}
-            placeholder="https://example.com/page"
-            className={`min-h-11 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
-          />
-          <input
-            value={expectedHost}
-            onChange={(event) => setExpectedHost(event.target.value)}
-            placeholder="expected host"
-            className={`min-h-11 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
-          />
-          <input
-            value={clickSelector}
-            onChange={(event) => setClickSelector(event.target.value)}
-            placeholder="CSS selector to click"
-            className={`min-h-11 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
-          />
-          <input
-            value={clickLabel}
-            onChange={(event) => setClickLabel(event.target.value)}
-            placeholder="label"
-            className={`min-h-11 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
-          />
+        <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-3">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(180px,240px)]">
+              <input
+                value={browserUrl}
+                onChange={(event) => setBrowserUrl(event.target.value)}
+                placeholder="URL to inspect"
+                className={`min-h-11 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
+              />
+              <input
+                value={expectedHost}
+                onChange={(event) => setExpectedHost(event.target.value)}
+                placeholder="Allowed host (auto)"
+                className={`min-h-11 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
+              />
+              <input
+                value={clickSelector}
+                onChange={(event) => setClickSelector(event.target.value)}
+                placeholder="CSS selector for one reviewed click"
+                className={`min-h-11 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
+              />
+              <input
+                value={clickLabel}
+                onChange={(event) => setClickLabel(event.target.value)}
+                placeholder="Click target label"
+                className={`min-h-11 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {['Click only', 'No typing/forms', 'No credentials', 'Same host', 'Screenshots + audit'].map((item) => (
+                <span key={item} className={`rounded border px-2 py-1 text-[10px] font-mono uppercase ${border}`}>
+                  {item}
+                </span>
+              ))}
+            </div>
+            {browserUrlInvalid && <p className="text-xs text-rose-500">Enter a full URL with https://.</p>}
+            {hostMismatch && <p className="text-xs text-amber-500">Allowed host must match the URL host for click-only approval.</p>}
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={queueBrowserApproval}
+                disabled={!browserUrl.trim() || !clickSelector.trim() || approvalLoading || browserUrlInvalid || hostMismatch}
+                className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-cyan-500 px-4 text-sm font-semibold text-[#0A0A0A] transition hover:bg-cyan-400 disabled:opacity-45"
+              >
+                <MousePointerClick className="h-4 w-4" />
+                {approvalLoading ? 'Queueing' : 'Queue click approval'}
+              </button>
+              {approvalResult && (
+                <Link
+                  to="/approvals"
+                  className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm ${border}`}
+                >
+                  <ShieldCheck className="h-4 w-4 text-emerald-500" />
+                  Review {approvalResult.approval_queue_id.slice(0, 8)}
+                </Link>
+              )}
+            </div>
+            {approvalError && <p className="text-sm text-rose-500">{approvalError}</p>}
+          </div>
+          <div className={`rounded-lg border p-3 text-xs ${border} ${isDark ? 'bg-black/15' : 'bg-white/35'}`}>
+            <p className="font-mono uppercase tracking-widest opacity-45">Approval preview</p>
+            <div className="mt-3 grid gap-2">
+              <PreviewRow label="Reviewed host" value={reviewedHost || 'enter URL'} />
+              <PreviewRow label="Target" value={clickLabel.trim() || clickSelector.trim() || 'enter selector'} />
+              <PreviewRow label="Action space" value="single click, no input" />
+              <PreviewRow label="Decision" value="operator approve or deny" />
+            </div>
+            {approvalResult && (
+              <p className="mt-3 border-t pt-3 font-mono text-[10px] uppercase opacity-55">
+                hash {approvalResult.preview.approval_hash_prefix} · {approvalResult.preview.allowed_hosts.join(', ') || 'no host'}
+              </p>
+            )}
+          </div>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-3">
+      </details>
+
+      <details className={`rounded-lg border p-4 ${border} ${panel}`}>
+        <summary className="cursor-pointer text-sm font-semibold">
+          Saved Beacon history
+        </summary>
+        <div className="mt-4 flex flex-col gap-3 lg:flex-row">
+          <label className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 opacity-45" />
+            <input
+              value={historyDraftQuery}
+              onChange={(event) => setHistoryDraftQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  setHistoryOffset(0)
+                  setHistoryQuery(historyDraftQuery)
+                }
+              }}
+              placeholder="Search request id, requester, host, claim, status"
+              className={`min-h-11 w-full rounded-lg border bg-transparent py-2 pl-10 pr-3 text-sm outline-none ${border}`}
+            />
+          </label>
+          <select
+            value={historyStatus}
+            onChange={(event) => {
+              setHistoryOffset(0)
+              setHistoryStatus(event.target.value)
+            }}
+            className={`min-h-11 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
+          >
+            <option value="all">All status</option>
+            <option value="succeeded">Succeeded</option>
+            <option value="running">Running</option>
+            <option value="failed">Failed</option>
+            <option value="blocked">Blocked</option>
+          </select>
           <button
             type="button"
-            onClick={queueBrowserApproval}
-            disabled={!browserUrl.trim() || !clickSelector.trim() || approvalLoading}
-            className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-cyan-500 px-4 text-sm font-semibold text-[#0A0A0A] transition hover:bg-cyan-400 disabled:opacity-45"
+            onClick={() => {
+              setHistoryOffset(0)
+              setHistoryQuery(historyDraftQuery)
+            }}
+            className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm ${border}`}
           >
-            <MousePointerClick className="h-4 w-4" />
-            {approvalLoading ? 'Queueing' : 'Queue approval'}
+            <History className="h-4 w-4" />
+            Search history
           </button>
-          {approvalResult && (
-            <Link
-              to="/approvals"
-              className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm ${border}`}
-            >
-              <ShieldCheck className="h-4 w-4 text-emerald-500" />
-              Approval {approvalResult.approval_queue_id.slice(0, 8)}
-            </Link>
-          )}
         </div>
-        {approvalResult && (
-          <p className="mt-2 text-xs opacity-55">
-            hash {approvalResult.preview.approval_hash_prefix} · {approvalResult.preview.allowed_hosts.join(', ') || 'no host'}
-          </p>
+        <div className="mt-4 space-y-2">
+          {historyLoading && <p className="text-sm opacity-55">Loading saved Beacon history.</p>}
+          {historyError && <p className="text-sm text-rose-500">{historyError}</p>}
+          {!historyLoading && !historyError && historyRows.length === 0 && (
+            <p className="text-sm opacity-55">No saved Beacon requests match this view.</p>
+          )}
+          {!historyLoading && !historyError && historyRows.map((item) => (
+            <BeaconHistoryRow key={item.request_id} item={item} border={border} isDark={isDark} />
+          ))}
+        </div>
+        {!historyError && (historyOffset > 0 || historyHasMore) && (
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <button
+              type="button"
+              disabled={historyOffset === 0}
+              onClick={() => setHistoryOffset(Math.max(0, historyOffset - 12))}
+              className={`min-h-10 rounded-lg border px-3 text-sm disabled:opacity-45 ${border}`}
+            >
+              Previous
+            </button>
+            <p className="text-xs opacity-55">
+              {historyOffset + 1}-{historyOffset + historyRows.length}{historyHasMore ? '+' : ''}
+            </p>
+            <button
+              type="button"
+              disabled={!historyHasMore}
+              onClick={() => setHistoryOffset(historyOffset + 12)}
+              className={`min-h-10 rounded-lg border px-3 text-sm disabled:opacity-45 ${border}`}
+            >
+              Next
+            </button>
+          </div>
         )}
-        {approvalError && <p className="mt-2 text-sm text-rose-500">{approvalError}</p>}
       </details>
 
       {!result && !runLoading && (
@@ -341,6 +492,85 @@ export default function Beacon() {
       )}
     </motion.div>
   )
+}
+
+function PreviewRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] font-mono uppercase tracking-widest opacity-45">{label}</p>
+      <p className="mt-0.5 truncate font-semibold">{value}</p>
+    </div>
+  )
+}
+
+function BeaconHistoryRow({
+  item,
+  border,
+  isDark,
+}: {
+  item: BeaconRequestHistoryItem
+  border: string
+  isDark: boolean
+}) {
+  const hostPreview = item.source_hosts.slice(0, 3).join(', ') || 'no sources yet'
+  const eventPreview = item.latest_event_type
+    ? `${item.latest_event_type.replaceAll('_', ' ')} · ${item.latest_event_status || 'unknown'}`
+    : 'no events'
+
+  return (
+    <div className={`rounded-lg border px-3 py-2 text-sm ${border} ${isDark ? 'bg-black/15' : 'bg-white/35'}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate font-semibold">{item.requester} · {item.selected_tool}</p>
+          <p className="mt-0.5 font-mono text-[10px] uppercase opacity-50">
+            {item.request_id.slice(0, 8)} · {formatBeaconDate(item.created_at)}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`rounded border px-2 py-0.5 text-[10px] font-mono uppercase ${historyStatusClass(item.status)} ${border}`}>
+            {item.status}
+          </span>
+          <span className={`rounded border px-2 py-0.5 text-[10px] font-mono uppercase ${border}`}>
+            {item.risk_tier}
+          </span>
+        </div>
+      </div>
+      <div className="mt-2 grid gap-2 text-xs sm:grid-cols-4">
+        <PreviewRow label="Evidence" value={`${item.source_count} sources · ${item.claim_count} claims`} />
+        <PreviewRow label="Latest event" value={eventPreview} />
+        <PreviewRow label="Hosts" value={hostPreview} />
+        <PreviewRow label="Shape" value={`${item.has_query ? 'query' : 'url'} · ${item.max_pages}p · ${item.event_count} events`} />
+      </div>
+    </div>
+  )
+}
+
+function parseUrlHost(value: string): { host: string; valid: boolean } {
+  const trimmed = value.trim()
+  if (!trimmed) return { host: '', valid: true }
+  try {
+    return { host: new URL(trimmed).host.toLowerCase(), valid: true }
+  } catch {
+    return { host: '', valid: false }
+  }
+}
+
+function historyStatusClass(status: string): string {
+  if (status === 'succeeded') return 'text-emerald-500'
+  if (status === 'failed') return 'text-rose-500'
+  if (status === 'blocked') return 'text-amber-500'
+  return 'opacity-70'
+}
+
+function formatBeaconDate(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
 }
 
 function BeaconModeRunContract({ mode, isDark }: { mode: BeaconMode; isDark: boolean }) {

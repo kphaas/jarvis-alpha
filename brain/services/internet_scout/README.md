@@ -22,6 +22,9 @@ P10/P11:
 - `/v1/internet-scout/consumers/{consumer}/local-llm/tool` applies Forge,
   Family, and Financial consumer policy before returning a local-LLM envelope.
 - `/v1/internet-scout/requests/{request_id}` returns RLS-visible stored evidence.
+- `/v1/internet-scout/requests` returns searchable saved Beacon request history
+  from request shape, source/evidence metadata, and tool events without storing
+  raw query text.
 - Browser-use approval requests can be queued and an approved-runner route can
   verify and consume the exact approval row.
 - Browser runs have an hourly operator quota, same-host observation checks,
