@@ -12,6 +12,10 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "GET /health": ["read"],
     "GET /v1/mesh/status": ["read"],
     "GET /v1/home/summary": ["read"],
+    "GET /v1/home/homie/state": ["read", "security_read"],
+    "GET /v1/home/homie/events/stream": ["read", "security_read"],
+    "POST /v1/home/homie/intent": ["write", "security_write"],
+    "POST /v1/home/homie/voice-intent": ["write", "security_write"],
     "GET /v1/buddy/events": ["read"],
     "GET /v1/costs/summary": ["read"],
     "GET /v1/unifi/status": ["read"],
@@ -35,6 +39,10 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/memory": ["write"],
     "PATCH /v1/tasks": ["write"],
     "POST /v1/prompts/": ["write"],
+    "POST /v1/home/homie/action": ["write", "security_write"],
+    "POST /v1/home/homie/approvals/{approval_id}/review": ["write", "security_write"],
+    "POST /v1/home/homie/approvals/{approval_id}/resume": ["write", "security_write"],
+    "POST /v1/home/homie/approvals/{approval_id}/execute": ["write", "security_write"],
     # Chat — varies by model routing (local=write, cloud=external_call+cost)
     # Default to write — cloud escalation handled at route level
     "POST /v1/chat": ["write"],
