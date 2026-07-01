@@ -449,7 +449,7 @@ def _run_crawler_smoke(base_url: str, token: str) -> dict[str, object]:
 
     health = _call_json("GET", base_url, "/v1/internet-scout/health", token)
     crawler = (health.get("checks") or {}).get("crawler")
-    if not isinstance(crawler, dict) or crawler.get("status") != "ok":
+    if not isinstance(crawler, dict) or crawler.get("ok") is not True:
         raise RuntimeError("crawler health is not ok")
     metadata = (
         crawler.get("metadata") if isinstance(crawler.get("metadata"), dict) else {}
