@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { startTransition, useCallback, useEffect, useEffectEvent, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import {
@@ -71,12 +71,33 @@ interface AgentRun {
   cost_usd: number
   error_text: string | null
   workspace_backend: string
-  workspace_root: string | null
+  workspace_uri: string | null
+  workspace_state: string
   policy_labels: string[]
   approval_scope: string | null
   retention_class: string
+  retention_expires_at: string | null
+  raw_access_mode: 'inline_ok' | 'download_only'
   artifact_count: number
   created_at: string
+}
+
+interface AgentRunWorkspace {
+  run_id: string
+  agent_id: string
+  created_at: string
+  workspace_backend: string
+  workspace_uri: string
+  workspace_state: string
+  policy_labels: string[]
+  approval_scope: string | null
+  retention_class: string
+  retention_expires_at: string
+  usage_bytes: number
+  quota_bytes: number
+  artifact_max_bytes: number
+  preview_max_bytes: number
+  raw_access_mode: 'inline_ok' | 'download_only'
 }
 
 interface AgentRunArtifact {
@@ -114,6 +135,21 @@ interface AgentRunList {
 interface AgentRunArtifactList {
   count: number
   artifacts: AgentRunArtifact[]
+}
+
+interface AgentRunArtifactPreview {
+  artifact_id: string
+  run_id: string
+  relative_path: string
+  kind: string
+  content_type: string
+  preview_text: string | null
+  preview_truncated: boolean
+  preview_bytes: number
+  preview_available: boolean
+  approval_scope: string | null
+  raw_access_mode: 'inline_ok' | 'download_only'
+  retention_expires_at: string | null
 }
 
 interface AgentManualRun {
@@ -176,8 +212,8 @@ function textOrFallback(value: string | null | undefined, fallback: string) {
   return value && value.trim() ? value : fallback
 }
 
-function hasWorkspace(run: Pick<AgentRun, 'workspace_root'>) {
-  return Boolean(run.workspace_root && run.workspace_root.trim())
+function hasWorkspace(run: Pick<AgentRun, 'workspace_uri'>) {
+  return Boolean(run.workspace_uri && run.workspace_uri.trim())
 }
 
 function isPreviewableContentType(contentType: string) {
@@ -206,17 +242,21 @@ export default function Agents() {
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [runs, setRuns] = useState<AgentRun[]>([])
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const [workspace, setWorkspace] = useState<AgentRunWorkspace | null>(null)
   const [artifacts, setArtifacts] = useState<AgentRunArtifact[]>([])
   const [showWorkspaceOnly, setShowWorkspaceOnly] = useState(false)
   const [showArtifactsOnly, setShowArtifactsOnly] = useState(false)
   const [retentionFilter, setRetentionFilter] = useState('all')
   const [loading, setLoading] = useState(true)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [workspaceLoading, setWorkspaceLoading] = useState(false)
   const [artifactLoading, setArtifactLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null)
   const [artifactError, setArtifactError] = useState<string | null>(null)
   const [artifactPreviewId, setArtifactPreviewId] = useState<string | null>(null)
   const [artifactPreviewText, setArtifactPreviewText] = useState<string | null>(null)
+  const [artifactPreviewTruncated, setArtifactPreviewTruncated] = useState(false)
   const [artifactPreviewError, setArtifactPreviewError] = useState<string | null>(null)
   const [artifactPreviewLoadingId, setArtifactPreviewLoadingId] = useState<string | null>(null)
   const [acting, setActing] = useState<string | null>(null)
@@ -254,15 +294,33 @@ export default function Agents() {
         if (current && runRes.runs.some((run) => run.id === current)) return current
         return runRes.runs[0]?.id ?? null
       })
+      setWorkspace(null)
+      setWorkspaceError(null)
       setArtifactError(null)
       setArtifactPreviewId(null)
       setArtifactPreviewText(null)
+      setArtifactPreviewTruncated(false)
       setArtifactPreviewError(null)
       setRetentionFilter('all')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load agent details')
     } finally {
       setDetailLoading(false)
+    }
+  }, [])
+
+  const loadWorkspace = useCallback(async (runId: string) => {
+    setWorkspaceLoading(true)
+    try {
+      const workspaceRes = await apiJson<AgentRunWorkspace>(`/v1/agent-runs/${runId}/workspace`)
+      setWorkspace(workspaceRes)
+      setWorkspaceError(null)
+    } catch (err) {
+      setWorkspace(null)
+      const message = err instanceof Error ? err.message : 'Failed to load workspace'
+      setWorkspaceError(message === 'HTTP 404' ? null : message)
+    } finally {
+      setWorkspaceLoading(false)
     }
   }, [])
 
@@ -274,6 +332,7 @@ export default function Agents() {
       setArtifactError(null)
       setArtifactPreviewId(null)
       setArtifactPreviewText(null)
+      setArtifactPreviewTruncated(false)
       setArtifactPreviewError(null)
     } catch (err) {
       setArtifacts([])
@@ -283,24 +342,55 @@ export default function Agents() {
     }
   }, [])
 
-  useEffect(() => {
-    load()
-    const id = setInterval(load, REFRESH_MS)
-    return () => clearInterval(id)
-  }, [load])
+  const refreshAgents = useEffectEvent(() => {
+    void load()
+  })
+
+  const refreshAgentDetails = useEffectEvent((agentId: string) => {
+    void loadDetails(agentId)
+  })
+
+  const refreshRunDetails = useEffectEvent((runId: string) => {
+    void loadWorkspace(runId)
+    void loadArtifacts(runId)
+  })
+
+  const clearRunDetails = useEffectEvent(() => {
+    startTransition(() => {
+      setWorkspace(null)
+      setWorkspaceError(null)
+      setArtifacts([])
+      setArtifactError(null)
+    })
+  })
+
+  const syncSelectedRun = useEffectEvent((nextRuns: AgentRun[], currentRunId: string | null) => {
+    if (nextRuns.length === 0) {
+      startTransition(() => setSelectedRunId(null))
+      return
+    }
+    if (!currentRunId || !nextRuns.some((run) => run.id === currentRunId)) {
+      startTransition(() => setSelectedRunId(nextRuns[0].id))
+    }
+  })
 
   useEffect(() => {
-    if (selectedId) loadDetails(selectedId)
-  }, [loadDetails, selectedId])
+    queueMicrotask(refreshAgents)
+    const id = setInterval(refreshAgents, REFRESH_MS)
+    return () => clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    if (selectedId) queueMicrotask(() => refreshAgentDetails(selectedId))
+  }, [selectedId])
 
   useEffect(() => {
     if (!selectedRunId) {
-      setArtifacts([])
-      setArtifactError(null)
+      queueMicrotask(clearRunDetails)
       return
     }
-    loadArtifacts(selectedRunId)
-  }, [loadArtifacts, selectedRunId])
+    queueMicrotask(() => refreshRunDetails(selectedRunId))
+  }, [selectedRunId])
 
   const selectedStatus = useMemo(
     () => statuses.find((agent) => agent.agent_id === selectedId) ?? null,
@@ -383,27 +473,24 @@ export default function Agents() {
     selectedAgent.metadata.manual_run_enabled === true
 
   useEffect(() => {
-    if (filteredRuns.length === 0) {
-      setSelectedRunId(null)
-      return
-    }
-    if (!selectedRunId || !filteredRuns.some((run) => run.id === selectedRunId)) {
-      setSelectedRunId(filteredRuns[0].id)
-    }
+    queueMicrotask(() => syncSelectedRun(filteredRuns, selectedRunId))
   }, [filteredRuns, selectedRunId])
 
   const previewArtifact = async (artifact: AgentRunArtifact) => {
     setArtifactPreviewLoadingId(artifact.artifact_id)
     setArtifactPreviewError(null)
     try {
-      const res = await apiFetch(`/v1/agent-runs/${artifact.run_id}/artifacts/${artifact.artifact_id}/content`)
+      const res = await apiFetch(`/v1/agent-runs/${artifact.run_id}/artifacts/${artifact.artifact_id}/preview`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      setArtifactPreviewText(await res.text())
+      const preview = await res.json() as AgentRunArtifactPreview
+      setArtifactPreviewText(preview.preview_text ?? 'Preview unavailable for this artifact.')
+      setArtifactPreviewTruncated(preview.preview_truncated)
       setArtifactPreviewId(artifact.artifact_id)
     } catch (err) {
       setArtifactPreviewError(err instanceof Error ? err.message : 'Failed to preview artifact')
       setArtifactPreviewId(artifact.artifact_id)
       setArtifactPreviewText(null)
+      setArtifactPreviewTruncated(false)
     } finally {
       setArtifactPreviewLoadingId(null)
     }
@@ -411,7 +498,7 @@ export default function Agents() {
 
   const downloadArtifact = async (artifact: AgentRunArtifact) => {
     try {
-      const res = await apiFetch(`/v1/agent-runs/${artifact.run_id}/artifacts/${artifact.artifact_id}/content`)
+      const res = await apiFetch(`/v1/agent-runs/${artifact.run_id}/artifacts/${artifact.artifact_id}/download`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const blob = await res.blob()
       const url = window.URL.createObjectURL(blob)
@@ -672,11 +759,16 @@ export default function Agents() {
                           <div className={`mt-1 text-xs ${muted}`}>${run.cost_usd.toFixed(4)} / {timeText(run.created_at)}</div>
                           <div className="mt-2 flex flex-wrap gap-2">
                             <span className={`rounded border ${border} px-2 py-1 text-[11px] font-semibold ${muted}`}>
-                              {run.workspace_root ? `${run.workspace_backend} workspace` : 'no workspace'}
+                              {run.workspace_uri ? `${run.workspace_state} ${run.workspace_backend}` : 'no workspace'}
                             </span>
                             <span className={`rounded border ${border} px-2 py-1 text-[11px] font-semibold ${muted}`}>
                               {run.retention_class}
                             </span>
+                            {run.workspace_uri && (
+                              <span className={`rounded border ${border} px-2 py-1 text-[11px] font-semibold ${muted}`}>
+                                {run.raw_access_mode === 'download_only' ? 'preview + download' : 'inline raw access'}
+                              </span>
+                            )}
                             {run.artifact_count > 0 && (
                               <span className={`rounded border ${border} px-2 py-1 text-[11px] font-semibold ${muted}`}>
                                 {run.artifact_count} artifacts
@@ -722,6 +814,14 @@ export default function Agents() {
                             panel={panel}
                           />
                           <InfoCell
+                            label="Expires"
+                            value={workspace?.retention_expires_at ? timeText(workspace.retention_expires_at) : timeText(selectedRun.retention_expires_at)}
+                            icon={<Clock3 className="w-4 h-4" />}
+                            muted={muted}
+                            border={border}
+                            panel={panel}
+                          />
+                          <InfoCell
                             label="Approval Scope"
                             value={selectedRun.approval_scope ?? 'None'}
                             icon={<ShieldCheck className="w-4 h-4" />}
@@ -730,9 +830,9 @@ export default function Agents() {
                             panel={panel}
                           />
                           <InfoCell
-                            label="Policies"
-                            value={selectedRun.policy_labels.join(', ') || 'None'}
-                            icon={<Bell className="w-4 h-4" />}
+                            label="Raw Access"
+                            value={(workspace?.raw_access_mode ?? selectedRun.raw_access_mode) === 'download_only' ? 'Preview plus download' : 'Inline allowed'}
+                            icon={<ShieldCheck className="w-4 h-4" />}
                             muted={muted}
                             border={border}
                             panel={panel}
@@ -740,9 +840,24 @@ export default function Agents() {
                         </div>
 
                         <div className={`rounded-lg border ${border} ${panel} p-4`}>
-                          <div className="text-sm font-semibold">Workspace Root</div>
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-sm font-semibold">Workspace Handle</div>
+                            <span className={`rounded border ${border} px-2 py-1 text-[11px] font-semibold ${muted}`}>
+                              {workspace?.workspace_state ?? selectedRun.workspace_state}
+                            </span>
+                          </div>
                           <div className={`mt-2 text-xs break-all ${muted}`}>
-                            {textOrFallback(selectedRun.workspace_root, 'Not initialized')}
+                            {textOrFallback(workspace?.workspace_uri ?? selectedRun.workspace_uri, 'Not initialized')}
+                          </div>
+                          <div className={`mt-3 flex flex-wrap gap-3 text-xs ${muted}`}>
+                            <span>Usage {workspace ? `${bytesText(workspace.usage_bytes)} / ${bytesText(workspace.quota_bytes)}` : 'Loading...'}</span>
+                            <span>Artifact cap {workspace ? bytesText(workspace.artifact_max_bytes) : '...'}</span>
+                            <span>Preview cap {workspace ? bytesText(workspace.preview_max_bytes) : '...'}</span>
+                          </div>
+                          {workspaceLoading && <div className={`mt-3 text-xs ${muted}`}>Loading workspace policy…</div>}
+                          {workspaceError && <div className="mt-3 text-xs text-rose-400">{workspaceError}</div>}
+                          <div className={`mt-3 text-xs ${muted}`}>
+                            Policies {selectedRun.policy_labels.join(', ') || 'None'}
                           </div>
                         </div>
 
@@ -805,9 +920,16 @@ export default function Agents() {
                                     {artifactPreviewError ? (
                                       <div className="text-xs text-rose-400">{artifactPreviewError}</div>
                                     ) : (
-                                      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs">
-                                        {artifactPreviewText ?? ''}
-                                      </pre>
+                                      <div className="space-y-2">
+                                        <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs">
+                                          {artifactPreviewText ?? ''}
+                                        </pre>
+                                        {artifactPreviewTruncated && (
+                                          <div className={`text-[11px] ${muted}`}>
+                                            Preview truncated at the safe preview limit.
+                                          </div>
+                                        )}
+                                      </div>
                                     )}
                                   </div>
                                 )}

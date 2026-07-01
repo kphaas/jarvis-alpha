@@ -16,3 +16,12 @@ ALPHA_AGENT_WORKSPACE_ROOT = os.getenv(
     "ALPHA_AGENT_WORKSPACE_ROOT",
     "/Users/jarvisbrain/jarvis-alpha/agent_workspaces",
 )
+ALPHA_AGENTFS_MAX_ARTIFACT_BYTES = int(
+    os.getenv("ALPHA_AGENTFS_MAX_ARTIFACT_BYTES", str(5 * 1024 * 1024))
+)
+ALPHA_AGENTFS_MAX_WORKSPACE_BYTES = int(
+    os.getenv("ALPHA_AGENTFS_MAX_WORKSPACE_BYTES", str(20 * 1024 * 1024))
+)
+ALPHA_AGENTFS_PREVIEW_BYTES = int(
+    os.getenv("ALPHA_AGENTFS_PREVIEW_BYTES", str(64 * 1024))
+)

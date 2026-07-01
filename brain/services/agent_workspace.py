@@ -6,21 +6,38 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
-from typing import Iterable
+from typing import BinaryIO, Iterable
 from uuid import UUID, uuid4
 
-from brain.core.config import ALPHA_AGENT_WORKSPACE_ROOT
+from brain.core.config import (
+    ALPHA_AGENTFS_MAX_ARTIFACT_BYTES,
+    ALPHA_AGENTFS_MAX_WORKSPACE_BYTES,
+    ALPHA_AGENTFS_PREVIEW_BYTES,
+    ALPHA_AGENT_WORKSPACE_ROOT,
+)
 
 WORKSPACE_BACKEND = "local"
 _ARTIFACT_DIRS = frozenset({"input", "working", "outputs"})
 _LOG_RELATIVE_PATH = "logs/events.jsonl"
 _KIND_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,79}$")
+_STREAM_CHUNK_BYTES = 64 * 1024
+_DEFAULT_RETENTION_CLASS = "standard"
+_RETENTION_WINDOWS = {
+    "ephemeral": timedelta(hours=24),
+    "standard": timedelta(days=7),
+    "extended": timedelta(days=30),
+    "archive": timedelta(days=90),
+}
 
 
 class WorkspacePathError(ValueError):
     """Raised when a requested workspace path escapes the allowed root."""
+
+
+class WorkspaceRetentionExpiredError(ValueError):
+    """Raised when a workspace has passed its retention window."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,18 +99,94 @@ class StagedWorkspaceArtifact:
     record: WorkspaceArtifactRecord
     workspace_root: Path
     absolute_path: Path
-    data: bytes
+    data: bytes | None = None
+    staged_path: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceArtifactPreview:
+    text: str | None
+    truncated: bool
+    preview_bytes: int
+    preview_available: bool
 
 
 class LocalWorkspaceBackend:
     """Filesystem-backed workspace implementation with strict root guards."""
 
-    def __init__(self, base_root: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        base_root: str | Path | None = None,
+        *,
+        max_artifact_bytes: int | None = None,
+        max_workspace_bytes: int | None = None,
+        preview_bytes: int | None = None,
+    ) -> None:
         raw_root = base_root or ALPHA_AGENT_WORKSPACE_ROOT
         self.base_root = Path(raw_root).expanduser().resolve()
+        self.max_artifact_bytes = max_artifact_bytes or ALPHA_AGENTFS_MAX_ARTIFACT_BYTES
+        self.max_workspace_bytes = (
+            max_workspace_bytes or ALPHA_AGENTFS_MAX_WORKSPACE_BYTES
+        )
+        self.preview_bytes = preview_bytes or ALPHA_AGENTFS_PREVIEW_BYTES
 
     def workspace_root(self, run_id: UUID | str) -> str:
         return str(self._default_workspace_root(run_id))
+
+    def workspace_uri(self, run_id: UUID | str) -> str:
+        return f"agentfs://runs/{run_id}"
+
+    def retention_expires_at(
+        self,
+        created_at: datetime | str | None,
+        retention_class: str,
+    ) -> str:
+        created = _coerce_datetime(created_at)
+        return (created + _retention_window(retention_class)).isoformat()
+
+    def workspace_state(
+        self,
+        *,
+        created_at: datetime | str | None,
+        retention_class: str,
+        workspace_initialized: bool,
+        now: datetime | None = None,
+    ) -> str:
+        if not workspace_initialized:
+            return "not_initialized"
+        if self.workspace_expired(
+            created_at=created_at,
+            retention_class=retention_class,
+            now=now,
+        ):
+            return "expired"
+        return "ready"
+
+    def workspace_expired(
+        self,
+        *,
+        created_at: datetime | str | None,
+        retention_class: str,
+        now: datetime | None = None,
+    ) -> bool:
+        current = now or datetime.now(tz=UTC)
+        return current >= _coerce_datetime(
+            self.retention_expires_at(created_at, retention_class)
+        )
+
+    def assert_within_retention(
+        self,
+        *,
+        created_at: datetime | str | None,
+        retention_class: str,
+    ) -> None:
+        if self.workspace_expired(
+            created_at=created_at,
+            retention_class=retention_class,
+        ):
+            raise WorkspaceRetentionExpiredError(
+                "workspace retention expired; raw artifact access is disabled"
+            )
 
     def init_workspace(
         self,
@@ -173,9 +266,56 @@ class LocalWorkspaceBackend:
         *,
         workspace_root: str | None = None,
     ) -> bytes:
+        return self.resolve_read_path(
+            run_id,
+            relative_path,
+            workspace_root=workspace_root,
+        ).read_bytes()
+
+    def resolve_read_path(
+        self,
+        run_id: UUID | str,
+        relative_path: str,
+        *,
+        workspace_root: str | None = None,
+    ) -> Path:
         root = self._resolve_workspace_root(run_id, workspace_root)
-        target = self._resolve_read_path(root, relative_path)
-        return target.read_bytes()
+        return self._resolve_read_path(root, relative_path)
+
+    def workspace_usage_bytes(
+        self,
+        run_id: UUID | str,
+        *,
+        workspace_root: str | None = None,
+    ) -> int:
+        return sum(
+            record.size_bytes
+            for record in self.list_artifacts(run_id, workspace_root=workspace_root)
+        )
+
+    def preview_text(
+        self,
+        run_id: UUID | str,
+        relative_path: str,
+        *,
+        workspace_root: str | None = None,
+    ) -> WorkspaceArtifactPreview:
+        path = self.resolve_read_path(
+            run_id,
+            relative_path,
+            workspace_root=workspace_root,
+        )
+        with path.open("rb") as handle:
+            payload = handle.read(self.preview_bytes + 1)
+        truncated = len(payload) > self.preview_bytes
+        if truncated:
+            payload = payload[: self.preview_bytes]
+        return WorkspaceArtifactPreview(
+            text=payload.decode("utf-8", errors="replace").replace("\x00", "\ufffd"),
+            truncated=truncated,
+            preview_bytes=len(payload),
+            preview_available=True,
+        )
 
     def stage_text(
         self,
@@ -215,6 +355,11 @@ class LocalWorkspaceBackend:
         if target.exists():
             # ponytail: phase 1 keeps artifact paths immutable; version a new path instead.
             raise WorkspacePathError("artifact path already exists")
+        self._assert_workspace_capacity(
+            run_id,
+            incoming_size=len(data),
+            workspace_root=workspace_root,
+        )
         record = WorkspaceArtifactRecord(
             artifact_id=str(uuid4()),
             run_id=str(run_id),
@@ -233,19 +378,84 @@ class LocalWorkspaceBackend:
             data=data,
         )
 
+    def stage_upload_stream(
+        self,
+        run_id: UUID | str,
+        relative_path: str,
+        stream: BinaryIO,
+        kind: str,
+        *,
+        content_type: str,
+        policy_labels: Iterable[str] = (),
+        workspace_root: str | None = None,
+    ) -> StagedWorkspaceArtifact:
+        root = self._resolve_workspace_root(run_id, workspace_root)
+        target = self._resolve_artifact_path(root, relative_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            raise WorkspacePathError("artifact path already exists")
+        current_usage = self.workspace_usage_bytes(
+            run_id, workspace_root=workspace_root
+        )
+        staged_path = target.with_name(f".{target.name}.{uuid4().hex}.upload")
+        sha256 = hashlib.sha256()
+        size_bytes = 0
+        try:
+            with staged_path.open("wb") as handle:
+                while True:
+                    chunk = stream.read(_STREAM_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    size_bytes += len(chunk)
+                    self._assert_capacity(
+                        incoming_size=size_bytes,
+                        current_usage=current_usage,
+                    )
+                    sha256.update(chunk)
+                    handle.write(chunk)
+        except Exception:
+            try:
+                staged_path.unlink()
+            except FileNotFoundError:
+                pass
+            raise
+        record = WorkspaceArtifactRecord(
+            artifact_id=str(uuid4()),
+            run_id=str(run_id),
+            relative_path=relative_path,
+            kind=_normalize_kind(kind),
+            content_type=_clean_required_text(content_type, field_name="content_type"),
+            size_bytes=size_bytes,
+            created_at=_isoformat(None),
+            sha256=sha256.hexdigest(),
+            policy_labels=_normalize_labels(policy_labels),
+        )
+        return StagedWorkspaceArtifact(
+            record=record,
+            workspace_root=root,
+            absolute_path=target,
+            staged_path=staged_path,
+        )
+
     def commit_staged_artifact(
         self,
         staged: StagedWorkspaceArtifact,
     ) -> WorkspaceArtifactRecord:
-        staged.absolute_path.write_bytes(staged.data)
+        if staged.staged_path is not None:
+            staged.staged_path.replace(staged.absolute_path)
+        else:
+            staged.absolute_path.write_bytes(staged.data or b"")
         self._append_artifact_ledger(staged.workspace_root, staged.record)
         return staged.record
 
     def cleanup_staged_artifact(self, staged: StagedWorkspaceArtifact) -> None:
-        try:
-            staged.absolute_path.unlink()
-        except FileNotFoundError:
-            return
+        for candidate in (staged.staged_path, staged.absolute_path):
+            if candidate is None:
+                continue
+            try:
+                candidate.unlink()
+            except FileNotFoundError:
+                continue
 
     def write_text(
         self,
@@ -361,6 +571,31 @@ class LocalWorkspaceBackend:
                 )
         return records
 
+    def _assert_workspace_capacity(
+        self,
+        run_id: UUID | str,
+        *,
+        incoming_size: int,
+        workspace_root: str | None = None,
+    ) -> None:
+        self._assert_capacity(
+            incoming_size=incoming_size,
+            current_usage=self.workspace_usage_bytes(
+                run_id,
+                workspace_root=workspace_root,
+            ),
+        )
+
+    def _assert_capacity(self, *, incoming_size: int, current_usage: int) -> None:
+        if incoming_size > self.max_artifact_bytes:
+            raise ValueError(
+                f"artifact exceeds max size ({self.max_artifact_bytes} bytes max)"
+            )
+        if current_usage + incoming_size > self.max_workspace_bytes:
+            raise ValueError(
+                f"workspace quota exceeded ({self.max_workspace_bytes} bytes max)"
+            )
+
     def _append_artifact_ledger(
         self,
         workspace_root: Path,
@@ -471,6 +706,20 @@ def _clean_required_text(value: object, *, field_name: str) -> str:
 def _clean_optional_text(value: object) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _retention_window(retention_class: str) -> timedelta:
+    clean = _clean_optional_text(retention_class) or _DEFAULT_RETENTION_CLASS
+    return _RETENTION_WINDOWS.get(clean, _RETENTION_WINDOWS[_DEFAULT_RETENTION_CLASS])
+
+
+def _coerce_datetime(value: datetime | str | None) -> datetime:
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if isinstance(value, str) and value.strip():
+        parsed = datetime.fromisoformat(value)
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return datetime.now(tz=UTC)
 
 
 def _isoformat(value: datetime | str | None) -> str:

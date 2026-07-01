@@ -495,6 +495,14 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     "POST /v1/agent-runs/{run_id}/workspace/init": ["write", "security_write"],
     "GET /v1/agent-runs/{run_id}/workspace": ["read", "security_read"],
     "GET /v1/agent-runs/{run_id}/artifacts": ["read", "security_read"],
+    "GET /v1/agent-runs/{run_id}/artifacts/{artifact_id}/preview": [
+        "read",
+        "security_read",
+    ],
+    "GET /v1/agent-runs/{run_id}/artifacts/{artifact_id}/download": [
+        "read",
+        "security_read",
+    ],
     "GET /v1/agent-runs/{run_id}/artifacts/{artifact_id}/content": [
         "read",
         "security_read",
