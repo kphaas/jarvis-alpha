@@ -98,6 +98,14 @@ def test_approvals_page_surfaces_browser_execution_history() -> None:
     assert "} obs" in source
     assert "} shots" in source
     assert "} audit" in source
+    assert "screenshot_refs?: string[]" in source
+    assert "evidence_path?: string | null" in source
+    assert "audit_path?: string | null" in source
+    assert "Evidence preview" in source
+    assert "Screenshot evidence" in source
+    assert "Evidence bundle" in source
+    assert "Audit trail" in source
+    assert "shortEvidenceRef" in source
     assert "Technical audit" in source
     assert "historyHasMore" in source
     assert "Search request, approval, host" in source

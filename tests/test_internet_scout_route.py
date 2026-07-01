@@ -268,6 +268,10 @@ class FakeHistoryConn:
                 "action": "navigate",
                 "host": "public.example.test",
                 "blocked_reason": None,
+                "metadata": {
+                    "screenshot_ref": "sha256:" + "1" * 64,
+                    "metadata": {"before_screenshot_ref": "sha256:" + "2" * 64},
+                },
                 "elapsed_ms": 12,
             },
             {
@@ -286,6 +290,16 @@ class FakeHistoryConn:
                 "action": None,
                 "host": None,
                 "blocked_reason": None,
+                "metadata": {
+                    "screenshot_refs": [
+                        "sha256:" + "3" * 64,
+                        "https://public.example.test/screenshot.png",
+                    ],
+                    "evidence_path": f"/v1/internet-scout/requests/{self.browser_request_id}",
+                    "audit_path": (
+                        f"/v1/internet-scout/browser-task/history?q={self.approval_queue_id}"
+                    ),
+                },
                 "elapsed_ms": None,
             },
             {
@@ -304,6 +318,7 @@ class FakeHistoryConn:
                 "action": None,
                 "host": None,
                 "blocked_reason": None,
+                "metadata": {},
                 "elapsed_ms": None,
             },
         ]
@@ -982,13 +997,27 @@ async def test_internet_scout_browser_history_returns_recent_audit_events(
     assert response.history[0].action == "navigate"
     assert response.history[0].host == "public.example.test"
     assert response.history[0].elapsed_ms == 12
+    assert response.history[0].screenshot_refs == [
+        "sha256:" + "1" * 64,
+        "sha256:" + "2" * 64,
+    ]
     assert response.history[0].approval_queue_id == FakeHistoryConn.approval_queue_id
+    assert (
+        response.history[0].evidence_path
+        == f"/v1/internet-scout/requests/{FakeHistoryConn.browser_request_id}"
+    )
+    assert (
+        response.history[0].audit_path
+        == f"/v1/internet-scout/browser-task/history?q={FakeHistoryConn.approval_queue_id}"
+    )
     assert response.history[1].event_type == "browser_run"
     assert response.history[1].observation_count == 1
     assert response.history[1].screenshot_count == 1
     assert response.history[1].action_audit_count == 2
+    assert response.history[1].screenshot_refs == ["sha256:" + "3" * 64]
     assert response.history[2].event_type == "approval_request"
     assert response.history[2].approval_hash_prefix == "abc123abc123"
+    assert response.history[2].evidence_path is None
 
 
 @pytest.mark.asyncio

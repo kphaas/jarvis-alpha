@@ -1060,6 +1060,9 @@ class InternetScoutBrowserHistoryItem(BaseModel):
     host: str | None = Field(default=None, max_length=255)
     blocked_reason: str | None = Field(default=None, max_length=160)
     elapsed_ms: int | None = Field(default=None, ge=0, le=120_000)
+    screenshot_refs: list[str] = Field(default_factory=list, max_length=3)
+    evidence_path: str | None = Field(default=None, max_length=200)
+    audit_path: str | None = Field(default=None, max_length=240)
 
 
 class InternetScoutBrowserHistoryResponse(BaseModel):
