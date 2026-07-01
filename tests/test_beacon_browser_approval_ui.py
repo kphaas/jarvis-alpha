@@ -51,10 +51,13 @@ def test_beacon_browser_approval_ui_has_operator_review_sections() -> None:
     assert "Risk labels" in source
     assert "Action timeline" in source
     assert "Click target review" in source
+    assert "Only listed selectors can run after approval." in source
     assert "same host only" in source
     assert "Interaction requested, but no click targets were reported." in source
     assert "expected host" in source
     assert "Decision boundary" in source
+    assert "Approve plan" in source
+    assert "Deny plan" in source
     assert "Runs only this reviewed browser plan" in source
     assert "Leaves the browser runtime untouched" in source
 

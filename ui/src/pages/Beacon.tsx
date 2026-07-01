@@ -314,39 +314,52 @@ export default function Beacon() {
 
       <details className={`rounded-lg border p-4 ${border} ${panel}`}>
         <summary className="cursor-pointer text-sm font-semibold">
-          Browser click-only request
+          <span className="inline-flex flex-wrap items-center gap-2">
+            Browser click-only request
+            <span className={`rounded border px-2 py-0.5 text-[10px] font-mono uppercase ${border}`}>
+              queues approval only
+            </span>
+            <span className={`rounded border px-2 py-0.5 text-[10px] font-mono uppercase ${border}`}>
+              single click
+            </span>
+          </span>
         </summary>
         <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div className="space-y-3">
             <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(180px,240px)]">
-              <input
+              <LabeledInput
+                label="URL"
                 value={browserUrl}
-                onChange={(event) => setBrowserUrl(event.target.value)}
-                placeholder="URL to inspect"
-                className={`min-h-11 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
+                onChange={setBrowserUrl}
+                placeholder="https://example.com/page"
+                border={border}
               />
-              <input
+              <LabeledInput
+                label="Allowed host"
                 value={expectedHost}
-                onChange={(event) => setExpectedHost(event.target.value)}
-                placeholder="Allowed host (auto)"
-                className={`min-h-11 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
+                onChange={setExpectedHost}
+                placeholder="Auto from URL"
+                border={border}
               />
-              <input
+              <LabeledInput
+                label="Click selector"
                 value={clickSelector}
-                onChange={(event) => setClickSelector(event.target.value)}
+                onChange={setClickSelector}
                 placeholder="CSS selector for one reviewed click"
-                className={`min-h-11 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
+                border={border}
               />
-              <input
+              <LabeledInput
+                label="Target label"
                 value={clickLabel}
-                onChange={(event) => setClickLabel(event.target.value)}
-                placeholder="Click target label"
-                className={`min-h-11 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
+                onChange={setClickLabel}
+                placeholder="Human-readable click target"
+                border={border}
               />
             </div>
             <div className="flex flex-wrap gap-2">
               {['Click only', 'No typing/forms', 'No credentials', 'Same host', 'Screenshots + audit'].map((item) => (
-                <span key={item} className={`rounded border px-2 py-1 text-[10px] font-mono uppercase ${border}`}>
+                <span key={item} className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-mono uppercase ${border}`}>
+                  <CheckCircle2 className="h-3 w-3 text-emerald-500" />
                   {item}
                 </span>
               ))}
@@ -380,8 +393,9 @@ export default function Beacon() {
             <div className="mt-3 grid gap-2">
               <PreviewRow label="Reviewed host" value={reviewedHost || 'enter URL'} />
               <PreviewRow label="Target" value={clickLabel.trim() || clickSelector.trim() || 'enter selector'} />
+              <PreviewRow label="Runtime effect" value="queues only" />
               <PreviewRow label="Action space" value="single click, no input" />
-              <PreviewRow label="Decision" value="operator approve or deny" />
+              <PreviewRow label="Decision" value="operator approve or deny in Approvals" />
             </div>
             {approvalResult && (
               <p className="mt-3 border-t pt-3 font-mono text-[10px] uppercase opacity-55">
@@ -503,6 +517,34 @@ function PreviewRow({ label, value }: { label: string; value: string }) {
       <p className="text-[10px] font-mono uppercase tracking-widest opacity-45">{label}</p>
       <p className="mt-0.5 truncate font-semibold">{value}</p>
     </div>
+  )
+}
+
+function LabeledInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+  border,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  placeholder: string
+  border: string
+}) {
+  return (
+    <label className="grid gap-1">
+      <span className="text-[10px] font-mono uppercase tracking-widest opacity-45">
+        {label}
+      </span>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className={`min-h-11 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
+      />
+    </label>
   )
 }
 
