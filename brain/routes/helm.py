@@ -167,6 +167,15 @@ class HelmBeaconCrawlerSummary(BaseModel):
     failed_page_count: int = 0
     source_count: int = 0
     claim_count: int = 0
+    render_quality_version: int = 2
+    render_request_count: int = 0
+    render_ok_count: int = 0
+    render_weak_count: int = 0
+    render_empty_count: int = 0
+    render_weak_empty_count: int = 0
+    render_weak_empty_rate_percent: int = 0
+    render_missing_screenshot_count: int = 0
+    render_missing_evidence_count: int = 0
     last_run_at: str | None = None
     max_pages_without_approval: int = 10
     max_depth_without_approval: int = 2
@@ -845,6 +854,27 @@ def _beacon_crawler(
         failed_page_count=_metadata_int(metadata, "failed_page_count"),
         source_count=_metadata_int(metadata, "source_count"),
         claim_count=_metadata_int(metadata, "claim_count"),
+        render_quality_version=_metadata_int(metadata, "render_quality_version") or 2,
+        render_request_count=_metadata_int(metadata, "render_request_count"),
+        render_ok_count=_metadata_int(metadata, "render_ok_count"),
+        render_weak_count=_metadata_int(metadata, "render_weak_count"),
+        render_empty_count=_metadata_int(metadata, "render_empty_count"),
+        render_weak_empty_count=_metadata_int(
+            metadata,
+            "render_weak_empty_count",
+        ),
+        render_weak_empty_rate_percent=_metadata_int(
+            metadata,
+            "render_weak_empty_rate_percent",
+        ),
+        render_missing_screenshot_count=_metadata_int(
+            metadata,
+            "render_missing_screenshot_count",
+        ),
+        render_missing_evidence_count=_metadata_int(
+            metadata,
+            "render_missing_evidence_count",
+        ),
         last_run_at=_metadata_str(metadata, "last_run_at"),
         max_pages_without_approval=_metadata_int(
             metadata,

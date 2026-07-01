@@ -38,6 +38,11 @@ def test_beacon_ops_dashboard_surfaces_core_slo_sections() -> None:
     assert "crawler.blocked_host_count" in source
     assert "crawler.max_pages_without_approval" in source
     assert "crawler.credential_entry_allowed" in source
+    assert "crawler.render_request_count" in source
+    assert "crawler.render_weak_empty_rate_percent" in source
+    assert "crawler.render_missing_screenshot_count" in source
+    assert "crawler.render_missing_evidence_count" in source
+    assert "Weak/empty render" in source
     assert "web_cache.raw_user_query_stored" in source
     assert "Show details" in source
     assert "Hide details" in source

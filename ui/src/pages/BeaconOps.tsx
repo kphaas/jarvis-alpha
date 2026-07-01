@@ -149,6 +149,15 @@ interface HelmBeaconCrawlerSummary {
   failed_page_count: number
   source_count: number
   claim_count: number
+  render_quality_version: number
+  render_request_count: number
+  render_ok_count: number
+  render_weak_count: number
+  render_empty_count: number
+  render_weak_empty_count: number
+  render_weak_empty_rate_percent: number
+  render_missing_screenshot_count: number
+  render_missing_evidence_count: number
   last_run_at: string | null
   max_pages_without_approval: number
   max_depth_without_approval: number
@@ -378,7 +387,7 @@ export default function BeaconOps() {
               icon={Globe2}
               label="Crawler"
               value={beacon.crawler.status}
-              detail={`${beacon.crawler.cache_hit_rate_percent}% cache / ${beacon.crawler.blocked_host_count} blocked`}
+              detail={crawlerMetricDetail(beacon.crawler)}
               tone={crawlerTone}
               isDark={isDark}
             />
@@ -563,6 +572,11 @@ export default function BeaconOps() {
                     <KeyValue label="Cache hit" value={`${beacon.crawler.cache_hit_rate_percent}%`} muted={muted} />
                     <KeyValue label="Blocked hosts" value={String(beacon.crawler.blocked_host_count)} muted={muted} />
                     <KeyValue label="Failed pages" value={String(beacon.crawler.failed_page_count)} muted={muted} />
+                    <KeyValue label="Render runs" value={String(beacon.crawler.render_request_count)} muted={muted} />
+                    <KeyValue label="Weak/empty render" value={`${beacon.crawler.render_weak_empty_rate_percent}%`} muted={muted} />
+                    <KeyValue label="Weak / empty" value={`${beacon.crawler.render_weak_count} / ${beacon.crawler.render_empty_count}`} muted={muted} />
+                    <KeyValue label="Missing screenshots" value={String(beacon.crawler.render_missing_screenshot_count)} muted={muted} />
+                    <KeyValue label="Missing evidence" value={String(beacon.crawler.render_missing_evidence_count)} muted={muted} />
                     <KeyValue label="Cap" value={`${beacon.crawler.max_pages_without_approval}p / d${beacon.crawler.max_depth_without_approval}`} muted={muted} />
                     <KeyValue label="Forms" value={beacon.crawler.forms_allowed ? 'allowed' : 'blocked'} muted={muted} />
                     <KeyValue label="Credentials" value={beacon.crawler.credential_entry_allowed ? 'allowed' : 'blocked'} muted={muted} />
@@ -844,6 +858,13 @@ function canaryTrendTone(trend: HelmBeaconQualityCanaryTrend): Tone {
   return 'ok'
 }
 
+function crawlerMetricDetail(crawler: HelmBeaconCrawlerSummary): string {
+  if (crawler.render_request_count > 0) {
+    return `${crawler.render_weak_empty_rate_percent}% weak/empty render`
+  }
+  return `${crawler.cache_hit_rate_percent}% cache / ${crawler.blocked_host_count} blocked`
+}
+
 function operatorActions(beacon: HelmBeaconSummary): Array<{ label: string; tone: Tone }> {
   const actions: Array<{ label: string; tone: Tone }> = []
   if (latencyStatus(beacon.latency) === 'warning') actions.push({ label: 'Latency watch', tone: 'warning' })
@@ -857,6 +878,7 @@ function operatorActions(beacon: HelmBeaconSummary): Array<{ label: string; tone
   if (beacon.approvals.pending_browser_approvals > 0) actions.push({ label: 'Review browser queue', tone: 'warning' })
   if (beacon.crawler.failed_request_count > 0) actions.push({ label: 'Crawler failures', tone: 'warning' })
   if (beacon.crawler.blocked_host_count > 0) actions.push({ label: 'Crawler blocks', tone: 'warning' })
+  if (beacon.crawler.render_weak_empty_count > 0) actions.push({ label: 'Render quality watch', tone: 'warning' })
   if (beacon.quality_canary.failed > 0) actions.push({ label: 'Canary failed', tone: 'degraded' })
   if (actions.length === 0) actions.push({ label: 'No immediate action', tone: 'ok' })
   return actions

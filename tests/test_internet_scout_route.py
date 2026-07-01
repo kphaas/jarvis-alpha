@@ -788,10 +788,20 @@ async def test_internet_scout_crawler_render_scrape_run_returns_crawler_shape(
     assert consume_calls == [approval_queue_id]
     assert FakeRepo.created[0]["status_override"] == "running"
     assert len(FakeRepo.stored) == 1
-    assert any(
-        event.get("event_type") == "browser_run" and event.get("status") == "succeeded"
+    browser_run_event = next(
+        event
         for event in FakeRepo.events
+        if event.get("event_type") == "browser_run"
+        and event.get("status") == "succeeded"
     )
+    assert browser_run_event["metadata"]["source"] == "crawler_render_scrape"
+    assert browser_run_event["metadata"]["render_quality_version"] == 2
+    assert browser_run_event["metadata"]["render_quality_status"] == "ok"
+    assert browser_run_event["metadata"]["render_quality_reasons"] == []
+    assert browser_run_event["metadata"]["visible_text_length"] == len(rendered_text)
+    assert browser_run_event["metadata"]["missing_screenshot"] is False
+    assert browser_run_event["metadata"]["missing_evidence"] is False
+    assert rendered_text not in str(browser_run_event["metadata"])
 
 
 def test_internet_scout_crawler_render_quality_flags_empty_output():

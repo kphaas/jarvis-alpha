@@ -68,6 +68,7 @@ References:
 | MCP/tool ecosystem | Beacon now has a documented internal tool ecosystem contract for policy-scoped consumers, but no public MCP server adapter yet. | Partial | Beacon exposes policy-scoped tool contracts for approved internal agents and optional MCP-facing consumers. |
 | Product-mode defaults | Focus modes now expose source policy, provider strategy, extraction budget, page cap, and run labels in the Beacon UI, and the request body uses the selected mode cap. | Complete | Mode selector maps to source policies, provider strategy, extraction budget, and UI labels. |
 | Ops SLO dashboard | Beacon now has a one-page Ops dashboard for answer latency, provider state, spend-guard posture, citation quality, browser approvals, and operator actions. | Complete | `/beacon/ops` shows SLO cards, 24h windows, provider/cost/citation/browser sections, and action chips after deployed smoke. |
+| Crawler render-quality Ops | Beacon Ops now rolls up approved-render weak/empty rates, missing screenshots, and missing evidence counts without storing raw page content in audit metadata. | Complete | `/beacon/ops` shows render quality rates/counts from 24h browser-run audit events. |
 
 ## Closure Plan
 
@@ -89,6 +90,9 @@ References:
 | 13 | Crawler map/history UX | Complete | Beacon crawler console shows why map/crawl stopped, groups discovered links by host, surfaces blocked/robots markers, searches recent crawler runs, and exports stored evidence JSON. |
 | 14 | Crawler batch scrape v1 | Complete | Beacon exposes a capped, cache-first batch scrape endpoint, standard smoke coverage, compact console mode, per-URL status, and per-URL audit/evidence records. |
 | 15 | Crawler render quality v2 | Complete | Approved render responses expose quality status, visible-text length, screenshot policy, evidence-source count, and compact operator reasons without logging raw page text. |
+| 16 | Crawler render-quality Ops rollup | Complete | Beacon health, Helm summary, and `/beacon/ops` report weak/empty render rate, missing screenshots, and missing evidence counts. |
+| 17 | Async crawl jobs | Deferred | Build only after crawler telemetry shows repeated page/time cap pressure; synchronous bounded calls remain simpler and safer today. |
+| 18 | MCP adapter | Deferred | Keep the current internal tool contract until Beacon has a real external MCP client or cross-agent protocol requirement. |
 
 ## UX Improvement Notes
 
@@ -122,6 +126,6 @@ operator depth rather than basic answer visibility.
 
 The next best production workstream is:
 
-1. Add async crawl jobs only if crawler usage needs long-running throughput.
-2. Decide whether MCP needs a real server adapter or the internal route contract is enough.
-3. Promote render-quality weak/empty rates into Beacon Ops if live usage shows recurring weak renders.
+1. Watch crawler cap telemetry; add async crawl jobs only after repeated page/time cap pressure.
+2. Keep the internal Beacon tool contract for now; build a real MCP adapter only when an external MCP client needs it.
+3. Use the render-quality Ops rollup to decide whether render retries, site-specific extraction tuning, or screenshot-store alerts are warranted.
