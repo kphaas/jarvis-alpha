@@ -110,6 +110,8 @@ def test_herald_ui_exposes_social_approval_outbox() -> None:
     assert "Review friction" in source
     assert "review_friction" in source
     assert "heavy_rewrite" in source
+    assert "Reviewed text" in source
+    assert "reviewed_text" in source
     assert "replyStyleLabel" in source
     assert "Strong short" in source
     assert "reviewer_notes" in source

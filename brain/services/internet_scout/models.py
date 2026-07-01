@@ -427,6 +427,20 @@ class InternetScoutCrawlerScrapeResponse(BaseModel):
     raw_web_content_is_untrusted: bool = True
 
 
+class InternetScoutCrawlerRenderRunRequest(BaseModel):
+    approval_queue_id: UUID
+    scrape: InternetScoutCrawlerScrapeRequest
+    max_steps: int = Field(default=5, ge=1, le=10)
+
+
+class InternetScoutCrawlerRenderResponse(InternetScoutCrawlerScrapeResponse):
+    approval_queue_id: UUID
+    evidence_path: str = Field(max_length=200)
+    audit_path: str = Field(max_length=240)
+    action_audit_count: int = Field(default=0, ge=0, le=100)
+    evidence_source_count: int = Field(default=0, ge=0, le=10)
+
+
 class InternetScoutCrawlerMapResponse(BaseModel):
     request_id: UUID
     seed_url: str

@@ -21,6 +21,7 @@ from brain.services.internet_scout.models import (
     InternetScoutBrowserRunRequest,
     InternetScoutBrowserRunResponse,
     InternetScoutConsumerRequest,
+    InternetScoutCrawlerRenderRunRequest,
     InternetScoutCrawlerScrapeRequest,
     InternetScoutCrawlerScrapeResponse,
     InternetScoutHealthCheck,
@@ -536,6 +537,181 @@ async def test_internet_scout_crawler_render_scrape_blocks_unsafe_url(monkeypatc
 
     assert exc.value.status_code == 403
     assert "blocked_internal_host" in exc.value.detail["decision"]["blocked_reasons"]
+    assert FakeRepo.created == []
+    assert FakeRepo.events == []
+    assert FakeRepo.stored == []
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_crawler_render_scrape_run_returns_crawler_shape(
+    monkeypatch,
+):
+    FakeRepo.created = []
+    FakeRepo.events = []
+    FakeRepo.stored = []
+    approval_queue_id = uuid4()
+    approval_calls: list[dict[str, object]] = []
+    consume_calls: list[object] = []
+
+    async def fake_require_approved(conn, **kwargs):
+        approval_calls.append(kwargs)
+
+    async def fake_consume(conn, **kwargs):
+        consume_calls.append(kwargs["approval_queue_id"])
+
+    class FakeBrowserRunner:
+        async def execute(self, **kwargs):
+            assert kwargs["approval_queue_id"] == approval_queue_id
+            assert (
+                kwargs["request"].requester == "alpha_ui.beacon_crawler.render_scrape"
+            )
+            assert kwargs["request"].browser_clicks == []
+            assert kwargs["require_screenshot"] is True
+            await kwargs["audit_action"](
+                BrowserActionAuditEvent(
+                    sequence=1,
+                    action="observe",
+                    status="succeeded",
+                    host="public.example.test",
+                    url_hash="sha256:" + "4" * 64,
+                    screenshot_ref="sha256:" + "3" * 64,
+                    content_hash=content_hash("Rendered text."),
+                )
+            )
+            observation = BrowserRunObservation(
+                url="https://public.example.test/rendered",
+                host="public.example.test",
+                title="Rendered",
+                visible_text="Rendered text.",
+                screenshot_ref="sha256:" + "3" * 64,
+                content_hash=content_hash("Rendered text."),
+            )
+            source = build_source_reference(
+                url=observation.url,
+                title=observation.title,
+                content=observation.visible_text,
+            )
+            packet = InternetEvidencePacket(
+                request=kwargs["request"],
+                sources=[source],
+                claims=[
+                    EvidenceClaim(
+                        claim=observation.visible_text,
+                        source_url=source.url,
+                        citation_text=observation.visible_text,
+                        confidence="medium",
+                    )
+                ],
+            )
+            return InternetScoutBrowserRunResponse(
+                request_id=kwargs["request_id"],
+                approval_queue_id=kwargs["approval_queue_id"],
+                status="completed",
+                plan=kwargs["plan"],
+                sandbox=BrowserSandboxPolicy(
+                    allowed_hosts=["public.example.test"],
+                    max_steps=kwargs["max_steps"],
+                ),
+                evidence=packet,
+                observations=[observation],
+                action_audit=[
+                    BrowserActionAuditEvent(
+                        sequence=1,
+                        action="observe",
+                        status="succeeded",
+                        host="public.example.test",
+                        url_hash="sha256:" + "4" * 64,
+                        screenshot_ref="sha256:" + "3" * 64,
+                        content_hash=content_hash("Rendered text."),
+                    )
+                ],
+                screenshots_review_required=True,
+                blocked_reasons=[],
+            )
+
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+    monkeypatch.setattr(
+        internet_scout, "require_approved_browser_task", fake_require_approved
+    )
+    monkeypatch.setattr(internet_scout, "consume_browser_task_approval", fake_consume)
+    monkeypatch.setattr(
+        internet_scout,
+        "build_browser_task_runner_from_env",
+        lambda: FakeBrowserRunner(),
+    )
+
+    response = await internet_scout.internet_scout_crawler_scrape_browser_run_approved(
+        InternetScoutCrawlerRenderRunRequest(
+            approval_queue_id=approval_queue_id,
+            scrape=InternetScoutCrawlerScrapeRequest(
+                url="https://public.example.test/report",
+                query="render this page",
+            ),
+            max_steps=4,
+        ),
+        _request(scopes=["internet_scout.research"]),
+        _user_id="ken",
+    )
+
+    assert response.request_id == FakeRepo.request_id
+    assert response.approval_queue_id == approval_queue_id
+    assert response.canonical_url == "https://public.example.test/rendered"
+    assert response.host == "public.example.test"
+    assert response.title == "Rendered"
+    assert response.text == "Rendered text."
+    assert response.screenshot_ref == "sha256:" + "3" * 64
+    assert (
+        response.evidence_path == f"/v1/internet-scout/requests/{FakeRepo.request_id}"
+    )
+    assert response.audit_path == (
+        f"/v1/internet-scout/browser-task/history?q={approval_queue_id}"
+    )
+    assert response.action_audit_count == 1
+    assert response.evidence_source_count == 1
+    assert approval_calls[0]["approval_queue_id"] == approval_queue_id
+    assert consume_calls == [approval_queue_id]
+    assert FakeRepo.created[0]["status_override"] == "running"
+    assert len(FakeRepo.stored) == 1
+    assert any(
+        event.get("event_type") == "browser_run" and event.get("status") == "succeeded"
+        for event in FakeRepo.events
+    )
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_crawler_render_scrape_run_blocks_unsafe_url(
+    monkeypatch,
+):
+    FakeRepo.created = []
+    FakeRepo.events = []
+    FakeRepo.stored = []
+    approval_calls: list[dict[str, object]] = []
+
+    async def fake_require_approved(conn, **kwargs):
+        approval_calls.append(kwargs)
+
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+    monkeypatch.setattr(
+        internet_scout, "require_approved_browser_task", fake_require_approved
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await internet_scout.internet_scout_crawler_scrape_browser_run_approved(
+            InternetScoutCrawlerRenderRunRequest(
+                approval_queue_id=uuid4(),
+                scrape=InternetScoutCrawlerScrapeRequest(
+                    url="http://localhost/private",
+                ),
+            ),
+            _request(scopes=["internet_scout.research"]),
+            _user_id="ken",
+        )
+
+    assert exc.value.status_code == 403
+    assert "blocked_internal_host" in exc.value.detail["decision"]["blocked_reasons"]
+    assert approval_calls == []
     assert FakeRepo.created == []
     assert FakeRepo.events == []
     assert FakeRepo.stored == []
@@ -1368,6 +1544,14 @@ def test_internet_scout_routes_are_classified():
     ) == [
         "write",
         "security_write",
+    ]
+    assert classify_route(
+        "POST",
+        "/v1/internet-scout/crawler/scrape/browser-run-approved",
+    ) == [
+        "write",
+        "security_write",
+        "external_call",
     ]
     assert classify_route("GET", "/v1/internet-scout/browser-task/history") == [
         "read",

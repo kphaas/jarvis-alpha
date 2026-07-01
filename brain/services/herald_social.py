@@ -269,6 +269,20 @@ def linkedin_feedback_memory_note(
     )
 
 
+def social_review_edit_metrics(
+    *,
+    original_text: str,
+    reviewed_text: str | None,
+) -> tuple[str | None, int, float]:
+    clean_reviewed = (reviewed_text or "").strip()
+    if not clean_reviewed:
+        return None, 0, 0.0
+    clean_original = original_text.strip()
+    distance = _levenshtein_distance(clean_original, clean_reviewed)
+    denominator = max(len(clean_original), len(clean_reviewed), 1)
+    return clean_reviewed, distance, round(distance / denominator, 4)
+
+
 def linkedin_metric_engagement_total(
     *,
     reactions: int,
@@ -1277,6 +1291,26 @@ def _fit(text: str, max_chars: int) -> str:
         return clean
     suffix = "..."
     return clean[: max(0, max_chars - len(suffix))].rstrip() + suffix
+
+
+def _levenshtein_distance(left: str, right: str) -> int:
+    if left == right:
+        return 0
+    if len(left) < len(right):
+        left, right = right, left
+    previous = list(range(len(right) + 1))
+    for left_index, left_char in enumerate(left, start=1):
+        current = [left_index]
+        for right_index, right_char in enumerate(right, start=1):
+            current.append(
+                min(
+                    previous[right_index] + 1,
+                    current[right_index - 1] + 1,
+                    previous[right_index - 1] + (left_char != right_char),
+                )
+            )
+        previous = current
+    return previous[-1]
 
 
 def _safety_flags(text: str) -> tuple[str, ...]:
