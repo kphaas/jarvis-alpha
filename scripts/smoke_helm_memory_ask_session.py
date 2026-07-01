@@ -39,6 +39,31 @@ FORBIDDEN_FALLBACK_PHRASES = (
     "turn on web search",
     "beacon needs",
 )
+FORBIDDEN_NO_MEMORY_PHRASES = (
+    "no approved memory",
+    "do not have approved memory",
+    "don't have approved memory",
+    "no memory",
+    "not in memory",
+    "not available in memory",
+    "cannot find",
+    "can't find",
+    "do not know",
+    "don't know",
+)
+PROFILE_FACT_TERMS = (
+    "career",
+    "profile",
+    "architect",
+    "enterprise",
+    "ai",
+    "at-0",
+    "alpha",
+    "helm",
+    "operator",
+    "production",
+)
+CURRENT_FACT_TERMS = ("current", "active", "present", "now", "today")
 
 
 def main() -> int:
@@ -153,8 +178,17 @@ def evaluate_memory_ask_payloads(
         "web_fallback_copy_absent": not any(
             phrase in answer_lower for phrase in FORBIDDEN_FALLBACK_PHRASES
         ),
+        "no_memory_refusal_absent": not any(
+            phrase in answer_lower for phrase in FORBIDDEN_NO_MEMORY_PHRASES
+        ),
         "memory_labeled_answer": "memory:" in answer_lower,
         "ken_profile_answer": "ken" in answer_lower,
+        "profile_fact_term_present": any(
+            term in answer_lower for term in PROFILE_FACT_TERMS
+        ),
+        "current_fact_term_present": any(
+            term in answer_lower for term in CURRENT_FACT_TERMS
+        ),
     }
     failures = [name for name, passed in checks.items() if not passed]
     return {

@@ -11,6 +11,7 @@ RUN_SMOKE = REPO_ROOT / "scripts" / "run_smoke.sh"
 MEMORY_SECDEF_SMOKE = REPO_ROOT / "scripts" / "smoke_memory_secdef.sh"
 DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "jarvisalpha_deploy.sh"
 MEMORY_GRAPH_SMOKE = REPO_ROOT / "scripts" / "smoke_memory_graph.py"
+MEMORY_ASK_SMOKE = REPO_ROOT / "scripts" / "smoke_helm_memory_ask_session.py"
 PUBLIC_REVOKE_MIGRATION = (
     REPO_ROOT
     / "brain"
@@ -35,6 +36,19 @@ def _load_memory_graph_smoke():
     spec = importlib.util.spec_from_file_location(
         "smoke_memory_graph_test_module",
         MEMORY_GRAPH_SMOKE,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_memory_ask_smoke():
+    spec = importlib.util.spec_from_file_location(
+        "smoke_memory_ask_test_module",
+        MEMORY_ASK_SMOKE,
     )
     assert spec is not None
     assert spec.loader is not None
@@ -94,6 +108,54 @@ def test_deploy_runs_memory_graph_smoke_as_post_deploy_gate() -> None:
     assert "JARVIS_ALPHA_SKIP_MEMORY_GRAPH_SMOKE" in source
     assert 'MEMORY_GRAPH_SMOKE_BASE_URL="$settings_base_url"' in source
     assert 'MEMORY_GRAPH_SMOKE_TOKEN_SSH_TARGET="$BRAIN"' in source
+
+
+def test_deploy_runs_memory_ask_smoke_and_eval_as_post_deploy_gates() -> None:
+    source = _script_text(DEPLOY_SCRIPT)
+
+    assert "smoke_helm_memory_ask_session.py" in source
+    assert "JARVIS_ALPHA_SKIP_MEMORY_ASK_SMOKE" in source
+    assert 'HELM_MEMORY_ASK_SMOKE_BASE_URL="$settings_base_url"' in source
+    assert 'HELM_MEMORY_ASK_SMOKE_TOKEN_SSH_TARGET="$BRAIN"' in source
+    assert "eval_memory_context.py" in source
+    assert "JARVIS_ALPHA_SKIP_MEMORY_CONTEXT_EVAL" in source
+
+
+def test_memory_ask_smoke_requires_current_profile_fact_content() -> None:
+    smoke = _load_memory_ask_smoke()
+
+    result = smoke.evaluate_memory_ask_payloads(
+        [
+            {
+                "delta": (
+                    "Memory: Ken has a current career profile as an enterprise "
+                    "AI architect for AT-0 memory and Helm operator work."
+                )
+            },
+            {"done": True},
+        ]
+    )
+
+    assert result["status"] == "passed"
+    assert result["checks"]["profile_fact_term_present"] is True
+    assert result["checks"]["current_fact_term_present"] is True
+
+
+def test_memory_ask_smoke_rejects_missing_or_generic_profile_memory() -> None:
+    smoke = _load_memory_ask_smoke()
+
+    refused = smoke.evaluate_memory_ask_payloads(
+        [{"delta": "Memory: I do not have approved memory for Ken."}]
+    )
+    assert refused["status"] == "failed"
+    assert "no_memory_refusal_absent" in refused["failures"]
+
+    generic = smoke.evaluate_memory_ask_payloads(
+        [{"delta": "Memory: Ken is a person."}]
+    )
+    assert generic["status"] == "failed"
+    assert "profile_fact_term_present" in generic["failures"]
+    assert "current_fact_term_present" in generic["failures"]
 
 
 def test_memory_graph_smoke_does_not_print_tokens_or_raw_payloads() -> None:
