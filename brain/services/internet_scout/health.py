@@ -220,11 +220,12 @@ async def _crawler_metadata(conn) -> dict[str, object]:
             COUNT(*) FILTER (
                 WHERE event_type IN ('crawler_map', 'crawler_crawl')
                   AND status = 'succeeded'
+                  AND metadata->>'max_pages' ~ '^[0-9]+$'
+                  AND (metadata->>'max_pages')::INTEGER >= $1
                   AND (
                     metadata->>'page_cap_hit' = 'true'
                     OR CASE
                         WHEN metadata->>'page_count' ~ '^[0-9]+$'
-                         AND metadata->>'max_pages' ~ '^[0-9]+$'
                         THEN (metadata->>'page_count')::INTEGER
                             >= (metadata->>'max_pages')::INTEGER
                         ELSE FALSE
@@ -234,6 +235,8 @@ async def _crawler_metadata(conn) -> dict[str, object]:
             COUNT(*) FILTER (
                 WHERE event_type IN ('crawler_map', 'crawler_crawl')
                   AND status = 'succeeded'
+                  AND metadata->>'max_depth' ~ '^[0-9]+$'
+                  AND (metadata->>'max_depth')::INTEGER >= $2
                   AND metadata->>'depth_cap_hit' = 'true'
             )::INTEGER AS crawl_depth_cap_hit_count,
             COUNT(*) FILTER (
@@ -244,7 +247,9 @@ async def _crawler_metadata(conn) -> dict[str, object]:
             MAX(created_at) AS last_run_at
         FROM public.alpha_internet_tool_events
         WHERE created_at >= NOW() - INTERVAL '24 hours'
-        """
+        """,
+        CRAWL_MAX_PAGES_WITHOUT_APPROVAL,
+        CRAWL_MAX_DEPTH_WITHOUT_APPROVAL,
     )
     hits = _int_row(row, "cache_hit_count") if row else 0
     misses = _int_row(row, "cache_miss_count") if row else 0

@@ -12,6 +12,7 @@ from brain.services.internet_scout.evidence import (
 from brain.services.internet_scout.gateway_client import InternetScoutGatewayClient
 from brain.services.internet_scout.models import (
     GatewayCrawlPage,
+    GatewayCrawlResponse,
     GatewayExtractResponse,
     InternetEvidencePacket,
     InternetScoutCrawlerCrawlRequest,
@@ -24,6 +25,10 @@ from brain.services.internet_scout.models import (
     InternetScoutCrawlerScrapeRequest,
     InternetScoutCrawlerScrapeResponse,
     InternetScoutRequest,
+)
+from brain.services.internet_scout.policy import (
+    CRAWL_MAX_DEPTH_WITHOUT_APPROVAL,
+    CRAWL_MAX_PAGES_WITHOUT_APPROVAL,
 )
 
 CacheLookup = Callable[[str, str | None], Awaitable[GatewayExtractResponse | None]]
@@ -120,10 +125,8 @@ class InternetScoutCrawler:
                 link_count=response.link_count,
                 max_pages=crawl.max_pages,
                 max_depth=crawl.max_depth,
-                page_cap_hit=len(crawl.pages) >= crawl.max_pages,
-                depth_cap_hit=any(page.depth >= crawl.max_depth for page in crawl.pages)
-                if crawl.max_depth > 0
-                else False,
+                page_cap_hit=_page_cap_hit(crawl),
+                depth_cap_hit=_depth_cap_hit(crawl),
             ),
         )
 
@@ -304,6 +307,19 @@ def _terms(*values: str) -> tuple[str, ...]:
             if token not in terms:
                 terms.append(token)
     return tuple(terms or [""])
+
+
+def _page_cap_hit(crawl: GatewayCrawlResponse) -> bool:
+    return (
+        crawl.max_pages >= CRAWL_MAX_PAGES_WITHOUT_APPROVAL
+        and len(crawl.pages) >= crawl.max_pages
+    )
+
+
+def _depth_cap_hit(crawl: GatewayCrawlResponse) -> bool:
+    return crawl.max_depth >= CRAWL_MAX_DEPTH_WITHOUT_APPROVAL and any(
+        page.depth >= crawl.max_depth for page in crawl.pages
+    )
 
 
 def _metadata(
