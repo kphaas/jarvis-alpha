@@ -128,10 +128,7 @@ async def _crawler_check(conn) -> InternetScoutHealthCheck:
     async_jobs = str(metadata.get("async_crawl_jobs_status") or "not_needed")
     status = (
         "warning"
-        if failed
-        or blocked
-        or render_watch in {"watch", "action"}
-        or async_jobs in {"watch", "recommended"}
+        if failed or blocked or render_watch == "action" or async_jobs == "recommended"
         else "ok"
     )
     return InternetScoutHealthCheck(
