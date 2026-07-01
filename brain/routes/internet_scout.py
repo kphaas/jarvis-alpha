@@ -547,21 +547,60 @@ def _crawler_render_quality(
     observation: BrowserRunObservation,
     result: InternetScoutBrowserRunResponse,
 ) -> tuple[str, list[str], int]:
-    visible_text = observation.visible_text.strip()
+    metadata = _browser_render_quality_metadata(
+        observations=[observation],
+        evidence_source_count=len(result.evidence.sources),
+        action_audit_count=len(result.action_audit),
+        require_screenshot=True,
+    )
+    return (
+        str(metadata["render_quality_status"]),
+        list(metadata["render_quality_reasons"]),
+        int(metadata["visible_text_length"]),
+    )
+
+
+def _browser_render_quality_metadata(
+    *,
+    observations: list[BrowserRunObservation],
+    evidence_source_count: int,
+    action_audit_count: int,
+    require_screenshot: bool,
+) -> dict[str, object]:
+    observation = observations[0] if observations else None
+    visible_text = observation.visible_text.strip() if observation else ""
     visible_text_length = len(visible_text)
+    screenshot_count = len(
+        [item for item in observations if item.screenshot_ref],
+    )
     reasons: list[str] = []
+    if not observation:
+        reasons.append("missing_observation")
     if not visible_text:
         reasons.append("empty_visible_text")
     elif visible_text_length < 80:
         reasons.append("short_visible_text")
-    if not observation.screenshot_ref:
+    if require_screenshot and screenshot_count == 0:
         reasons.append("missing_screenshot")
-    if not result.evidence.sources:
+    if evidence_source_count <= 0:
         reasons.append("missing_evidence_source")
-    if not result.action_audit:
+    if action_audit_count <= 0:
         reasons.append("missing_action_audit")
     status = "empty" if "empty_visible_text" in reasons else "weak" if reasons else "ok"
-    return status, reasons[:10], visible_text_length
+    return {
+        "render_quality_version": 2,
+        "render_quality_status": status,
+        "render_quality_reasons": reasons[:10],
+        "visible_text_length": visible_text_length,
+        "missing_screenshot": "missing_screenshot" in reasons,
+        "missing_evidence": "missing_evidence_source" in reasons,
+    }
+
+
+def _browser_run_source(requester: str | None) -> str:
+    if requester == "alpha_ui.beacon_crawler.render_scrape":
+        return "crawler_render_scrape"
+    return "browser_task"
 
 
 def _crawler_render_browser_request(
@@ -1163,6 +1202,19 @@ async def _run_approved_browser_task(
     async with rls_connection(request) as conn:
         repo = InternetScoutRepository(conn)
         await repo.store_packet(request_id=request_id, packet=result.evidence)
+        screenshot_count = len(
+            [
+                observation
+                for observation in result.observations
+                if observation.screenshot_ref
+            ]
+        )
+        render_quality = _browser_render_quality_metadata(
+            observations=result.observations,
+            evidence_source_count=len(result.evidence.sources),
+            action_audit_count=len(result.action_audit),
+            require_screenshot=body.require_screenshot,
+        )
         await repo.record_tool_event(
             request_id=request_id,
             tool=plan.decision.tool.value,
@@ -1170,16 +1222,12 @@ async def _run_approved_browser_task(
             status="succeeded",
             metadata={
                 "approval_queue_id": str(body.approval_queue_id),
+                "source": _browser_run_source(browser_body.requester),
                 "observation_count": len(result.observations),
-                "screenshot_count": len(
-                    [
-                        observation
-                        for observation in result.observations
-                        if observation.screenshot_ref
-                    ]
-                ),
+                "screenshot_count": screenshot_count,
                 "screenshots_review_required": True,
                 "action_audit_count": len(result.action_audit),
+                **render_quality,
             },
         )
         await repo.mark_request_succeeded(request_id)

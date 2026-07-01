@@ -118,7 +118,8 @@ async def _crawler_check(conn) -> InternetScoutHealthCheck:
     metadata = await _crawler_metadata(conn)
     failed = _int_mapping(metadata, "failed_request_count")
     blocked = _int_mapping(metadata, "blocked_host_count")
-    status = "warning" if failed or blocked else "ok"
+    render_weak_empty = _int_mapping(metadata, "render_weak_empty_count")
+    status = "warning" if failed or blocked or render_weak_empty else "ok"
     return InternetScoutHealthCheck(
         ok=True,
         status=status,
@@ -171,6 +172,36 @@ async def _crawler_metadata(conn) -> dict[str, object]:
                     ELSE 0
                 END
             ), 0)::INTEGER AS claim_count,
+            COUNT(*) FILTER (
+                WHERE event_type = 'browser_run'
+                  AND metadata->>'source' = 'crawler_render_scrape'
+                  AND metadata->>'render_quality_version' = '2'
+            )::INTEGER AS render_request_count,
+            COUNT(*) FILTER (
+                WHERE event_type = 'browser_run'
+                  AND metadata->>'source' = 'crawler_render_scrape'
+                  AND metadata->>'render_quality_status' = 'ok'
+            )::INTEGER AS render_ok_count,
+            COUNT(*) FILTER (
+                WHERE event_type = 'browser_run'
+                  AND metadata->>'source' = 'crawler_render_scrape'
+                  AND metadata->>'render_quality_status' = 'weak'
+            )::INTEGER AS render_weak_count,
+            COUNT(*) FILTER (
+                WHERE event_type = 'browser_run'
+                  AND metadata->>'source' = 'crawler_render_scrape'
+                  AND metadata->>'render_quality_status' = 'empty'
+            )::INTEGER AS render_empty_count,
+            COUNT(*) FILTER (
+                WHERE event_type = 'browser_run'
+                  AND metadata->>'source' = 'crawler_render_scrape'
+                  AND metadata->>'missing_screenshot' = 'true'
+            )::INTEGER AS render_missing_screenshot_count,
+            COUNT(*) FILTER (
+                WHERE event_type = 'browser_run'
+                  AND metadata->>'source' = 'crawler_render_scrape'
+                  AND metadata->>'missing_evidence' = 'true'
+            )::INTEGER AS render_missing_evidence_count,
             MAX(created_at) AS last_run_at
         FROM public.alpha_internet_tool_events
         WHERE created_at >= NOW() - INTERVAL '24 hours'
@@ -179,6 +210,10 @@ async def _crawler_metadata(conn) -> dict[str, object]:
     hits = _int_row(row, "cache_hit_count") if row else 0
     misses = _int_row(row, "cache_miss_count") if row else 0
     cache_total = hits + misses
+    render_total = _int_row(row, "render_request_count") if row else 0
+    render_weak = _int_row(row, "render_weak_count") if row else 0
+    render_empty = _int_row(row, "render_empty_count") if row else 0
+    render_weak_empty = render_weak + render_empty
     return {
         "mode": "gateway_bounded_crawler",
         "window_hours": 24,
@@ -196,6 +231,29 @@ async def _crawler_metadata(conn) -> dict[str, object]:
         "failed_page_count": _int_row(row, "failed_page_count") if row else 0,
         "source_count": _int_row(row, "source_count") if row else 0,
         "claim_count": _int_row(row, "claim_count") if row else 0,
+        "render_quality_version": 2,
+        "render_request_count": render_total,
+        "render_ok_count": _int_row(row, "render_ok_count") if row else 0,
+        "render_weak_count": render_weak,
+        "render_empty_count": render_empty,
+        "render_weak_empty_count": render_weak_empty,
+        "render_weak_empty_rate_percent": round(
+            (render_weak_empty / render_total) * 100,
+        )
+        if render_total
+        else 0,
+        "render_missing_screenshot_count": _int_row(
+            row,
+            "render_missing_screenshot_count",
+        )
+        if row
+        else 0,
+        "render_missing_evidence_count": _int_row(
+            row,
+            "render_missing_evidence_count",
+        )
+        if row
+        else 0,
         "last_run_at": _datetime_or_none(row["last_run_at"]) if row else None,
         "max_pages_without_approval": CRAWL_MAX_PAGES_WITHOUT_APPROVAL,
         "max_depth_without_approval": CRAWL_MAX_DEPTH_WITHOUT_APPROVAL,
