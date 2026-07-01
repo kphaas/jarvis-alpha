@@ -171,6 +171,10 @@ function bytesText(size: number) {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function textOrFallback(value: string | null | undefined, fallback: string) {
+  return value && value.trim() ? value : fallback
+}
+
 export default function Agents() {
   const { theme } = useAppStore()
   const isDark = theme === 'dark'
@@ -605,7 +609,7 @@ export default function Agents() {
                         <div className={`rounded-lg border ${border} ${panel} p-4`}>
                           <div className="text-sm font-semibold">Workspace Root</div>
                           <div className={`mt-2 text-xs break-all ${muted}`}>
-                            {selectedRun.workspace_root ?? 'Not initialized'}
+                            {textOrFallback(selectedRun.workspace_root, 'Not initialized')}
                           </div>
                         </div>
 
