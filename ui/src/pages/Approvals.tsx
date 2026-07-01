@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock, Fingerprint, Sparkles, Activity, MousePointerClick, Camera, ListChecks, Eye } from 'lucide-react'
+import { ShieldCheck, ShieldX, Clock, AlertTriangle, Lock, Unlock, Fingerprint, Sparkles, Activity, MousePointerClick, Camera, ListChecks, Eye, FileText } from 'lucide-react'
 import { BeaconBrowserApprovalPanel, type BeaconApprovalContext } from '../components/beacon/BeaconBrowserApprovalPanel'
 import { apiJson } from '../lib/apiFetch'
 import { useAppStore } from '../store'
@@ -62,6 +62,9 @@ interface BrowserHistoryItem {
   host: string | null
   blocked_reason: string | null
   elapsed_ms: number | null
+  screenshot_refs?: string[]
+  evidence_path?: string | null
+  audit_path?: string | null
 }
 
 interface BrowserHistoryResponse {
@@ -170,6 +173,10 @@ function canApproveAndSendSpark(item: QueueItem): boolean {
 
 function shortId(value?: string | null): string {
   return value ? value.slice(0, 8) : 'none'
+}
+
+function shortEvidenceRef(value: string): string {
+  return value.startsWith('sha256:') ? `sha256:${value.slice(7, 15)}` : shortId(value)
 }
 
 function eventLabel(value: string): string {
@@ -663,6 +670,50 @@ export default function Approvals() {
                         </div>
                       )}
 
+                      {((item.screenshot_refs?.length ?? 0) > 0 || item.evidence_path || item.audit_path) && (
+                        <div className={`rounded-lg border px-2.5 py-2 ${border} ${isDark ? 'bg-white/[0.03]' : 'bg-zinc-50'}`}>
+                          <div className="mb-1.5 flex items-center justify-between gap-2 text-[10px] font-mono uppercase opacity-55">
+                            <span>Evidence preview</span>
+                            <span>refs only</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 text-[11px]">
+                            {(item.screenshot_refs ?? []).map((ref) => (
+                              <span
+                                key={ref}
+                                title={ref}
+                                className={`inline-flex items-center gap-2 rounded-lg border px-2 py-1 ${border}`}
+                              >
+                                <span className={`flex h-7 w-8 items-center justify-center rounded border ${border} ${isDark ? 'bg-cyan-400/10 text-cyan-300' : 'bg-cyan-50 text-cyan-700'}`}>
+                                  <Camera className="h-3.5 w-3.5" />
+                                </span>
+                                <span className="min-w-0">
+                                  <span className="block font-bold">Screenshot evidence</span>
+                                  <span className="block font-mono opacity-60">{shortEvidenceRef(ref)}</span>
+                                </span>
+                              </span>
+                            ))}
+                            {item.evidence_path && (
+                              <span
+                                title={item.evidence_path}
+                                className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 font-mono ${border}`}
+                              >
+                                <FileText className="h-3 w-3" />
+                                Evidence bundle
+                              </span>
+                            )}
+                            {item.audit_path && (
+                              <span
+                                title={item.audit_path}
+                                className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 font-mono ${border}`}
+                              >
+                                <ListChecks className="h-3 w-3" />
+                                Audit trail
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
                       <details className={`rounded-lg border px-2.5 py-1.5 text-[11px] ${border}`}>
                         <summary className="cursor-pointer select-none font-bold">Technical audit</summary>
                         <div className="mt-2 flex items-center gap-x-3 gap-y-1 flex-wrap opacity-60">
@@ -674,6 +725,8 @@ export default function Approvals() {
                             <span className="font-mono">hash {item.approval_hash_prefix}</span>
                           )}
                           <span className="font-mono">tool {item.selected_tool}</span>
+                          {item.evidence_path && <span className="font-mono">evidence {item.evidence_path}</span>}
+                          {item.audit_path && <span className="font-mono">audit {item.audit_path}</span>}
                         </div>
                       </details>
                     </div>

@@ -1209,6 +1209,11 @@ async def _run_approved_browser_task(
                 if observation.screenshot_ref
             ]
         )
+        screenshot_refs = [
+            observation.screenshot_ref
+            for observation in result.observations
+            if observation.screenshot_ref
+        ][:3]
         render_quality = _browser_render_quality_metadata(
             observations=result.observations,
             evidence_source_count=len(result.evidence.sources),
@@ -1225,8 +1230,13 @@ async def _run_approved_browser_task(
                 "source": _browser_run_source(browser_body.requester),
                 "observation_count": len(result.observations),
                 "screenshot_count": screenshot_count,
+                "screenshot_refs": screenshot_refs,
                 "screenshots_review_required": True,
                 "action_audit_count": len(result.action_audit),
+                "evidence_path": f"/v1/internet-scout/requests/{request_id}",
+                "audit_path": (
+                    f"/v1/internet-scout/browser-task/history?q={body.approval_queue_id}"
+                ),
                 **render_quality,
             },
         )
@@ -1304,6 +1314,7 @@ async def internet_scout_browser_history(
                 event.metadata->>'action' AS action,
                 event.metadata->>'host' AS host,
                 event.metadata->>'blocked_reason' AS blocked_reason,
+                event.metadata AS metadata,
                 CASE
                     WHEN event.metadata->>'elapsed_ms' ~ '^[0-9]+$'
                     THEN (event.metadata->>'elapsed_ms')::integer
@@ -1344,29 +1355,43 @@ async def internet_scout_browser_history(
             safe_offset,
         )
     page_rows = rows[:safe_limit]
-    history = [
-        InternetScoutBrowserHistoryItem(
-            request_id=row["request_id"],
-            approval_queue_id=_optional_uuid(row["approval_queue_id"]),
-            event_type=row["event_type"],
-            status=row["status"],
-            created_at=row["created_at"],
-            selected_tool=row["selected_tool"],
-            request_status=row["request_status"],
-            risk_tier=row["risk_tier"],
-            approval_hash_prefix=row["approval_hash_prefix"],
-            observation_count=int(row["observation_count"] or 0),
-            screenshot_count=int(row["screenshot_count"] or 0),
-            action_audit_count=int(row["action_audit_count"] or 0),
-            action=row["action"],
-            host=row["host"],
-            blocked_reason=row["blocked_reason"],
-            elapsed_ms=(
-                int(row["elapsed_ms"]) if row["elapsed_ms"] is not None else None
-            ),
+    history: list[InternetScoutBrowserHistoryItem] = []
+    for row in page_rows:
+        metadata = _event_metadata(row["metadata"])
+        approval_queue_id = _optional_uuid(row["approval_queue_id"])
+        history.append(
+            InternetScoutBrowserHistoryItem(
+                request_id=row["request_id"],
+                approval_queue_id=approval_queue_id,
+                event_type=row["event_type"],
+                status=row["status"],
+                created_at=row["created_at"],
+                selected_tool=row["selected_tool"],
+                request_status=row["request_status"],
+                risk_tier=row["risk_tier"],
+                approval_hash_prefix=row["approval_hash_prefix"],
+                observation_count=int(row["observation_count"] or 0),
+                screenshot_count=int(row["screenshot_count"] or 0),
+                action_audit_count=int(row["action_audit_count"] or 0),
+                action=row["action"],
+                host=row["host"],
+                blocked_reason=row["blocked_reason"],
+                elapsed_ms=(
+                    int(row["elapsed_ms"]) if row["elapsed_ms"] is not None else None
+                ),
+                screenshot_refs=_browser_history_screenshot_refs(metadata),
+                evidence_path=_browser_history_evidence_path(
+                    request_id=row["request_id"],
+                    request_status=row["request_status"],
+                    metadata=metadata,
+                ),
+                audit_path=_browser_history_audit_path(
+                    request_id=row["request_id"],
+                    approval_queue_id=approval_queue_id,
+                    metadata=metadata,
+                ),
+            )
         )
-        for row in page_rows
-    ]
     return InternetScoutBrowserHistoryResponse(
         history=history,
         count=len(history),
@@ -1611,6 +1636,73 @@ def _event_metadata_list(
         for item in value[:limit]
         if isinstance(item, str) and item.strip()
     ]
+
+
+def _safe_screenshot_ref(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text.startswith("sha256:"):
+        return None
+    digest = text.removeprefix("sha256:")
+    if len(digest) != 64:
+        return None
+    if any(char not in "0123456789abcdef" for char in digest):
+        return None
+    return text
+
+
+def _browser_history_screenshot_refs(metadata: dict[str, object]) -> list[str]:
+    refs: list[str] = []
+    for value in _event_metadata_list(
+        metadata,
+        "screenshot_refs",
+        limit=3,
+        max_len=80,
+    ):
+        ref = _safe_screenshot_ref(value)
+        if ref:
+            refs.append(ref)
+
+    for value in (metadata.get("screenshot_ref"),):
+        ref = _safe_screenshot_ref(value)
+        if ref and ref not in refs:
+            refs.append(ref)
+
+    nested = metadata.get("metadata")
+    if isinstance(nested, Mapping):
+        ref = _safe_screenshot_ref(nested.get("before_screenshot_ref"))
+        if ref and ref not in refs:
+            refs.append(ref)
+
+    return refs[:3]
+
+
+def _browser_history_evidence_path(
+    *,
+    request_id: UUID,
+    request_status: str,
+    metadata: dict[str, object],
+) -> str | None:
+    path = _event_metadata_str(metadata, "evidence_path", max_len=200)
+    if path and path.startswith("/v1/internet-scout/requests/"):
+        return path
+    if request_status == "succeeded":
+        return f"/v1/internet-scout/requests/{request_id}"
+    return None
+
+
+def _browser_history_audit_path(
+    *,
+    request_id: UUID,
+    approval_queue_id: UUID | None,
+    metadata: dict[str, object],
+) -> str:
+    path = _event_metadata_str(metadata, "audit_path", max_len=240)
+    if path and path.startswith("/v1/internet-scout/browser-task/history?"):
+        return path
+    query = approval_queue_id or request_id
+    return f"/v1/internet-scout/browser-task/history?q={query}"
 
 
 @router.get("/requests/{request_id}", response_model=InternetScoutStoredResponse)
