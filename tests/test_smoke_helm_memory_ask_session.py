@@ -7,7 +7,10 @@ def test_memory_ask_payload_eval_passes_clean_memory_answer() -> None:
     result = smoke.evaluate_memory_ask_payloads(
         [
             {
-                "delta": "- Memory: Ken has approved career profile facts.",
+                "delta": (
+                    "- Memory: Ken has a current career profile as an "
+                    "enterprise AI architect."
+                ),
                 "model": "llama3.1",
                 "thread_id": "thread-1",
             },
