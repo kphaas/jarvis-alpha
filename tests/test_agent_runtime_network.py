@@ -13,7 +13,7 @@ os.environ.setdefault("ALPHA_DB_DSN_BUDDY", "postgresql://user:pass@localhost/db
 os.environ.setdefault("ALPHA_GATEWAY_URL", "http://127.0.0.1:8283")
 os.environ.setdefault("OLLAMA_URL", "http://127.0.0.1:11434")
 
-from brain.agents import chatops_smoke
+from brain.agents import chatops_smoke, network_watchdog, workspace_artifacts
 from brain.agents.manual_run import manual_run_eligibility
 from brain.agents.porchlight import DEFAULT_PORCHLIGHT_INTERVAL_SECONDS
 from brain.agents.chatops_smoke import format_chatops_smoke_message
@@ -238,7 +238,7 @@ async def test_chatops_smoke_persists_workspace_snapshot_artifact(
     tmp_path: Path,
 ):
     backend = agent_workspace.LocalWorkspaceBackend(tmp_path)
-    conn = _FakeChatopsWorkspaceConn()
+    conn = _FakeWorkspaceArtifactConn(agent_id="chatops_smoke")
 
     async def fake_emit_agent_event(event, *, pool=None):
         return SimpleNamespace(event_id="evt-123")
@@ -258,9 +258,11 @@ async def test_chatops_smoke_persists_workspace_snapshot_artifact(
     monkeypatch.setattr(
         chatops_smoke, "collect_chatops_health", fake_collect_chatops_health
     )
-    monkeypatch.setattr(chatops_smoke, "get_workspace_backend", lambda: backend)
+    monkeypatch.setattr(workspace_artifacts, "get_workspace_backend", lambda: backend)
     monkeypatch.setattr(
-        chatops_smoke, "platform_admin_connection", lambda **kwargs: _FakeRls(conn)
+        workspace_artifacts,
+        "platform_admin_connection",
+        lambda **kwargs: _FakeRls(conn),
     )
 
     run_id = UUID("77777777-7777-7777-7777-777777777777")
@@ -279,6 +281,83 @@ async def test_chatops_smoke_persists_workspace_snapshot_artifact(
     assert payload["snapshot"]["pending_notifications_24h"] == 1
     assert conn.workspace_update_count == 1
     assert conn.inserted_artifact_relative_path == "outputs/chatops_smoke_snapshot.json"
+
+
+@pytest.mark.asyncio
+async def test_sweep_persists_workspace_snapshot_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    backend = agent_workspace.LocalWorkspaceBackend(tmp_path)
+    conn = _FakeWorkspaceArtifactConn(agent_id="sweep")
+
+    class FakeRunner:
+        async def run(self, conn, invocation):
+            outputs = {
+                "unifi.wan_status": {"wan_status": "up", "failover_ready": True},
+                "unifi.clients": {
+                    "client_count": 1,
+                    "clients": [{"mac": "aa:bb:cc:00:00:01"}],
+                },
+                "unifi.health_check": {
+                    "status": "ok",
+                    "errors": [],
+                    "devices": [],
+                    "tls": {"public_key_pin_configured": True},
+                },
+            }
+            return SimpleNamespace(executed=True, output=outputs[invocation.skill_name])
+
+    class FakeRuntime:
+        last_metadata: dict[str, object] | None = None
+
+        def __init__(self, config, *, pool):
+            self.config = config
+            self.pool = pool
+
+        async def update_metadata(self, metadata):
+            FakeRuntime.last_metadata = dict(metadata)
+
+    async def fake_emit_agent_event(event, *, pool=None):
+        return SimpleNamespace(event_id="evt-unused")
+
+    monkeypatch.setattr(
+        network_watchdog, "build_skill_runner", lambda handlers: FakeRunner()
+    )
+    monkeypatch.setattr(network_watchdog, "emit_agent_event", fake_emit_agent_event)
+    monkeypatch.setattr(
+        network_watchdog, "platform_admin_connection", lambda **kwargs: _FakeRls(conn)
+    )
+    monkeypatch.setattr(network_watchdog, "AgentRuntime", FakeRuntime)
+    monkeypatch.setattr(workspace_artifacts, "get_workspace_backend", lambda: backend)
+    monkeypatch.setattr(
+        workspace_artifacts,
+        "platform_admin_connection",
+        lambda **kwargs: _FakeRls(conn),
+    )
+
+    run_id = UUID("88888888-8888-8888-8888-888888888888")
+    out = await network_watchdog.collect_and_emit_network_events(
+        object(),
+        run_id,
+        {"last_client_keys": ["aa:bb:cc:00:00:01"]},
+    )
+
+    workspace_root = tmp_path / str(run_id)
+    artifact_path = workspace_root / "outputs" / "sweep_snapshot.json"
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    assert out["artifact_error"] is None
+    assert out["artifact"] is not None
+    assert out["artifact"]["relative_path"] == "outputs/sweep_snapshot.json"
+    assert out["event_ids"] == []
+    assert payload["agent_id"] == "sweep"
+    assert payload["run_id"] == str(run_id)
+    assert payload["snapshot"]["wan"]["wan_status"] == "up"
+    assert FakeRuntime.last_metadata is not None
+    assert FakeRuntime.last_metadata["last_wan_status"] == "up"
+    assert conn.workspace_update_count == 1
+    assert conn.inserted_artifact_relative_path == "outputs/sweep_snapshot.json"
 
 
 def test_unifi_health_route_is_read_classified():
@@ -367,8 +446,9 @@ def test_porchlight_default_schedule_is_daily():
     assert DEFAULT_PORCHLIGHT_INTERVAL_SECONDS == 86400
 
 
-class _FakeChatopsWorkspaceConn:
-    def __init__(self) -> None:
+class _FakeWorkspaceArtifactConn:
+    def __init__(self, *, agent_id: str) -> None:
+        self.agent_id = agent_id
         self.workspace_root = ""
         self.workspace_update_count = 0
         self.inserted_artifact_relative_path: str | None = None
@@ -377,7 +457,7 @@ class _FakeChatopsWorkspaceConn:
         if "FROM public.alpha_agent_runs" in query:
             return {
                 "id": args[0],
-                "agent_id": "chatops_smoke",
+                "agent_id": self.agent_id,
                 "created_at": datetime(2026, 7, 1, 12, 0, tzinfo=UTC),
                 "workspace_backend": "local",
                 "workspace_root": self.workspace_root,
@@ -401,10 +481,10 @@ class _FakeChatopsWorkspaceConn:
 
 
 class _FakeRls:
-    def __init__(self, conn: _FakeChatopsWorkspaceConn) -> None:
+    def __init__(self, conn: _FakeWorkspaceArtifactConn) -> None:
         self.conn = conn
 
-    async def __aenter__(self) -> _FakeChatopsWorkspaceConn:
+    async def __aenter__(self) -> _FakeWorkspaceArtifactConn:
         return self.conn
 
     async def __aexit__(self, exc_type, exc, tb) -> None:

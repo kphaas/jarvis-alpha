@@ -95,6 +95,7 @@ def test_agent_run_row_conversion():
         "policy_labels": "[]",
         "approval_scope": None,
         "retention_class": "standard",
+        "artifact_count": 0,
         "metadata": "{}",
         "created_at": "2026-05-26T00:00:00+00:00",
     }
