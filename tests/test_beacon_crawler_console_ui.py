@@ -17,7 +17,8 @@ def test_beacon_mounts_compact_crawler_console() -> None:
 
     assert "BeaconCrawlerConsole" in source
     assert "Crawler console" in console
-    assert "Scrape, map, crawl, extract, render" in console
+    assert "Scrape, batch, map, crawl, extract, render" in console
+    assert "up to 5 URLs" in console
     assert "Cache first" in console
     assert "Same host" in console
     assert "No forms" in console
@@ -28,6 +29,7 @@ def test_crawler_console_calls_all_existing_crawler_endpoints() -> None:
     console = CRAWLER_CONSOLE.read_text(encoding="utf-8")
 
     assert "/v1/internet-scout/crawler/scrape" in console
+    assert "/v1/internet-scout/crawler/batch-scrape" in console
     assert "/v1/internet-scout/crawler/map" in console
     assert "/v1/internet-scout/crawler/crawl" in console
     assert "/v1/internet-scout/crawler/extract" in console
@@ -44,6 +46,7 @@ def test_crawler_console_surfaces_compact_results_and_safety_context() -> None:
 
     assert "Result summary" in console
     assert "Text excerpt and links" in console
+    assert "Batch URLs and evidence" in console
     assert "Pages and same-host links" in console
     assert "Why stopped" in console
     assert "Link groups by host" in console
@@ -53,6 +56,7 @@ def test_crawler_console_surfaces_compact_results_and_safety_context() -> None:
     assert "Render evidence" in console
     assert "raw_web_content_is_untrusted" in console
     assert "BeaconCrawlerMode" in types
+    assert "BeaconCrawlerBatchScrapeResponse" in types
     assert "BeaconCrawlerRenderResponse" in types
     assert "evidence_path" in types
     assert "audit_path" in types

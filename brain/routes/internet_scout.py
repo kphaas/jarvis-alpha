@@ -49,6 +49,9 @@ from brain.services.internet_scout.models import (
     InternetScoutBrowserRunRequest,
     InternetScoutBrowserRunResponse,
     InternetScoutConsumerRequest,
+    InternetScoutCrawlerBatchScrapeItem,
+    InternetScoutCrawlerBatchScrapeRequest,
+    InternetScoutCrawlerBatchScrapeResponse,
     InternetScoutCrawlerCrawlRequest,
     InternetScoutCrawlerExtractRequest,
     InternetScoutCrawlerExtractResponse,
@@ -347,6 +350,117 @@ async def internet_scout_crawler_scrape(
 
 
 @router.post(
+    "/crawler/batch-scrape",
+    response_model=InternetScoutCrawlerBatchScrapeResponse,
+)
+async def internet_scout_crawler_batch_scrape(
+    body: InternetScoutCrawlerBatchScrapeRequest,
+    request: Request,
+    _user_id: str = Depends(require_auth),
+) -> InternetScoutCrawlerBatchScrapeResponse:
+    """Scrape a small URL batch through the same audited, cache-first path."""
+    check_scopes(request, "internet_scout.research", "admin")
+    batch_id = uuid4()
+    items: list[InternetScoutCrawlerBatchScrapeItem] = []
+    for index, url in enumerate(body.urls):
+        scrape_body = InternetScoutCrawlerScrapeRequest(
+            url=url,
+            query=body.query,
+            force_refresh=body.force_refresh,
+            max_bytes=body.max_bytes,
+        )
+        batch_metadata = {
+            "batch_id": str(batch_id),
+            "batch_index": index,
+            "batch_size": len(body.urls),
+        }
+        try:
+            response = await _execute_crawler(
+                operation="scrape",
+                body=scrape_body,
+                scout_request=InternetScoutRequest(
+                    query=body.query,
+                    urls=[url],
+                    tool_hint=InternetTool.EXTRACT,
+                    requester="alpha_ui.beacon_crawler.batch_scrape",
+                ),
+                request=request,
+                metadata_extra=batch_metadata,
+            )
+            items.append(_batch_scrape_success_item(url=url, response=response))
+        except HTTPException as exc:
+            if exc.status_code != 403:
+                raise
+            items.append(_batch_scrape_blocked_item(url=url, exc=exc))
+        except Exception as exc:
+            items.append(
+                InternetScoutCrawlerBatchScrapeItem(
+                    url=url,
+                    status="failed",
+                    error_type=exc.__class__.__name__,
+                )
+            )
+
+    return InternetScoutCrawlerBatchScrapeResponse(
+        batch_id=batch_id,
+        result_count=len(items),
+        succeeded_count=sum(1 for item in items if item.status == "succeeded"),
+        failed_count=sum(1 for item in items if item.status == "failed"),
+        blocked_count=sum(1 for item in items if item.status == "blocked"),
+        items=items,
+    )
+
+
+def _batch_scrape_success_item(
+    *,
+    url: str,
+    response: InternetScoutCrawlerScrapeResponse,
+) -> InternetScoutCrawlerBatchScrapeItem:
+    return InternetScoutCrawlerBatchScrapeItem(
+        url=url,
+        status="succeeded",
+        request_id=response.request_id,
+        cache_hit=response.cache_hit,
+        canonical_url=response.canonical_url,
+        host=response.host,
+        title=response.title,
+        fetched_at=response.fetched_at,
+        text=response.text,
+        links=response.links,
+        content_hash=response.content_hash,
+        risk_markers=response.risk_markers,
+    )
+
+
+def _batch_scrape_blocked_item(
+    *,
+    url: str,
+    exc: HTTPException,
+) -> InternetScoutCrawlerBatchScrapeItem:
+    detail = exc.detail if isinstance(exc.detail, Mapping) else {}
+    decision = detail.get("decision") if isinstance(detail, Mapping) else {}
+    reasons = decision.get("blocked_reasons") if isinstance(decision, Mapping) else []
+    return InternetScoutCrawlerBatchScrapeItem(
+        url=url,
+        status="blocked",
+        request_id=_uuid_or_none(detail.get("request_id")),
+        blocked_reasons=[
+            str(reason)[:120]
+            for reason in reasons
+            if isinstance(reason, str) and reason.strip()
+        ][:10],
+        error_type="policy_denied",
+    )
+
+
+def _uuid_or_none(value: object) -> UUID | None:
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+@router.post(
     "/crawler/scrape/browser-approval-request",
     response_model=InternetScoutBrowserApprovalResponse,
 )
@@ -521,10 +635,12 @@ async def _execute_crawler(
     ),
     scout_request: InternetScoutRequest,
     request: Request,
+    metadata_extra: dict[str, object] | None = None,
 ):
     actor = str(getattr(request.state, "user_id", "unknown"))
     plan = InternetScoutOrchestrator().plan(scout_request)
     event_type = CRAWLER_EVENTS[operation]
+    extra_metadata = metadata_extra or {}
 
     async with rls_connection(request) as conn:
         repo = InternetScoutRepository(conn)
@@ -545,6 +661,7 @@ async def _execute_crawler(
                     "same_host_required": True,
                     "forms_allowed": False,
                     "credential_entry_allowed": False,
+                    **extra_metadata,
                 },
             )
 
@@ -565,7 +682,7 @@ async def _execute_crawler(
                 tool=plan.decision.tool.value,
                 event_type=event_type,
                 status="started",
-                metadata={"operation": operation},
+                metadata={"operation": operation, **extra_metadata},
             )
 
         async def cache_lookup(url: str, query: str | None):
@@ -601,6 +718,7 @@ async def _execute_crawler(
                 scout_request,
                 cache_lookup=cache_lookup,
             )
+        metadata.update(extra_metadata)
 
         async with rls_connection(request) as conn:
             repo = InternetScoutRepository(conn)
@@ -626,6 +744,7 @@ async def _execute_crawler(
                 metadata={
                     "operation": operation,
                     "error_type": exc.__class__.__name__,
+                    **extra_metadata,
                 },
                 error_text=safe_error_text,
             )

@@ -207,6 +207,17 @@ def test_crawler_smoke_checks_four_endpoints_and_health(monkeypatch):
                 "text": "Example Domain",
                 "content_hash": "a" * 64,
             }
+        if path == "/v1/internet-scout/crawler/batch-scrape":
+            return {
+                "batch_id": "batch-1",
+                "items": [
+                    {
+                        "url": "https://example.com/",
+                        "status": "succeeded",
+                    }
+                ],
+                "succeeded_count": 1,
+            }
         if path in {
             "/v1/internet-scout/crawler/map",
             "/v1/internet-scout/crawler/crawl",
@@ -252,19 +263,22 @@ def test_crawler_smoke_checks_four_endpoints_and_health(monkeypatch):
     assert result["failed_request_count"] == 0
     assert [item["name"] for item in result["checks"]] == [
         "scrape",
+        "batch_scrape",
         "map",
         "crawl",
         "extract",
     ]
     assert [call[1] for call in calls] == [
         "/v1/internet-scout/crawler/scrape",
+        "/v1/internet-scout/crawler/batch-scrape",
         "/v1/internet-scout/crawler/map",
         "/v1/internet-scout/crawler/crawl",
         "/v1/internet-scout/crawler/extract",
         "/v1/internet-scout/health",
     ]
     assert calls[0][2]["max_bytes"] == 200_000
-    assert calls[1][2]["max_pages"] == 1
+    assert calls[1][2]["urls"] == ["https://example.com/"]
+    assert calls[2][2]["max_pages"] == 1
 
 
 def test_browser_click_smoke_approves_runs_and_checks_history(monkeypatch):
