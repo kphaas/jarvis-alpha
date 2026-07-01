@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
@@ -94,6 +95,45 @@ def test_workspace_writes_append_to_artifact_ledger(tmp_path: Path) -> None:
     assert payloads[1]["relative_path"] == "outputs/report.bin"
 
 
+def test_stage_upload_stream_rejects_oversized_payload(tmp_path: Path) -> None:
+    backend = agent_workspace.LocalWorkspaceBackend(
+        tmp_path,
+        max_artifact_bytes=8,
+        max_workspace_bytes=128,
+    )
+    run_id = UUID("33333333-3333-3333-3333-333333333334")
+    backend.init_workspace(run_id, "buddy", [], None, "standard")
+
+    with pytest.raises(ValueError, match="artifact exceeds max size"):
+        backend.stage_upload_stream(
+            run_id,
+            "outputs/large.bin",
+            BytesIO(b"123456789"),
+            "output_blob",
+            content_type="application/octet-stream",
+        )
+
+
+def test_preview_text_is_bounded_and_sanitized(tmp_path: Path) -> None:
+    backend = agent_workspace.LocalWorkspaceBackend(tmp_path, preview_bytes=6)
+    run_id = UUID("33333333-3333-3333-3333-333333333335")
+    backend.init_workspace(run_id, "buddy", [], None, "standard")
+    backend.write_bytes(
+        run_id,
+        "outputs/report.txt",
+        b"abc\x00defghi",
+        "report",
+        content_type="text/plain",
+    )
+
+    preview = backend.preview_text(run_id, "outputs/report.txt")
+
+    assert preview.preview_available is True
+    assert preview.preview_bytes == 6
+    assert preview.truncated is True
+    assert preview.text == "abc\ufffdde"
+
+
 @pytest.mark.asyncio
 async def test_workspace_init_route_is_idempotent_and_persists_policy_labels(
     monkeypatch: pytest.MonkeyPatch,
@@ -112,8 +152,12 @@ async def test_workspace_init_route_is_idempotent_and_persists_policy_labels(
     first = await registry.init_agent_run_workspace(run_id, request)
     second = await registry.init_agent_run_workspace(run_id, request)
 
-    assert first.workspace_root == str(tmp_path / str(run_id))
-    assert second.workspace_root == first.workspace_root
+    assert first.workspace_uri == f"agentfs://runs/{run_id}"
+    assert second.workspace_uri == first.workspace_uri
+    assert first.workspace_state == "ready"
+    assert first.raw_access_mode == "download_only"
+    assert first.usage_bytes == 0
+    assert "workspace_root" not in first.model_dump()
     assert first.policy_labels == [
         "finance.paper_only",
         "memory.proposal_required",
@@ -229,6 +273,7 @@ async def test_get_agent_run_artifact_content_reads_workspace_file(
         "id": UUID(record.artifact_id),
         "run_id": run_id,
         "relative_path": record.relative_path,
+        "kind": record.kind,
         "content_type": record.content_type,
     }
 
@@ -244,7 +289,58 @@ async def test_get_agent_run_artifact_content_reads_workspace_file(
 
     assert response.media_type == "application/json"
     assert response.body == b'{"ok":true}\n'
-    assert response.headers["content-disposition"] == 'inline; filename="report.json"'
+    assert response.headers["content-disposition"] == 'attachment; filename="report.json"'
+
+
+@pytest.mark.asyncio
+async def test_preview_agent_run_artifact_returns_bounded_safe_text(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = agent_workspace.LocalWorkspaceBackend(tmp_path, preview_bytes=5)
+    conn = _FakeWorkspaceConn()
+    run_id = UUID("78777777-7777-7777-7777-777777777777")
+
+    manifest = backend.init_workspace(
+        run_id,
+        "internet_scout",
+        ["memory.proposal_required"],
+        "memory.review",
+        "standard",
+        created_at=datetime(2026, 6, 30, 18, 0, tzinfo=UTC),
+    )
+    conn.workspace_root = manifest.workspace_root
+    record = backend.write_text(
+        run_id,
+        "outputs/report.txt",
+        "hello world",
+        "report",
+        content_type="text/plain",
+        policy_labels=["memory.proposal_required"],
+        workspace_root=manifest.workspace_root,
+    )
+    conn.artifact_row = {
+        "id": UUID(record.artifact_id),
+        "run_id": run_id,
+        "relative_path": record.relative_path,
+        "kind": record.kind,
+        "content_type": record.content_type,
+    }
+
+    monkeypatch.setattr(registry, "check_scopes", lambda *args: None)
+    monkeypatch.setattr(registry, "get_workspace_backend", lambda: backend)
+    monkeypatch.setattr(registry, "rls_connection", lambda request: _FakeRls(conn))
+
+    out = await registry.preview_agent_run_artifact(
+        run_id,
+        UUID(record.artifact_id),
+        _request(),
+    )
+
+    assert out.preview_available is True
+    assert out.preview_truncated is True
+    assert out.preview_text == "hello"
+    assert out.raw_access_mode == "download_only"
 
 
 def test_agent_workspace_routes_are_governed_t2() -> None:
@@ -252,6 +348,16 @@ def test_agent_workspace_routes_are_governed_t2() -> None:
         ("POST", "/v1/agent-runs/11111111-1111-1111-1111-111111111111/workspace/init"),
         ("GET", "/v1/agent-runs/11111111-1111-1111-1111-111111111111/workspace"),
         ("GET", "/v1/agent-runs/11111111-1111-1111-1111-111111111111/artifacts"),
+        (
+            "GET",
+            "/v1/agent-runs/11111111-1111-1111-1111-111111111111/artifacts/"
+            "22222222-2222-2222-2222-222222222222/preview",
+        ),
+        (
+            "GET",
+            "/v1/agent-runs/11111111-1111-1111-1111-111111111111/artifacts/"
+            "22222222-2222-2222-2222-222222222222/download",
+        ),
         (
             "GET",
             "/v1/agent-runs/11111111-1111-1111-1111-111111111111/artifacts/"

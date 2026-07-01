@@ -30,8 +30,10 @@ from brain.middleware.scopes import check_scopes
 from brain.registry.models import SkillManifestV1
 from brain.services.agent_workspace import (
     WorkspaceArtifactRecord,
+    WorkspaceArtifactPreview,
     WorkspaceManifest,
     WorkspacePathError,
+    WorkspaceRetentionExpiredError,
     get_workspace_backend,
 )
 from jarvis_common.logging_config import get_logger
@@ -119,10 +121,13 @@ class AgentRunOut(BaseModel):
     cost_usd: float
     error_text: str | None = None
     workspace_backend: str
-    workspace_root: str
+    workspace_uri: str | None = None
+    workspace_state: str = "not_initialized"
     policy_labels: list[str] = Field(default_factory=list)
     approval_scope: str | None = None
     retention_class: str
+    retention_expires_at: str | None = None
+    raw_access_mode: Literal["inline_ok", "download_only"] = "inline_ok"
     artifact_count: int = 0
     metadata: dict = Field(default_factory=dict)
     created_at: str
@@ -138,10 +143,17 @@ class AgentRunWorkspaceOut(BaseModel):
     agent_id: str
     created_at: str
     workspace_backend: str
-    workspace_root: str
+    workspace_uri: str
+    workspace_state: str
     policy_labels: list[str] = Field(default_factory=list)
     approval_scope: str | None = None
     retention_class: str
+    retention_expires_at: str
+    usage_bytes: int
+    quota_bytes: int
+    artifact_max_bytes: int
+    preview_max_bytes: int
+    raw_access_mode: Literal["inline_ok", "download_only"] = "inline_ok"
 
 
 class AgentRunArtifactOut(BaseModel):
@@ -159,6 +171,21 @@ class AgentRunArtifactOut(BaseModel):
 class AgentRunArtifactListOut(BaseModel):
     count: int
     artifacts: list[AgentRunArtifactOut]
+
+
+class AgentRunArtifactPreviewOut(BaseModel):
+    artifact_id: str
+    run_id: str
+    relative_path: str
+    kind: str
+    content_type: str
+    preview_text: str | None = None
+    preview_truncated: bool = False
+    preview_bytes: int = 0
+    preview_available: bool = False
+    approval_scope: str | None = None
+    raw_access_mode: Literal["inline_ok", "download_only"] = "inline_ok"
+    retention_expires_at: str | None = None
 
 
 class AgentStatusOut(BaseModel):
@@ -280,6 +307,9 @@ def _agent_event_from_row(row) -> AgentEventOut:
 
 
 def _agent_run_from_row(row) -> AgentRunOut:
+    backend = get_workspace_backend()
+    workspace_initialized = bool(str(row["workspace_root"] or "").strip())
+    raw_access_mode = _raw_access_mode(row["approval_scope"])
     return AgentRunOut(
         id=str(row["id"]),
         agent_id=row["agent_id"],
@@ -291,26 +321,55 @@ def _agent_run_from_row(row) -> AgentRunOut:
         cost_usd=float(row["cost_usd"] or 0),
         error_text=row["error_text"],
         workspace_backend=row["workspace_backend"],
-        workspace_root=row["workspace_root"],
+        workspace_uri=backend.workspace_uri(row["id"]) if workspace_initialized else None,
+        workspace_state=backend.workspace_state(
+            created_at=row["created_at"],
+            retention_class=row["retention_class"],
+            workspace_initialized=workspace_initialized,
+        ),
         policy_labels=_jsonb_list(row["policy_labels"]),
         approval_scope=row["approval_scope"],
         retention_class=row["retention_class"],
+        retention_expires_at=backend.retention_expires_at(
+            row["created_at"],
+            row["retention_class"],
+        ),
+        raw_access_mode=raw_access_mode,
         artifact_count=int(row["artifact_count"] or 0),
         metadata=_jsonb(row["metadata"]),
         created_at=_iso(row["created_at"]) or "",
     )
 
 
-def _workspace_from_manifest(manifest: WorkspaceManifest) -> AgentRunWorkspaceOut:
+def _workspace_from_manifest(
+    manifest: WorkspaceManifest,
+    *,
+    usage_bytes: int,
+    backend,
+) -> AgentRunWorkspaceOut:
     return AgentRunWorkspaceOut(
         run_id=manifest.run_id,
         agent_id=manifest.agent_id,
         created_at=manifest.created_at,
         workspace_backend=manifest.workspace_backend,
-        workspace_root=manifest.workspace_root,
+        workspace_uri=backend.workspace_uri(manifest.run_id),
+        workspace_state=backend.workspace_state(
+            created_at=manifest.created_at,
+            retention_class=manifest.retention_class,
+            workspace_initialized=True,
+        ),
         policy_labels=list(manifest.policy_labels),
         approval_scope=manifest.approval_scope,
         retention_class=manifest.retention_class,
+        retention_expires_at=backend.retention_expires_at(
+            manifest.created_at,
+            manifest.retention_class,
+        ),
+        usage_bytes=usage_bytes,
+        quota_bytes=backend.max_workspace_bytes,
+        artifact_max_bytes=backend.max_artifact_bytes,
+        preview_max_bytes=backend.preview_bytes,
+        raw_access_mode=_raw_access_mode(manifest.approval_scope),
     )
 
 
@@ -325,6 +384,40 @@ def _artifact_from_record(record: WorkspaceArtifactRecord) -> AgentRunArtifactOu
         created_at=record.created_at,
         sha256=record.sha256,
         policy_labels=list(record.policy_labels),
+    )
+
+
+def _artifact_preview_from_record(
+    row,
+    preview: WorkspaceArtifactPreview,
+    *,
+    approval_scope: str | None,
+    retention_expires_at: str,
+) -> AgentRunArtifactPreviewOut:
+    return AgentRunArtifactPreviewOut(
+        artifact_id=str(row["id"]),
+        run_id=str(row["run_id"]),
+        relative_path=row["relative_path"],
+        kind=row["kind"],
+        content_type=row["content_type"],
+        preview_text=preview.text,
+        preview_truncated=preview.truncated,
+        preview_bytes=preview.preview_bytes,
+        preview_available=preview.preview_available,
+        approval_scope=approval_scope,
+        raw_access_mode=_raw_access_mode(approval_scope),
+        retention_expires_at=retention_expires_at,
+    )
+
+
+def _raw_access_mode(approval_scope: str | None) -> Literal["inline_ok", "download_only"]:
+    return "download_only" if str(approval_scope or "").strip() else "inline_ok"
+
+
+def _previewable_content_type(content_type: str) -> bool:
+    clean = str(content_type or "").strip().lower()
+    return clean.startswith("text/") or clean == "application/json" or clean.endswith(
+        "+json"
     )
 
 
@@ -586,7 +679,11 @@ async def init_agent_run_workspace(
     async with rls_connection(request) as conn:
         row = await _load_agent_run_row(conn, run_id)
         manifest = await _ensure_workspace(conn, row, backend=backend)
-    return _workspace_from_manifest(manifest)
+    usage_bytes = backend.workspace_usage_bytes(
+        run_id,
+        workspace_root=manifest.workspace_root,
+    )
+    return _workspace_from_manifest(manifest, usage_bytes=usage_bytes, backend=backend)
 
 
 @router.get("/agent-runs/{run_id}/workspace", response_model=AgentRunWorkspaceOut)
@@ -609,7 +706,11 @@ async def get_agent_run_workspace(
         ) from exc
     except WorkspacePathError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return _workspace_from_manifest(manifest)
+    usage_bytes = backend.workspace_usage_bytes(
+        run_id,
+        workspace_root=manifest.workspace_root,
+    )
+    return _workspace_from_manifest(manifest, usage_bytes=usage_bytes, backend=backend)
 
 
 @router.get("/agent-runs/{run_id}/artifacts", response_model=AgentRunArtifactListOut)
@@ -647,12 +748,15 @@ async def list_agent_run_artifacts(
     return AgentRunArtifactListOut(count=len(artifacts), artifacts=artifacts)
 
 
-@router.get("/agent-runs/{run_id}/artifacts/{artifact_id}/content")
-async def get_agent_run_artifact_content(
+@router.get(
+    "/agent-runs/{run_id}/artifacts/{artifact_id}/preview",
+    response_model=AgentRunArtifactPreviewOut,
+)
+async def preview_agent_run_artifact(
     run_id: UUID,
     artifact_id: UUID,
     request: Request,
-) -> Response:
+) -> AgentRunArtifactPreviewOut:
     check_scopes(request, "agents.read")
     backend = get_workspace_backend()
     async with rls_connection(request) as conn:
@@ -661,23 +765,71 @@ async def get_agent_run_artifact_content(
     workspace_root = str(row["workspace_root"] or "").strip()
     if not workspace_root:
         raise HTTPException(status_code=404, detail="Workspace not initialized")
+    retention_expires_at = backend.retention_expires_at(
+        row["created_at"],
+        row["retention_class"],
+    )
+    if not _previewable_content_type(str(artifact_row["content_type"] or "")):
+        return _artifact_preview_from_record(
+            artifact_row,
+            WorkspaceArtifactPreview(
+                text=None,
+                truncated=False,
+                preview_bytes=0,
+                preview_available=False,
+            ),
+            approval_scope=row["approval_scope"],
+            retention_expires_at=retention_expires_at,
+        )
     try:
-        payload = backend.read_bytes(
+        backend.assert_within_retention(
+            created_at=row["created_at"],
+            retention_class=row["retention_class"],
+        )
+        preview = backend.preview_text(
             run_id,
             artifact_row["relative_path"],
             workspace_root=workspace_root,
         )
+    except WorkspaceRetentionExpiredError as exc:
+        raise HTTPException(status_code=410, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Artifact content missing") from exc
     except WorkspacePathError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    filename = (
-        Path(str(artifact_row["relative_path"])).name.replace('"', "") or "artifact"
+    return _artifact_preview_from_record(
+        artifact_row,
+        preview,
+        approval_scope=row["approval_scope"],
+        retention_expires_at=retention_expires_at,
     )
-    return Response(
-        content=payload,
-        media_type=str(artifact_row["content_type"] or "application/octet-stream"),
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+
+
+@router.get("/agent-runs/{run_id}/artifacts/{artifact_id}/download")
+async def download_agent_run_artifact(
+    run_id: UUID,
+    artifact_id: UUID,
+    request: Request,
+) -> Response:
+    return await _artifact_binary_response(
+        run_id,
+        artifact_id,
+        request,
+        disposition="attachment",
+    )
+
+
+@router.get("/agent-runs/{run_id}/artifacts/{artifact_id}/content")
+async def get_agent_run_artifact_content(
+    run_id: UUID,
+    artifact_id: UUID,
+    request: Request,
+) -> Response:
+    return await _artifact_binary_response(
+        run_id,
+        artifact_id,
+        request,
+        disposition="inline",
     )
 
 
@@ -703,11 +855,15 @@ async def create_agent_run_artifact(
         row = await _load_agent_run_row(conn, run_id)
         manifest = await _ensure_workspace(conn, row, backend=backend)
         try:
+            backend.assert_within_retention(
+                created_at=row["created_at"],
+                retention_class=row["retention_class"],
+            )
             if file is not None:
-                staged = backend.stage_bytes(
+                staged = backend.stage_upload_stream(
                     run_id,
                     relative_path,
-                    await file.read(),
+                    file.file,
                     kind,
                     content_type=content_type
                     or file.content_type
@@ -725,6 +881,8 @@ async def create_agent_run_artifact(
                     policy_labels=_jsonb_list(row["policy_labels"]),
                     workspace_root=manifest.workspace_root,
                 )
+        except WorkspaceRetentionExpiredError as exc:
+            raise HTTPException(status_code=410, detail=str(exc)) from exc
         except (ValueError, WorkspacePathError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -739,6 +897,9 @@ async def create_agent_run_artifact(
             await _delete_agent_run_artifact(conn, staged.record.artifact_id)
             backend.cleanup_staged_artifact(staged)
             raise
+        finally:
+            if file is not None:
+                await file.close()
     return _artifact_from_record(record)
 
 
@@ -818,7 +979,7 @@ async def _load_agent_run_row(conn, run_id: UUID):
 async def _load_agent_run_artifact_row(conn, run_id: UUID, artifact_id: UUID):
     row = await conn.fetchrow(
         """
-        SELECT id, run_id, relative_path, content_type
+        SELECT id, run_id, relative_path, kind, content_type
         FROM public.alpha_agent_run_artifacts
         WHERE run_id = $1 AND id = $2
         """,
@@ -828,6 +989,54 @@ async def _load_agent_run_artifact_row(conn, run_id: UUID, artifact_id: UUID):
     if not row:
         raise HTTPException(status_code=404, detail="Agent artifact not found")
     return row
+
+
+async def _artifact_binary_response(
+    run_id: UUID,
+    artifact_id: UUID,
+    request: Request,
+    *,
+    disposition: Literal["inline", "attachment"],
+) -> Response:
+    check_scopes(request, "agents.read")
+    backend = get_workspace_backend()
+    async with rls_connection(request) as conn:
+        row = await _load_agent_run_row(conn, run_id)
+        artifact_row = await _load_agent_run_artifact_row(conn, run_id, artifact_id)
+    workspace_root = str(row["workspace_root"] or "").strip()
+    if not workspace_root:
+        raise HTTPException(status_code=404, detail="Workspace not initialized")
+    try:
+        backend.assert_within_retention(
+            created_at=row["created_at"],
+            retention_class=row["retention_class"],
+        )
+        payload = backend.read_bytes(
+            run_id,
+            artifact_row["relative_path"],
+            workspace_root=workspace_root,
+        )
+    except WorkspaceRetentionExpiredError as exc:
+        raise HTTPException(status_code=410, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Artifact content missing") from exc
+    except WorkspacePathError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    filename = (
+        Path(str(artifact_row["relative_path"])).name.replace('"', "") or "artifact"
+    )
+    content_disposition = (
+        "attachment"
+        if _raw_access_mode(row["approval_scope"]) == "download_only"
+        else disposition
+    )
+    return Response(
+        content=payload,
+        media_type=str(artifact_row["content_type"] or "application/octet-stream"),
+        headers={
+            "Content-Disposition": f'{content_disposition}; filename="{filename}"'
+        },
+    )
 
 
 async def _ensure_workspace(conn, row, *, backend) -> WorkspaceManifest:
