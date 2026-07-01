@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from uuid import UUID
 from typing import Literal
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from pydantic import BaseModel, Field
 
 from brain.agents.manual_run import (
@@ -113,6 +123,7 @@ class AgentRunOut(BaseModel):
     policy_labels: list[str] = Field(default_factory=list)
     approval_scope: str | None = None
     retention_class: str
+    artifact_count: int = 0
     metadata: dict = Field(default_factory=dict)
     created_at: str
 
@@ -284,6 +295,7 @@ def _agent_run_from_row(row) -> AgentRunOut:
         policy_labels=_jsonb_list(row["policy_labels"]),
         approval_scope=row["approval_scope"],
         retention_class=row["retention_class"],
+        artifact_count=int(row["artifact_count"] or 0),
         metadata=_jsonb(row["metadata"]),
         created_at=_iso(row["created_at"]) or "",
     )
@@ -538,14 +550,19 @@ async def list_agent_runs(
             raise HTTPException(status_code=404, detail="Agent not found")
         rows = await conn.fetch(
             """
-            SELECT id, agent_id, status, trigger_type, trace_id, started_at,
-                   completed_at, cost_usd, error_text, workspace_backend,
-                   workspace_root, policy_labels, approval_scope,
-                   retention_class, metadata, created_at
-            FROM public.alpha_agent_runs
-            WHERE agent_id = $1
-            ORDER BY COALESCE(completed_at, started_at, created_at) DESC,
-                     created_at DESC
+            SELECT r.id, r.agent_id, r.status, r.trigger_type, r.trace_id,
+                   r.started_at, r.completed_at, r.cost_usd, r.error_text,
+                   r.workspace_backend, r.workspace_root, r.policy_labels,
+                   r.approval_scope, r.retention_class, r.metadata, r.created_at,
+                   (
+                       SELECT COUNT(*)
+                       FROM public.alpha_agent_run_artifacts a
+                       WHERE a.run_id = r.id
+                   ) AS artifact_count
+            FROM public.alpha_agent_runs r
+            WHERE r.agent_id = $1
+            ORDER BY COALESCE(r.completed_at, r.started_at, r.created_at) DESC,
+                     r.created_at DESC
             LIMIT $2
             """,
             agent_id,
@@ -628,6 +645,40 @@ async def list_agent_run_artifacts(
         for row in rows
     ]
     return AgentRunArtifactListOut(count=len(artifacts), artifacts=artifacts)
+
+
+@router.get("/agent-runs/{run_id}/artifacts/{artifact_id}/content")
+async def get_agent_run_artifact_content(
+    run_id: UUID,
+    artifact_id: UUID,
+    request: Request,
+) -> Response:
+    check_scopes(request, "agents.read")
+    backend = get_workspace_backend()
+    async with rls_connection(request) as conn:
+        row = await _load_agent_run_row(conn, run_id)
+        artifact_row = await _load_agent_run_artifact_row(conn, run_id, artifact_id)
+    workspace_root = str(row["workspace_root"] or "").strip()
+    if not workspace_root:
+        raise HTTPException(status_code=404, detail="Workspace not initialized")
+    try:
+        payload = backend.read_bytes(
+            run_id,
+            artifact_row["relative_path"],
+            workspace_root=workspace_root,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Artifact content missing") from exc
+    except WorkspacePathError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    filename = (
+        Path(str(artifact_row["relative_path"])).name.replace('"', "") or "artifact"
+    )
+    return Response(
+        content=payload,
+        media_type=str(artifact_row["content_type"] or "application/octet-stream"),
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 
 
 @router.post("/agent-runs/{run_id}/artifacts", response_model=AgentRunArtifactOut)
@@ -761,6 +812,21 @@ async def _load_agent_run_row(conn, run_id: UUID):
     )
     if not row:
         raise HTTPException(status_code=404, detail="Agent run not found")
+    return row
+
+
+async def _load_agent_run_artifact_row(conn, run_id: UUID, artifact_id: UUID):
+    row = await conn.fetchrow(
+        """
+        SELECT id, run_id, relative_path, content_type
+        FROM public.alpha_agent_run_artifacts
+        WHERE run_id = $1 AND id = $2
+        """,
+        run_id,
+        artifact_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Agent artifact not found")
     return row
 
 
