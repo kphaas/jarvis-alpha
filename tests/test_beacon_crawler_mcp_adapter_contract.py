@@ -113,4 +113,4 @@ def test_crawler_mcp_contract_is_documented_and_tracked() -> None:
     assert "beacon.crawler.render_run_approved" in docs
     assert "Render retry stays deferred" in docs
     assert "machine-readable crawler MCP adapter spec" in tracker
-    assert "| 18 | MCP adapter | Spec-ready |" in tracker
+    assert "| 18 | MCP adapter | Skeleton-ready |" in tracker

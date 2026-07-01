@@ -75,6 +75,15 @@ Render retry stays deferred. The current production rule is to keep watching
 the Beacon Ops render-quality rollup and only add retry/tuning if weak or empty
 renders, missing screenshots, or missing evidence cross the operator threshold.
 
+## Disabled Runtime Skeleton
+
+Alpha exposes a status-only runtime skeleton at
+`GET /v1/security/mcp/adapters/beacon-crawler`. The skeleton is disabled by
+default behind `BEACON_CRAWLER_MCP_ADAPTER_ENABLED`, and even when that env flag
+is set it remains `blocked_unimplemented` until a reviewed invocation bridge is
+added. This keeps MCP discovery visible without creating a new execution path,
+egress path, or approval bypass.
+
 ## Current Non-Goals
 
 - Public tool marketplace.
