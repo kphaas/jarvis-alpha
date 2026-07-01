@@ -16,6 +16,7 @@ import {
 import { apiJson } from '../../lib/apiFetch'
 import type {
   BeaconBrowserApprovalResponse,
+  BeaconCrawlerBatchScrapeResponse,
   BeaconCrawlerExtractResponse,
   BeaconCrawlerMapResponse,
   BeaconCrawlerMode,
@@ -32,6 +33,7 @@ const CRAWLER_MODES: Array<{
   detail: string
 }> = [
   { key: 'scrape', label: 'Scrape', detail: 'one URL' },
+  { key: 'batch', label: 'Batch', detail: 'up to 5 URLs' },
   { key: 'map', label: 'Map', detail: 'same-host links' },
   { key: 'crawl', label: 'Crawl', detail: 'bounded pages' },
   { key: 'extract', label: 'Extract', detail: 'schema fields' },
@@ -50,6 +52,7 @@ export function BeaconCrawlerConsole({
   const softPanel = isDark ? 'bg-black/15' : 'bg-white/35'
   const [mode, setMode] = useState<BeaconCrawlerMode>('scrape')
   const [url, setUrl] = useState('https://example.com/')
+  const [batchUrls, setBatchUrls] = useState('https://example.com/')
   const [query, setQuery] = useState('example domain')
   const [schemaText, setSchemaText] = useState('title: page title\nsummary: concise summary')
   const [maxPages, setMaxPages] = useState(2)
@@ -71,9 +74,12 @@ export function BeaconCrawlerConsole({
     [mode],
   )
   const parsedUrl = useMemo(() => parseCrawlerUrl(url), [url])
+  const parsedBatchUrls = useMemo(() => parseBatchUrls(batchUrls), [batchUrls])
   const schema = useMemo(() => parseSchema(schemaText), [schemaText])
   const schemaFieldCount = Object.keys(schema).length
-  const canRun = Boolean(url.trim() && parsedUrl.valid && !loading)
+  const canRun = mode === 'batch'
+    ? Boolean(parsedBatchUrls.urls.length > 0 && parsedBatchUrls.valid && !loading)
+    : Boolean(url.trim() && parsedUrl.valid && !loading)
   const renderReadyToRun = mode === 'render' && Boolean(approvalQueueId.trim())
 
   const fetchCrawlerHistory = useCallback(async () => {
@@ -131,6 +137,7 @@ export function BeaconCrawlerConsole({
 
       const payload = await runCrawlerMode(mode, {
         url,
+        batchUrls: parsedBatchUrls.urls,
         query,
         schema,
         maxPages,
@@ -155,7 +162,7 @@ export function BeaconCrawlerConsole({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-[10px] font-mono uppercase tracking-widest opacity-45">Crawler console</p>
-          <h2 className="mt-1 text-lg font-semibold">Scrape, map, crawl, extract, render</h2>
+          <h2 className="mt-1 text-lg font-semibold">Scrape, batch, map, crawl, extract, render</h2>
         </div>
         <div className="flex flex-wrap gap-2">
           {['Cache first', 'Same host', 'No forms', 'No credentials'].map((item) => (
@@ -168,7 +175,7 @@ export function BeaconCrawlerConsole({
 
       <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_260px]">
         <div className="space-y-3">
-          <div className="grid gap-2 sm:grid-cols-5">
+          <div className="grid gap-2 sm:grid-cols-6">
             {CRAWLER_MODES.map((item) => (
               <button
                 key={item.key}
@@ -191,15 +198,27 @@ export function BeaconCrawlerConsole({
           </div>
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(180px,240px)_auto]">
-            <label className="relative min-w-0">
-              <Globe2 className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 opacity-45" />
-              <input
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-                placeholder="https://example.com/"
-                className={`min-h-11 w-full rounded-lg border bg-transparent py-2 pl-10 pr-3 text-sm outline-none ${border}`}
-              />
-            </label>
+            {mode === 'batch' ? (
+              <label className="min-w-0">
+                <textarea
+                  value={batchUrls}
+                  onChange={(event) => setBatchUrls(event.target.value)}
+                  placeholder="One URL per line, up to 5"
+                  rows={3}
+                  className={`min-h-11 w-full resize-y rounded-lg border bg-transparent px-3 py-2 text-sm outline-none ${border}`}
+                />
+              </label>
+            ) : (
+              <label className="relative min-w-0">
+                <Globe2 className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 opacity-45" />
+                <input
+                  value={url}
+                  onChange={(event) => setUrl(event.target.value)}
+                  placeholder="https://example.com/"
+                  className={`min-h-11 w-full rounded-lg border bg-transparent py-2 pl-10 pr-3 text-sm outline-none ${border}`}
+                />
+              </label>
+            )}
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -217,7 +236,13 @@ export function BeaconCrawlerConsole({
             </button>
           </div>
 
-          {!parsedUrl.valid && <p className="text-xs text-rose-500">Enter a full http or https URL.</p>}
+          {mode === 'batch' && parsedBatchUrls.overflow && (
+            <p className="text-xs text-rose-500">Batch scrape is capped at 5 URLs.</p>
+          )}
+          {mode === 'batch' && !parsedBatchUrls.valid && !parsedBatchUrls.overflow && (
+            <p className="text-xs text-rose-500">Every batch line must be a full http or https URL.</p>
+          )}
+          {mode !== 'batch' && !parsedUrl.valid && <p className="text-xs text-rose-500">Enter a full http or https URL.</p>}
           {mode === 'render' && (
             <div className={`rounded-lg border px-3 py-2 text-xs ${border} ${softPanel}`}>
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -313,6 +338,7 @@ async function runCrawlerMode(
   mode: BeaconCrawlerMode,
   options: {
     url: string
+    batchUrls: string[]
     query: string
     schema: Record<string, string>
     maxPages: number
@@ -324,6 +350,16 @@ async function runCrawlerMode(
     return await apiJson<BeaconCrawlerScrapeResponse>('/v1/internet-scout/crawler/scrape', {
       method: 'POST',
       body: JSON.stringify(scrapeBody(options.url, options.query)),
+    })
+  }
+  if (mode === 'batch') {
+    return await apiJson<BeaconCrawlerBatchScrapeResponse>('/v1/internet-scout/crawler/batch-scrape', {
+      method: 'POST',
+      body: JSON.stringify({
+        urls: options.batchUrls,
+        ...(options.query.trim() ? { query: options.query.trim() } : {}),
+        max_bytes: 200_000,
+      }),
     })
   }
   if (mode === 'extract') {
@@ -378,10 +414,11 @@ function CrawlerResult({
 }) {
   const border = isDark ? 'border-white/10' : 'border-[#141414]/10'
   const softPanel = isDark ? 'bg-black/15' : 'bg-white/35'
-  const host = 'host' in result ? result.host : result.seed_host
-  const title = 'title' in result ? result.title : null
-  const canonicalUrl = 'canonical_url' in result ? result.canonical_url : result.seed_url
-  const cacheLabel = 'cache_hit' in result ? result.cache_hit ? 'cache hit' : 'cache miss' : 'map cache n/a'
+  const batch = isBatchResult(result)
+  const host = batch ? `${result.succeeded_count}/${result.result_count} succeeded` : 'host' in result ? result.host : result.seed_host
+  const title = batch ? 'Batch scrape complete' : 'title' in result ? result.title : null
+  const canonicalUrl = batch ? '' : 'canonical_url' in result ? result.canonical_url : result.seed_url
+  const cacheLabel = batch ? 'cache first' : 'cache_hit' in result ? result.cache_hit ? 'cache hit' : 'cache miss' : 'map cache n/a'
   const countLabel = resultCountLabel(result)
 
   return (
@@ -390,15 +427,17 @@ function CrawlerResult({
         <div className="min-w-0">
           <p className="text-[10px] font-mono uppercase tracking-widest opacity-45">Result summary</p>
           <p className="mt-1 truncate text-sm font-semibold">{title || host}</p>
-          <a
-            href={canonicalUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-xs opacity-65 hover:opacity-100"
-          >
-            <ExternalLink className="h-3 w-3 shrink-0" />
-            <span className="truncate">{canonicalUrl}</span>
-          </a>
+          {canonicalUrl && (
+            <a
+              href={canonicalUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-xs opacity-65 hover:opacity-100"
+            >
+              <ExternalLink className="h-3 w-3 shrink-0" />
+              <span className="truncate">{canonicalUrl}</span>
+            </a>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {[mode, cacheLabel, countLabel].map((item) => (
@@ -410,13 +449,20 @@ function CrawlerResult({
       </div>
 
       <div className="mt-3 grid gap-2 text-xs sm:grid-cols-4">
-        <ResultMetric label="Request" value={result.request_id.slice(0, 8)} />
+        <ResultMetric label={batch ? 'Batch' : 'Request'} value={(batch ? result.batch_id : result.request_id).slice(0, 8)} />
         <ResultMetric label="Host" value={host} />
-        <ResultMetric label="Fetched" value={'fetched_at' in result ? formatCrawlerDate(result.fetched_at) : `${result.page_count} pages`} />
+        <ResultMetric label="Fetched" value={batch ? `${result.blocked_count} blocked` : 'fetched_at' in result ? formatCrawlerDate(result.fetched_at) : `${result.page_count} pages`} />
         <ResultMetric label="Trust boundary" value={result.raw_web_content_is_untrusted ? 'untrusted web content' : 'trusted'} />
       </div>
 
       <div className="mt-3 grid gap-2 lg:grid-cols-2">
+        {batch && (
+          <details className={`rounded-lg border p-3 ${border}`}>
+            <summary className="cursor-pointer text-sm font-semibold">Batch URLs and evidence</summary>
+            <BatchScrapeSummary result={result} border={border} />
+          </details>
+        )}
+
         {isScrapeResult(result) && (
           <details className={`rounded-lg border p-3 ${border}`}>
             <summary className="cursor-pointer text-sm font-semibold">Text excerpt and links</summary>
@@ -519,6 +565,49 @@ function MapCrawlSummary({ result, border }: { result: BeaconCrawlerMapResponse;
       <p className="sm:col-span-2 opacity-60">
         Same-host crawl capped at {result.max_pages} pages and depth {result.max_depth}; forms and credential entry stay blocked.
       </p>
+    </div>
+  )
+}
+
+function BatchScrapeSummary({ result, border }: { result: BeaconCrawlerBatchScrapeResponse; border: string }) {
+  return (
+    <div className="mt-3 space-y-2 text-xs">
+      <div className="grid gap-2 sm:grid-cols-4">
+        <ResultMetric label="Succeeded" value={String(result.succeeded_count)} />
+        <ResultMetric label="Blocked" value={String(result.blocked_count)} />
+        <ResultMetric label="Failed" value={String(result.failed_count)} />
+        <ResultMetric label="Cap" value={`${result.max_urls} URLs`} />
+      </div>
+      <p className="opacity-60">
+        Batch scrape is cache-first, non-rendered, and capped to public read-only URLs.
+      </p>
+      {result.items.map((item, index) => (
+        <div key={`${item.url}-${index}`} className={`rounded border p-2 ${border}`}>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate font-semibold">{item.title || item.host || item.url}</p>
+              <a
+                href={item.canonical_url || item.url}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-flex max-w-full items-center gap-1 truncate opacity-65 hover:opacity-100"
+              >
+                <ExternalLink className="h-3 w-3 shrink-0" />
+                <span className="truncate">{item.canonical_url || item.url}</span>
+              </a>
+            </div>
+            <span className={`rounded border px-2 py-1 text-[10px] font-mono uppercase ${border}`}>
+              {item.status}
+            </span>
+          </div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            <ResultMetric label="Request" value={item.request_id ? item.request_id.slice(0, 8) : 'none'} />
+            <ResultMetric label="Cache" value={item.cache_hit == null ? 'cache n/a' : item.cache_hit ? 'cache hit' : 'cache miss'} />
+            <ResultMetric label="Issue" value={item.blocked_reasons.join(', ') || item.error_type || 'none'} />
+          </div>
+          {item.text && <p className="mt-2 line-clamp-3 whitespace-pre-wrap opacity-65">{item.text}</p>}
+        </div>
+      ))}
     </div>
   )
 }
@@ -714,6 +803,16 @@ function parseCrawlerUrl(value: string): { valid: boolean; host: string } {
   }
 }
 
+function parseBatchUrls(value: string): { urls: string[]; valid: boolean; overflow: boolean } {
+  const urls = Array.from(new Set(value.split(/\s+/).map((item) => item.trim()).filter(Boolean)))
+  const overflow = urls.length > 5
+  return {
+    urls: urls.slice(0, 5),
+    valid: !overflow && urls.every((item) => parseCrawlerUrl(item).valid),
+    overflow,
+  }
+}
+
 function clampNumber(value: string, min: number, max: number): number {
   const parsed = Number.parseInt(value, 10)
   if (Number.isNaN(parsed)) return min
@@ -721,6 +820,7 @@ function clampNumber(value: string, min: number, max: number): number {
 }
 
 function modeIcon(mode: BeaconCrawlerMode) {
+  if (mode === 'batch') return <FileSearch className="h-4 w-4" />
   if (mode === 'map' || mode === 'crawl') return <Network className="h-4 w-4" />
   if (mode === 'extract') return <FileSearch className="h-4 w-4" />
   if (mode === 'render') return <Camera className="h-4 w-4" />
@@ -728,9 +828,14 @@ function modeIcon(mode: BeaconCrawlerMode) {
 }
 
 function resultCountLabel(result: BeaconCrawlerResult): string {
+  if ('items' in result) return `${result.result_count} URLs`
   if ('fields' in result) return `${result.fields.length} fields`
   if ('page_count' in result) return `${result.page_count} pages · ${result.link_count} links`
   return `${result.links.length} links`
+}
+
+function isBatchResult(result: BeaconCrawlerResult): result is BeaconCrawlerBatchScrapeResponse {
+  return 'items' in result
 }
 
 function isScrapeResult(result: BeaconCrawlerResult): result is BeaconCrawlerScrapeResponse | BeaconCrawlerRenderResponse {
