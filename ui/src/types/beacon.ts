@@ -297,3 +297,81 @@ export interface BeaconBrowserApprovalResponse {
     }>
   }
 }
+
+export type BeaconCrawlerMode = 'scrape' | 'map' | 'crawl' | 'extract' | 'render'
+
+export interface BeaconCrawlerScrapeResponse {
+  request_id: string
+  cache_hit: boolean
+  canonical_url: string
+  host: string
+  title?: string | null
+  fetched_at: string
+  text: string
+  links: string[]
+  screenshot_ref?: string | null
+  content_hash: string
+  risk_markers: string[]
+  raw_web_content_is_untrusted: boolean
+}
+
+export interface BeaconCrawlerPage {
+  url: string
+  host: string
+  depth: number
+  status_code: number
+  fetched_at: string
+  content_hash: string
+  text: string
+  links: string[]
+  extractor: string
+  truncated: boolean
+  risk_markers: string[]
+}
+
+export interface BeaconCrawlerMapResponse {
+  request_id: string
+  seed_url: string
+  seed_host: string
+  page_count: number
+  link_count: number
+  max_pages: number
+  max_depth: number
+  pages: BeaconCrawlerPage[]
+  links: string[]
+  raw_web_content_is_untrusted: boolean
+}
+
+export interface BeaconCrawlerFieldEvidence {
+  field: string
+  found: boolean
+  value?: string | null
+  source_url: string
+  evidence_text?: string | null
+  start_char?: number | null
+  end_char?: number | null
+}
+
+export interface BeaconCrawlerExtractResponse {
+  request_id: string
+  cache_hit: boolean
+  canonical_url: string
+  host: string
+  fetched_at: string
+  fields: BeaconCrawlerFieldEvidence[]
+  raw_web_content_is_untrusted: boolean
+}
+
+export interface BeaconCrawlerRenderResponse extends BeaconCrawlerScrapeResponse {
+  approval_queue_id: string
+  evidence_path: string
+  audit_path: string
+  action_audit_count: number
+  evidence_source_count: number
+}
+
+export type BeaconCrawlerResult =
+  | BeaconCrawlerScrapeResponse
+  | BeaconCrawlerMapResponse
+  | BeaconCrawlerExtractResponse
+  | BeaconCrawlerRenderResponse
