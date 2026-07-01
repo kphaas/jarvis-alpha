@@ -283,6 +283,8 @@ def test_crawler_smoke_checks_four_endpoints_and_health(monkeypatch):
 
 
 def test_crawler_smoke_allows_warning_health_when_check_is_still_ok(monkeypatch):
+    # Advisory crawler warnings should not fail the smoke while the health
+    # contract still reports the crawler check itself as ok=true.
     def fake_call_json(method, base_url, path, token, body=None):
         if path == "/v1/internet-scout/health":
             return {
