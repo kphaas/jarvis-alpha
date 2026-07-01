@@ -1,12 +1,15 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  AlertTriangle,
   Camera,
+  Download,
   ExternalLink,
   FileSearch,
   Globe2,
   Loader2,
   Network,
+  RefreshCw,
   Search,
   ShieldCheck,
 } from 'lucide-react'
@@ -19,6 +22,8 @@ import type {
   BeaconCrawlerRenderResponse,
   BeaconCrawlerResult,
   BeaconCrawlerScrapeResponse,
+  BeaconRequestHistoryItem,
+  BeaconRequestHistoryResponse,
 } from '../../types/beacon'
 
 const CRAWLER_MODES: Array<{
@@ -52,6 +57,13 @@ export function BeaconCrawlerConsole({
   const [approvalQueueId, setApprovalQueueId] = useState('')
   const [approval, setApproval] = useState<BeaconBrowserApprovalResponse | null>(null)
   const [result, setResult] = useState<BeaconCrawlerResult | null>(null)
+  const [historyRows, setHistoryRows] = useState<BeaconRequestHistoryItem[]>([])
+  const [historyQuery, setHistoryQuery] = useState('alpha_ui.beacon_crawler')
+  const [historyStatus, setHistoryStatus] = useState('all')
+  const [historyLoaded, setHistoryLoaded] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState('')
+  const [exportingRequestId, setExportingRequestId] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const selectedMode = useMemo(
@@ -63,6 +75,39 @@ export function BeaconCrawlerConsole({
   const schemaFieldCount = Object.keys(schema).length
   const canRun = Boolean(url.trim() && parsedUrl.valid && !loading)
   const renderReadyToRun = mode === 'render' && Boolean(approvalQueueId.trim())
+
+  const fetchCrawlerHistory = useCallback(async () => {
+    setHistoryLoading(true)
+    setHistoryError('')
+    try {
+      const params = new URLSearchParams({
+        limit: '6',
+        q: historyQuery.trim() || 'alpha_ui.beacon_crawler',
+      })
+      if (historyStatus !== 'all') params.set('status', historyStatus)
+      const payload = await apiJson<BeaconRequestHistoryResponse>(`/v1/internet-scout/requests?${params.toString()}`)
+      setHistoryRows(payload.history ?? [])
+      setHistoryLoaded(true)
+    } catch (caught) {
+      setHistoryRows([])
+      setHistoryError(caught instanceof Error ? caught.message : 'Crawler history unavailable')
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [historyQuery, historyStatus])
+
+  const exportCrawlerEvidence = async (requestId: string) => {
+    setExportingRequestId(requestId)
+    setHistoryError('')
+    try {
+      const payload = await apiJson<unknown>(`/v1/internet-scout/requests/${requestId}`)
+      downloadJson(`beacon-crawler-evidence-${requestId.slice(0, 8)}.json`, payload)
+    } catch (caught) {
+      setHistoryError(caught instanceof Error ? caught.message : 'Crawler evidence export failed')
+    } finally {
+      setExportingRequestId('')
+    }
+  }
 
   const runCrawler = async () => {
     if (!canRun) return
@@ -199,43 +244,61 @@ export function BeaconCrawlerConsole({
           )}
         </div>
 
-        <details className={`rounded-lg border p-3 text-xs ${border} ${softPanel}`}>
-          <summary className="cursor-pointer font-semibold">Caps and schema</summary>
-          <div className="mt-3 grid gap-3">
-            <label>
-              <span className="text-[10px] font-mono uppercase tracking-widest opacity-45">Max pages</span>
-              <input
-                type="number"
-                min={1}
-                max={10}
-                value={maxPages}
-                onChange={(event) => setMaxPages(clampNumber(event.target.value, 1, 10))}
-                className={`mt-1 min-h-10 w-full rounded-lg border bg-transparent px-3 outline-none ${border}`}
-              />
-            </label>
-            <label>
-              <span className="text-[10px] font-mono uppercase tracking-widest opacity-45">Max depth</span>
-              <input
-                type="number"
-                min={0}
-                max={2}
-                value={maxDepth}
-                onChange={(event) => setMaxDepth(clampNumber(event.target.value, 0, 2))}
-                className={`mt-1 min-h-10 w-full rounded-lg border bg-transparent px-3 outline-none ${border}`}
-              />
-            </label>
-            <label>
-              <span className="text-[10px] font-mono uppercase tracking-widest opacity-45">Extract schema</span>
-              <textarea
-                value={schemaText}
-                onChange={(event) => setSchemaText(event.target.value)}
-                rows={3}
-                className={`mt-1 w-full resize-y rounded-lg border bg-transparent p-3 outline-none ${border}`}
-              />
-            </label>
-            <p className="font-mono text-[10px] uppercase opacity-55">{schemaFieldCount} fields parsed</p>
-          </div>
-        </details>
+        <div className="space-y-3">
+          <details className={`rounded-lg border p-3 text-xs ${border} ${softPanel}`}>
+            <summary className="cursor-pointer font-semibold">Caps and schema</summary>
+            <div className="mt-3 grid gap-3">
+              <label>
+                <span className="text-[10px] font-mono uppercase tracking-widest opacity-45">Max pages</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={maxPages}
+                  onChange={(event) => setMaxPages(clampNumber(event.target.value, 1, 10))}
+                  className={`mt-1 min-h-10 w-full rounded-lg border bg-transparent px-3 outline-none ${border}`}
+                />
+              </label>
+              <label>
+                <span className="text-[10px] font-mono uppercase tracking-widest opacity-45">Max depth</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={2}
+                  value={maxDepth}
+                  onChange={(event) => setMaxDepth(clampNumber(event.target.value, 0, 2))}
+                  className={`mt-1 min-h-10 w-full rounded-lg border bg-transparent px-3 outline-none ${border}`}
+                />
+              </label>
+              <label>
+                <span className="text-[10px] font-mono uppercase tracking-widest opacity-45">Extract schema</span>
+                <textarea
+                  value={schemaText}
+                  onChange={(event) => setSchemaText(event.target.value)}
+                  rows={3}
+                  className={`mt-1 w-full resize-y rounded-lg border bg-transparent p-3 outline-none ${border}`}
+                />
+              </label>
+              <p className="font-mono text-[10px] uppercase opacity-55">{schemaFieldCount} fields parsed</p>
+            </div>
+          </details>
+          <CrawlerHistoryExport
+            border={border}
+            softPanel={softPanel}
+            isDark={isDark}
+            rows={historyRows}
+            query={historyQuery}
+            status={historyStatus}
+            loaded={historyLoaded}
+            loading={historyLoading}
+            error={historyError}
+            exportingRequestId={exportingRequestId}
+            onQueryChange={setHistoryQuery}
+            onStatusChange={setHistoryStatus}
+            onRefresh={fetchCrawlerHistory}
+            onExport={exportCrawlerEvidence}
+          />
+        </div>
       </div>
 
       {error && <p className="mt-3 text-sm text-rose-500">{error}</p>}
@@ -365,6 +428,7 @@ function CrawlerResult({
         {isMapResult(result) && (
           <details className={`rounded-lg border p-3 ${border}`}>
             <summary className="cursor-pointer text-sm font-semibold">Pages and same-host links</summary>
+            <MapCrawlSummary result={result} border={border} />
             <div className="mt-3 space-y-2">
               {result.pages.map((page) => (
                 <div key={page.url} className={`rounded border p-2 text-xs ${border}`}>
@@ -375,7 +439,7 @@ function CrawlerResult({
                 </div>
               ))}
             </div>
-            <LinkList links={result.links} border={border} />
+            <GroupedLinkList links={result.links} border={border} />
           </details>
         )}
 
@@ -421,6 +485,44 @@ function ResultMetric({ label, value }: { label: string; value: string }) {
   )
 }
 
+function MapCrawlSummary({ result, border }: { result: BeaconCrawlerMapResponse; border: string }) {
+  const stopReasons = mapStopReasons(result)
+  const markers = mapRiskMarkers(result)
+
+  return (
+    <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+      <div className={`rounded border p-2 ${border}`}>
+        <p className="text-[10px] font-mono uppercase tracking-widest opacity-45">Why stopped</p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {stopReasons.map((reason) => (
+            <span key={reason} className={`rounded border px-2 py-1 text-[10px] font-mono uppercase ${border}`}>
+              {reason}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className={`rounded border p-2 ${border}`}>
+        <p className="text-[10px] font-mono uppercase tracking-widest opacity-45">Blocked / robots markers</p>
+        {markers.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {markers.map((marker) => (
+              <span key={marker} className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-mono uppercase text-amber-500 ${border}`}>
+                <AlertTriangle className="h-3 w-3" />
+                {marker}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-2 opacity-60">No blocked or robots markers reported.</p>
+        )}
+      </div>
+      <p className="sm:col-span-2 opacity-60">
+        Same-host crawl capped at {result.max_pages} pages and depth {result.max_depth}; forms and credential entry stay blocked.
+      </p>
+    </div>
+  )
+}
+
 function LinkList({ links, border }: { links: string[]; border: string }) {
   if (links.length === 0) return null
   return (
@@ -436,6 +538,157 @@ function LinkList({ links, border }: { links: string[]; border: string }) {
           {link}
         </a>
       ))}
+    </div>
+  )
+}
+
+function GroupedLinkList({ links, border }: { links: string[]; border: string }) {
+  const groups = groupLinksByHost(links)
+  if (groups.length === 0) return null
+  return (
+    <div className="mt-3 space-y-2">
+      <p className="text-[10px] font-mono uppercase tracking-widest opacity-45">Link groups by host</p>
+      {groups.slice(0, 6).map((group) => (
+        <details key={group.host} className={`rounded border p-2 text-xs ${border}`}>
+          <summary className="cursor-pointer font-semibold">
+            {group.host} · {group.links.length} links
+          </summary>
+          <LinkList links={group.links} border={border} />
+        </details>
+      ))}
+    </div>
+  )
+}
+
+function CrawlerHistoryExport({
+  border,
+  softPanel,
+  isDark,
+  rows,
+  query,
+  status,
+  loaded,
+  loading,
+  error,
+  exportingRequestId,
+  onQueryChange,
+  onStatusChange,
+  onRefresh,
+  onExport,
+}: {
+  border: string
+  softPanel: string
+  isDark: boolean
+  rows: BeaconRequestHistoryItem[]
+  query: string
+  status: string
+  loaded: boolean
+  loading: boolean
+  error: string
+  exportingRequestId: string
+  onQueryChange: (value: string) => void
+  onStatusChange: (value: string) => void
+  onRefresh: () => void
+  onExport: (requestId: string) => void
+}) {
+  return (
+    <details
+      className={`rounded-lg border p-3 text-xs ${border} ${softPanel}`}
+      onToggle={(event) => {
+        if (event.currentTarget.open && !loaded && !loading) onRefresh()
+      }}
+    >
+      <summary className="cursor-pointer font-semibold">Crawler history and export</summary>
+      <div className="mt-3 grid gap-2">
+        <input
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          placeholder="Search crawler request, host, status"
+          className={`min-h-10 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
+        />
+        <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+          <select
+            value={status}
+            onChange={(event) => onStatusChange(event.target.value)}
+            className={`min-h-10 rounded-lg border bg-transparent px-3 text-sm outline-none ${border}`}
+          >
+            <option value="all">All status</option>
+            <option value="succeeded">Succeeded</option>
+            <option value="running">Running</option>
+            <option value="failed">Failed</option>
+            <option value="blocked">Blocked</option>
+          </select>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border px-3 text-sm disabled:opacity-45 ${border}`}
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+        {error && <p className="text-sm text-rose-500">{error}</p>}
+        {loading && <p className="text-sm opacity-55">Loading crawler history.</p>}
+        {!loading && loaded && rows.length === 0 && (
+          <p className="text-sm opacity-55">No crawler runs match this view.</p>
+        )}
+        {!loading && rows.map((item) => (
+          <CrawlerHistoryRow
+            key={item.request_id}
+            item={item}
+            border={border}
+            isDark={isDark}
+            exporting={exportingRequestId === item.request_id}
+            onExport={onExport}
+          />
+        ))}
+      </div>
+    </details>
+  )
+}
+
+function CrawlerHistoryRow({
+  item,
+  border,
+  isDark,
+  exporting,
+  onExport,
+}: {
+  item: BeaconRequestHistoryItem
+  border: string
+  isDark: boolean
+  exporting: boolean
+  onExport: (requestId: string) => void
+}) {
+  const operation = item.crawler_operation || item.latest_event_type?.replaceAll('_', ' ') || 'crawler'
+  const cache = item.crawler_cache_hit == null ? 'cache n/a' : item.crawler_cache_hit ? 'cache hit' : 'cache miss'
+  const blocked = item.crawler_blocked_reasons?.join(', ') || item.crawler_error_type || 'no block'
+
+  return (
+    <div className={`rounded border p-2 ${border} ${isDark ? 'bg-black/15' : 'bg-white/35'}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate font-semibold">{operation} · {item.status}</p>
+          <p className="mt-0.5 font-mono text-[10px] uppercase opacity-50">
+            {item.request_id.slice(0, 8)} · {formatCrawlerDate(item.created_at)}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onExport(item.request_id)}
+          disabled={exporting}
+          className={`inline-flex min-h-9 items-center gap-2 rounded border px-2 text-[10px] font-mono uppercase disabled:opacity-45 ${border}`}
+        >
+          {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+          Export evidence
+        </button>
+      </div>
+      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+        <ResultMetric label="Cache" value={cache} />
+        <ResultMetric label="Pages / links" value={`${item.crawler_page_count ?? 0}p · ${item.crawler_link_count ?? 0} links`} />
+        <ResultMetric label="Blocked" value={blocked} />
+      </div>
     </div>
   )
 }
@@ -494,6 +747,56 @@ function isExtractResult(result: BeaconCrawlerResult): result is BeaconCrawlerEx
 
 function isRenderResult(result: BeaconCrawlerResult): result is BeaconCrawlerRenderResponse {
   return 'audit_path' in result
+}
+
+function groupLinksByHost(links: string[]): Array<{ host: string; links: string[] }> {
+  const groups = new Map<string, string[]>()
+  for (const link of links) {
+    const host = linkHost(link)
+    groups.set(host, [...(groups.get(host) ?? []), link])
+  }
+  return [...groups.entries()].map(([host, groupLinks]) => ({ host, links: groupLinks }))
+}
+
+function linkHost(link: string): string {
+  try {
+    return new URL(link).host.toLowerCase()
+  } catch {
+    return 'unparsed'
+  }
+}
+
+function mapStopReasons(result: BeaconCrawlerMapResponse): string[] {
+  const reasons: string[] = []
+  const deepest = Math.max(0, ...result.pages.map((page) => page.depth))
+  if (result.page_count >= result.max_pages) reasons.push(`page cap ${result.max_pages}`)
+  if (deepest >= result.max_depth) reasons.push(`depth cap d${result.max_depth}`)
+  if (result.links.length === 0) reasons.push('no same-host links')
+  if (result.page_count === 0) reasons.push('no pages fetched')
+  return reasons.length > 0 ? reasons : ['completed within caps']
+}
+
+function mapRiskMarkers(result: BeaconCrawlerMapResponse): string[] {
+  return [
+    ...new Set(
+      result.pages.flatMap((page) => [
+        ...page.risk_markers,
+        ...(page.truncated ? ['page_truncated'] : []),
+      ]),
+    ),
+  ].slice(0, 8)
+}
+
+function downloadJson(filename: string, payload: unknown) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: 'application/json',
+  })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
 function formatCrawlerDate(value: string): string {

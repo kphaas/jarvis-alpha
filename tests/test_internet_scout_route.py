@@ -338,27 +338,36 @@ class FakeRequestHistoryConn:
                 "source_hosts": ["docs.example.test", "status.example.test"],
                 "latest_event_type": "gateway_call",
                 "latest_event_status": "succeeded",
+                "latest_event_metadata": {},
             },
             {
                 "request_id": uuid4(),
-                "requester": "alpha_ui.beacon_browser_action",
-                "selected_tool": "browser_use",
+                "requester": "alpha_ui.beacon_crawler.crawl",
+                "selected_tool": "crawl",
                 "sensitivity": "normal",
-                "status": "blocked",
-                "risk_tier": "T5",
+                "status": "succeeded",
+                "risk_tier": "T1",
                 "created_at": datetime(2026, 6, 18, 12, 5, tzinfo=UTC),
                 "updated_at": datetime(2026, 6, 18, 12, 5, tzinfo=UTC),
                 "has_query": False,
                 "url_count": 1,
-                "max_pages": 1,
-                "max_depth": 0,
-                "needs_interaction": True,
-                "source_count": 0,
-                "claim_count": 0,
-                "event_count": 1,
-                "source_hosts": [],
-                "latest_event_type": "approval_request",
-                "latest_event_status": "blocked",
+                "max_pages": 3,
+                "max_depth": 1,
+                "needs_interaction": False,
+                "source_count": 2,
+                "claim_count": 2,
+                "event_count": 2,
+                "source_hosts": ["public.example.test"],
+                "latest_event_type": "crawler_crawl",
+                "latest_event_status": "succeeded",
+                "latest_event_metadata": {
+                    "operation": "crawl",
+                    "cache_hit": False,
+                    "page_count": 2,
+                    "link_count": 4,
+                    "blocked_reasons": ["robots_blocked"],
+                    "error_type": "ignored",
+                },
             },
         ]
 
@@ -942,8 +951,13 @@ async def test_internet_scout_request_history_returns_saved_requests(monkeypatch
     assert response.history[0].source_count == 3
     assert response.history[0].claim_count == 5
     assert response.history[0].latest_event_type == "gateway_call"
-    assert response.history[1].selected_tool == "browser_use"
-    assert response.history[1].needs_interaction is True
+    assert response.history[1].selected_tool == "crawl"
+    assert response.history[1].crawler_operation == "crawl"
+    assert response.history[1].crawler_cache_hit is False
+    assert response.history[1].crawler_page_count == 2
+    assert response.history[1].crawler_link_count == 4
+    assert response.history[1].crawler_blocked_reasons == ["robots_blocked"]
+    assert response.history[1].crawler_error_type == "ignored"
 
 
 @pytest.mark.asyncio
