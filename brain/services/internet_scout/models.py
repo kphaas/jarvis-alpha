@@ -503,6 +503,12 @@ class InternetScoutRequestHistoryItem(BaseModel):
     source_hosts: list[str] = Field(default_factory=list, max_length=20)
     latest_event_type: str | None = Field(default=None, max_length=64)
     latest_event_status: str | None = Field(default=None, max_length=64)
+    crawler_operation: str | None = Field(default=None, max_length=32)
+    crawler_cache_hit: bool | None = None
+    crawler_page_count: int = Field(default=0, ge=0, le=50)
+    crawler_link_count: int = Field(default=0, ge=0, le=500)
+    crawler_blocked_reasons: list[str] = Field(default_factory=list, max_length=10)
+    crawler_error_type: str | None = Field(default=None, max_length=80)
 
 
 class InternetScoutRequestHistoryResponse(BaseModel):

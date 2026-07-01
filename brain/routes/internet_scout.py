@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -1223,7 +1223,8 @@ async def internet_scout_request_history(
                 COALESCE(source_summary.source_hosts, ARRAY[]::text[])
                     AS source_hosts,
                 latest_event.event_type AS latest_event_type,
-                latest_event.status AS latest_event_status
+                latest_event.status AS latest_event_status,
+                latest_event.metadata AS latest_event_metadata
             FROM public.alpha_internet_requests AS request
             LEFT JOIN LATERAL (
                 SELECT COUNT(*)::integer AS source_count,
@@ -1248,7 +1249,7 @@ async def internet_scout_request_history(
                 WHERE event.request_id = request.id
             ) AS event_summary ON true
             LEFT JOIN LATERAL (
-                SELECT event.event_type, event.status
+                SELECT event.event_type, event.status, event.metadata
                 FROM public.alpha_internet_tool_events AS event
                 WHERE event.request_id = request.id
                 ORDER BY event.created_at DESC, event.id DESC
@@ -1306,30 +1307,44 @@ async def internet_scout_request_history(
         )
 
     page_rows = rows[:safe_limit]
-    history = [
-        InternetScoutRequestHistoryItem(
-            request_id=row["request_id"],
-            requester=row["requester"],
-            selected_tool=row["selected_tool"],
-            sensitivity=row["sensitivity"],
-            status=row["status"],
-            risk_tier=row["risk_tier"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-            has_query=bool(row["has_query"]),
-            url_count=int(row["url_count"] or 0),
-            max_pages=int(row["max_pages"] or 1),
-            max_depth=int(row["max_depth"] or 0),
-            needs_interaction=bool(row["needs_interaction"]),
-            source_count=int(row["source_count"] or 0),
-            claim_count=int(row["claim_count"] or 0),
-            event_count=int(row["event_count"] or 0),
-            source_hosts=list(row["source_hosts"] or []),
-            latest_event_type=row["latest_event_type"],
-            latest_event_status=row["latest_event_status"],
+    history: list[InternetScoutRequestHistoryItem] = []
+    for row in page_rows:
+        metadata = _event_metadata(row["latest_event_metadata"])
+        history.append(
+            InternetScoutRequestHistoryItem(
+                request_id=row["request_id"],
+                requester=row["requester"],
+                selected_tool=row["selected_tool"],
+                sensitivity=row["sensitivity"],
+                status=row["status"],
+                risk_tier=row["risk_tier"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+                has_query=bool(row["has_query"]),
+                url_count=int(row["url_count"] or 0),
+                max_pages=int(row["max_pages"] or 1),
+                max_depth=int(row["max_depth"] or 0),
+                needs_interaction=bool(row["needs_interaction"]),
+                source_count=int(row["source_count"] or 0),
+                claim_count=int(row["claim_count"] or 0),
+                event_count=int(row["event_count"] or 0),
+                source_hosts=list(row["source_hosts"] or []),
+                latest_event_type=row["latest_event_type"],
+                latest_event_status=row["latest_event_status"],
+                crawler_operation=_event_metadata_str(
+                    metadata, "operation", max_len=32
+                ),
+                crawler_cache_hit=_event_metadata_bool(metadata, "cache_hit"),
+                crawler_page_count=_event_metadata_int(metadata, "page_count"),
+                crawler_link_count=_event_metadata_int(metadata, "link_count"),
+                crawler_blocked_reasons=_event_metadata_list(
+                    metadata, "blocked_reasons", limit=10, max_len=80
+                ),
+                crawler_error_type=_event_metadata_str(
+                    metadata, "error_type", max_len=80
+                ),
+            )
         )
-        for row in page_rows
-    ]
     return InternetScoutRequestHistoryResponse(
         history=history,
         count=len(history),
@@ -1337,6 +1352,61 @@ async def internet_scout_request_history(
         offset=safe_offset,
         has_more=len(rows) > safe_limit,
     )
+
+
+def _event_metadata(value: object) -> dict[str, object]:
+    if isinstance(value, Mapping):
+        return dict(value)
+    return {}
+
+
+def _event_metadata_bool(
+    metadata: dict[str, object],
+    key: str,
+) -> bool | None:
+    value = metadata.get(key)
+    return value if isinstance(value, bool) else None
+
+
+def _event_metadata_int(
+    metadata: dict[str, object],
+    key: str,
+) -> int:
+    value = metadata.get(key)
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return max(value, 0)
+    return 0
+
+
+def _event_metadata_str(
+    metadata: dict[str, object],
+    key: str,
+    *,
+    max_len: int,
+) -> str | None:
+    value = metadata.get(key)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip()[:max_len]
+
+
+def _event_metadata_list(
+    metadata: dict[str, object],
+    key: str,
+    *,
+    limit: int,
+    max_len: int,
+) -> list[str]:
+    value = metadata.get(key)
+    if not isinstance(value, list):
+        return []
+    return [
+        item.strip()[:max_len]
+        for item in value[:limit]
+        if isinstance(item, str) and item.strip()
+    ]
 
 
 @router.get("/requests/{request_id}", response_model=InternetScoutStoredResponse)

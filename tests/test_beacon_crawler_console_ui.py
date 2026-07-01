@@ -45,6 +45,10 @@ def test_crawler_console_surfaces_compact_results_and_safety_context() -> None:
     assert "Result summary" in console
     assert "Text excerpt and links" in console
     assert "Pages and same-host links" in console
+    assert "Why stopped" in console
+    assert "Link groups by host" in console
+    assert "Blocked / robots markers" in console
+    assert "Same-host crawl capped" in console
     assert "Fields and evidence" in console
     assert "Render evidence" in console
     assert "raw_web_content_is_untrusted" in console
@@ -52,3 +56,17 @@ def test_crawler_console_surfaces_compact_results_and_safety_context() -> None:
     assert "BeaconCrawlerRenderResponse" in types
     assert "evidence_path" in types
     assert "audit_path" in types
+
+
+def test_crawler_console_has_history_search_and_evidence_export() -> None:
+    console = CRAWLER_CONSOLE.read_text(encoding="utf-8")
+    types = BEACON_TYPES.read_text(encoding="utf-8")
+
+    assert "Crawler history and export" in console
+    assert "/v1/internet-scout/requests?" in console
+    assert "/v1/internet-scout/requests/${requestId}" in console
+    assert "Search crawler request, host, status" in console
+    assert "Export evidence" in console
+    assert "beacon-crawler-evidence-" in console
+    assert "crawler_cache_hit" in types
+    assert "crawler_blocked_reasons" in types

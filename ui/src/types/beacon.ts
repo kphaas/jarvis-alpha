@@ -255,6 +255,12 @@ export interface BeaconRequestHistoryItem {
   source_hosts: string[]
   latest_event_type?: string | null
   latest_event_status?: string | null
+  crawler_operation?: string | null
+  crawler_cache_hit?: boolean | null
+  crawler_page_count?: number
+  crawler_link_count?: number
+  crawler_blocked_reasons?: string[]
+  crawler_error_type?: string | null
 }
 
 export interface BeaconRequestHistoryResponse {
