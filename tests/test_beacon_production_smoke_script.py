@@ -241,6 +241,7 @@ def test_crawler_smoke_checks_four_endpoints_and_health(monkeypatch):
             return {
                 "checks": {
                     "crawler": {
+                        "ok": True,
                         "status": "ok",
                         "metadata": {
                             "request_count": 4,
@@ -279,6 +280,71 @@ def test_crawler_smoke_checks_four_endpoints_and_health(monkeypatch):
     assert calls[0][2]["max_bytes"] == 200_000
     assert calls[1][2]["urls"] == ["https://example.com/"]
     assert calls[2][2]["max_pages"] == 1
+
+
+def test_crawler_smoke_allows_warning_health_when_check_is_still_ok(monkeypatch):
+    # Advisory crawler warnings should not fail the smoke while the health
+    # contract still reports the crawler check itself as ok=true.
+    def fake_call_json(method, base_url, path, token, body=None):
+        if path == "/v1/internet-scout/health":
+            return {
+                "checks": {
+                    "crawler": {
+                        "ok": True,
+                        "status": "warning",
+                        "metadata": {
+                            "request_count": 4,
+                            "failed_request_count": 0,
+                            "blocked_host_count": 0,
+                        },
+                    }
+                }
+            }
+        if path == "/v1/internet-scout/crawler/batch-scrape":
+            return {
+                "batch_id": "batch-1",
+                "items": [{"url": "https://example.com/", "status": "succeeded"}],
+                "succeeded_count": 1,
+            }
+        if path in {
+            "/v1/internet-scout/crawler/map",
+            "/v1/internet-scout/crawler/crawl",
+        }:
+            return {
+                "request_id": path.rsplit("/", 1)[-1] + "-1",
+                "seed_url": "https://example.com/",
+                "seed_host": "example.com",
+                "page_count": 1,
+                "link_count": 0,
+                "links": [],
+            }
+        if path == "/v1/internet-scout/crawler/extract":
+            return {
+                "request_id": "extract-1",
+                "canonical_url": "https://example.com/",
+                "host": "example.com",
+                "fields": [{"field": "domain", "found": True}],
+            }
+        if path == "/v1/internet-scout/crawler/scrape":
+            return {
+                "request_id": "scrape-1",
+                "canonical_url": "https://example.com/",
+                "host": "example.com",
+                "text": "Example Domain",
+                "content_hash": "a" * 64,
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(smoke_beacon_production, "_call_json", fake_call_json)
+
+    result = smoke_beacon_production._run_crawler_smoke(
+        "https://alpha.example.test",
+        "token",
+    )
+
+    assert result["health_status"] == "warning"
+    assert result["failed_request_count"] == 0
+    assert result["blocked_host_count"] == 0
 
 
 def test_browser_click_smoke_approves_runs_and_checks_history(monkeypatch):
