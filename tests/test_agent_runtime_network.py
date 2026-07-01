@@ -1,3 +1,19 @@
+from datetime import UTC, datetime
+import json
+import os
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import UUID
+
+import pytest
+
+os.environ.setdefault("ALPHA_DB_DSN", "postgresql://user:pass@localhost/db")
+os.environ.setdefault("ALPHA_DB_DSN_WRITER", "postgresql://user:pass@localhost/db")
+os.environ.setdefault("ALPHA_DB_DSN_BUDDY", "postgresql://user:pass@localhost/db")
+os.environ.setdefault("ALPHA_GATEWAY_URL", "http://127.0.0.1:8283")
+os.environ.setdefault("OLLAMA_URL", "http://127.0.0.1:11434")
+
+from brain.agents import chatops_smoke
 from brain.agents.manual_run import manual_run_eligibility
 from brain.agents.porchlight import DEFAULT_PORCHLIGHT_INTERVAL_SECONDS
 from brain.agents.chatops_smoke import format_chatops_smoke_message
@@ -10,6 +26,7 @@ from brain.agents.network_watchdog import (
 )
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
 from brain.ports.network import NetworkClients, NetworkHealth, WanStatus
+from brain.services import agent_workspace
 
 
 def test_unifi_payload_models_accept_gateway_shapes():
@@ -215,6 +232,55 @@ def test_chatops_smoke_message_is_compact():
     assert "pending approvals 1" in message
 
 
+@pytest.mark.asyncio
+async def test_chatops_smoke_persists_workspace_snapshot_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    backend = agent_workspace.LocalWorkspaceBackend(tmp_path)
+    conn = _FakeChatopsWorkspaceConn()
+
+    async def fake_emit_agent_event(event, *, pool=None):
+        return SimpleNamespace(event_id="evt-123")
+
+    async def fake_collect_chatops_health(pool):
+        return {
+            "checked_at": "2026-07-01T12:00:00+00:00",
+            "active_agents": 2,
+            "enabled_agents": 2,
+            "total_agents": 3,
+            "failed_notifications_24h": 0,
+            "pending_notifications_24h": 1,
+            "pending_approvals": 0,
+        }
+
+    monkeypatch.setattr(chatops_smoke, "emit_agent_event", fake_emit_agent_event)
+    monkeypatch.setattr(
+        chatops_smoke, "collect_chatops_health", fake_collect_chatops_health
+    )
+    monkeypatch.setattr(chatops_smoke, "get_workspace_backend", lambda: backend)
+    monkeypatch.setattr(
+        chatops_smoke, "platform_admin_connection", lambda **kwargs: _FakeRls(conn)
+    )
+
+    run_id = UUID("77777777-7777-7777-7777-777777777777")
+    out = await chatops_smoke._emit_smoke_event(object(), run_id)
+
+    workspace_root = tmp_path / str(run_id)
+    artifact_path = workspace_root / "outputs" / "chatops_smoke_snapshot.json"
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    assert out["event_id"] == "evt-123"
+    assert out["artifact_error"] is None
+    assert out["artifact"] is not None
+    assert out["artifact"]["relative_path"] == "outputs/chatops_smoke_snapshot.json"
+    assert payload["agent_id"] == "chatops_smoke"
+    assert payload["run_id"] == str(run_id)
+    assert payload["snapshot"]["pending_notifications_24h"] == 1
+    assert conn.workspace_update_count == 1
+    assert conn.inserted_artifact_relative_path == "outputs/chatops_smoke_snapshot.json"
+
+
 def test_unifi_health_route_is_read_classified():
     classes = classify_route("GET", "/v1/unifi/health-check")
 
@@ -299,3 +365,47 @@ def test_porchlight_manual_run_allowed_but_keyturner_is_approval_gated():
 
 def test_porchlight_default_schedule_is_daily():
     assert DEFAULT_PORCHLIGHT_INTERVAL_SECONDS == 86400
+
+
+class _FakeChatopsWorkspaceConn:
+    def __init__(self) -> None:
+        self.workspace_root = ""
+        self.workspace_update_count = 0
+        self.inserted_artifact_relative_path: str | None = None
+
+    async def fetchrow(self, query: str, *args: object):
+        if "FROM public.alpha_agent_runs" in query:
+            return {
+                "id": args[0],
+                "agent_id": "chatops_smoke",
+                "created_at": datetime(2026, 7, 1, 12, 0, tzinfo=UTC),
+                "workspace_backend": "local",
+                "workspace_root": self.workspace_root,
+                "policy_labels": '["ops.read_only"]',
+                "approval_scope": None,
+                "retention_class": "standard",
+            }
+        raise AssertionError(query)
+
+    async def execute(self, query: str, *args: object):
+        if "UPDATE public.alpha_agent_runs" in query:
+            self.workspace_update_count += 1
+            self.workspace_root = str(args[2])
+            return "UPDATE 1"
+        if "INSERT INTO public.alpha_agent_run_artifacts" in query:
+            self.inserted_artifact_relative_path = str(args[3])
+            return "INSERT 0 1"
+        if "DELETE FROM public.alpha_agent_run_artifacts" in query:
+            return "DELETE 0"
+        raise AssertionError(query)
+
+
+class _FakeRls:
+    def __init__(self, conn: _FakeChatopsWorkspaceConn) -> None:
+        self.conn = conn
+
+    async def __aenter__(self) -> _FakeChatopsWorkspaceConn:
+        return self.conn
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
