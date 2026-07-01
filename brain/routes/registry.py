@@ -321,7 +321,9 @@ def _agent_run_from_row(row) -> AgentRunOut:
         cost_usd=float(row["cost_usd"] or 0),
         error_text=row["error_text"],
         workspace_backend=row["workspace_backend"],
-        workspace_uri=backend.workspace_uri(row["id"]) if workspace_initialized else None,
+        workspace_uri=backend.workspace_uri(row["id"])
+        if workspace_initialized
+        else None,
         workspace_state=backend.workspace_state(
             created_at=row["created_at"],
             retention_class=row["retention_class"],
@@ -410,14 +412,18 @@ def _artifact_preview_from_record(
     )
 
 
-def _raw_access_mode(approval_scope: str | None) -> Literal["inline_ok", "download_only"]:
+def _raw_access_mode(
+    approval_scope: str | None,
+) -> Literal["inline_ok", "download_only"]:
     return "download_only" if str(approval_scope or "").strip() else "inline_ok"
 
 
 def _previewable_content_type(content_type: str) -> bool:
     clean = str(content_type or "").strip().lower()
-    return clean.startswith("text/") or clean == "application/json" or clean.endswith(
-        "+json"
+    return (
+        clean.startswith("text/")
+        or clean == "application/json"
+        or clean.endswith("+json")
     )
 
 

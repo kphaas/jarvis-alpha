@@ -289,7 +289,9 @@ async def test_get_agent_run_artifact_content_reads_workspace_file(
 
     assert response.media_type == "application/json"
     assert response.body == b'{"ok":true}\n'
-    assert response.headers["content-disposition"] == 'attachment; filename="report.json"'
+    assert (
+        response.headers["content-disposition"] == 'attachment; filename="report.json"'
+    )
 
 
 @pytest.mark.asyncio

@@ -394,7 +394,9 @@ class LocalWorkspaceBackend:
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
             raise WorkspacePathError("artifact path already exists")
-        current_usage = self.workspace_usage_bytes(run_id, workspace_root=workspace_root)
+        current_usage = self.workspace_usage_bytes(
+            run_id, workspace_root=workspace_root
+        )
         staged_path = target.with_name(f".{target.name}.{uuid4().hex}.upload")
         sha256 = hashlib.sha256()
         size_bytes = 0
