@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
+  XCircle,
   Eye,
   Globe2,
   MousePointerClick,
@@ -80,6 +81,17 @@ function policyBoolLabel(value: unknown, yes: string, no: string): string {
   return 'not reported'
 }
 
+function guardRailClass(safe: boolean, isDark: boolean): string {
+  if (safe) {
+    return isDark
+      ? 'border-emerald-400/25 bg-emerald-500/10 text-emerald-100'
+      : 'border-emerald-300 bg-emerald-50 text-emerald-950'
+  }
+  return isDark
+    ? 'border-amber-400/25 bg-amber-500/10 text-amber-100'
+    : 'border-amber-300 bg-amber-50 text-amber-950'
+}
+
 export function BeaconBrowserApprovalPanel({
   beacon,
   isDark,
@@ -98,12 +110,31 @@ export function BeaconBrowserApprovalPanel({
     ? 'bg-cyan-500/10 border-cyan-400/25 text-cyan-100'
     : 'bg-cyan-50 border-cyan-300 text-cyan-900'
   const muted = isDark ? 'text-white/55' : 'text-[#141414]/55'
-  const safeCallout = isDark
-    ? 'bg-emerald-500/10 border-emerald-400/25 text-emerald-100'
-    : 'bg-emerald-50 border-emerald-300 text-emerald-950'
-  const cautionCallout = isDark
-    ? 'bg-amber-500/10 border-amber-400/25 text-amber-100'
-    : 'bg-amber-50 border-amber-300 text-amber-950'
+  const safeCallout = guardRailClass(true, isDark)
+  const cautionCallout = guardRailClass(false, isDark)
+  const primaryTarget = clickTargets[0]
+  const guardRailRows = [
+    {
+      label: 'Click-only',
+      value: beacon.needs_interaction ? 'one reviewed click' : 'observe only',
+      safe: true,
+    },
+    {
+      label: 'Same-host',
+      value: beacon.same_host_required ? 'locked' : 'not locked',
+      safe: beacon.same_host_required,
+    },
+    {
+      label: 'Credentials',
+      value: beacon.credential_entry_allowed ? 'not enforced' : 'blocked',
+      safe: !beacon.credential_entry_allowed,
+    },
+    {
+      label: 'Screenshots',
+      value: beacon.screenshots_required ? 'required' : 'optional',
+      safe: beacon.screenshots_required,
+    },
+  ]
 
   const capabilityRows = [
     ['Downloads', beacon.downloads_allowed ? 'allowed' : 'blocked'],
@@ -185,7 +216,7 @@ export function BeaconBrowserApprovalPanel({
   ]
 
   return (
-    <div className={`rounded-xl border p-3 space-y-3 ${card}`}>
+    <div className={`rounded-lg border p-3 space-y-3 ${card}`}>
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="flex items-start gap-2">
           <MousePointerClick className="w-4 h-4 mt-0.5 shrink-0 text-cyan-400" />
@@ -205,6 +236,15 @@ export function BeaconBrowserApprovalPanel({
         </div>
       </div>
 
+      <div className="grid gap-2 sm:grid-cols-4">
+        {guardRailRows.map((row) => (
+          <div key={row.label} className={`rounded-md border px-2.5 py-2 text-[11px] ${guardRailClass(row.safe, isDark)}`}>
+            <div className="font-mono text-[10px] uppercase opacity-70">{row.label}</div>
+            <div className="mt-0.5 font-bold">{row.value}</div>
+          </div>
+        ))}
+      </div>
+
       <div className={`rounded-lg border p-3 ${card}`}>
         <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold">
           <Eye className="h-3.5 w-3.5 text-cyan-400" />
@@ -214,9 +254,7 @@ export function BeaconBrowserApprovalPanel({
           {reviewSummaryRows.map((row) => (
             <div
               key={row.label}
-              className={`rounded-md border px-2.5 py-2 text-[11px] ${
-                row.safe ? safeCallout : cautionCallout
-              }`}
+              className={`rounded-md border px-2.5 py-2 text-[11px] ${guardRailClass(row.safe, isDark)}`}
             >
               <div className="font-mono text-[10px] uppercase opacity-70">
                 {row.label}
@@ -227,7 +265,7 @@ export function BeaconBrowserApprovalPanel({
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
         <div className={`rounded-lg border p-3 space-y-2 ${card}`}>
           <div className="flex items-center gap-1.5 text-[11px] font-bold">
             <Globe2 className="w-3.5 h-3.5 text-cyan-400" />
@@ -266,9 +304,7 @@ export function BeaconBrowserApprovalPanel({
             {screenshotRows.map((row) => (
               <div
                 key={row.label}
-                className={`rounded-md border px-2 py-1.5 text-[11px] ${
-                  row.safe ? safeCallout : cautionCallout
-                }`}
+                className={`rounded-md border px-2 py-1.5 text-[11px] ${guardRailClass(row.safe, isDark)}`}
               >
                 <div className="font-mono text-[10px] uppercase opacity-70">
                   {row.label}
@@ -319,6 +355,72 @@ export function BeaconBrowserApprovalPanel({
         </div>
       </div>
 
+      {(clickTargets.length > 0 || beacon.needs_interaction) && (
+        <div className={`rounded-lg border p-3 ${card}`}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold">
+                <MousePointerClick className="h-3.5 w-3.5 text-cyan-400" />
+                Click target review
+              </div>
+              <div className={`mt-1 text-[11px] ${muted}`}>
+                {clickTargets.length > 0
+                  ? 'Only listed selectors can run after approval.'
+                  : 'Interaction requested, but no click targets were reported.'}
+              </div>
+            </div>
+            <span className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-mono ${clickTargets.length > 0 ? chip : cautionCallout}`}>
+              {clickTargets.length} target{clickTargets.length === 1 ? '' : 's'}
+            </span>
+          </div>
+
+          {primaryTarget ? (
+            <div className={`mt-3 rounded-md border p-2 text-[11px] ${isDark ? 'bg-white/5' : 'bg-[#141414]/5'} ${isDark ? 'border-white/10' : 'border-[#141414]/10'}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-bold">{primaryTarget.label || 'Target 1'}</div>
+                  <div className={`mt-1 truncate font-mono ${muted}`} title={primaryTarget.selector}>
+                    {primaryTarget.selector}
+                  </div>
+                </div>
+                {primaryTarget.expected_host && (
+                  <span className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] ${chip}`}>
+                    expected host {primaryTarget.expected_host}
+                  </span>
+                )}
+              </div>
+              {primaryTarget.expected_host && (
+                <div className={`mt-1 font-mono ${muted}`}>same host only</div>
+              )}
+              {clickTargets.length > 1 && (
+                <details className="mt-2">
+                  <summary className={`cursor-pointer select-none font-bold ${muted}`}>
+                    Show {clickTargets.length - 1} more target{clickTargets.length === 2 ? '' : 's'}
+                  </summary>
+                  <div className="mt-2 grid gap-2">
+                    {clickTargets.slice(1).map((target, index) => (
+                      <div key={`${target.selector}-${index}`} className={`rounded border px-2 py-1.5 ${isDark ? 'border-white/10' : 'border-[#141414]/10'}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="font-bold">{target.label || `Target ${index + 2}`}</span>
+                          {target.expected_host && <span className={`font-mono text-[10px] ${muted}`}>expected host {target.expected_host}</span>}
+                        </div>
+                        <div className={`mt-1 truncate font-mono ${muted}`} title={target.selector}>
+                          {target.selector}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          ) : (
+            <div className={`mt-3 rounded-md border px-2 py-1.5 text-[11px] ${cautionCallout}`}>
+              Interaction requested, but no click targets were reported.
+            </div>
+          )}
+        </div>
+      )}
+
       <div className={`rounded-lg border p-3 space-y-2 ${card}`}>
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 text-[11px] font-bold">
@@ -361,40 +463,6 @@ export function BeaconBrowserApprovalPanel({
         </div>
       </div>
 
-      {(clickTargets.length > 0 || beacon.needs_interaction) && (
-        <details open className={`rounded-lg border p-3 ${card}`}>
-          <summary className="cursor-pointer text-[11px] font-bold">
-            Click target review · {clickTargets.length} approved
-          </summary>
-          {clickTargets.length > 0 ? (
-            <div className="mt-2 grid gap-2 md:grid-cols-2">
-              {clickTargets.map((target, index) => (
-                <div key={`${target.selector}-${index}`} className={`rounded-md border p-2 text-[11px] ${card}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="font-bold">{target.label || `Target ${index + 1}`}</div>
-                    {target.expected_host && (
-                      <span className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] ${chip}`}>
-                        {target.expected_host}
-                      </span>
-                    )}
-                  </div>
-                  <div className={`mt-1 rounded border px-2 py-1 font-mono break-all ${muted}`}>
-                    {target.selector}
-                  </div>
-                  {target.expected_host && (
-                    <div className={`mt-1 font-mono ${muted}`}>expected host: {target.expected_host} · same host only</div>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className={`mt-2 rounded-md border px-2 py-1.5 text-[11px] ${cautionCallout}`}>
-              Interaction requested, but no click targets were reported.
-            </div>
-          )}
-        </details>
-      )}
-
       <div className={`rounded-lg border p-3 text-[11px] ${safeCallout}`}>
         <div className="mb-2 flex items-center gap-1.5 font-bold">
           <CheckCircle2 className="h-3.5 w-3.5" />
@@ -402,11 +470,17 @@ export function BeaconBrowserApprovalPanel({
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
           <div className="rounded-md border border-current/20 px-2 py-1.5">
-            <div className="font-bold">Approve</div>
+            <div className="flex items-center gap-1.5 font-bold">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Approve plan
+            </div>
             <div>Runs only this reviewed browser plan.</div>
           </div>
-          <div className="rounded-md border border-current/20 px-2 py-1.5">
-            <div className="font-bold">Deny</div>
+          <div className={`rounded-md border px-2 py-1.5 ${isDark ? 'border-rose-400/25 bg-rose-500/10 text-rose-100' : 'border-rose-300 bg-rose-50 text-rose-950'}`}>
+            <div className="flex items-center gap-1.5 font-bold">
+              <XCircle className="h-3.5 w-3.5" />
+              Deny plan
+            </div>
             <div>Leaves the browser runtime untouched.</div>
           </div>
         </div>

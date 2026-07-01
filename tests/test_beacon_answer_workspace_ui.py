@@ -98,8 +98,14 @@ def test_beacon_page_can_queue_browser_action_approvals() -> None:
     assert "/v1/internet-scout/browser-task/approval-request" in source
     assert "browser_clicks" in source
     assert "Queue click approval" in source
+    assert "queues approval only" in source
     assert "Click only" in source
     assert "No typing/forms" in source
+    assert 'label="URL"' in source
+    assert 'label="Allowed host"' in source
+    assert 'label="Click selector"' in source
+    assert "Runtime effect" in source
+    assert "queues only" in source
     assert "Expected host must match the URL host for click-only requests." in source
     assert "operator approve or deny" in source
     assert 'to="/approvals"' in source
