@@ -62,7 +62,7 @@ References:
 | Deep research productization | Contracts, planner, reports, canaries, live step streaming, cockpit progress, redacted citation/evidence bundle metadata, and markdown/JSON export are visible in the Beacon UI. | Complete | UI shows plan, subquestions, progress, coverage warnings, report, source table, live trace, redaction metadata, and export path. |
 | Research benchmark breadth | Deterministic quality canaries, answer-eval reporting, scheduled trend summaries, and compact Ops trend drilldown exist. | Complete | Eval harness covers current facts, official docs, local/weather, shopping, adversarial pages, insufficient-evidence refusal, answer-quality score regressions, latency, zero-spend cost posture, citation precision, 7-run scheduled trend summaries, and operator drilldown. |
 | Durable web cache/index | Beacon has a DB-backed public-web evidence cache with TTL, URL dedupe, search-term GIN index, local quality/term rerank, hit telemetry, Ops status, and runtime extract reuse before Gateway calls. | Complete | Evidence cache has TTL, dedupe, reuse policy, optional embeddings/rerank index, and cache hit telemetry. |
-| Crawler API | Beacon has deployed crawler scrape, batch scrape, map, crawl, schema extraction, approval-gated browser render, compact console controls, map/crawl stop summaries, crawler history, and evidence export using existing Beacon evidence storage. | Complete | Crawler endpoints are merged, deployed, smoke-tested, visible in Beacon Ops, and usable from Beacon with cache status, blocked markers, crawl caps, history, and evidence export. |
+| Crawler API | Beacon has deployed crawler scrape, batch scrape, map, crawl, schema extraction, approval-gated browser render, compact console controls, map/crawl stop summaries, crawler history, render quality metadata, and evidence export using existing Beacon evidence storage. | Complete | Crawler endpoints are merged, deployed, smoke-tested, visible in Beacon Ops, and usable from Beacon with cache status, blocked markers, crawl caps, render quality status, history, and evidence export. |
 | Browser action UX | Approval payloads include v2 review metadata, and the Approvals UI now shows a compact review summary, action timeline, host allowlist, screenshot policy, risk labels, blocked capabilities, click targets, and the approve/deny decision boundary. | Complete | Approvals UI shows action timeline, pre/post screenshots, host allowlist, risk labels, and one-click deny/approve. |
 | Browser action capability | Browser execution supports a bounded approved-selector click path, and crawler browser-render scrape requests now queue and run through the same approval boundary before returning screenshot-backed crawler evidence. | Partial | Click-only v2 supports approved element snapshots, same-host navigation, no credentials, no purchases, screenshots before/after, and per-click audit. |
 | MCP/tool ecosystem | Beacon now has a documented internal tool ecosystem contract for policy-scoped consumers, but no public MCP server adapter yet. | Partial | Beacon exposes policy-scoped tool contracts for approved internal agents and optional MCP-facing consumers. |
@@ -87,7 +87,8 @@ References:
 | 11 | Crawler API | Complete | Beacon exposes scrape/map/crawl/extract over bounded Gateway egress, reuses durable cache, records audit events, and reports crawler health in Ops after deploy smoke. |
 | 12 | Crawler browser-render execution bridge | Complete | Crawler render/screenshot scrape requests queue browser-use approval, then approved runs return crawler-shaped text/title/canonical URL/screenshot evidence with audit links. |
 | 13 | Crawler map/history UX | Complete | Beacon crawler console shows why map/crawl stopped, groups discovered links by host, surfaces blocked/robots markers, searches recent crawler runs, and exports stored evidence JSON. |
-| 14 | Crawler batch scrape v1 | In progress | Beacon exposes a capped, cache-first batch scrape endpoint, standard smoke coverage, compact console mode, per-URL status, and per-URL audit/evidence records. |
+| 14 | Crawler batch scrape v1 | Complete | Beacon exposes a capped, cache-first batch scrape endpoint, standard smoke coverage, compact console mode, per-URL status, and per-URL audit/evidence records. |
+| 15 | Crawler render quality v2 | Complete | Approved render responses expose quality status, visible-text length, screenshot policy, evidence-source count, and compact operator reasons without logging raw page text. |
 
 ## UX Improvement Notes
 
@@ -121,6 +122,6 @@ operator depth rather than basic answer visibility.
 
 The next best production workstream is:
 
-1. Merge, deploy, and smoke crawler batch scrape v1.
-2. Add async crawl jobs only if crawler usage needs long-running throughput.
-3. Decide whether MCP needs a real server adapter or the internal route contract is enough.
+1. Add async crawl jobs only if crawler usage needs long-running throughput.
+2. Decide whether MCP needs a real server adapter or the internal route contract is enough.
+3. Promote render-quality weak/empty rates into Beacon Ops if live usage shows recurring weak renders.

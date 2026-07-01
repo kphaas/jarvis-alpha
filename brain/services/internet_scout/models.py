@@ -36,6 +36,7 @@ SourceQualityLevel = Literal[
     "rejected",
 ]
 SourceQualityStatus = Literal["supported", "weak", "insufficient"]
+RenderQualityStatus = Literal["ok", "weak", "empty"]
 ResearchIntent = Literal[
     "official_docs",
     "current_fact",
@@ -496,6 +497,11 @@ class InternetScoutCrawlerRenderResponse(InternetScoutCrawlerScrapeResponse):
     audit_path: str = Field(max_length=240)
     action_audit_count: int = Field(default=0, ge=0, le=100)
     evidence_source_count: int = Field(default=0, ge=0, le=10)
+    render_quality_version: Literal[2] = 2
+    render_quality_status: RenderQualityStatus
+    render_quality_reasons: list[str] = Field(default_factory=list, max_length=10)
+    visible_text_length: int = Field(default=0, ge=0, le=5000)
+    screenshot_required: bool = True
 
 
 class InternetScoutCrawlerMapResponse(BaseModel):
