@@ -374,6 +374,11 @@ export interface BeaconCrawlerRenderResponse extends BeaconCrawlerScrapeResponse
   audit_path: string
   action_audit_count: number
   evidence_source_count: number
+  render_quality_version: 2
+  render_quality_status: 'ok' | 'weak' | 'empty'
+  render_quality_reasons: string[]
+  visible_text_length: number
+  screenshot_required: boolean
 }
 
 export interface BeaconCrawlerBatchScrapeItem {

@@ -509,11 +509,23 @@ function CrawlerResult({
           <details className={`rounded-lg border p-3 ${border}`}>
             <summary className="cursor-pointer text-sm font-semibold">Render evidence</summary>
             <div className="mt-3 grid gap-2 text-xs">
+              <div
+                className={`rounded border px-2 py-1 font-mono text-[10px] uppercase ${renderQualityTone(result.render_quality_status, isDark)}`}
+              >
+                Render quality {result.render_quality_status}
+              </div>
+              <ResultMetric label="Visible text" value={`${result.visible_text_length} chars`} />
               <ResultMetric label="Approval" value={result.approval_queue_id.slice(0, 8)} />
               <ResultMetric label="Screenshot" value={result.screenshot_ref || 'not returned'} />
+              <ResultMetric label="Screenshot policy" value={result.screenshot_required ? 'required' : 'optional'} />
+              <ResultMetric label="Evidence sources" value={String(result.evidence_source_count)} />
               <ResultMetric label="Evidence path" value={result.evidence_path} />
               <ResultMetric label="Audit path" value={result.audit_path} />
               <ResultMetric label="Audit rows" value={String(result.action_audit_count)} />
+              <ResultMetric
+                label="Quality reasons"
+                value={result.render_quality_reasons.length ? result.render_quality_reasons.join(', ') : 'none'}
+              />
             </div>
           </details>
         )}
@@ -852,6 +864,22 @@ function isExtractResult(result: BeaconCrawlerResult): result is BeaconCrawlerEx
 
 function isRenderResult(result: BeaconCrawlerResult): result is BeaconCrawlerRenderResponse {
   return 'audit_path' in result
+}
+
+function renderQualityTone(status: BeaconCrawlerRenderResponse['render_quality_status'], isDark: boolean) {
+  if (status === 'ok') {
+    return isDark
+      ? 'border-emerald-300/30 bg-emerald-300/10 text-emerald-100'
+      : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-800'
+  }
+  if (status === 'empty') {
+    return isDark
+      ? 'border-rose-300/30 bg-rose-300/10 text-rose-100'
+      : 'border-rose-500/25 bg-rose-500/10 text-rose-800'
+  }
+  return isDark
+    ? 'border-amber-300/30 bg-amber-300/10 text-amber-100'
+    : 'border-amber-500/25 bg-amber-500/10 text-amber-800'
 }
 
 function groupLinksByHost(links: string[]): Array<{ host: string; links: string[] }> {

@@ -615,6 +615,13 @@ async def test_internet_scout_crawler_render_scrape_queues_browser_approval(
     assert approval_event["status"] == "queued"
     assert approval_event["metadata"]["source"] == "crawler_render_scrape"
     assert approval_event["metadata"]["require_screenshot"] is True
+    assert approval_event["metadata"]["render_quality_version"] == 2
+    assert approval_event["metadata"]["render_quality_checks"] == [
+        "visible_text",
+        "screenshot",
+        "evidence_source",
+        "action_audit",
+    ]
     assert FakeRepo.stored == []
 
 
@@ -657,6 +664,11 @@ async def test_internet_scout_crawler_render_scrape_run_returns_crawler_shape(
     async def fake_consume(conn, **kwargs):
         consume_calls.append(kwargs["approval_queue_id"])
 
+    rendered_text = (
+        "Rendered text with enough visible content for operator review and "
+        "citation-backed quality checks."
+    )
+
     class FakeBrowserRunner:
         async def execute(self, **kwargs):
             assert kwargs["approval_queue_id"] == approval_queue_id
@@ -673,16 +685,16 @@ async def test_internet_scout_crawler_render_scrape_run_returns_crawler_shape(
                     host="public.example.test",
                     url_hash="sha256:" + "4" * 64,
                     screenshot_ref="sha256:" + "3" * 64,
-                    content_hash=content_hash("Rendered text."),
+                    content_hash=content_hash(rendered_text),
                 )
             )
             observation = BrowserRunObservation(
                 url="https://public.example.test/rendered",
                 host="public.example.test",
                 title="Rendered",
-                visible_text="Rendered text.",
+                visible_text=rendered_text,
                 screenshot_ref="sha256:" + "3" * 64,
-                content_hash=content_hash("Rendered text."),
+                content_hash=content_hash(rendered_text),
             )
             source = build_source_reference(
                 url=observation.url,
@@ -720,7 +732,7 @@ async def test_internet_scout_crawler_render_scrape_run_returns_crawler_shape(
                         host="public.example.test",
                         url_hash="sha256:" + "4" * 64,
                         screenshot_ref="sha256:" + "3" * 64,
-                        content_hash=content_hash("Rendered text."),
+                        content_hash=content_hash(rendered_text),
                     )
                 ],
                 screenshots_review_required=True,
@@ -757,7 +769,7 @@ async def test_internet_scout_crawler_render_scrape_run_returns_crawler_shape(
     assert response.canonical_url == "https://public.example.test/rendered"
     assert response.host == "public.example.test"
     assert response.title == "Rendered"
-    assert response.text == "Rendered text."
+    assert response.text == rendered_text
     assert response.screenshot_ref == "sha256:" + "3" * 64
     assert (
         response.evidence_path == f"/v1/internet-scout/requests/{FakeRepo.request_id}"
@@ -767,6 +779,11 @@ async def test_internet_scout_crawler_render_scrape_run_returns_crawler_shape(
     )
     assert response.action_audit_count == 1
     assert response.evidence_source_count == 1
+    assert response.render_quality_version == 2
+    assert response.render_quality_status == "ok"
+    assert response.render_quality_reasons == []
+    assert response.visible_text_length == len(rendered_text)
+    assert response.screenshot_required is True
     assert approval_calls[0]["approval_queue_id"] == approval_queue_id
     assert consume_calls == [approval_queue_id]
     assert FakeRepo.created[0]["status_override"] == "running"
@@ -775,6 +792,34 @@ async def test_internet_scout_crawler_render_scrape_run_returns_crawler_shape(
         event.get("event_type") == "browser_run" and event.get("status") == "succeeded"
         for event in FakeRepo.events
     )
+
+
+def test_internet_scout_crawler_render_quality_flags_empty_output():
+    observation = BrowserRunObservation(
+        url="https://public.example.test/blank",
+        host="public.example.test",
+        title="Blank",
+        visible_text="  ",
+        screenshot_ref=None,
+        content_hash=content_hash(""),
+    )
+
+    status, reasons, visible_text_length = internet_scout._crawler_render_quality(
+        observation=observation,
+        result=SimpleNamespace(
+            evidence=SimpleNamespace(sources=[]),
+            action_audit=[],
+        ),
+    )
+
+    assert status == "empty"
+    assert visible_text_length == 0
+    assert reasons == [
+        "empty_visible_text",
+        "missing_screenshot",
+        "missing_evidence_source",
+        "missing_action_audit",
+    ]
 
 
 @pytest.mark.asyncio

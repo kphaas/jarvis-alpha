@@ -54,10 +54,16 @@ def test_crawler_console_surfaces_compact_results_and_safety_context() -> None:
     assert "Same-host crawl capped" in console
     assert "Fields and evidence" in console
     assert "Render evidence" in console
+    assert "Render quality" in console
+    assert "Visible text" in console
+    assert "Quality reasons" in console
     assert "raw_web_content_is_untrusted" in console
     assert "BeaconCrawlerMode" in types
     assert "BeaconCrawlerBatchScrapeResponse" in types
     assert "BeaconCrawlerRenderResponse" in types
+    assert "render_quality_status" in types
+    assert "render_quality_reasons" in types
+    assert "visible_text_length" in types
     assert "evidence_path" in types
     assert "audit_path" in types
 

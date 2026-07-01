@@ -42,6 +42,7 @@ from brain.services.internet_scout.health import build_beacon_health
 from brain.services.internet_scout.memory_promotions import MemoryPromotionPolicyError
 from brain.services.internet_scout.models import (
     BrowserActionAuditEvent,
+    BrowserRunObservation,
     InternetScoutAgentResponse,
     InternetScoutBrowserApprovalResponse,
     InternetScoutBrowserHistoryItem,
@@ -479,6 +480,13 @@ async def internet_scout_crawler_scrape_browser_approval_request(
             "source": "crawler_render_scrape",
             "require_screenshot": True,
             "crawler_operation": "scrape",
+            "render_quality_version": 2,
+            "render_quality_checks": [
+                "visible_text",
+                "screenshot",
+                "evidence_source",
+                "action_audit",
+            ],
         },
     )
 
@@ -505,6 +513,10 @@ async def internet_scout_crawler_scrape_browser_run_approved(
         request,
     )
     observation = result.observations[0]
+    quality_status, quality_reasons, visible_text_length = _crawler_render_quality(
+        observation=observation,
+        result=result,
+    )
     return InternetScoutCrawlerRenderResponse(
         request_id=result.request_id,
         approval_queue_id=result.approval_queue_id,
@@ -524,7 +536,32 @@ async def internet_scout_crawler_scrape_browser_run_approved(
         ),
         action_audit_count=len(result.action_audit),
         evidence_source_count=len(result.evidence.sources),
+        render_quality_status=quality_status,
+        render_quality_reasons=quality_reasons,
+        visible_text_length=visible_text_length,
     )
+
+
+def _crawler_render_quality(
+    *,
+    observation: BrowserRunObservation,
+    result: InternetScoutBrowserRunResponse,
+) -> tuple[str, list[str], int]:
+    visible_text = observation.visible_text.strip()
+    visible_text_length = len(visible_text)
+    reasons: list[str] = []
+    if not visible_text:
+        reasons.append("empty_visible_text")
+    elif visible_text_length < 80:
+        reasons.append("short_visible_text")
+    if not observation.screenshot_ref:
+        reasons.append("missing_screenshot")
+    if not result.evidence.sources:
+        reasons.append("missing_evidence_source")
+    if not result.action_audit:
+        reasons.append("missing_action_audit")
+    status = "empty" if "empty_visible_text" in reasons else "weak" if reasons else "ok"
+    return status, reasons[:10], visible_text_length
 
 
 def _crawler_render_browser_request(
