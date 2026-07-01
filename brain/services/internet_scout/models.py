@@ -377,6 +377,29 @@ class InternetScoutCrawlerScrapeRequest(BaseModel):
         return stripped or None
 
 
+class InternetScoutCrawlerBatchScrapeRequest(BaseModel):
+    urls: list[str] = Field(default_factory=list, min_length=1, max_length=5)
+    query: str | None = Field(default=None, max_length=500)
+    force_refresh: bool = False
+    max_bytes: int = Field(default=200_000, ge=1, le=1_000_000)
+
+    @field_validator("urls")
+    @classmethod
+    def _strip_unique_urls(cls, value: list[str]) -> list[str]:
+        urls = list(dict.fromkeys(item.strip() for item in value if item.strip()))
+        if not urls:
+            raise ValueError("at least one URL is required")
+        return urls
+
+    @field_validator("query")
+    @classmethod
+    def _blank_query_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+
 class InternetScoutCrawlerMapRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2000)
     max_pages: int = Field(default=10, ge=1, le=10)
@@ -424,6 +447,40 @@ class InternetScoutCrawlerScrapeResponse(BaseModel):
     screenshot_ref: str | None = None
     content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     risk_markers: list[str] = Field(default_factory=list, max_length=20)
+    raw_web_content_is_untrusted: bool = True
+
+
+class InternetScoutCrawlerBatchScrapeItem(BaseModel):
+    url: str = Field(max_length=2000)
+    status: Literal["succeeded", "failed", "blocked"]
+    request_id: UUID | None = None
+    cache_hit: bool | None = None
+    canonical_url: str | None = Field(default=None, max_length=2000)
+    host: str | None = Field(default=None, max_length=255)
+    title: str | None = Field(default=None, max_length=500)
+    fetched_at: datetime | None = None
+    text: str = Field(default="", max_length=5000)
+    links: list[str] = Field(default_factory=list, max_length=25)
+    content_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    risk_markers: list[str] = Field(default_factory=list, max_length=20)
+    blocked_reasons: list[str] = Field(default_factory=list, max_length=10)
+    error_type: str | None = Field(default=None, max_length=80)
+    raw_web_content_is_untrusted: bool = True
+
+
+class InternetScoutCrawlerBatchScrapeResponse(BaseModel):
+    batch_id: UUID
+    result_count: int = Field(ge=0, le=5)
+    succeeded_count: int = Field(ge=0, le=5)
+    failed_count: int = Field(ge=0, le=5)
+    blocked_count: int = Field(ge=0, le=5)
+    max_urls: int = Field(default=5, ge=1, le=5)
+    cache_first: bool = True
+    render_used: bool = False
+    items: list[InternetScoutCrawlerBatchScrapeItem] = Field(
+        default_factory=list,
+        max_length=5,
+    )
     raw_web_content_is_untrusted: bool = True
 
 

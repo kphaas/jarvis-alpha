@@ -304,7 +304,7 @@ export interface BeaconBrowserApprovalResponse {
   }
 }
 
-export type BeaconCrawlerMode = 'scrape' | 'map' | 'crawl' | 'extract' | 'render'
+export type BeaconCrawlerMode = 'scrape' | 'batch' | 'map' | 'crawl' | 'extract' | 'render'
 
 export interface BeaconCrawlerScrapeResponse {
   request_id: string
@@ -376,8 +376,40 @@ export interface BeaconCrawlerRenderResponse extends BeaconCrawlerScrapeResponse
   evidence_source_count: number
 }
 
+export interface BeaconCrawlerBatchScrapeItem {
+  url: string
+  status: 'succeeded' | 'failed' | 'blocked'
+  request_id?: string | null
+  cache_hit?: boolean | null
+  canonical_url?: string | null
+  host?: string | null
+  title?: string | null
+  fetched_at?: string | null
+  text: string
+  links: string[]
+  content_hash?: string | null
+  risk_markers: string[]
+  blocked_reasons: string[]
+  error_type?: string | null
+  raw_web_content_is_untrusted: boolean
+}
+
+export interface BeaconCrawlerBatchScrapeResponse {
+  batch_id: string
+  result_count: number
+  succeeded_count: number
+  failed_count: number
+  blocked_count: number
+  max_urls: number
+  cache_first: boolean
+  render_used: boolean
+  items: BeaconCrawlerBatchScrapeItem[]
+  raw_web_content_is_untrusted: boolean
+}
+
 export type BeaconCrawlerResult =
   | BeaconCrawlerScrapeResponse
+  | BeaconCrawlerBatchScrapeResponse
   | BeaconCrawlerMapResponse
   | BeaconCrawlerExtractResponse
   | BeaconCrawlerRenderResponse

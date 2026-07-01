@@ -21,6 +21,7 @@ from brain.services.internet_scout.models import (
     InternetScoutBrowserRunRequest,
     InternetScoutBrowserRunResponse,
     InternetScoutConsumerRequest,
+    InternetScoutCrawlerBatchScrapeRequest,
     InternetScoutCrawlerRenderRunRequest,
     InternetScoutCrawlerScrapeRequest,
     InternetScoutCrawlerScrapeResponse,
@@ -475,6 +476,94 @@ async def test_internet_scout_crawler_scrape_blocks_unsafe_url(monkeypatch):
     assert blocked_event["tool"] == "extract"
     assert "blocked_internal_host" in blocked_event["metadata"]["blocked_reasons"]
     assert FakeRepo.stored == []
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_crawler_batch_scrape_records_per_url_audit(
+    monkeypatch,
+):
+    FakeRepo.created = []
+    FakeRepo.events = []
+    FakeRepo.stored = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+    monkeypatch.setattr(internet_scout, "InternetScoutCrawler", lambda: FakeCrawler())
+
+    response = await internet_scout.internet_scout_crawler_batch_scrape(
+        InternetScoutCrawlerBatchScrapeRequest(
+            urls=[
+                "https://public.example.test/report",
+                "https://public.example.test/docs",
+            ],
+            query="crawler batch",
+        ),
+        _request(scopes=["internet_scout.research"]),
+        _user_id="ken",
+    )
+
+    assert response.result_count == 2
+    assert response.succeeded_count == 2
+    assert response.failed_count == 0
+    assert response.blocked_count == 0
+    assert [item.status for item in response.items] == ["succeeded", "succeeded"]
+    assert [item.cache_hit for item in response.items] == [False, False]
+    assert len(FakeRepo.created) == 2
+    assert all(
+        item["request"].requester == "alpha_ui.beacon_crawler.batch_scrape"
+        for item in FakeRepo.created
+    )
+    succeeded_events = [
+        event
+        for event in FakeRepo.events
+        if event.get("event_type") == "crawler_scrape"
+        and event.get("status") == "succeeded"
+    ]
+    assert len(succeeded_events) == 2
+    assert {event["metadata"]["batch_id"] for event in succeeded_events} == {
+        str(response.batch_id)
+    }
+    assert [event["metadata"]["batch_index"] for event in succeeded_events] == [0, 1]
+    assert all(event["metadata"]["batch_size"] == 2 for event in succeeded_events)
+    assert len(FakeRepo.stored) == 2
+
+
+@pytest.mark.asyncio
+async def test_internet_scout_crawler_batch_scrape_returns_partial_blocks(
+    monkeypatch,
+):
+    FakeRepo.created = []
+    FakeRepo.events = []
+    FakeRepo.stored = []
+    monkeypatch.setattr(internet_scout, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(internet_scout, "InternetScoutRepository", FakeRepo)
+    monkeypatch.setattr(internet_scout, "InternetScoutCrawler", lambda: FakeCrawler())
+
+    response = await internet_scout.internet_scout_crawler_batch_scrape(
+        InternetScoutCrawlerBatchScrapeRequest(
+            urls=[
+                "http://localhost/private",
+                "https://public.example.test/report",
+            ],
+        ),
+        _request(scopes=["internet_scout.research"]),
+        _user_id="ken",
+    )
+
+    assert response.result_count == 2
+    assert response.succeeded_count == 1
+    assert response.blocked_count == 1
+    assert response.failed_count == 0
+    assert response.items[0].status == "blocked"
+    assert response.items[0].error_type == "policy_denied"
+    assert "blocked_internal_host" in response.items[0].blocked_reasons
+    assert response.items[1].status == "succeeded"
+    assert len(FakeRepo.created) == 2
+    assert len(FakeRepo.stored) == 1
+    blocked_event = next(
+        event for event in FakeRepo.events if event.get("status") == "blocked"
+    )
+    assert blocked_event["metadata"]["batch_id"] == str(response.batch_id)
+    assert blocked_event["metadata"]["batch_index"] == 0
 
 
 @pytest.mark.asyncio
@@ -1540,6 +1629,7 @@ def test_internet_scout_routes_are_classified():
     ]
     for path in (
         "/v1/internet-scout/crawler/scrape",
+        "/v1/internet-scout/crawler/batch-scrape",
         "/v1/internet-scout/crawler/map",
         "/v1/internet-scout/crawler/crawl",
         "/v1/internet-scout/crawler/extract",

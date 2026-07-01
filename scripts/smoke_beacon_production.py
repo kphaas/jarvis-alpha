@@ -386,6 +386,16 @@ def _run_crawler_smoke(base_url: str, token: str) -> dict[str, object]:
             ("request_id", "canonical_url", "host", "text", "content_hash"),
         ),
         (
+            "batch_scrape",
+            "/v1/internet-scout/crawler/batch-scrape",
+            {
+                "urls": [CRAWLER_SMOKE_URL],
+                "query": "example domain",
+                "max_bytes": 200_000,
+            },
+            ("batch_id", "items", "succeeded_count"),
+        ),
+        (
             "map",
             "/v1/internet-scout/crawler/map",
             {
@@ -426,7 +436,7 @@ def _run_crawler_smoke(base_url: str, token: str) -> dict[str, object]:
         checks.append(
             {
                 "name": name,
-                "request_id": payload.get("request_id"),
+                "request_id": payload.get("request_id") or payload.get("batch_id"),
                 "host": payload.get("host") or payload.get("seed_host"),
                 "cache_hit": payload.get("cache_hit"),
                 "page_count": payload.get("page_count"),
