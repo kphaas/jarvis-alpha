@@ -12,3 +12,7 @@ ALPHA_VERSION = "0.1.0"
 
 GATEWAY_URL = os.environ["ALPHA_GATEWAY_URL"]
 OLLAMA_URL = os.environ.get("ALPHA_OLLAMA_URL", "http://127.0.0.1:11434")
+ALPHA_AGENT_WORKSPACE_ROOT = os.getenv(
+    "ALPHA_AGENT_WORKSPACE_ROOT",
+    "/Users/jarvisbrain/jarvis-alpha/agent_workspaces",
+)

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from uuid import UUID
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from brain.agents.manual_run import (
@@ -17,6 +18,12 @@ from brain.db.pool import get_pool
 from brain.db.rls import rls_connection
 from brain.middleware.scopes import check_scopes
 from brain.registry.models import SkillManifestV1
+from brain.services.agent_workspace import (
+    WorkspaceArtifactRecord,
+    WorkspaceManifest,
+    WorkspacePathError,
+    get_workspace_backend,
+)
 from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
@@ -101,6 +108,11 @@ class AgentRunOut(BaseModel):
     completed_at: str | None = None
     cost_usd: float
     error_text: str | None = None
+    workspace_backend: str
+    workspace_root: str
+    policy_labels: list[str] = Field(default_factory=list)
+    approval_scope: str | None = None
+    retention_class: str
     metadata: dict = Field(default_factory=dict)
     created_at: str
 
@@ -108,6 +120,34 @@ class AgentRunOut(BaseModel):
 class AgentRunListOut(BaseModel):
     count: int
     runs: list[AgentRunOut]
+
+
+class AgentRunWorkspaceOut(BaseModel):
+    run_id: str
+    agent_id: str
+    created_at: str
+    workspace_backend: str
+    workspace_root: str
+    policy_labels: list[str] = Field(default_factory=list)
+    approval_scope: str | None = None
+    retention_class: str
+
+
+class AgentRunArtifactOut(BaseModel):
+    artifact_id: str
+    run_id: str
+    relative_path: str
+    kind: str
+    content_type: str
+    size_bytes: int
+    created_at: str
+    sha256: str | None = None
+    policy_labels: list[str] = Field(default_factory=list)
+
+
+class AgentRunArtifactListOut(BaseModel):
+    count: int
+    artifacts: list[AgentRunArtifactOut]
 
 
 class AgentStatusOut(BaseModel):
@@ -148,6 +188,15 @@ def _jsonb(value) -> dict:
     if isinstance(value, str):
         return json.loads(value)
     return dict(value)
+
+
+def _jsonb_list(value) -> list[str]:
+    if value is None:
+        return []
+    parsed = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(parsed, list):
+        return []
+    return [str(item) for item in parsed]
 
 
 def _skill_from_row(row) -> SkillOut:
@@ -230,8 +279,40 @@ def _agent_run_from_row(row) -> AgentRunOut:
         completed_at=_iso(row["completed_at"]),
         cost_usd=float(row["cost_usd"] or 0),
         error_text=row["error_text"],
+        workspace_backend=row["workspace_backend"],
+        workspace_root=row["workspace_root"],
+        policy_labels=_jsonb_list(row["policy_labels"]),
+        approval_scope=row["approval_scope"],
+        retention_class=row["retention_class"],
         metadata=_jsonb(row["metadata"]),
         created_at=_iso(row["created_at"]) or "",
+    )
+
+
+def _workspace_from_manifest(manifest: WorkspaceManifest) -> AgentRunWorkspaceOut:
+    return AgentRunWorkspaceOut(
+        run_id=manifest.run_id,
+        agent_id=manifest.agent_id,
+        created_at=manifest.created_at,
+        workspace_backend=manifest.workspace_backend,
+        workspace_root=manifest.workspace_root,
+        policy_labels=list(manifest.policy_labels),
+        approval_scope=manifest.approval_scope,
+        retention_class=manifest.retention_class,
+    )
+
+
+def _artifact_from_record(record: WorkspaceArtifactRecord) -> AgentRunArtifactOut:
+    return AgentRunArtifactOut(
+        artifact_id=record.artifact_id,
+        run_id=record.run_id,
+        relative_path=record.relative_path,
+        kind=record.kind,
+        content_type=record.content_type,
+        size_bytes=record.size_bytes,
+        created_at=record.created_at,
+        sha256=record.sha256,
+        policy_labels=list(record.policy_labels),
     )
 
 
@@ -458,7 +539,9 @@ async def list_agent_runs(
         rows = await conn.fetch(
             """
             SELECT id, agent_id, status, trigger_type, trace_id, started_at,
-                   completed_at, cost_usd, error_text, metadata, created_at
+                   completed_at, cost_usd, error_text, workspace_backend,
+                   workspace_root, policy_labels, approval_scope,
+                   retention_class, metadata, created_at
             FROM public.alpha_agent_runs
             WHERE agent_id = $1
             ORDER BY COALESCE(completed_at, started_at, created_at) DESC,
@@ -471,6 +554,141 @@ async def list_agent_runs(
     return AgentRunListOut(
         count=len(rows), runs=[_agent_run_from_row(row) for row in rows]
     )
+
+
+@router.post(
+    "/agent-runs/{run_id}/workspace/init",
+    response_model=AgentRunWorkspaceOut,
+)
+async def init_agent_run_workspace(
+    run_id: UUID,
+    request: Request,
+) -> AgentRunWorkspaceOut:
+    check_scopes(request, "agents.write")
+    backend = get_workspace_backend()
+    async with rls_connection(request) as conn:
+        row = await _load_agent_run_row(conn, run_id)
+        manifest = await _ensure_workspace(conn, row, backend=backend)
+    return _workspace_from_manifest(manifest)
+
+
+@router.get("/agent-runs/{run_id}/workspace", response_model=AgentRunWorkspaceOut)
+async def get_agent_run_workspace(
+    run_id: UUID,
+    request: Request,
+) -> AgentRunWorkspaceOut:
+    check_scopes(request, "agents.read")
+    backend = get_workspace_backend()
+    async with rls_connection(request) as conn:
+        row = await _load_agent_run_row(conn, run_id)
+    workspace_root = str(row["workspace_root"] or "").strip()
+    if not workspace_root:
+        raise HTTPException(status_code=404, detail="Workspace not initialized")
+    try:
+        manifest = backend.read_manifest(run_id, workspace_root=workspace_root)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404, detail="Workspace not initialized"
+        ) from exc
+    except WorkspacePathError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _workspace_from_manifest(manifest)
+
+
+@router.get("/agent-runs/{run_id}/artifacts", response_model=AgentRunArtifactListOut)
+async def list_agent_run_artifacts(
+    run_id: UUID,
+    request: Request,
+) -> AgentRunArtifactListOut:
+    check_scopes(request, "agents.read")
+    async with rls_connection(request) as conn:
+        await _load_agent_run_row(conn, run_id)
+        rows = await conn.fetch(
+            """
+            SELECT id, run_id, relative_path, kind, content_type, size_bytes,
+                   sha256, policy_labels, created_at
+            FROM public.alpha_agent_run_artifacts
+            WHERE run_id = $1
+            ORDER BY created_at ASC, id ASC
+            """,
+            run_id,
+        )
+    artifacts = [
+        AgentRunArtifactOut(
+            artifact_id=str(row["id"]),
+            run_id=str(row["run_id"]),
+            relative_path=row["relative_path"],
+            kind=row["kind"],
+            content_type=row["content_type"],
+            size_bytes=int(row["size_bytes"]),
+            created_at=_iso(row["created_at"]) or "",
+            sha256=row["sha256"],
+            policy_labels=_jsonb_list(row["policy_labels"]),
+        )
+        for row in rows
+    ]
+    return AgentRunArtifactListOut(count=len(artifacts), artifacts=artifacts)
+
+
+@router.post("/agent-runs/{run_id}/artifacts", response_model=AgentRunArtifactOut)
+async def create_agent_run_artifact(
+    run_id: UUID,
+    request: Request,
+    kind: str = Form(...),
+    relative_path: str = Form(...),
+    text: str | None = Form(default=None),
+    content_type: str | None = Form(default=None),
+    file: UploadFile | None = File(default=None),
+) -> AgentRunArtifactOut:
+    check_scopes(request, "agents.write")
+    if (text is None and file is None) or (text is not None and file is not None):
+        raise HTTPException(
+            status_code=400,
+            detail="Provide exactly one of text or file content",
+        )
+
+    backend = get_workspace_backend()
+    async with rls_connection(request) as conn:
+        row = await _load_agent_run_row(conn, run_id)
+        manifest = await _ensure_workspace(conn, row, backend=backend)
+        try:
+            if file is not None:
+                staged = backend.stage_bytes(
+                    run_id,
+                    relative_path,
+                    await file.read(),
+                    kind,
+                    content_type=content_type
+                    or file.content_type
+                    or "application/octet-stream",
+                    policy_labels=_jsonb_list(row["policy_labels"]),
+                    workspace_root=manifest.workspace_root,
+                )
+            else:
+                staged = backend.stage_text(
+                    run_id,
+                    relative_path,
+                    text or "",
+                    kind,
+                    content_type=content_type or "text/plain",
+                    policy_labels=_jsonb_list(row["policy_labels"]),
+                    workspace_root=manifest.workspace_root,
+                )
+        except (ValueError, WorkspacePathError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        try:
+            await _insert_agent_run_artifact(
+                conn,
+                artifact=staged.record,
+                agent_id=row["agent_id"],
+            )
+            record = backend.commit_staged_artifact(staged)
+        except Exception:
+            await _delete_agent_run_artifact(conn, staged.record.artifact_id)
+            backend.cleanup_staged_artifact(staged)
+            raise
+    return _artifact_from_record(record)
 
 
 @router.post("/agents/{agent_id}/enable", response_model=AgentOut)
@@ -528,6 +746,86 @@ async def run_agent(agent_id: str, request: Request) -> AgentManualRunOut:
         trace_id=result.trace_id,
         skipped_reason=result.skipped_reason,
         error_text=result.error_text,
+    )
+
+
+async def _load_agent_run_row(conn, run_id: UUID):
+    row = await conn.fetchrow(
+        """
+        SELECT id, agent_id, created_at, workspace_backend, workspace_root,
+               policy_labels, approval_scope, retention_class
+        FROM public.alpha_agent_runs
+        WHERE id = $1
+        """,
+        run_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Agent run not found")
+    return row
+
+
+async def _ensure_workspace(conn, row, *, backend) -> WorkspaceManifest:
+    try:
+        manifest = backend.init_workspace(
+            row["id"],
+            row["agent_id"],
+            _jsonb_list(row["policy_labels"]),
+            row["approval_scope"],
+            row["retention_class"],
+            workspace_root=str(row["workspace_root"] or "").strip() or None,
+            created_at=row["created_at"],
+        )
+    except WorkspacePathError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if (
+        row["workspace_root"] != manifest.workspace_root
+        or row["workspace_backend"] != manifest.workspace_backend
+    ):
+        await conn.execute(
+            """
+            UPDATE public.alpha_agent_runs
+            SET workspace_backend = $2,
+                workspace_root = $3
+            WHERE id = $1
+            """,
+            row["id"],
+            manifest.workspace_backend,
+            manifest.workspace_root,
+        )
+    return manifest
+
+
+async def _insert_agent_run_artifact(
+    conn,
+    *,
+    artifact: WorkspaceArtifactRecord,
+    agent_id: str,
+) -> None:
+    await conn.execute(
+        """
+        INSERT INTO public.alpha_agent_run_artifacts
+            (id, run_id, agent_id, relative_path, kind, content_type, size_bytes,
+             sha256, policy_labels)
+        VALUES
+            ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::jsonb)
+        """,
+        artifact.artifact_id,
+        artifact.run_id,
+        agent_id,
+        artifact.relative_path,
+        artifact.kind,
+        artifact.content_type,
+        artifact.size_bytes,
+        artifact.sha256,
+        json.dumps(list(artifact.policy_labels)),
+    )
+
+
+async def _delete_agent_run_artifact(conn, artifact_id: str) -> None:
+    await conn.execute(
+        "DELETE FROM public.alpha_agent_run_artifacts WHERE id = $1::uuid",
+        artifact_id,
     )
 
 

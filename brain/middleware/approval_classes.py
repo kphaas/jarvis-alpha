@@ -490,6 +490,10 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # Manual run is still guarded in-route by agent allowlist, active/enabled
     # status, T1/T2 risk tier, and explicit metadata.manual_run_enabled.
     "POST /v1/agents/{agent_id}/run": ["write", "security_write"],
+    "POST /v1/agent-runs/{run_id}/workspace/init": ["write", "security_write"],
+    "GET /v1/agent-runs/{run_id}/workspace": ["read", "security_read"],
+    "GET /v1/agent-runs/{run_id}/artifacts": ["read", "security_read"],
+    "POST /v1/agent-runs/{run_id}/artifacts": ["write", "security_write"],
     # --- Alpha Agent Board — governed queue metadata, no agent execution ---
     "GET /v1/agent-board": ["read", "security_read"],
     "GET /v1/agent-board/registry": ["read", "security_read"],

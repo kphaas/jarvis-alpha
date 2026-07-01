@@ -90,6 +90,11 @@ def test_agent_run_row_conversion():
         "completed_at": None,
         "cost_usd": "0.000000",
         "error_text": None,
+        "workspace_backend": "local",
+        "workspace_root": "/tmp/22222222-2222-2222-2222-222222222222",
+        "policy_labels": "[]",
+        "approval_scope": None,
+        "retention_class": "standard",
         "metadata": "{}",
         "created_at": "2026-05-26T00:00:00+00:00",
     }
@@ -98,3 +103,4 @@ def test_agent_run_row_conversion():
 
     assert out.agent_id == "buddy"
     assert out.cost_usd == 0.0
+    assert out.workspace_backend == "local"
