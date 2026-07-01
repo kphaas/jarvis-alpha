@@ -15,11 +15,17 @@ from brain.services.internet_scout.models import (
     InternetScoutRequest,
     InternetTool,
 )
+from brain.services.internet_scout.policy import (
+    CRAWL_MAX_DEPTH_WITHOUT_APPROVAL,
+    CRAWL_MAX_PAGES_WITHOUT_APPROVAL,
+)
 
 
 class FakeGateway:
-    def __init__(self) -> None:
+    def __init__(self, *, page_count: int = 1, page_depth: int = 0) -> None:
         self.crawl_calls: list[dict[str, object]] = []
+        self.page_count = page_count
+        self.page_depth = page_depth
 
     async def crawl(
         self,
@@ -45,9 +51,11 @@ class FakeGateway:
             max_depth=max_depth,
             pages=[
                 {
-                    "url": url,
+                    "url": url
+                    if index == 0
+                    else f"https://public.example.test/page-{index}",
                     "host": "public.example.test",
-                    "depth": 0,
+                    "depth": self.page_depth,
                     "status_code": 200,
                     "content_type": "text/html",
                     "content_hash": "a" * 64,
@@ -62,6 +70,7 @@ class FakeGateway:
                     "redirect_chain": [url],
                     "discovered_links": ["https://public.example.test/docs"],
                 }
+                for index in range(self.page_count)
             ],
         )
 
@@ -144,6 +153,59 @@ async def test_crawler_crawl_returns_links_and_evidence_metadata() -> None:
     assert metadata["cap_pressure"] is False
     assert gateway.crawl_calls[0]["max_pages"] == 3
     assert gateway.crawl_calls[0]["max_depth"] == 1
+
+
+@pytest.mark.asyncio
+async def test_crawler_tiny_smoke_bounds_do_not_create_cap_pressure() -> None:
+    crawler = InternetScoutCrawler(FakeGateway(page_count=1))
+
+    _response, _packet, metadata = await crawler.crawl(
+        InternetScoutCrawlerCrawlRequest(
+            url="https://public.example.test/report",
+            max_pages=1,
+            max_depth=0,
+        ),
+        uuid4(),
+        InternetScoutRequest(
+            urls=["https://public.example.test/report"],
+            tool_hint=InternetTool.CRAWL,
+            max_pages=1,
+            max_depth=0,
+        ),
+    )
+
+    assert metadata["page_cap_hit"] is False
+    assert metadata["depth_cap_hit"] is False
+    assert metadata["cap_pressure"] is False
+
+
+@pytest.mark.asyncio
+async def test_crawler_safety_ceiling_hit_creates_cap_pressure() -> None:
+    crawler = InternetScoutCrawler(
+        FakeGateway(
+            page_count=CRAWL_MAX_PAGES_WITHOUT_APPROVAL,
+            page_depth=CRAWL_MAX_DEPTH_WITHOUT_APPROVAL,
+        )
+    )
+
+    _response, _packet, metadata = await crawler.crawl(
+        InternetScoutCrawlerCrawlRequest(
+            url="https://public.example.test/report",
+            max_pages=CRAWL_MAX_PAGES_WITHOUT_APPROVAL,
+            max_depth=CRAWL_MAX_DEPTH_WITHOUT_APPROVAL,
+        ),
+        uuid4(),
+        InternetScoutRequest(
+            urls=["https://public.example.test/report"],
+            tool_hint=InternetTool.CRAWL,
+            max_pages=CRAWL_MAX_PAGES_WITHOUT_APPROVAL,
+            max_depth=CRAWL_MAX_DEPTH_WITHOUT_APPROVAL,
+        ),
+    )
+
+    assert metadata["page_cap_hit"] is True
+    assert metadata["depth_cap_hit"] is True
+    assert metadata["cap_pressure"] is True
 
 
 @pytest.mark.asyncio

@@ -34,6 +34,7 @@ class FakeConn:
     ) -> None:
         self.counts = counts or {}
         self.executed: list[tuple[str, tuple[object, ...]]] = []
+        self.fetchrow_calls: list[tuple[str, tuple[object, ...]]] = []
         self.expired_request_ids = expired_request_ids or []
         self.delete_counts = delete_counts or {}
         self.recent_row = recent_row or {
@@ -157,6 +158,7 @@ class FakeConn:
         return []
 
     async def fetchrow(self, query: str, *args):
+        self.fetchrow_calls.append((query, args))
         if "event_type LIKE 'crawler_%'" in query:
             return self.crawler_row
         if "FROM public.alpha_internet_web_cache" in query:
@@ -612,6 +614,58 @@ async def test_crawler_cap_watch_signal_does_not_fail_health(monkeypatch):
     assert crawler.metadata["async_crawl_jobs_status"] == "watch"
     assert (
         crawler.metadata["async_crawl_jobs_next_action"] == "watch_cap_pressure_trend"
+    )
+
+
+@pytest.mark.asyncio
+async def test_crawler_health_cap_pressure_filters_to_safety_caps(monkeypatch):
+    monkeypatch.setattr(
+        beacon_health,
+        "browser_runtime_health",
+        lambda: {"ok": True, "runtime_enabled": True},
+    )
+    conn = FakeConn(
+        crawler_row={
+            "request_count": 36,
+            "succeeded_request_count": 36,
+            "failed_request_count": 0,
+            "blocked_host_count": 0,
+            "cache_hit_count": 1,
+            "cache_miss_count": 1,
+            "failed_page_count": 0,
+            "source_count": 36,
+            "claim_count": 36,
+            "render_request_count": 0,
+            "render_ok_count": 0,
+            "render_weak_count": 0,
+            "render_empty_count": 0,
+            "render_missing_screenshot_count": 0,
+            "render_missing_evidence_count": 0,
+            "crawl_request_count": 36,
+            "crawl_page_cap_hit_count": 0,
+            "crawl_depth_cap_hit_count": 0,
+            "crawl_time_cap_hit_count": 0,
+            "last_run_at": datetime.now(UTC),
+        }
+    )
+
+    response = await beacon_health.build_beacon_health(
+        conn,
+        gateway_client=FakeGatewayClient(),
+    )
+
+    crawler_query, crawler_args = next(
+        call for call in conn.fetchrow_calls if "event_type LIKE 'crawler_%'" in call[0]
+    )
+    assert crawler_args == (
+        beacon_health.CRAWL_MAX_PAGES_WITHOUT_APPROVAL,
+        beacon_health.CRAWL_MAX_DEPTH_WITHOUT_APPROVAL,
+    )
+    assert "(metadata->>'max_pages')::INTEGER >= $1" in crawler_query
+    assert "(metadata->>'max_depth')::INTEGER >= $2" in crawler_query
+    assert response.checks["crawler"].status == "ok"
+    assert (
+        response.checks["crawler"].metadata["async_crawl_jobs_status"] == "not_needed"
     )
 
 
