@@ -160,9 +160,22 @@ class LocalWorkspaceBackend:
         *,
         workspace_root: str | None = None,
     ) -> str:
+        return self.read_bytes(
+            run_id,
+            relative_path,
+            workspace_root=workspace_root,
+        ).decode("utf-8")
+
+    def read_bytes(
+        self,
+        run_id: UUID | str,
+        relative_path: str,
+        *,
+        workspace_root: str | None = None,
+    ) -> bytes:
         root = self._resolve_workspace_root(run_id, workspace_root)
         target = self._resolve_read_path(root, relative_path)
-        return target.read_text(encoding="utf-8")
+        return target.read_bytes()
 
     def stage_text(
         self,

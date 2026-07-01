@@ -10,15 +10,21 @@ import asyncpg
 
 from brain.agents.events import AgentEvent, emit_agent_event
 from brain.agents.runtime import AgentRuntime, AgentRuntimeConfig
+from brain.agents.workspace_artifacts import persist_workspace_json_artifact
 from brain.db.rls import platform_admin_connection
 from brain.skills.handlers import build_skill_runner
 from brain.skills.policy_gate import SkillInvocation
 from brain.skills.unifi import unifi_skill_handlers
+from jarvis_common.logging_config import get_logger
 
 SWEEP_AGENT_ID = "sweep"
 NETWORK_WATCHDOG_AGENT_ID = SWEEP_AGENT_ID
 NETWORK_WATCHDOG_AGENT_ALIAS = "network_watchdog"
 DEFAULT_NETWORK_INTERVAL_SECONDS = 30
+_WORKSPACE_ARTIFACT_PATH = "outputs/sweep_snapshot.json"
+_WORKSPACE_ARTIFACT_KIND = "network.sweep.snapshot"
+
+logger = get_logger("alpha_agents")
 
 
 async def maybe_run_network_watchdog(pool: asyncpg.Pool) -> bool:
@@ -151,7 +157,35 @@ async def collect_and_emit_network_events(
             ).get("unknown_client_keys", []),
         }
     )
-    return {"snapshot": snapshot, "event_ids": event_ids}
+    artifact = None
+    artifact_error = None
+    try:
+        artifact = await persist_workspace_json_artifact(
+            pool,
+            run_id,
+            audit_actor=NETWORK_WATCHDOG_AGENT_ID,
+            relative_path=_WORKSPACE_ARTIFACT_PATH,
+            kind=_WORKSPACE_ARTIFACT_KIND,
+            document={
+                "agent_id": NETWORK_WATCHDOG_AGENT_ID,
+                "run_id": str(run_id),
+                "snapshot": snapshot,
+                "event_ids": event_ids,
+            },
+        )
+    except Exception as exc:
+        artifact_error = str(exc)
+        logger.warning(
+            "network_watchdog_workspace_artifact_failed run_id=%s error=%s",
+            run_id,
+            artifact_error,
+        )
+    return {
+        "snapshot": snapshot,
+        "event_ids": event_ids,
+        "artifact": artifact,
+        "artifact_error": artifact_error,
+    }
 
 
 def network_events_from_snapshot(

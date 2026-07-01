@@ -75,6 +75,7 @@ interface AgentRun {
   policy_labels: string[]
   approval_scope: string | null
   retention_class: string
+  artifact_count: number
   created_at: string
 }
 
@@ -175,6 +176,22 @@ function textOrFallback(value: string | null | undefined, fallback: string) {
   return value && value.trim() ? value : fallback
 }
 
+function hasWorkspace(run: Pick<AgentRun, 'workspace_root'>) {
+  return Boolean(run.workspace_root && run.workspace_root.trim())
+}
+
+function isPreviewableContentType(contentType: string) {
+  return (
+    contentType.startsWith('text/') ||
+    contentType === 'application/json' ||
+    contentType.endsWith('+json')
+  )
+}
+
+function artifactFileName(relativePath: string) {
+  return relativePath.split('/').filter(Boolean).at(-1) ?? 'artifact'
+}
+
 export default function Agents() {
   const { theme } = useAppStore()
   const isDark = theme === 'dark'
@@ -190,11 +207,18 @@ export default function Agents() {
   const [runs, setRuns] = useState<AgentRun[]>([])
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [artifacts, setArtifacts] = useState<AgentRunArtifact[]>([])
+  const [showWorkspaceOnly, setShowWorkspaceOnly] = useState(false)
+  const [showArtifactsOnly, setShowArtifactsOnly] = useState(false)
+  const [retentionFilter, setRetentionFilter] = useState('all')
   const [loading, setLoading] = useState(true)
   const [detailLoading, setDetailLoading] = useState(false)
   const [artifactLoading, setArtifactLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [artifactError, setArtifactError] = useState<string | null>(null)
+  const [artifactPreviewId, setArtifactPreviewId] = useState<string | null>(null)
+  const [artifactPreviewText, setArtifactPreviewText] = useState<string | null>(null)
+  const [artifactPreviewError, setArtifactPreviewError] = useState<string | null>(null)
+  const [artifactPreviewLoadingId, setArtifactPreviewLoadingId] = useState<string | null>(null)
   const [acting, setActing] = useState<string | null>(null)
   const [runningNow, setRunningNow] = useState<string | null>(null)
   const [runResult, setRunResult] = useState<AgentManualRun | null>(null)
@@ -231,6 +255,10 @@ export default function Agents() {
         return runRes.runs[0]?.id ?? null
       })
       setArtifactError(null)
+      setArtifactPreviewId(null)
+      setArtifactPreviewText(null)
+      setArtifactPreviewError(null)
+      setRetentionFilter('all')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load agent details')
     } finally {
@@ -244,6 +272,9 @@ export default function Agents() {
       const artifactRes = await apiJson<AgentRunArtifactList>(`/v1/agent-runs/${runId}/artifacts`)
       setArtifacts(artifactRes.artifacts)
       setArtifactError(null)
+      setArtifactPreviewId(null)
+      setArtifactPreviewText(null)
+      setArtifactPreviewError(null)
     } catch (err) {
       setArtifacts([])
       setArtifactError(err instanceof Error ? err.message : 'Failed to load artifacts')
@@ -279,9 +310,22 @@ export default function Agents() {
     () => agents.find((agent) => agent.agent_id === selectedId) ?? null,
     [agents, selectedId]
   )
+  const retentionOptions = useMemo(
+    () => Array.from(new Set(runs.map((run) => run.retention_class))).sort(),
+    [runs]
+  )
+  const filteredRuns = useMemo(
+    () => runs.filter((run) => {
+      if (showWorkspaceOnly && !hasWorkspace(run)) return false
+      if (showArtifactsOnly && run.artifact_count <= 0) return false
+      if (retentionFilter !== 'all' && run.retention_class !== retentionFilter) return false
+      return true
+    }),
+    [retentionFilter, runs, showArtifactsOnly, showWorkspaceOnly]
+  )
   const selectedRun = useMemo(
-    () => runs.find((run) => run.id === selectedRunId) ?? null,
-    [runs, selectedRunId]
+    () => filteredRuns.find((run) => run.id === selectedRunId) ?? null,
+    [filteredRuns, selectedRunId]
   )
 
   const stats = useMemo(() => {
@@ -337,6 +381,51 @@ export default function Agents() {
     selectedAgent?.enabled === true &&
     selectedAgent.status === 'active' &&
     selectedAgent.metadata.manual_run_enabled === true
+
+  useEffect(() => {
+    if (filteredRuns.length === 0) {
+      setSelectedRunId(null)
+      return
+    }
+    if (!selectedRunId || !filteredRuns.some((run) => run.id === selectedRunId)) {
+      setSelectedRunId(filteredRuns[0].id)
+    }
+  }, [filteredRuns, selectedRunId])
+
+  const previewArtifact = async (artifact: AgentRunArtifact) => {
+    setArtifactPreviewLoadingId(artifact.artifact_id)
+    setArtifactPreviewError(null)
+    try {
+      const res = await apiFetch(`/v1/agent-runs/${artifact.run_id}/artifacts/${artifact.artifact_id}/content`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setArtifactPreviewText(await res.text())
+      setArtifactPreviewId(artifact.artifact_id)
+    } catch (err) {
+      setArtifactPreviewError(err instanceof Error ? err.message : 'Failed to preview artifact')
+      setArtifactPreviewId(artifact.artifact_id)
+      setArtifactPreviewText(null)
+    } finally {
+      setArtifactPreviewLoadingId(null)
+    }
+  }
+
+  const downloadArtifact = async (artifact: AgentRunArtifact) => {
+    try {
+      const res = await apiFetch(`/v1/agent-runs/${artifact.run_id}/artifacts/${artifact.artifact_id}/content`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = artifactFileName(artifact.relative_path)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err) {
+      setArtifactError(err instanceof Error ? err.message : 'Failed to download artifact')
+    }
+  }
 
   return (
     <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="space-y-5 max-w-7xl">
@@ -524,11 +613,50 @@ export default function Agents() {
                   </div>
 
                   <div className={`rounded-lg border ${border} ${panel} overflow-hidden`}>
-                    <div className={`px-4 py-3 border-b ${border} font-semibold`}>Runs</div>
+                    <div className={`px-4 py-3 border-b ${border} flex items-center justify-between gap-3`}>
+                      <div className="font-semibold">Runs</div>
+                      <div className={`text-xs ${muted}`}>{filteredRuns.length}/{runs.length}</div>
+                    </div>
+                    <div className={`px-4 py-3 border-b ${border} flex flex-wrap items-center gap-2`}>
+                      <button
+                        type="button"
+                        onClick={() => setShowWorkspaceOnly((value) => !value)}
+                        className={`min-h-9 rounded border px-3 py-1.5 text-xs font-semibold ${
+                          showWorkspaceOnly ? 'border-sky-500/40 bg-sky-500/10 text-sky-400' : `${border} ${muted}`
+                        }`}
+                      >
+                        AgentFS only
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowArtifactsOnly((value) => !value)}
+                        className={`min-h-9 rounded border px-3 py-1.5 text-xs font-semibold ${
+                          showArtifactsOnly ? 'border-sky-500/40 bg-sky-500/10 text-sky-400' : `${border} ${muted}`
+                        }`}
+                      >
+                        With artifacts
+                      </button>
+                      <label className={`ml-auto text-xs ${muted}`}>
+                        <span className="mr-2">Retention</span>
+                        <select
+                          value={retentionFilter}
+                          onChange={(event) => setRetentionFilter(event.target.value)}
+                          className={`min-h-9 rounded border px-2 py-1.5 text-xs ${border} ${panel}`}
+                        >
+                          <option value="all">All</option>
+                          {retentionOptions.map((value) => (
+                            <option key={value} value={value}>{value}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
                     <div className="divide-y divide-zinc-500/10 min-h-72">
                       {detailLoading && <div className={`p-4 text-sm ${muted}`}>Loading...</div>}
                       {!detailLoading && runs.length === 0 && <div className={`p-4 text-sm ${muted}`}>No runs.</div>}
-                      {!detailLoading && runs.map((run) => (
+                      {!detailLoading && runs.length > 0 && filteredRuns.length === 0 && (
+                        <div className={`p-4 text-sm ${muted}`}>No runs match the current filters.</div>
+                      )}
+                      {!detailLoading && filteredRuns.map((run) => (
                         <button
                           key={run.id}
                           type="button"
@@ -549,6 +677,11 @@ export default function Agents() {
                             <span className={`rounded border ${border} px-2 py-1 text-[11px] font-semibold ${muted}`}>
                               {run.retention_class}
                             </span>
+                            {run.artifact_count > 0 && (
+                              <span className={`rounded border ${border} px-2 py-1 text-[11px] font-semibold ${muted}`}>
+                                {run.artifact_count} artifacts
+                              </span>
+                            )}
                             {run.approval_scope && (
                               <span className={`rounded border ${border} px-2 py-1 text-[11px] font-semibold ${muted}`}>
                                 {run.approval_scope}
@@ -616,7 +749,7 @@ export default function Agents() {
                         <div className={`rounded-lg border ${border} ${panel} overflow-hidden`}>
                           <div className={`px-4 py-3 border-b ${border} flex items-center justify-between gap-3`}>
                             <div className="text-sm font-semibold">Artifacts</div>
-                            <div className={`text-xs ${muted}`}>{artifacts.length} items</div>
+                            <div className={`text-xs ${muted}`}>{artifacts.length} / {selectedRun.artifact_count} recorded</div>
                           </div>
                           <div className="divide-y divide-zinc-500/10">
                             {artifactLoading && <div className={`p-4 text-sm ${muted}`}>Loading artifacts...</div>}
@@ -643,6 +776,39 @@ export default function Agents() {
                                         {label}
                                       </span>
                                     ))}
+                                  </div>
+                                )}
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  {isPreviewableContentType(artifact.content_type) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => artifactPreviewId === artifact.artifact_id ? setArtifactPreviewId(null) : void previewArtifact(artifact)}
+                                      className={`min-h-9 rounded border px-3 py-1.5 text-xs font-semibold ${border} ${panel}`}
+                                    >
+                                      {artifactPreviewLoadingId === artifact.artifact_id
+                                        ? 'Loading...'
+                                        : artifactPreviewId === artifact.artifact_id
+                                          ? 'Hide preview'
+                                          : 'Preview'}
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => void downloadArtifact(artifact)}
+                                    className={`min-h-9 rounded border px-3 py-1.5 text-xs font-semibold ${border} ${panel}`}
+                                  >
+                                    Download
+                                  </button>
+                                </div>
+                                {artifactPreviewId === artifact.artifact_id && (
+                                  <div className={`mt-3 rounded-lg border ${border} ${strongPanel} p-3`}>
+                                    {artifactPreviewError ? (
+                                      <div className="text-xs text-rose-400">{artifactPreviewError}</div>
+                                    ) : (
+                                      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs">
+                                        {artifactPreviewText ?? ''}
+                                      </pre>
+                                    )}
                                   </div>
                                 )}
                               </div>

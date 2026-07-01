@@ -198,11 +198,65 @@ async def test_list_agent_run_artifacts_reads_db_metadata_only(
     assert out.artifacts[0].policy_labels == ["memory.proposal_required"]
 
 
+@pytest.mark.asyncio
+async def test_get_agent_run_artifact_content_reads_workspace_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = agent_workspace.LocalWorkspaceBackend(tmp_path)
+    conn = _FakeWorkspaceConn()
+    run_id = UUID("77777777-7777-7777-7777-777777777777")
+
+    manifest = backend.init_workspace(
+        run_id,
+        "internet_scout",
+        ["memory.proposal_required"],
+        "memory.review",
+        "standard",
+        created_at=datetime(2026, 6, 30, 18, 0, tzinfo=UTC),
+    )
+    conn.workspace_root = manifest.workspace_root
+    record = backend.write_text(
+        run_id,
+        "outputs/report.json",
+        '{"ok":true}\n',
+        "report",
+        content_type="application/json",
+        policy_labels=["memory.proposal_required"],
+        workspace_root=manifest.workspace_root,
+    )
+    conn.artifact_row = {
+        "id": UUID(record.artifact_id),
+        "run_id": run_id,
+        "relative_path": record.relative_path,
+        "content_type": record.content_type,
+    }
+
+    monkeypatch.setattr(registry, "check_scopes", lambda *args: None)
+    monkeypatch.setattr(registry, "get_workspace_backend", lambda: backend)
+    monkeypatch.setattr(registry, "rls_connection", lambda request: _FakeRls(conn))
+
+    response = await registry.get_agent_run_artifact_content(
+        run_id,
+        UUID(record.artifact_id),
+        _request(),
+    )
+
+    assert response.media_type == "application/json"
+    assert response.body == b'{"ok":true}\n'
+    assert response.headers["content-disposition"] == 'inline; filename="report.json"'
+
+
 def test_agent_workspace_routes_are_governed_t2() -> None:
     cases = [
         ("POST", "/v1/agent-runs/11111111-1111-1111-1111-111111111111/workspace/init"),
         ("GET", "/v1/agent-runs/11111111-1111-1111-1111-111111111111/workspace"),
         ("GET", "/v1/agent-runs/11111111-1111-1111-1111-111111111111/artifacts"),
+        (
+            "GET",
+            "/v1/agent-runs/11111111-1111-1111-1111-111111111111/artifacts/"
+            "22222222-2222-2222-2222-222222222222/content",
+        ),
         ("POST", "/v1/agent-runs/11111111-1111-1111-1111-111111111111/artifacts"),
     ]
 
@@ -241,6 +295,7 @@ class _FakeWorkspaceConn:
         self.workspace_update_count = 0
         self.artifact_insert_args: tuple[object, ...] | None = None
         self.artifact_rows: list[dict[str, object]] = []
+        self.artifact_row: dict[str, object] | None = None
 
     async def fetchrow(self, query: str, *args: object):
         if "FROM public.alpha_agent_runs" in query:
@@ -255,6 +310,8 @@ class _FakeWorkspaceConn:
                 "approval_scope": "memory.review",
                 "retention_class": "standard",
             }
+        if "FROM public.alpha_agent_run_artifacts" in query:
+            return self.artifact_row
         raise AssertionError(query)
 
     async def fetch(self, query: str, *args: object):
