@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import { AlertTriangle, CheckCircle2, History, Loader2, MousePointerClick, PlayCircle, RefreshCw, Search, ShieldCheck } from 'lucide-react'
 import { BeaconAnswerSummary } from '../components/beacon/BeaconAnswerSummary'
+import { BeaconCrawlerConsole } from '../components/beacon/BeaconCrawlerConsole'
 import { BeaconEvidenceTransparencyPanel } from '../components/beacon/BeaconEvidenceTransparencyPanel'
 import { BeaconHealthRail } from '../components/beacon/BeaconHealthRail'
 import { BeaconModeSelector } from '../components/beacon/BeaconModeSelector'
@@ -308,6 +309,8 @@ export default function Beacon() {
         )}
         {runError && <p className="text-sm text-rose-500">{runError}</p>}
       </section>
+
+      <BeaconCrawlerConsole isDark={isDark} onComplete={fetchHealth} />
 
       <details className={`rounded-lg border p-4 ${border} ${panel}`}>
         <summary className="cursor-pointer text-sm font-semibold">
