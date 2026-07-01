@@ -70,7 +70,24 @@ interface AgentRun {
   completed_at: string | null
   cost_usd: number
   error_text: string | null
+  workspace_backend: string
+  workspace_root: string | null
+  policy_labels: string[]
+  approval_scope: string | null
+  retention_class: string
   created_at: string
+}
+
+interface AgentRunArtifact {
+  artifact_id: string
+  run_id: string
+  relative_path: string
+  kind: string
+  content_type: string
+  size_bytes: number
+  created_at: string
+  sha256: string
+  policy_labels: string[]
 }
 
 interface AgentStatusList {
@@ -91,6 +108,11 @@ interface AgentEventList {
 interface AgentRunList {
   count: number
   runs: AgentRun[]
+}
+
+interface AgentRunArtifactList {
+  count: number
+  artifacts: AgentRunArtifact[]
 }
 
 interface AgentManualRun {
@@ -143,6 +165,12 @@ function compactJson(value: Record<string, unknown>) {
   return entries.map(([key, val]) => `${key}: ${String(val)}`).join(' / ')
 }
 
+function bytesText(size: number) {
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`
+}
+
 export default function Agents() {
   const { theme } = useAppStore()
   const isDark = theme === 'dark'
@@ -156,9 +184,13 @@ export default function Agents() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [runs, setRuns] = useState<AgentRun[]>([])
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const [artifacts, setArtifacts] = useState<AgentRunArtifact[]>([])
   const [loading, setLoading] = useState(true)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [artifactLoading, setArtifactLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [artifactError, setArtifactError] = useState<string | null>(null)
   const [acting, setActing] = useState<string | null>(null)
   const [runningNow, setRunningNow] = useState<string | null>(null)
   const [runResult, setRunResult] = useState<AgentManualRun | null>(null)
@@ -190,10 +222,29 @@ export default function Agents() {
       ])
       setEvents(eventRes.events)
       setRuns(runRes.runs)
+      setSelectedRunId((current) => {
+        if (current && runRes.runs.some((run) => run.id === current)) return current
+        return runRes.runs[0]?.id ?? null
+      })
+      setArtifactError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load agent details')
     } finally {
       setDetailLoading(false)
+    }
+  }, [])
+
+  const loadArtifacts = useCallback(async (runId: string) => {
+    setArtifactLoading(true)
+    try {
+      const artifactRes = await apiJson<AgentRunArtifactList>(`/v1/agent-runs/${runId}/artifacts`)
+      setArtifacts(artifactRes.artifacts)
+      setArtifactError(null)
+    } catch (err) {
+      setArtifacts([])
+      setArtifactError(err instanceof Error ? err.message : 'Failed to load artifacts')
+    } finally {
+      setArtifactLoading(false)
     }
   }, [])
 
@@ -207,6 +258,15 @@ export default function Agents() {
     if (selectedId) loadDetails(selectedId)
   }, [loadDetails, selectedId])
 
+  useEffect(() => {
+    if (!selectedRunId) {
+      setArtifacts([])
+      setArtifactError(null)
+      return
+    }
+    loadArtifacts(selectedRunId)
+  }, [loadArtifacts, selectedRunId])
+
   const selectedStatus = useMemo(
     () => statuses.find((agent) => agent.agent_id === selectedId) ?? null,
     [statuses, selectedId]
@@ -214,6 +274,10 @@ export default function Agents() {
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.agent_id === selectedId) ?? null,
     [agents, selectedId]
+  )
+  const selectedRun = useMemo(
+    () => runs.find((run) => run.id === selectedRunId) ?? null,
+    [runs, selectedRunId]
   )
 
   const stats = useMemo(() => {
@@ -254,6 +318,7 @@ export default function Agents() {
         setApprovalNotice(response.approval)
       } else if (response.data) {
         setRunResult(response.data)
+        if (response.data.run_id) setSelectedRunId(response.data.run_id)
       }
       await load()
       await loadDetails(agentId)
@@ -460,16 +525,128 @@ export default function Agents() {
                       {detailLoading && <div className={`p-4 text-sm ${muted}`}>Loading...</div>}
                       {!detailLoading && runs.length === 0 && <div className={`p-4 text-sm ${muted}`}>No runs.</div>}
                       {!detailLoading && runs.map((run) => (
-                        <div key={run.id} className="p-4 min-h-20">
+                        <button
+                          key={run.id}
+                          type="button"
+                          onClick={() => setSelectedRunId(run.id)}
+                          className={`w-full text-left p-4 min-h-20 hover:bg-sky-500/5 transition-colors ${
+                            selectedRunId === run.id ? 'bg-sky-500/10' : ''
+                          }`}
+                        >
                           <div className="flex items-start justify-between gap-2">
                             <div className="font-semibold text-sm">{run.trigger_type}</div>
                             <span className={`text-xs font-semibold ${run.status === 'failed' ? 'text-rose-400' : 'text-emerald-400'}`}>{run.status}</span>
                           </div>
                           <div className={`mt-1 text-xs ${muted}`}>${run.cost_usd.toFixed(4)} / {timeText(run.created_at)}</div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <span className={`rounded border ${border} px-2 py-1 text-[11px] font-semibold ${muted}`}>
+                              {run.workspace_root ? `${run.workspace_backend} workspace` : 'no workspace'}
+                            </span>
+                            <span className={`rounded border ${border} px-2 py-1 text-[11px] font-semibold ${muted}`}>
+                              {run.retention_class}
+                            </span>
+                            {run.approval_scope && (
+                              <span className={`rounded border ${border} px-2 py-1 text-[11px] font-semibold ${muted}`}>
+                                {run.approval_scope}
+                              </span>
+                            )}
+                          </div>
                           {run.error_text && <div className="mt-2 text-xs text-rose-400">{run.error_text}</div>}
-                        </div>
+                        </button>
                       ))}
                     </div>
+                    {selectedRun && (
+                      <div className={`border-t ${border} p-4 space-y-4`}>
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold">Run Workspace</div>
+                            <div className={`mt-1 text-xs ${muted}`}>{selectedRun.id}</div>
+                          </div>
+                          <span className={`rounded border ${border} px-2 py-1 text-[11px] font-semibold ${muted}`}>
+                            {selectedRun.status}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <InfoCell
+                            label="Backend"
+                            value={selectedRun.workspace_backend}
+                            icon={<Bot className="w-4 h-4" />}
+                            muted={muted}
+                            border={border}
+                            panel={panel}
+                          />
+                          <InfoCell
+                            label="Retention"
+                            value={selectedRun.retention_class}
+                            icon={<Clock3 className="w-4 h-4" />}
+                            muted={muted}
+                            border={border}
+                            panel={panel}
+                          />
+                          <InfoCell
+                            label="Approval Scope"
+                            value={selectedRun.approval_scope ?? 'None'}
+                            icon={<ShieldCheck className="w-4 h-4" />}
+                            muted={muted}
+                            border={border}
+                            panel={panel}
+                          />
+                          <InfoCell
+                            label="Policies"
+                            value={selectedRun.policy_labels.join(', ') || 'None'}
+                            icon={<Bell className="w-4 h-4" />}
+                            muted={muted}
+                            border={border}
+                            panel={panel}
+                          />
+                        </div>
+
+                        <div className={`rounded-lg border ${border} ${panel} p-4`}>
+                          <div className="text-sm font-semibold">Workspace Root</div>
+                          <div className={`mt-2 text-xs break-all ${muted}`}>
+                            {selectedRun.workspace_root ?? 'Not initialized'}
+                          </div>
+                        </div>
+
+                        <div className={`rounded-lg border ${border} ${panel} overflow-hidden`}>
+                          <div className={`px-4 py-3 border-b ${border} flex items-center justify-between gap-3`}>
+                            <div className="text-sm font-semibold">Artifacts</div>
+                            <div className={`text-xs ${muted}`}>{artifacts.length} items</div>
+                          </div>
+                          <div className="divide-y divide-zinc-500/10">
+                            {artifactLoading && <div className={`p-4 text-sm ${muted}`}>Loading artifacts...</div>}
+                            {!artifactLoading && artifactError && <div className="p-4 text-sm text-rose-400">{artifactError}</div>}
+                            {!artifactLoading && !artifactError && artifacts.length === 0 && (
+                              <div className={`p-4 text-sm ${muted}`}>No artifacts recorded for this run.</div>
+                            )}
+                            {!artifactLoading && !artifactError && artifacts.map((artifact) => (
+                              <div key={artifact.artifact_id} className="p-4 min-h-20">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-semibold break-all">{artifact.relative_path}</div>
+                                    <div className={`mt-1 text-xs ${muted}`}>
+                                      {artifact.kind} / {artifact.content_type}
+                                    </div>
+                                  </div>
+                                  <div className={`text-xs ${muted}`}>{bytesText(artifact.size_bytes)}</div>
+                                </div>
+                                <div className={`mt-2 text-xs ${muted}`}>{timeText(artifact.created_at)}</div>
+                                {artifact.policy_labels.length > 0 && (
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {artifact.policy_labels.map((label) => (
+                                      <span key={label} className={`rounded border ${border} px-2 py-1 text-[11px] font-semibold ${muted}`}>
+                                        {label}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
