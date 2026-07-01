@@ -339,6 +339,51 @@
           "title": "Raw Web Content Is Untrusted",
           "type": "boolean"
         },
+        "render_empty_count": {
+          "default": 0,
+          "title": "Render Empty Count",
+          "type": "integer"
+        },
+        "render_missing_evidence_count": {
+          "default": 0,
+          "title": "Render Missing Evidence Count",
+          "type": "integer"
+        },
+        "render_missing_screenshot_count": {
+          "default": 0,
+          "title": "Render Missing Screenshot Count",
+          "type": "integer"
+        },
+        "render_ok_count": {
+          "default": 0,
+          "title": "Render Ok Count",
+          "type": "integer"
+        },
+        "render_quality_version": {
+          "default": 2,
+          "title": "Render Quality Version",
+          "type": "integer"
+        },
+        "render_request_count": {
+          "default": 0,
+          "title": "Render Request Count",
+          "type": "integer"
+        },
+        "render_weak_count": {
+          "default": 0,
+          "title": "Render Weak Count",
+          "type": "integer"
+        },
+        "render_weak_empty_count": {
+          "default": 0,
+          "title": "Render Weak Empty Count",
+          "type": "integer"
+        },
+        "render_weak_empty_rate_percent": {
+          "default": 0,
+          "title": "Render Weak Empty Rate Percent",
+          "type": "integer"
+        },
         "request_count": {
           "default": 0,
           "title": "Request Count",
