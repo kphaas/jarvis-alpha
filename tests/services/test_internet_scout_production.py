@@ -568,6 +568,54 @@ async def test_crawler_watch_signals_do_not_recommend_work_without_pressure(
 
 
 @pytest.mark.asyncio
+async def test_crawler_cap_watch_signal_does_not_fail_health(monkeypatch):
+    monkeypatch.setattr(
+        beacon_health,
+        "browser_runtime_health",
+        lambda: {"ok": True, "runtime_enabled": True},
+    )
+    now = datetime.now(UTC)
+    conn = FakeConn(
+        crawler_row={
+            "request_count": 32,
+            "succeeded_request_count": 32,
+            "failed_request_count": 0,
+            "blocked_host_count": 0,
+            "cache_hit_count": 1,
+            "cache_miss_count": 1,
+            "failed_page_count": 0,
+            "source_count": 32,
+            "claim_count": 32,
+            "render_request_count": 0,
+            "render_ok_count": 0,
+            "render_weak_count": 0,
+            "render_empty_count": 0,
+            "render_missing_screenshot_count": 0,
+            "render_missing_evidence_count": 0,
+            "crawl_request_count": 32,
+            "crawl_page_cap_hit_count": 2,
+            "crawl_depth_cap_hit_count": 0,
+            "crawl_time_cap_hit_count": 0,
+            "last_run_at": now,
+        }
+    )
+
+    response = await beacon_health.build_beacon_health(
+        conn,
+        gateway_client=FakeGatewayClient(),
+    )
+
+    crawler = response.checks["crawler"]
+    assert crawler.status == "ok"
+    assert crawler.metadata["crawl_cap_pressure_count"] == 2
+    assert crawler.metadata["crawl_cap_pressure_rate_percent"] == 6
+    assert crawler.metadata["async_crawl_jobs_status"] == "watch"
+    assert (
+        crawler.metadata["async_crawl_jobs_next_action"] == "watch_cap_pressure_trend"
+    )
+
+
+@pytest.mark.asyncio
 async def test_health_parses_quality_canary_json_metadata(monkeypatch):
     monkeypatch.setattr(
         beacon_health,
