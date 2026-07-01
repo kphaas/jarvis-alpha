@@ -88,6 +88,24 @@ else
     echo "   Fix: cd $REPO_DIR && git checkout main && git pull --ff-only origin main"
     exit 1
   fi
+  if git ls-files -u | grep -q .; then
+    emit fail pull node="$NODE_SHORT" from_hash="$PREV_HEAD" dur_ms=0 error="remote worktree has unmerged paths before pull"
+    echo ""
+    echo "❌ REMOTE WORKTREE GUARD FAILED — aborting."
+    echo "   This node has unresolved merge conflicts."
+    echo "   Check: cd $REPO_DIR && git status --short"
+    git status --short
+    exit 1
+  fi
+  if [ -n "$(git status --porcelain)" ]; then
+    emit fail pull node="$NODE_SHORT" from_hash="$PREV_HEAD" dur_ms=0 error="remote worktree is dirty before pull"
+    echo ""
+    echo "❌ REMOTE WORKTREE GUARD FAILED — aborting."
+    echo "   This node has local changes or untracked files."
+    echo "   Check: cd $REPO_DIR && git status --short"
+    git status --short
+    exit 1
+  fi
   if [ -n "${GITHUB_TOKEN:-}" ]; then
     git config credential.helper ""
     GIT_TERMINAL_PROMPT=0 git remote set-url origin https://kphaas:${GITHUB_TOKEN}@github.com/kphaas/jarvis-alpha.git

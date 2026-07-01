@@ -49,3 +49,19 @@ def test_pull_deploy_refuses_head_that_is_not_origin_main() -> None:
     assert "refs/remotes/origin/main" in source
     assert "REMOTE HEAD GUARD FAILED" in source
     assert "remote head is not origin/main after pull" in source
+
+
+def test_pull_deploy_refuses_dirty_or_unmerged_remote_worktree_before_pull() -> None:
+    source = PULL_SCRIPT.read_text(encoding="utf-8")
+
+    assert "git ls-files -u | grep -q ." in source
+    assert "remote worktree has unmerged paths before pull" in source
+    assert 'if [ -n "$(git status --porcelain)" ]; then' in source
+    assert "remote worktree is dirty before pull" in source
+    assert "REMOTE WORKTREE GUARD FAILED" in source
+    assert source.index("git ls-files -u | grep -q .") < source.index(
+        "git pull origin main --rebase"
+    )
+    assert source.index('if [ -n "$(git status --porcelain)" ]; then') < source.index(
+        "git pull origin main --rebase"
+    )
