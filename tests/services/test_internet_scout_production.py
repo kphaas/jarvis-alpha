@@ -99,6 +99,10 @@ class FakeConn:
             "render_empty_count": 1,
             "render_missing_screenshot_count": 1,
             "render_missing_evidence_count": 1,
+            "crawl_request_count": 4,
+            "crawl_page_cap_hit_count": 2,
+            "crawl_depth_cap_hit_count": 0,
+            "crawl_time_cap_hit_count": 0,
             "last_run_at": now,
         }
         self.quality_canary_row = quality_canary_row or {
@@ -403,6 +407,18 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
         "render_weak_empty_rate_percent": 50,
         "render_missing_screenshot_count": 1,
         "render_missing_evidence_count": 1,
+        "render_quality_watch_status": "action",
+        "render_quality_next_action": "add_render_retry_or_site_tuning",
+        "render_quality_watch_reason": "render_quality_signal_above_threshold",
+        "crawl_request_count": 4,
+        "crawl_page_cap_hit_count": 2,
+        "crawl_depth_cap_hit_count": 0,
+        "crawl_time_cap_hit_count": 0,
+        "crawl_cap_pressure_count": 2,
+        "crawl_cap_pressure_rate_percent": 50,
+        "async_crawl_jobs_status": "recommended",
+        "async_crawl_jobs_next_action": "plan_async_crawl_jobs",
+        "async_crawl_jobs_reason": "crawl_cap_pressure_above_threshold",
         "last_run_at": response.checks["crawler"].metadata["last_run_at"],
         "max_pages_without_approval": 10,
         "max_depth_without_approval": 2,
@@ -498,6 +514,57 @@ async def test_health_aggregates_gateway_browser_db_and_retention(monkeypatch):
         == "single_sample"
     )
     assert response.retention.mode == "report_only"
+
+
+@pytest.mark.asyncio
+async def test_crawler_watch_signals_do_not_recommend_work_without_pressure(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        beacon_health,
+        "browser_runtime_health",
+        lambda: {"ok": True, "runtime_enabled": True},
+    )
+    now = datetime.now(UTC)
+    conn = FakeConn(
+        crawler_row={
+            "request_count": 1,
+            "succeeded_request_count": 1,
+            "failed_request_count": 0,
+            "blocked_host_count": 0,
+            "cache_hit_count": 0,
+            "cache_miss_count": 1,
+            "failed_page_count": 0,
+            "source_count": 1,
+            "claim_count": 1,
+            "render_request_count": 0,
+            "render_ok_count": 0,
+            "render_weak_count": 0,
+            "render_empty_count": 0,
+            "render_missing_screenshot_count": 0,
+            "render_missing_evidence_count": 0,
+            "crawl_request_count": 1,
+            "crawl_page_cap_hit_count": 0,
+            "crawl_depth_cap_hit_count": 0,
+            "crawl_time_cap_hit_count": 0,
+            "last_run_at": now,
+        }
+    )
+
+    response = await beacon_health.build_beacon_health(
+        conn,
+        gateway_client=FakeGatewayClient(),
+    )
+
+    crawler = response.checks["crawler"]
+    assert crawler.status == "ok"
+    assert crawler.metadata["render_quality_watch_status"] == "observe"
+    assert (
+        crawler.metadata["render_quality_next_action"]
+        == "watch_real_approved_render_usage"
+    )
+    assert crawler.metadata["async_crawl_jobs_status"] == "not_needed"
+    assert crawler.metadata["async_crawl_jobs_next_action"] == "keep_sync_crawler"
 
 
 @pytest.mark.asyncio

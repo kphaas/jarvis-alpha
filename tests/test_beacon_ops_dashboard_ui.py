@@ -42,7 +42,15 @@ def test_beacon_ops_dashboard_surfaces_core_slo_sections() -> None:
     assert "crawler.render_weak_empty_rate_percent" in source
     assert "crawler.render_missing_screenshot_count" in source
     assert "crawler.render_missing_evidence_count" in source
+    assert "crawler.render_quality_watch_status" in source
+    assert "crawler.render_quality_next_action" in source
+    assert "crawler.crawl_cap_pressure_count" in source
+    assert "crawler.crawl_cap_pressure_rate_percent" in source
+    assert "crawler.async_crawl_jobs_status" in source
     assert "Weak/empty render" in source
+    assert "Render watch" in source
+    assert "Cap pressure" in source
+    assert "Plan async crawl jobs" in source
     assert "web_cache.raw_user_query_stored" in source
     assert "Show details" in source
     assert "Hide details" in source

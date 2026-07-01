@@ -158,6 +158,18 @@ interface HelmBeaconCrawlerSummary {
   render_weak_empty_rate_percent: number
   render_missing_screenshot_count: number
   render_missing_evidence_count: number
+  render_quality_watch_status: string
+  render_quality_next_action: string
+  render_quality_watch_reason: string
+  crawl_request_count: number
+  crawl_page_cap_hit_count: number
+  crawl_depth_cap_hit_count: number
+  crawl_time_cap_hit_count: number
+  crawl_cap_pressure_count: number
+  crawl_cap_pressure_rate_percent: number
+  async_crawl_jobs_status: string
+  async_crawl_jobs_next_action: string
+  async_crawl_jobs_reason: string
   last_run_at: string | null
   max_pages_without_approval: number
   max_depth_without_approval: number
@@ -577,6 +589,11 @@ export default function BeaconOps() {
                     <KeyValue label="Weak / empty" value={`${beacon.crawler.render_weak_count} / ${beacon.crawler.render_empty_count}`} muted={muted} />
                     <KeyValue label="Missing screenshots" value={String(beacon.crawler.render_missing_screenshot_count)} muted={muted} />
                     <KeyValue label="Missing evidence" value={String(beacon.crawler.render_missing_evidence_count)} muted={muted} />
+                    <KeyValue label="Render watch" value={humanize(beacon.crawler.render_quality_watch_status)} muted={muted} />
+                    <KeyValue label="Render next" value={humanize(beacon.crawler.render_quality_next_action)} muted={muted} />
+                    <KeyValue label="Map/crawl runs" value={String(beacon.crawler.crawl_request_count)} muted={muted} />
+                    <KeyValue label="Cap pressure" value={`${beacon.crawler.crawl_cap_pressure_count} hits / ${beacon.crawler.crawl_cap_pressure_rate_percent}%`} muted={muted} />
+                    <KeyValue label="Async jobs" value={humanize(beacon.crawler.async_crawl_jobs_status)} muted={muted} />
                     <KeyValue label="Cap" value={`${beacon.crawler.max_pages_without_approval}p / d${beacon.crawler.max_depth_without_approval}`} muted={muted} />
                     <KeyValue label="Forms" value={beacon.crawler.forms_allowed ? 'allowed' : 'blocked'} muted={muted} />
                     <KeyValue label="Credentials" value={beacon.crawler.credential_entry_allowed ? 'allowed' : 'blocked'} muted={muted} />
@@ -859,6 +876,8 @@ function canaryTrendTone(trend: HelmBeaconQualityCanaryTrend): Tone {
 }
 
 function crawlerMetricDetail(crawler: HelmBeaconCrawlerSummary): string {
+  if (crawler.async_crawl_jobs_status === 'recommended') return 'async crawl jobs recommended'
+  if (crawler.render_quality_watch_status === 'action') return 'render tuning recommended'
   if (crawler.render_request_count > 0) {
     return `${crawler.render_weak_empty_rate_percent}% weak/empty render`
   }
@@ -878,10 +897,23 @@ function operatorActions(beacon: HelmBeaconSummary): Array<{ label: string; tone
   if (beacon.approvals.pending_browser_approvals > 0) actions.push({ label: 'Review browser queue', tone: 'warning' })
   if (beacon.crawler.failed_request_count > 0) actions.push({ label: 'Crawler failures', tone: 'warning' })
   if (beacon.crawler.blocked_host_count > 0) actions.push({ label: 'Crawler blocks', tone: 'warning' })
-  if (beacon.crawler.render_weak_empty_count > 0) actions.push({ label: 'Render quality watch', tone: 'warning' })
+  if (beacon.crawler.render_quality_watch_status === 'action') {
+    actions.push({ label: 'Tune render path', tone: 'warning' })
+  } else if (beacon.crawler.render_quality_watch_status === 'watch') {
+    actions.push({ label: 'Render quality watch', tone: 'warning' })
+  }
+  if (beacon.crawler.async_crawl_jobs_status === 'recommended') {
+    actions.push({ label: 'Plan async crawl jobs', tone: 'warning' })
+  } else if (beacon.crawler.async_crawl_jobs_status === 'watch') {
+    actions.push({ label: 'Crawl cap watch', tone: 'warning' })
+  }
   if (beacon.quality_canary.failed > 0) actions.push({ label: 'Canary failed', tone: 'degraded' })
   if (actions.length === 0) actions.push({ label: 'No immediate action', tone: 'ok' })
   return actions
+}
+
+function humanize(value: string): string {
+  return value.replace(/_/g, ' ')
 }
 
 function formatMs(value: number): string {

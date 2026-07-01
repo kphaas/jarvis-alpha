@@ -632,6 +632,24 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
                         "render_weak_empty_rate_percent": 50,
                         "render_missing_screenshot_count": 1,
                         "render_missing_evidence_count": 1,
+                        "render_quality_watch_status": "action",
+                        "render_quality_next_action": (
+                            "add_render_retry_or_site_tuning"
+                        ),
+                        "render_quality_watch_reason": (
+                            "render_quality_signal_above_threshold"
+                        ),
+                        "crawl_request_count": 4,
+                        "crawl_page_cap_hit_count": 2,
+                        "crawl_depth_cap_hit_count": 0,
+                        "crawl_time_cap_hit_count": 0,
+                        "crawl_cap_pressure_count": 2,
+                        "crawl_cap_pressure_rate_percent": 50,
+                        "async_crawl_jobs_status": "recommended",
+                        "async_crawl_jobs_next_action": "plan_async_crawl_jobs",
+                        "async_crawl_jobs_reason": (
+                            "crawl_cap_pressure_above_threshold"
+                        ),
                         "last_run_at": checked_at.isoformat(),
                         "max_pages_without_approval": 10,
                         "max_depth_without_approval": 2,
@@ -764,6 +782,18 @@ async def test_beacon_summary_redacts_health_payload(monkeypatch) -> None:
         "render_weak_empty_rate_percent": 50,
         "render_missing_screenshot_count": 1,
         "render_missing_evidence_count": 1,
+        "render_quality_watch_status": "action",
+        "render_quality_next_action": "add_render_retry_or_site_tuning",
+        "render_quality_watch_reason": "render_quality_signal_above_threshold",
+        "crawl_request_count": 4,
+        "crawl_page_cap_hit_count": 2,
+        "crawl_depth_cap_hit_count": 0,
+        "crawl_time_cap_hit_count": 0,
+        "crawl_cap_pressure_count": 2,
+        "crawl_cap_pressure_rate_percent": 50,
+        "async_crawl_jobs_status": "recommended",
+        "async_crawl_jobs_next_action": "plan_async_crawl_jobs",
+        "async_crawl_jobs_reason": "crawl_cap_pressure_above_threshold",
         "last_run_at": checked_at.isoformat(),
         "max_pages_without_approval": 10,
         "max_depth_without_approval": 2,

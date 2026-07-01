@@ -176,6 +176,18 @@ class HelmBeaconCrawlerSummary(BaseModel):
     render_weak_empty_rate_percent: int = 0
     render_missing_screenshot_count: int = 0
     render_missing_evidence_count: int = 0
+    render_quality_watch_status: str = "observe"
+    render_quality_next_action: str = "watch_real_approved_render_usage"
+    render_quality_watch_reason: str = "no_approved_render_runs_in_window"
+    crawl_request_count: int = 0
+    crawl_page_cap_hit_count: int = 0
+    crawl_depth_cap_hit_count: int = 0
+    crawl_time_cap_hit_count: int = 0
+    crawl_cap_pressure_count: int = 0
+    crawl_cap_pressure_rate_percent: int = 0
+    async_crawl_jobs_status: str = "not_needed"
+    async_crawl_jobs_next_action: str = "watch_real_map_crawl_usage"
+    async_crawl_jobs_reason: str = "no_map_or_crawl_runs_in_window"
     last_run_at: str | None = None
     max_pages_without_approval: int = 10
     max_depth_without_approval: int = 2
@@ -875,6 +887,63 @@ def _beacon_crawler(
             metadata,
             "render_missing_evidence_count",
         ),
+        render_quality_watch_status=_metadata_str(
+            metadata,
+            "render_quality_watch_status",
+            "observe",
+        )
+        or "observe",
+        render_quality_next_action=_metadata_str(
+            metadata,
+            "render_quality_next_action",
+            "watch_real_approved_render_usage",
+        )
+        or "watch_real_approved_render_usage",
+        render_quality_watch_reason=_metadata_str(
+            metadata,
+            "render_quality_watch_reason",
+            "no_approved_render_runs_in_window",
+        )
+        or "no_approved_render_runs_in_window",
+        crawl_request_count=_metadata_int(metadata, "crawl_request_count"),
+        crawl_page_cap_hit_count=_metadata_int(
+            metadata,
+            "crawl_page_cap_hit_count",
+        ),
+        crawl_depth_cap_hit_count=_metadata_int(
+            metadata,
+            "crawl_depth_cap_hit_count",
+        ),
+        crawl_time_cap_hit_count=_metadata_int(
+            metadata,
+            "crawl_time_cap_hit_count",
+        ),
+        crawl_cap_pressure_count=_metadata_int(
+            metadata,
+            "crawl_cap_pressure_count",
+        ),
+        crawl_cap_pressure_rate_percent=_metadata_int(
+            metadata,
+            "crawl_cap_pressure_rate_percent",
+        ),
+        async_crawl_jobs_status=_metadata_str(
+            metadata,
+            "async_crawl_jobs_status",
+            "not_needed",
+        )
+        or "not_needed",
+        async_crawl_jobs_next_action=_metadata_str(
+            metadata,
+            "async_crawl_jobs_next_action",
+            "watch_real_map_crawl_usage",
+        )
+        or "watch_real_map_crawl_usage",
+        async_crawl_jobs_reason=_metadata_str(
+            metadata,
+            "async_crawl_jobs_reason",
+            "no_map_or_crawl_runs_in_window",
+        )
+        or "no_map_or_crawl_runs_in_window",
         last_run_at=_metadata_str(metadata, "last_run_at"),
         max_pages_without_approval=_metadata_int(
             metadata,
