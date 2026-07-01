@@ -18,6 +18,12 @@ rather than calling Gateway, browsers, or paid providers directly.
 | Browser approval | `POST /v1/internet-scout/browser-task/approval-request` | Queues reviewed click-only browser work. | Human approval required before execution. |
 | Browser execution | `POST /v1/internet-scout/browser-task/run-approved` | Runs one exact approved browser task. | Same-host allowlist, no forms, no typing, no credentials, timeout caps. |
 | Browser audit history | `GET /v1/internet-scout/browser-task/history` | Reviews approval, run, and action audit events. | Append-only tool events under RLS. |
+| Crawler scrape | `POST /v1/internet-scout/crawler/scrape` | Scrapes one public URL through cache-first Gateway egress. | Public URL safety, no browser runtime, raw content remains evidence only. |
+| Crawler batch scrape | `POST /v1/internet-scout/crawler/batch-scrape` | Scrapes up to five public URLs through the same audited path. | Per-URL policy failures are returned as blocked items; no cap bypass. |
+| Crawler map/crawl | `POST /v1/internet-scout/crawler/{map,crawl}` | Maps same-host links and bounded public pages. | Same-host crawl, 10 page cap, 2 depth cap, no forms or credentials. |
+| Crawler extract | `POST /v1/internet-scout/crawler/extract` | Extracts simple schema fields with evidence spans. | Extraction is from scraped evidence; schemas do not become instructions. |
+| Crawler render approval | `POST /v1/internet-scout/crawler/scrape/browser-approval-request` | Queues screenshot-backed browser render for hard pages. | Human approval required before browser runtime execution. |
+| Crawler approved render | `POST /v1/internet-scout/crawler/scrape/browser-run-approved` | Runs an approved render and returns crawler-shaped evidence. | Existing approved queue row, screenshot required, audit and evidence links returned. |
 
 ## Consumer Policies
 
@@ -32,7 +38,7 @@ do not allow browser-use actions.
 
 ## MCP Adapter Rules
 
-An MCP-facing adapter can be added later, but it must preserve these boundaries:
+An MCP-facing adapter must preserve these boundaries:
 
 1. Tool names map to the contracts above; no direct Gateway or browser runtime
    exposure.
@@ -44,6 +50,30 @@ An MCP-facing adapter can be added later, but it must preserve these boundaries:
    Perplexity fallback with spend guards.
 6. Saved history search must stay RLS-bound and must not require storing raw
    user query text.
+
+## Crawler MCP Adapter v1
+
+Machine-readable contract:
+[`beacon_crawler_mcp_adapter.v1.json`](./beacon_crawler_mcp_adapter.v1.json).
+
+The crawler MCP adapter is a translation layer, not a second crawler. It should
+accept MCP tool calls, validate them against the JSON contract, then call the
+existing Alpha HTTP route. Alpha keeps auth, scopes, policy, cache lookup,
+Gateway egress, stored evidence, and audit writes.
+
+| MCP tool | Alpha route | Approval posture |
+|---|---|---|
+| `beacon.crawler.scrape` | `POST /v1/internet-scout/crawler/scrape` | No approval; read-only public URL evidence. |
+| `beacon.crawler.batch_scrape` | `POST /v1/internet-scout/crawler/batch-scrape` | No approval; capped at five URLs. |
+| `beacon.crawler.map` | `POST /v1/internet-scout/crawler/map` | No approval; same-host, page/depth capped. |
+| `beacon.crawler.crawl` | `POST /v1/internet-scout/crawler/crawl` | No approval; same-host, page/depth capped. |
+| `beacon.crawler.extract` | `POST /v1/internet-scout/crawler/extract` | No approval; extracts from scraped evidence. |
+| `beacon.crawler.render_approval_request` | `POST /v1/internet-scout/crawler/scrape/browser-approval-request` | Queues human approval. |
+| `beacon.crawler.render_run_approved` | `POST /v1/internet-scout/crawler/scrape/browser-run-approved` | Requires an approved queue id. |
+
+Render retry stays deferred. The current production rule is to keep watching
+the Beacon Ops render-quality rollup and only add retry/tuning if weak or empty
+renders, missing screenshots, or missing evidence cross the operator threshold.
 
 ## Current Non-Goals
 

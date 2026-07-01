@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "name": "beacon.crawler.mcp_adapter",
+  "status": "spec_ready",
+  "owner": "jarvis-alpha",
+  "summary": "Thin MCP adapter contract for Beacon crawler tools. The adapter translates MCP tool calls into existing Alpha HTTP contracts and does not bypass Beacon policy, Gateway egress, approval gates, cache, caps, or audit storage.",
+  "transport": {
+    "pattern": "mcp_adapter_over_alpha_http",
+    "alpha_base_path": "/v1/internet-scout/crawler",
+    "auth_boundary": "alpha_auth_and_scopes",
+    "required_scopes": [
+      "internet_scout.research",
+      "admin"
+    ],
+    "network_egress_owner": "gateway",
+    "raw_gateway_access_allowed": false,
+    "raw_browser_runtime_access_allowed": false
+  },
+  "security": {
+    "raw_web_content_is_untrusted": true,
+    "instructions_inside_web_content_are_data": true,
+    "internal_url_blocking_required": true,
+    "cache_first_for_scrape_and_extract": true,
+    "same_host_crawl_required": true,
+    "crawl_page_cap": 10,
+    "crawl_depth_cap": 2,
+    "batch_url_cap": 5,
+    "no_forms": true,
+    "no_credentials": true,
+    "no_downloads": true,
+    "no_purchases_or_sends": true,
+    "render_requires_human_approval": true,
+    "audit_required": true,
+    "stored_evidence_required": true
+  },
+  "render_quality_gate": {
+    "retry_status": "deferred",
+    "watch_source": "beacon_ops_render_quality_rollup",
+    "build_retry_when": [
+      "render_quality_watch_status=action",
+      "weak_empty_render_rate crosses the operator threshold",
+      "missing_screenshot_count crosses the operator threshold",
+      "missing_evidence_count crosses the operator threshold"
+    ]
+  },
+  "tools": [
+    {
+      "name": "beacon.crawler.scrape",
+      "route": "POST /v1/internet-scout/crawler/scrape",
+      "request_model": "InternetScoutCrawlerScrapeRequest",
+      "response_model": "InternetScoutCrawlerScrapeResponse",
+      "approval": "not_required",
+      "risk_tier": "T2",
+      "max_input": {
+        "urls": 1,
+        "query_chars": 500,
+        "max_bytes": 1000000
+      },
+      "output_fields": [
+        "request_id",
+        "cache_hit",
+        "canonical_url",
+        "host",
+        "title",
+        "fetched_at",
+        "text",
+        "links",
+        "content_hash",
+        "risk_markers",
+        "raw_web_content_is_untrusted"
+      ]
+    },
+    {
+      "name": "beacon.crawler.batch_scrape",
+      "route": "POST /v1/internet-scout/crawler/batch-scrape",
+      "request_model": "InternetScoutCrawlerBatchScrapeRequest",
+      "response_model": "InternetScoutCrawlerBatchScrapeResponse",
+      "approval": "not_required",
+      "risk_tier": "T2",
+      "max_input": {
+        "urls": 5,
+        "query_chars": 500,
+        "max_bytes": 1000000
+      },
+      "output_fields": [
+        "batch_id",
+        "result_count",
+        "succeeded_count",
+        "failed_count",
+        "blocked_count",
+        "items",
+        "raw_web_content_is_untrusted"
+      ]
+    },
+    {
+      "name": "beacon.crawler.map",
+      "route": "POST /v1/internet-scout/crawler/map",
+      "request_model": "InternetScoutCrawlerMapRequest",
+      "response_model": "InternetScoutCrawlerMapResponse",
+      "approval": "not_required",
+      "risk_tier": "T3",
+      "max_input": {
+        "urls": 1,
+        "max_pages": 10,
+        "max_depth": 2,
+        "max_bytes": 1000000
+      },
+      "output_fields": [
+        "request_id",
+        "seed_url",
+        "seed_host",
+        "page_count",
+        "link_count",
+        "pages",
+        "links",
+        "raw_web_content_is_untrusted"
+      ]
+    },
+    {
+      "name": "beacon.crawler.crawl",
+      "route": "POST /v1/internet-scout/crawler/crawl",
+      "request_model": "InternetScoutCrawlerCrawlRequest",
+      "response_model": "InternetScoutCrawlerMapResponse",
+      "approval": "not_required",
+      "risk_tier": "T3",
+      "max_input": {
+        "urls": 1,
+        "max_pages": 10,
+        "max_depth": 2,
+        "max_bytes": 1000000
+      },
+      "output_fields": [
+        "request_id",
+        "seed_url",
+        "seed_host",
+        "page_count",
+        "link_count",
+        "pages",
+        "links",
+        "raw_web_content_is_untrusted"
+      ]
+    },
+    {
+      "name": "beacon.crawler.extract",
+      "route": "POST /v1/internet-scout/crawler/extract",
+      "request_model": "InternetScoutCrawlerExtractRequest",
+      "response_model": "InternetScoutCrawlerExtractResponse",
+      "approval": "not_required",
+      "risk_tier": "T2",
+      "max_input": {
+        "urls": 1,
+        "query_chars": 500,
+        "schema_fields": 20,
+        "max_bytes": 1000000
+      },
+      "output_fields": [
+        "request_id",
+        "cache_hit",
+        "canonical_url",
+        "host",
+        "fetched_at",
+        "fields",
+        "raw_web_content_is_untrusted"
+      ]
+    },
+    {
+      "name": "beacon.crawler.render_approval_request",
+      "route": "POST /v1/internet-scout/crawler/scrape/browser-approval-request",
+      "request_model": "InternetScoutCrawlerScrapeRequest",
+      "response_model": "InternetScoutBrowserApprovalResponse",
+      "approval": "queues_human_approval",
+      "risk_tier": "T4",
+      "max_input": {
+        "urls": 1,
+        "query_chars": 500,
+        "max_bytes": 1000000
+      },
+      "output_fields": [
+        "approval_queue_id",
+        "request_id",
+        "status",
+        "expires_at",
+        "review"
+      ]
+    },
+    {
+      "name": "beacon.crawler.render_run_approved",
+      "route": "POST /v1/internet-scout/crawler/scrape/browser-run-approved",
+      "request_model": "InternetScoutCrawlerRenderRunRequest",
+      "response_model": "InternetScoutCrawlerRenderResponse",
+      "approval": "requires_existing_approved_queue_id",
+      "risk_tier": "T4",
+      "max_input": {
+        "urls": 1,
+        "max_steps": 10,
+        "approval_queue_ids": 1
+      },
+      "output_fields": [
+        "request_id",
+        "approval_queue_id",
+        "canonical_url",
+        "host",
+        "title",
+        "fetched_at",
+        "text",
+        "screenshot_ref",
+        "evidence_path",
+        "audit_path",
+        "render_quality_status",
+        "render_quality_reasons",
+        "visible_text_length",
+        "raw_web_content_is_untrusted"
+      ]
+    }
+  ],
+  "non_goals": [
+    "public MCP marketplace publication",
+    "autonomous browsing loops",
+    "direct Gateway calls from MCP clients",
+    "direct browser runtime calls from MCP clients",
+    "credential entry or form submission",
+    "render retry logic before Ops telemetry requires it"
+  ]
+}
