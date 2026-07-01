@@ -136,6 +136,12 @@ async def test_crawler_crawl_returns_links_and_evidence_metadata() -> None:
     assert packet.sources[0].host == "public.example.test"
     assert metadata["operation"] == "crawl"
     assert metadata["source_count"] == 1
+    assert metadata["max_pages"] == 3
+    assert metadata["max_depth"] == 1
+    assert metadata["page_cap_hit"] is False
+    assert metadata["depth_cap_hit"] is False
+    assert metadata["time_cap_hit"] is False
+    assert metadata["cap_pressure"] is False
     assert gateway.crawl_calls[0]["max_pages"] == 3
     assert gateway.crawl_calls[0]["max_depth"] == 1
 

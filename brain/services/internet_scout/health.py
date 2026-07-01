@@ -42,6 +42,12 @@ _READINESS_CHECKS = (
 _QUALITY_CANARY_HISTORY_LIMIT = 7
 _QUALITY_CANARY_STALE_AFTER_HOURS = 26
 _DEFAULT_ANSWER_LATENCY_SLO_MS = 20_000
+_RENDER_ACTION_MIN_RUNS = 3
+_RENDER_ACTION_WEAK_EMPTY_RATE_PERCENT = 50
+_RENDER_ACTION_MISSING_COUNT = 2
+_CRAWL_CAP_ACTION_MIN_RUNS = 3
+_CRAWL_CAP_ACTION_RATE_PERCENT = 50
+_CRAWL_CAP_ACTION_COUNT = 3
 
 
 class _RequestRow(Protocol):
@@ -118,8 +124,16 @@ async def _crawler_check(conn) -> InternetScoutHealthCheck:
     metadata = await _crawler_metadata(conn)
     failed = _int_mapping(metadata, "failed_request_count")
     blocked = _int_mapping(metadata, "blocked_host_count")
-    render_weak_empty = _int_mapping(metadata, "render_weak_empty_count")
-    status = "warning" if failed or blocked or render_weak_empty else "ok"
+    render_watch = str(metadata.get("render_quality_watch_status") or "observe")
+    async_jobs = str(metadata.get("async_crawl_jobs_status") or "not_needed")
+    status = (
+        "warning"
+        if failed
+        or blocked
+        or render_watch in {"watch", "action"}
+        or async_jobs in {"watch", "recommended"}
+        else "ok"
+    )
     return InternetScoutHealthCheck(
         ok=True,
         status=status,
@@ -202,6 +216,34 @@ async def _crawler_metadata(conn) -> dict[str, object]:
                   AND metadata->>'source' = 'crawler_render_scrape'
                   AND metadata->>'missing_evidence' = 'true'
             )::INTEGER AS render_missing_evidence_count,
+            COUNT(*) FILTER (
+                WHERE event_type IN ('crawler_map', 'crawler_crawl')
+                  AND status = 'succeeded'
+            )::INTEGER AS crawl_request_count,
+            COUNT(*) FILTER (
+                WHERE event_type IN ('crawler_map', 'crawler_crawl')
+                  AND status = 'succeeded'
+                  AND (
+                    metadata->>'page_cap_hit' = 'true'
+                    OR CASE
+                        WHEN metadata->>'page_count' ~ '^[0-9]+$'
+                         AND metadata->>'max_pages' ~ '^[0-9]+$'
+                        THEN (metadata->>'page_count')::INTEGER
+                            >= (metadata->>'max_pages')::INTEGER
+                        ELSE FALSE
+                    END
+                  )
+            )::INTEGER AS crawl_page_cap_hit_count,
+            COUNT(*) FILTER (
+                WHERE event_type IN ('crawler_map', 'crawler_crawl')
+                  AND status = 'succeeded'
+                  AND metadata->>'depth_cap_hit' = 'true'
+            )::INTEGER AS crawl_depth_cap_hit_count,
+            COUNT(*) FILTER (
+                WHERE event_type IN ('crawler_map', 'crawler_crawl')
+                  AND status = 'succeeded'
+                  AND metadata->>'time_cap_hit' = 'true'
+            )::INTEGER AS crawl_time_cap_hit_count,
             MAX(created_at) AS last_run_at
         FROM public.alpha_internet_tool_events
         WHERE created_at >= NOW() - INTERVAL '24 hours'
@@ -214,6 +256,28 @@ async def _crawler_metadata(conn) -> dict[str, object]:
     render_weak = _int_row(row, "render_weak_count") if row else 0
     render_empty = _int_row(row, "render_empty_count") if row else 0
     render_weak_empty = render_weak + render_empty
+    missing_screenshots = _int_row(row, "render_missing_screenshot_count") if row else 0
+    missing_evidence = _int_row(row, "render_missing_evidence_count") if row else 0
+    render_rate = round((render_weak_empty / render_total) * 100) if render_total else 0
+    render_watch = _render_quality_watch(
+        render_total=render_total,
+        weak_empty_rate_percent=render_rate,
+        missing_screenshot_count=missing_screenshots,
+        missing_evidence_count=missing_evidence,
+    )
+    crawl_requests = _int_row(row, "crawl_request_count") if row else 0
+    page_cap_hits = _int_row(row, "crawl_page_cap_hit_count") if row else 0
+    depth_cap_hits = _int_row(row, "crawl_depth_cap_hit_count") if row else 0
+    time_cap_hits = _int_row(row, "crawl_time_cap_hit_count") if row else 0
+    cap_pressure_count = page_cap_hits + depth_cap_hits + time_cap_hits
+    cap_pressure_rate = (
+        round((cap_pressure_count / crawl_requests) * 100) if crawl_requests else 0
+    )
+    async_jobs = _async_crawl_jobs_watch(
+        crawl_request_count=crawl_requests,
+        cap_pressure_count=cap_pressure_count,
+        cap_pressure_rate_percent=cap_pressure_rate,
+    )
     return {
         "mode": "gateway_bounded_crawler",
         "window_hours": 24,
@@ -237,23 +301,17 @@ async def _crawler_metadata(conn) -> dict[str, object]:
         "render_weak_count": render_weak,
         "render_empty_count": render_empty,
         "render_weak_empty_count": render_weak_empty,
-        "render_weak_empty_rate_percent": round(
-            (render_weak_empty / render_total) * 100,
-        )
-        if render_total
-        else 0,
-        "render_missing_screenshot_count": _int_row(
-            row,
-            "render_missing_screenshot_count",
-        )
-        if row
-        else 0,
-        "render_missing_evidence_count": _int_row(
-            row,
-            "render_missing_evidence_count",
-        )
-        if row
-        else 0,
+        "render_weak_empty_rate_percent": render_rate,
+        "render_missing_screenshot_count": missing_screenshots,
+        "render_missing_evidence_count": missing_evidence,
+        **render_watch,
+        "crawl_request_count": crawl_requests,
+        "crawl_page_cap_hit_count": page_cap_hits,
+        "crawl_depth_cap_hit_count": depth_cap_hits,
+        "crawl_time_cap_hit_count": time_cap_hits,
+        "crawl_cap_pressure_count": cap_pressure_count,
+        "crawl_cap_pressure_rate_percent": cap_pressure_rate,
+        **async_jobs,
         "last_run_at": _datetime_or_none(row["last_run_at"]) if row else None,
         "max_pages_without_approval": CRAWL_MAX_PAGES_WITHOUT_APPROVAL,
         "max_depth_without_approval": CRAWL_MAX_DEPTH_WITHOUT_APPROVAL,
@@ -261,6 +319,79 @@ async def _crawler_metadata(conn) -> dict[str, object]:
         "forms_allowed": False,
         "credential_entry_allowed": False,
         "raw_web_content_is_untrusted": True,
+    }
+
+
+def _render_quality_watch(
+    *,
+    render_total: int,
+    weak_empty_rate_percent: int,
+    missing_screenshot_count: int,
+    missing_evidence_count: int,
+) -> dict[str, str]:
+    if render_total <= 0:
+        return {
+            "render_quality_watch_status": "observe",
+            "render_quality_next_action": "watch_real_approved_render_usage",
+            "render_quality_watch_reason": "no_approved_render_runs_in_window",
+        }
+
+    missing_count = max(missing_screenshot_count, missing_evidence_count)
+    action_needed = render_total >= _RENDER_ACTION_MIN_RUNS and (
+        weak_empty_rate_percent >= _RENDER_ACTION_WEAK_EMPTY_RATE_PERCENT
+        or missing_count >= _RENDER_ACTION_MISSING_COUNT
+    )
+    if action_needed:
+        return {
+            "render_quality_watch_status": "action",
+            "render_quality_next_action": "add_render_retry_or_site_tuning",
+            "render_quality_watch_reason": "render_quality_signal_above_threshold",
+        }
+    if weak_empty_rate_percent > 0 or missing_count > 0:
+        return {
+            "render_quality_watch_status": "watch",
+            "render_quality_next_action": "review_latest_render_runs",
+            "render_quality_watch_reason": "render_quality_signal_present",
+        }
+    return {
+        "render_quality_watch_status": "observe",
+        "render_quality_next_action": "keep_watching_render_rollup",
+        "render_quality_watch_reason": "render_quality_clean_in_window",
+    }
+
+
+def _async_crawl_jobs_watch(
+    *,
+    crawl_request_count: int,
+    cap_pressure_count: int,
+    cap_pressure_rate_percent: int,
+) -> dict[str, str]:
+    if crawl_request_count <= 0:
+        return {
+            "async_crawl_jobs_status": "not_needed",
+            "async_crawl_jobs_next_action": "watch_real_map_crawl_usage",
+            "async_crawl_jobs_reason": "no_map_or_crawl_runs_in_window",
+        }
+    action_needed = crawl_request_count >= _CRAWL_CAP_ACTION_MIN_RUNS and (
+        cap_pressure_rate_percent >= _CRAWL_CAP_ACTION_RATE_PERCENT
+        or cap_pressure_count >= _CRAWL_CAP_ACTION_COUNT
+    )
+    if action_needed:
+        return {
+            "async_crawl_jobs_status": "recommended",
+            "async_crawl_jobs_next_action": "plan_async_crawl_jobs",
+            "async_crawl_jobs_reason": "crawl_cap_pressure_above_threshold",
+        }
+    if cap_pressure_count > 0:
+        return {
+            "async_crawl_jobs_status": "watch",
+            "async_crawl_jobs_next_action": "watch_cap_pressure_trend",
+            "async_crawl_jobs_reason": "crawl_cap_pressure_present",
+        }
+    return {
+        "async_crawl_jobs_status": "not_needed",
+        "async_crawl_jobs_next_action": "keep_sync_crawler",
+        "async_crawl_jobs_reason": "no_cap_pressure_in_window",
     }
 
 

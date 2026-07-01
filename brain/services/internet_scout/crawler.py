@@ -118,6 +118,12 @@ class InternetScoutCrawler:
                 page_count=len(crawl.pages),
                 packet=packet,
                 link_count=response.link_count,
+                max_pages=crawl.max_pages,
+                max_depth=crawl.max_depth,
+                page_cap_hit=len(crawl.pages) >= crawl.max_pages,
+                depth_cap_hit=any(page.depth >= crawl.max_depth for page in crawl.pages)
+                if crawl.max_depth > 0
+                else False,
             ),
         )
 
@@ -307,8 +313,12 @@ def _metadata(
     page_count: int,
     packet: InternetEvidencePacket,
     link_count: int = 0,
+    max_pages: int | None = None,
+    max_depth: int | None = None,
+    page_cap_hit: bool = False,
+    depth_cap_hit: bool = False,
 ) -> dict[str, object]:
-    return {
+    metadata: dict[str, object] = {
         "operation": operation,
         "cache_hit": cache_hit,
         "page_count": page_count,
@@ -321,3 +331,12 @@ def _metadata(
         "raw_web_content_included": False,
         "raw_web_content_is_untrusted": True,
     }
+    if max_pages is not None:
+        metadata["max_pages"] = max_pages
+        metadata["page_cap_hit"] = page_cap_hit
+    if max_depth is not None:
+        metadata["max_depth"] = max_depth
+        metadata["depth_cap_hit"] = depth_cap_hit
+    metadata["time_cap_hit"] = False
+    metadata["cap_pressure"] = page_cap_hit or depth_cap_hit
+    return metadata

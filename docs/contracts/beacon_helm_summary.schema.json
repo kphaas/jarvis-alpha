@@ -262,6 +262,21 @@
     },
     "HelmBeaconCrawlerSummary": {
       "properties": {
+        "async_crawl_jobs_next_action": {
+          "default": "watch_real_map_crawl_usage",
+          "title": "Async Crawl Jobs Next Action",
+          "type": "string"
+        },
+        "async_crawl_jobs_reason": {
+          "default": "no_map_or_crawl_runs_in_window",
+          "title": "Async Crawl Jobs Reason",
+          "type": "string"
+        },
+        "async_crawl_jobs_status": {
+          "default": "not_needed",
+          "title": "Async Crawl Jobs Status",
+          "type": "string"
+        },
         "blocked_host_count": {
           "default": 0,
           "title": "Blocked Host Count",
@@ -285,6 +300,36 @@
         "claim_count": {
           "default": 0,
           "title": "Claim Count",
+          "type": "integer"
+        },
+        "crawl_cap_pressure_count": {
+          "default": 0,
+          "title": "Crawl Cap Pressure Count",
+          "type": "integer"
+        },
+        "crawl_cap_pressure_rate_percent": {
+          "default": 0,
+          "title": "Crawl Cap Pressure Rate Percent",
+          "type": "integer"
+        },
+        "crawl_depth_cap_hit_count": {
+          "default": 0,
+          "title": "Crawl Depth Cap Hit Count",
+          "type": "integer"
+        },
+        "crawl_page_cap_hit_count": {
+          "default": 0,
+          "title": "Crawl Page Cap Hit Count",
+          "type": "integer"
+        },
+        "crawl_request_count": {
+          "default": 0,
+          "title": "Crawl Request Count",
+          "type": "integer"
+        },
+        "crawl_time_cap_hit_count": {
+          "default": 0,
+          "title": "Crawl Time Cap Hit Count",
           "type": "integer"
         },
         "credential_entry_allowed": {
@@ -359,10 +404,25 @@
           "title": "Render Ok Count",
           "type": "integer"
         },
+        "render_quality_next_action": {
+          "default": "watch_real_approved_render_usage",
+          "title": "Render Quality Next Action",
+          "type": "string"
+        },
         "render_quality_version": {
           "default": 2,
           "title": "Render Quality Version",
           "type": "integer"
+        },
+        "render_quality_watch_reason": {
+          "default": "no_approved_render_runs_in_window",
+          "title": "Render Quality Watch Reason",
+          "type": "string"
+        },
+        "render_quality_watch_status": {
+          "default": "observe",
+          "title": "Render Quality Watch Status",
+          "type": "string"
         },
         "render_request_count": {
           "default": 0,
