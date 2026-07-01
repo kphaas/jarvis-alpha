@@ -458,6 +458,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Security child profiles — T2 security_read ---
     "GET /v1/security/child-profiles": ["read", "security_read"],
     "GET /v1/security/mcp/registry": ["read"],
+    "GET /v1/security/mcp/adapters/beacon-crawler": ["read", "security_read"],
     # --- Vault — reads T1, writes T2 ---
     "GET /v1/vault/pipeline": ["read"],
     "POST /v1/vault/ask": ["read", "external_call", "cost_incurring"],
