@@ -29,6 +29,7 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert "agent_board.read" in names
     assert "agent_board.queue_item" in names
     assert "agent_board.update_status" in names
+    assert "agent_board.dispatch_item" in names
     assert "approval.canary_t4" in names
     assert "secrets.rotate" in names
     assert "chatops.command_read" in names
@@ -57,6 +58,10 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert skills["agent_board.queue_item"].mutates_state is True
     assert skills["agent_board.queue_item"].metadata["does_not_execute_agents"] is True
     assert skills["agent_board.update_status"].metadata["operator_surface"] == "helm"
+    assert skills["agent_board.dispatch_item"].metadata["executor_bridge"] == (
+        "task_graph"
+    )
+    assert skills["agent_board.dispatch_item"].metadata["wakes_executor"] is True
     assert skills["approval.canary_t4"].status == "active"
     assert skills["approval.canary_t4"].approval_tier == "T4"
     assert skills["approval.canary_t4"].metadata["approval_queue_bridge"] == "enabled"

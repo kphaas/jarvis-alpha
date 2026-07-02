@@ -16,7 +16,7 @@ os.environ.setdefault("ALPHA_GATEWAY_URL", "http://127.0.0.1:8283")
 os.environ.setdefault("OLLAMA_URL", "http://127.0.0.1:11434")
 
 from brain.middleware.approval_classes import classify_route, determine_risk_tier
-from brain.routes import agent_board
+from brain.routes import agent_board, tasks
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,7 +45,13 @@ def _skill_row(
     }
 
 
-def _work_item_row(metadata: dict[str, object] | None = None) -> dict[str, object]:
+def _work_item_row(
+    metadata: dict[str, object] | None = None,
+    *,
+    status: str = "queued",
+    approval_tier: str = "T3",
+    task_graph_id: UUID | None = None,
+) -> dict[str, object]:
     now = datetime(2026, 6, 25, 13, 0, tzinfo=UTC)
     return {
         "id": UUID("11111111-1111-1111-1111-111111111111"),
@@ -55,7 +61,7 @@ def _work_item_row(metadata: dict[str, object] | None = None) -> dict[str, objec
         "source_surface": "helm_companion",
         "requested_by": "ken",
         "role": "research",
-        "status": "queued",
+        "status": status,
         "priority": 8,
         "assigned_agent_id": "internet_scout",
         "assigned_agent_display_name": "Internet Scout",
@@ -63,9 +69,9 @@ def _work_item_row(metadata: dict[str, object] | None = None) -> dict[str, objec
             "internet_scout.deep_research",
             "agent_board.queue_item",
         ],
-        "approval_tier": "T3",
+        "approval_tier": approval_tier,
         "approval_queue_id": None,
-        "task_graph_id": None,
+        "task_graph_id": task_graph_id,
         "due_at": None,
         "started_at": None,
         "completed_at": None,
@@ -135,12 +141,17 @@ def test_agent_board_routes_are_governed_without_execution_tiers() -> None:
         "PATCH",
         "/v1/agent-board/work-items/11111111-1111-1111-1111-111111111111/status",
     )
+    dispatch_classes = classify_route(
+        "POST",
+        "/v1/agent-board/work-items/11111111-1111-1111-1111-111111111111/task-graph",
+    )
 
     assert determine_risk_tier(read_classes) == "T2"
     assert determine_risk_tier(registry_classes) == "T2"
     assert determine_risk_tier(skill_map_classes) == "T2"
     assert determine_risk_tier(create_classes) == "T2"
     assert determine_risk_tier(status_classes) == "T2"
+    assert determine_risk_tier(dispatch_classes) == "T2"
 
 
 def test_skill_discovery_entry_maps_skill_policy_to_candidate_agents() -> None:
@@ -363,6 +374,245 @@ async def test_create_work_item_validates_skills_and_records_warning(
     assert "alpha_agent_work_item_events" in execute_calls[0][0]
 
 
+@pytest.mark.asyncio
+async def test_bridge_work_item_creates_task_graph_and_notifies_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph_id = UUID("22222222-2222-2222-2222-222222222222")
+    step_id = UUID("33333333-3333-3333-3333-333333333333")
+    graph_insert_args: tuple[object, ...] | None = None
+    step_insert_args: tuple[object, ...] | None = None
+    update_args: tuple[object, ...] | None = None
+    execute_calls: list[tuple[str, tuple[object, ...]]] = []
+
+    class FakeTransaction:
+        async def __aenter__(self) -> None:
+            return None
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeConn:
+        def transaction(self) -> FakeTransaction:
+            return FakeTransaction()
+
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            assert "FROM public.alpha_skill_registry" in query
+            assert set(args[0]) == {
+                "internet_scout.deep_research",
+                "agent_board.queue_item",
+            }
+            return [
+                _skill_row("internet_scout.deep_research", "T3"),
+                _skill_row("agent_board.queue_item", "T2", mutates_state=True),
+            ]
+
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
+            nonlocal graph_insert_args, step_insert_args, update_args
+            if "FROM public.alpha_agent_work_items" in query and "FOR UPDATE" in query:
+                return _work_item_row()
+            if "INSERT INTO public.alpha_task_graphs" in query:
+                graph_insert_args = args
+                return {"id": graph_id}
+            if "INSERT INTO public.alpha_task_steps" in query:
+                step_insert_args = args
+                return {"id": step_id}
+            assert "UPDATE public.alpha_agent_work_items" in query
+            update_args = args
+            metadata = json.loads(str(args[3]))
+            return _work_item_row(
+                metadata=metadata,
+                status=str(args[2]),
+                task_graph_id=graph_id,
+            )
+
+        async def execute(self, query: str, *args: object) -> None:
+            execute_calls.append((query, args))
+
+    class FakeRlsConnection:
+        async def __aenter__(self) -> FakeConn:
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(agent_board, "check_scopes", lambda *args: None)
+    monkeypatch.setattr(
+        agent_board,
+        "rls_connection",
+        lambda request: FakeRlsConnection(),
+    )
+
+    request = SimpleNamespace(state=SimpleNamespace(user_id="ken", role="admin"))
+    body = agent_board.BridgeWorkItemToTaskGraphRequest()
+
+    out = await agent_board.bridge_work_item_to_task_graph(
+        UUID("11111111-1111-1111-1111-111111111111"),
+        request,
+        body,
+    )
+
+    assert out.task_graph_id == str(graph_id)
+    assert out.step_id == str(step_id)
+    assert out.dispatch_status == "approval_required"
+    assert out.approval_required is True
+    assert out.work_item.status == "needs_approval"
+    assert graph_insert_args is not None
+    assert graph_insert_args[0] == "ken"
+    assert json.loads(str(graph_insert_args[4]))["work_item_id"] == (
+        "11111111-1111-1111-1111-111111111111"
+    )
+    assert step_insert_args is not None
+    assert step_insert_args[3] == "llm"
+    assert step_insert_args[5] is True
+    assert (
+        "Execute this Alpha Agent Board work item"
+        in json.loads(str(step_insert_args[4]))["prompt"]
+    )
+    assert update_args is not None
+    assert update_args[2] == "needs_approval"
+    assert any("alpha_agent_work_item_events" in call[0] for call in execute_calls)
+    assert any("pg_notify('graph_submitted'" in call[0] for call in execute_calls)
+
+
+@pytest.mark.asyncio
+async def test_bridge_work_item_is_idempotent_when_graph_already_linked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph_id = UUID("22222222-2222-2222-2222-222222222222")
+    execute_calls: list[tuple[str, tuple[object, ...]]] = []
+
+    class FakeTransaction:
+        async def __aenter__(self) -> None:
+            return None
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeConn:
+        def transaction(self) -> FakeTransaction:
+            return FakeTransaction()
+
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            assert "FROM public.alpha_skill_registry" in query
+            return [
+                _skill_row("internet_scout.deep_research", "T3"),
+                _skill_row("agent_board.queue_item", "T2", mutates_state=True),
+            ]
+
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
+            assert "FROM public.alpha_agent_work_items" in query
+            return _work_item_row(task_graph_id=graph_id)
+
+        async def execute(self, query: str, *args: object) -> None:
+            execute_calls.append((query, args))
+
+    class FakeRlsConnection:
+        async def __aenter__(self) -> FakeConn:
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(agent_board, "check_scopes", lambda *args: None)
+    monkeypatch.setattr(
+        agent_board,
+        "rls_connection",
+        lambda request: FakeRlsConnection(),
+    )
+
+    request = SimpleNamespace(state=SimpleNamespace(user_id="ken", role="admin"))
+    out = await agent_board.bridge_work_item_to_task_graph(
+        UUID("11111111-1111-1111-1111-111111111111"),
+        request,
+        agent_board.BridgeWorkItemToTaskGraphRequest(),
+    )
+
+    assert out.dispatch_status == "already_linked"
+    assert out.task_graph_id == str(graph_id)
+    assert execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_approved_task_step_resumes_pending_and_notifies_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph_id = "22222222-2222-2222-2222-222222222222"
+    execute_calls: list[tuple[str, tuple[object, ...]]] = []
+
+    class FakeConn:
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
+            assert "SELECT graph_id::text" in query
+            return {
+                "graph_id": graph_id,
+                "approval_required": True,
+                "approval_status": "pending",
+                "status": "queued",
+            }
+
+        async def execute(self, query: str, *args: object) -> None:
+            execute_calls.append((query, args))
+
+    class FakeRlsConnection:
+        async def __aenter__(self) -> FakeConn:
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(tasks, "rls_connection", lambda request: FakeRlsConnection())
+
+    request = SimpleNamespace(state=SimpleNamespace(user_id="ken", role="admin"))
+    response = await tasks.approve_step(
+        "33333333-3333-3333-3333-333333333333",
+        request,
+    )
+
+    assert response.status_code == 200
+    assert "status = 'pending'" in execute_calls[0][0]
+    assert execute_calls[0][1][1] == "ken"
+    assert any("pg_notify('graph_submitted'" in call[0] for call in execute_calls)
+
+
+@pytest.mark.asyncio
+async def test_approve_step_rejects_non_pending_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execute_calls: list[tuple[str, tuple[object, ...]]] = []
+
+    class FakeConn:
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
+            assert "SELECT graph_id::text" in query
+            return {
+                "graph_id": "22222222-2222-2222-2222-222222222222",
+                "approval_required": True,
+                "approval_status": "approved",
+                "status": "queued",
+            }
+
+        async def execute(self, query: str, *args: object) -> None:
+            execute_calls.append((query, args))
+
+    class FakeRlsConnection:
+        async def __aenter__(self) -> FakeConn:
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(tasks, "rls_connection", lambda request: FakeRlsConnection())
+
+    request = SimpleNamespace(state=SimpleNamespace(user_id="ken", role="admin"))
+    with pytest.raises(Exception) as exc:
+        await tasks.approve_step(
+            "33333333-3333-3333-3333-333333333333",
+            request,
+        )
+
+    assert getattr(exc.value, "status_code") == 409
+    assert execute_calls == []
+
+
 def test_agent_board_migration_is_reversible_and_rls_guarded() -> None:
     migration = (
         REPO_ROOT / "brain/db/migrations/20260625_130000_agent_board_work_queue.sql"
@@ -380,3 +630,22 @@ def test_agent_board_migration_is_reversible_and_rls_guarded() -> None:
     assert "agent_work_items_operator_write" in migration_text
     assert "agent_board.queue_item" in migration_text
     assert "DROP TABLE IF EXISTS public.alpha_agent_work_items" in rollback_text
+
+
+def test_agent_board_executor_bridge_skill_migration_is_reversible() -> None:
+    migration = (
+        REPO_ROOT
+        / "brain/db/migrations/20260702_131500_agent_board_executor_bridge.sql"
+    )
+    rollback = (
+        REPO_ROOT
+        / "brain/db/rollbacks/20260702_131500_agent_board_executor_bridge_rollback.sql"
+    )
+
+    migration_text = migration.read_text(encoding="utf-8")
+    rollback_text = rollback.read_text(encoding="utf-8")
+
+    assert "agent_board.dispatch_item" in migration_text
+    assert "executor_bridge" in migration_text
+    assert "DELETE FROM public.alpha_skill_registry" in rollback_text
+    assert "agent_board.dispatch_item" in rollback_text
