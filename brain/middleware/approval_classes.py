@@ -537,6 +537,14 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "write",
         "security_write",
     ],
+    # --- Agent schedules — materializes queued board work, never executes it ---
+    "GET /v1/agent-schedules": ["read", "security_read"],
+    "POST /v1/agent-schedules": ["write", "security_write"],
+    "PATCH /v1/agent-schedules/{schedule_id}/status": [
+        "write",
+        "security_write",
+    ],
+    "POST /v1/agent-schedules/materialize-due": ["write", "security_write"],
     # --- Privacy scrub intake — encrypted local-only writes, no outbound action ---
     "POST /v1/privacy/subjects": ["write", "security_write"],
     "POST /v1/privacy/subjects/{subject_id}/identity-tuples": [

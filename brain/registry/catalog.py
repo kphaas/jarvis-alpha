@@ -271,6 +271,84 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         ),
     ),
     SkillSpec(
+        name="agent_schedule.read",
+        domain="agent_schedule",
+        action="read",
+        description=(
+            "Read governed Agent Board scheduled work definitions and run history."
+        ),
+        approval_tier="T1",
+        scope="agents.read",
+        status="active",
+        metadata=_skill_metadata(
+            data_classification="ops",
+            timeout_s=10,
+            rate_limit="60/minute/operator",
+            test_ref="tests/test_agent_schedules.py",
+            extra={
+                "execution_path": "fastapi_route",
+                "operator_surface": "helm",
+            },
+        ),
+    ),
+    SkillSpec(
+        name="agent_schedule.create",
+        domain="agent_schedule",
+        action="create",
+        description=(
+            "Create or update governed scheduled work that later queues Agent "
+            "Board items."
+        ),
+        approval_tier="T2",
+        scope="agents.write",
+        mutates_state=True,
+        idempotency_required=True,
+        status="active",
+        metadata=_skill_metadata(
+            data_classification="ops",
+            side_effect_class="control_plane",
+            timeout_s=10,
+            retry_policy="idempotent_retry_once",
+            rate_limit="30/minute/operator",
+            compensation="cancel_schedule",
+            test_ref="tests/test_agent_schedules.py",
+            extra={
+                "execution_path": "fastapi_route",
+                "operator_surface": "helm",
+                "does_not_execute_agents": True,
+            },
+        ),
+    ),
+    SkillSpec(
+        name="agent_schedule.materialize_due",
+        domain="agent_schedule",
+        action="materialize_due",
+        description=(
+            "Materialize due scheduled work into queued Agent Board items "
+            "without dispatching execution."
+        ),
+        approval_tier="T2",
+        scope="agents.write",
+        mutates_state=True,
+        idempotency_required=True,
+        status="active",
+        metadata=_skill_metadata(
+            data_classification="ops",
+            side_effect_class="control_plane",
+            timeout_s=20,
+            retry_policy="idempotent_retry_once",
+            rate_limit="12/minute/system",
+            compensation="cancel_materialized_work_item",
+            test_ref="tests/test_agent_schedules.py",
+            extra={
+                "execution_path": "launchagent_or_fastapi_route",
+                "operator_surface": "helm",
+                "does_not_execute_agents": True,
+                "queues_agent_board_items": True,
+            },
+        ),
+    ),
+    SkillSpec(
         name="unifi.wan_status",
         domain="unifi",
         action="wan_status",

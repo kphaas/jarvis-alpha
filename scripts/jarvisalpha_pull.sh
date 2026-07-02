@@ -191,6 +191,10 @@ needs_reload_school_email() {
   service_has_changes_matching "alpha-school-email" '(^launchagents/com\.jarvis\.alpha\.(school-email|gmail-health|at0-mail|at0-mail-health)\.template\.plist$|^scripts/start_alpha_(school_email|gmail_health|at0_mail|at0_mail_health)\.sh$|^scripts/install_launchagents\.py$)'
 }
 
+needs_reload_agent_scheduler() {
+  service_has_changes_matching "alpha-agent-scheduler" '(^brain/agents/agent_scheduler\.py$|^brain/services/agent_schedules\.py$|^launchagents/com\.jarvis\.alpha\.agent-scheduler\.template\.plist$|^scripts/start_alpha_agent_scheduler\.sh$|^scripts/install_launchagents\.py$)'
+}
+
 needs_reload_spark_send_readiness() {
   service_has_changes_matching "alpha-spark-send-readiness" '(^launchagents/com\.jarvis\.alpha\.spark-send-readiness\.template\.plist$|^scripts/start_alpha_spark_send_readiness\.sh$|^scripts/smoke_spark_send_readiness\.sh$|^scripts/install_launchagents\.py$)'
 }
@@ -596,6 +600,39 @@ if [ "$NODE_SHORT" = "brain" ] && needs_reload_school_email; then
 elif [ "$NODE_SHORT" = "brain" ]; then
   emit skip restart node="$NODE_SHORT" service="alpha-school-email" reason="no_launchagent_changes"
   mark_service_checked "alpha-school-email"
+fi
+
+AGENT_SCHEDULER_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.agent-scheduler.plist"
+if [ "$NODE_SHORT" = "brain" ] && needs_reload_agent_scheduler; then
+  echo ""
+  echo "Refreshing Agent Scheduler LaunchAgent..."
+  AGENT_SCHEDULER_START=$(time_ms)
+  INSTALL_LOG=$(mktemp)
+  if ! python3 "${REPO_DIR}/scripts/install_launchagents.py" --node brain >"$INSTALL_LOG" 2>&1; then
+    AGENT_SCHEDULER_DUR=$(($(time_ms) - AGENT_SCHEDULER_START))
+    INSTALL_ERR=$(tail -5 "$INSTALL_LOG" | tr '\n' ' ' | cut -c1-300)
+    rm -f "$INSTALL_LOG"
+    emit fail restart node="$NODE_SHORT" service="alpha-agent-scheduler" dur_ms="$AGENT_SCHEDULER_DUR" error="$INSTALL_ERR"
+    echo "❌ Agent Scheduler LaunchAgent install failed"
+    exit 1
+  fi
+  rm -f "$INSTALL_LOG"
+  if [ -f "$AGENT_SCHEDULER_PLIST" ]; then
+    launchctl unload "$AGENT_SCHEDULER_PLIST" 2>/dev/null || true
+    launchctl load "$AGENT_SCHEDULER_PLIST"
+    AGENT_SCHEDULER_PID=$(launchctl list | awk '$3 == "com.jarvis.alpha.agent-scheduler" {print $1}' | head -1)
+    [ "$AGENT_SCHEDULER_PID" = "-" ] && AGENT_SCHEDULER_PID=0
+    echo "✅ Agent Scheduler LaunchAgent refreshed"
+    emit ok restart node="$NODE_SHORT" service="alpha-agent-scheduler" pid="${AGENT_SCHEDULER_PID:-0}" dur_ms=$(($(time_ms) - AGENT_SCHEDULER_START))
+  else
+    emit fail restart node="$NODE_SHORT" service="alpha-agent-scheduler" dur_ms=$(($(time_ms) - AGENT_SCHEDULER_START)) error="plist missing after install"
+    echo "❌ Agent Scheduler LaunchAgent plist missing after install"
+    exit 1
+  fi
+  mark_service_checked "alpha-agent-scheduler"
+elif [ "$NODE_SHORT" = "brain" ]; then
+  emit skip restart node="$NODE_SHORT" service="alpha-agent-scheduler" reason="no_launchagent_changes"
+  mark_service_checked "alpha-agent-scheduler"
 fi
 
 SPARK_SEND_READINESS_PLIST="${HOME}/Library/LaunchAgents/com.jarvis.alpha.spark-send-readiness.plist"

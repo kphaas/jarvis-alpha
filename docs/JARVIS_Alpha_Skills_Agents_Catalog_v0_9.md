@@ -91,6 +91,13 @@ the authority for skill policy, approval tier, agent assignment, task graph
 linkage, and audit events. T3+ or tool-backed dispatches enter the existing
 TaskGraph step approval gate before executor work can run.
 
+## Agent Board Scheduled Work
+
+Scheduled work stores natural-language cadence requests, computes the next due
+time, and materializes due schedules into queued Agent Board items. It does not
+dispatch execution. The existing Agent Board bridge still controls when an
+approved item becomes a TaskGraph.
+
 ## First Seed Skills
 
 The initial seed covers foundation and near-term waves:
@@ -102,6 +109,9 @@ The initial seed covers foundation and near-term waves:
 - `agent_board.queue_item`
 - `agent_board.update_status`
 - `agent_board.dispatch_item`
+- `agent_schedule.read`
+- `agent_schedule.create`
+- `agent_schedule.materialize_due`
 - `approval.canary_t4`
 - `chatops.command_read`
 - `unifi.wan_status`
