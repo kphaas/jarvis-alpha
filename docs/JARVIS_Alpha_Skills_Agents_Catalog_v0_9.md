@@ -98,6 +98,24 @@ time, and materializes due schedules into queued Agent Board items. It does not
 dispatch execution. The existing Agent Board bridge still controls when an
 approved item becomes a TaskGraph.
 
+## Skill Discovery Mapping
+
+`GET /v1/agent-board/skill-map` is the operator-facing map from Alpha skills to
+the things an operator or executor can use next:
+
+| Reference | Meaning |
+|---|---|
+| `runbook_refs` | Alpha-owned docs and ADRs for the governed skill. |
+| `codex_skill_refs` | Logical Codex skill-file refs such as `codex://skills/production/SKILL.md`. |
+| `claude_skill_refs` | Logical Claude/Anthropic skill-file refs such as `claude://skills/anthropic-skills/schedule/SKILL.md`. |
+| `mcp_tool_refs` | MCP tool refs and contract metadata, still visibility-only unless a reviewed adapter is enabled. |
+| `agentfs_refs` | AgentFS artifact URI templates for run outputs and handoffs. These are references, not copied skill-file contents. |
+
+This keeps the boundary clean: Alpha is the source of truth for policy and
+allowed capabilities; Codex/Claude/MCP refs are discovery metadata; AgentFS
+stores run artifacts after an approved execution path creates a real
+`alpha_agent_runs` row.
+
 ## First Seed Skills
 
 The initial seed covers foundation and near-term waves:
