@@ -205,15 +205,16 @@ async def _enqueue_failure(
     exc: Exception,
     payload_summary: dict[str, Any] | None,
 ) -> None:
+    reason = _failure_reason(exc)
     payload = {
         "operation": operation,
         "attempts": attempts,
-        "reason": _failure_reason(exc),
+        "reason": reason,
         "error_class": exc.__class__.__name__,
         "payload_summary": _sanitize_payload_summary(payload_summary),
     }
     try:
-        await _dlq_for(operation).enqueue(payload, reason=payload["reason"])
+        await _dlq_for(operation).enqueue(payload, reason=reason)
     except Exception as dlq_exc:
         logger.warning(
             "gateway_egress_dlq_enqueue_failed operation=%s error_class=%s",

@@ -2048,6 +2048,7 @@ async def _fetch_public_content(
             status_code=400,
             detail={"error": "unsafe_url", "reasons": safety.reasons},
         )
+    normalized_url = safety.normalized_url
 
     max_bytes = min(max(max_bytes, 1), DEFAULT_MAX_CONTENT_BYTES)
     headers = {"User-Agent": "AT-0 Beacon/1.0"}
@@ -2055,9 +2056,9 @@ async def _fetch_public_content(
     async def _fetch_once() -> _FetchedInternetContent:
         async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
             async with client.stream(
-                "GET", safety.normalized_url, headers=headers
+                "GET", normalized_url, headers=headers
             ) as response:
-                chain = [safety.normalized_url]
+                chain: list[str] = [normalized_url]
                 chain.extend(str(history.url) for history in response.history)
                 chain.append(str(response.url))
                 try:
