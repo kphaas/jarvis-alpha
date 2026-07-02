@@ -46,6 +46,7 @@ SERVICE_NODE_MAP = {
     "com.jarvis.alpha.rotate.gateway": "gateway",
     "com.jarvis.alpha.at0-mail": "brain",
     "com.jarvis.alpha.at0-mail-health": "brain",
+    "com.jarvis.alpha.agent-scheduler": "brain",
     "com.jarvis.alpha.ai-news-brief": "brain",
     "com.jarvis.alpha.market-brief": "brain",
     "com.jarvis.alpha.brain": "brain",
