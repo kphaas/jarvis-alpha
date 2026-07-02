@@ -408,16 +408,38 @@ async def submit_graph(request: Request):
 async def approve_step(step_id: str, request: Request):
     user_id = getattr(request.state, "user_id", "anon")
     async with rls_connection(request) as conn:
+        step = await conn.fetchrow(
+            """
+            SELECT graph_id::text, approval_required, approval_status, status
+            FROM alpha_task_steps
+            WHERE id = $1
+            """,
+            UUID(step_id),
+        )
+        if step is None:
+            raise HTTPException(status_code=404, detail="step not found")
+        if (
+            step["approval_required"] is not True
+            or step["approval_status"] != "pending"
+            or step["status"] != "queued"
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="step is not queued for approval",
+            )
+
         await conn.execute(
             """
             UPDATE alpha_task_steps
             SET approval_status = 'approved',
+                status = 'pending',
                 approved_by = $2,
                 approved_at = now(),
                 updated_at = now()
             WHERE id = $1
               AND approval_required = true
               AND approval_status = 'pending'
+              AND status = 'queued'
             """,
             UUID(step_id),
             str(user_id),
@@ -430,6 +452,10 @@ async def approve_step(step_id: str, request: Request):
               AND status = 'needs_approval'
             """,
             UUID(step_id),
+        )
+        await conn.execute(
+            "SELECT pg_notify('graph_submitted', $1::text)",
+            step["graph_id"],
         )
     return JSONResponse({"approved": True, "step_id": step_id})
 

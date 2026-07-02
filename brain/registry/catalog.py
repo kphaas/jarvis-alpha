@@ -241,6 +241,36 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         ),
     ),
     SkillSpec(
+        name="agent_board.dispatch_item",
+        domain="agent_board",
+        action="dispatch_item",
+        description=(
+            "Bridge an approved Agent Board work item into a TaskGraph and wake "
+            "the existing executor."
+        ),
+        approval_tier="T2",
+        scope="agents.write",
+        mutates_state=True,
+        idempotency_required=True,
+        status="active",
+        metadata=_skill_metadata(
+            data_classification="ops",
+            side_effect_class="control_plane",
+            timeout_s=10,
+            retry_policy="idempotent_retry_once",
+            rate_limit="30/minute/operator",
+            compensation="cancel_task_graph_and_work_item",
+            test_ref="tests/test_agent_board.py",
+            extra={
+                "execution_path": "fastapi_route",
+                "operator_surface": "helm",
+                "executor_bridge": "task_graph",
+                "approval_gate": "alpha_task_steps.approval_required",
+                "wakes_executor": True,
+            },
+        ),
+    ),
+    SkillSpec(
         name="unifi.wan_status",
         domain="unifi",
         action="wan_status",

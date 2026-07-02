@@ -85,11 +85,11 @@ reference `alpha_agents` and `alpha_skill_registry` by ID/name, then store the
 computed approval tier, assignment warnings, acceptance criteria, handoff
 metadata, and status history.
 
-Helm can render the board and queue work from Companion mode, but Alpha remains
-the authority for skill policy, approval tier, agent assignment, and audit
-events. A queued board item does not run a skill or start a task graph until a
-future executor bridge consumes it through the existing approval and
-SkillRunner gates.
+Helm can render the board, queue work from Companion mode, and ask Alpha to
+dispatch an approved item into the existing TaskGraph executor. Alpha remains
+the authority for skill policy, approval tier, agent assignment, task graph
+linkage, and audit events. T3+ or tool-backed dispatches enter the existing
+TaskGraph step approval gate before executor work can run.
 
 ## First Seed Skills
 
@@ -101,6 +101,7 @@ The initial seed covers foundation and near-term waves:
 - `agent_board.read`
 - `agent_board.queue_item`
 - `agent_board.update_status`
+- `agent_board.dispatch_item`
 - `approval.canary_t4`
 - `chatops.command_read`
 - `unifi.wan_status`
