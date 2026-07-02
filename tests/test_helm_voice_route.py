@@ -294,6 +294,16 @@ def test_helm_voice_speak_route_is_t2_security_write_classified() -> None:
     ]
 
 
+def test_helm_voice_family_api_url_rejects_public_host(monkeypatch) -> None:
+    monkeypatch.setenv("JARVIS_FAMILY_API_URL", "https://family.invalid")
+    monkeypatch.delenv("JARVIS_HELM_VOICE_FAMILY_API_URL", raising=False)
+
+    with pytest.raises(helm_voice.FamilyApiConfigError) as exc:
+        helm_voice._family_api_url()
+
+    assert exc.value.code == "family_api_url_invalid"
+
+
 @pytest.mark.asyncio
 async def test_helm_voice_speak_requires_helm_read_scope() -> None:
     with pytest.raises(HTTPException) as exc:

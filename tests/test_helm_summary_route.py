@@ -1081,7 +1081,10 @@ async def test_helm_family_summary_brokers_family_service_token(monkeypatch) -> 
             calls["headers"] = headers
             return FakeResponse()
 
-    monkeypatch.setenv("JARVIS_FAMILY_API_URL", "https://family.invalid")
+    monkeypatch.setenv(
+        "JARVIS_FAMILY_API_URL",
+        "https://jarvis-brain.tail40ed36.ts.net:8187",
+    )
     monkeypatch.setattr(helm, "_family_service_token", lambda: "service-token")
     monkeypatch.setattr(helm.httpx, "AsyncClient", FakeClient)
 
@@ -1090,10 +1093,24 @@ async def test_helm_family_summary_brokers_family_service_token(monkeypatch) -> 
         _user_id="ken",
     )
 
-    assert calls["url"] == "https://family.invalid/v1/helm/home-summary"
+    assert (
+        calls["url"]
+        == "https://jarvis-brain.tail40ed36.ts.net:8187/v1/helm/home-summary"
+    )
     assert calls["headers"] == {"Authorization": "Bearer service-token"}
+    assert calls["verify"] is True
     assert response["_broker"]["authority"] == "jarvis-alpha"
     assert response["_broker"]["source"] == "jarvis-family"
+
+
+def test_helm_family_base_url_rejects_public_host(monkeypatch) -> None:
+    monkeypatch.setenv("JARVIS_FAMILY_API_URL", "https://family.invalid")
+
+    with pytest.raises(HTTPException) as exc:
+        helm._family_base_url()
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "family_api_url_invalid"
 
 
 @pytest.mark.asyncio
@@ -1292,7 +1309,10 @@ async def test_helm_medical_summary_brokers_redacted_family_export(monkeypatch) 
             calls["headers"] = headers
             return FakeResponse()
 
-    monkeypatch.setenv("JARVIS_FAMILY_API_URL", "https://family.invalid")
+    monkeypatch.setenv(
+        "JARVIS_FAMILY_API_URL",
+        "https://jarvis-brain.tail40ed36.ts.net:8187",
+    )
     monkeypatch.setattr(helm, "_family_service_token", lambda: "service-token")
     monkeypatch.setattr(
         helm, "platform_admin_connection", fake_platform_admin_connection
@@ -1304,8 +1324,12 @@ async def test_helm_medical_summary_brokers_redacted_family_export(monkeypatch) 
         _user_id="ken",
     )
 
-    assert calls["url"] == "https://family.invalid/v1/helm/medical-summary"
+    assert (
+        calls["url"]
+        == "https://jarvis-brain.tail40ed36.ts.net:8187/v1/helm/medical-summary"
+    )
     assert calls["headers"] == {"Authorization": "Bearer service-token"}
+    assert calls["verify"] is True
     assert response["safety_status"] == "ok"
     assert response["critical_facts"] == 2
     assert response["pending_approvals"] == 1

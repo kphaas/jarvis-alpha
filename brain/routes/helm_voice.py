@@ -25,6 +25,11 @@ from pydantic import BaseModel, Field
 from brain.config.secrets import get_secret
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
+from brain.services.family_api import (
+    FamilyApiConfigError,
+    family_api_base_url,
+    family_api_verify_tls,
+)
 from jarvis_common.logging_config import get_logger
 
 router = APIRouter(prefix="/v1/helm", tags=["helm"])
@@ -87,7 +92,9 @@ def _family_api_url() -> str | None:
         os.getenv("JARVIS_HELM_VOICE_FAMILY_API_URL", "").strip()
         or os.getenv("JARVIS_FAMILY_API_URL", "").strip()
     )
-    return value.rstrip("/") or None
+    if not value:
+        return None
+    return family_api_base_url(value)
 
 
 def _voice_backend_verify_tls() -> bool:
@@ -162,7 +169,14 @@ async def _family_voice_token() -> str:
     if cached:
         return cached
 
-    family_api_url = _family_api_url()
+    try:
+        family_api_url = _family_api_url()
+    except FamilyApiConfigError:
+        logger.warning(
+            "helm_voice_speak_unconfigured",
+            extra={"reason": "invalid_family_api_url"},
+        )
+        raise HTTPException(status_code=503, detail="voice_synthesis_auth_unconfigured")
     pin = _family_voice_auth_pin()
     if not family_api_url or not pin:
         logger.warning(
@@ -174,7 +188,7 @@ async def _family_voice_token() -> str:
     try:
         async with httpx.AsyncClient(
             timeout=_voice_backend_timeout_secs(),
-            verify=_voice_backend_verify_tls(),
+            verify=family_api_verify_tls(),
         ) as client:
             response = await client.post(
                 f"{family_api_url}/v1/auth/pin",
