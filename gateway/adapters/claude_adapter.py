@@ -1,4 +1,3 @@
-import httpx
 from jarvis_common.secrets import get_secret
 from jarvis_common.logging_config import get_logger
 from .base_adapter import BaseCloudAdapter
@@ -19,17 +18,27 @@ class ClaudeAdapter(BaseCloudAdapter):
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         }
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(CLAUDE_API_URL, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-            logger.info("claude_adapter: status=%d", resp.status_code)
+        resp = await self._request(
+            operation="cloud-anthropic",
+            method="POST",
+            url=CLAUDE_API_URL,
+            headers=headers,
+            json_body=payload,
+            payload_summary={
+                "provider": "anthropic",
+                "model": payload.get("model", "unknown"),
+                "has_idempotency_key": bool(idempotency_key),
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info("claude_adapter: status=%d", resp.status_code)
 
-            usage = data.get("usage", {})
-            self._emit_cost(
-                model=payload.get("model", "unknown"),
-                prompt_tokens=usage.get("input_tokens", 0),
-                completion_tokens=usage.get("output_tokens", 0),
-                idempotency_key=idempotency_key,
-            )
-            return data
+        usage = data.get("usage", {})
+        self._emit_cost(
+            model=payload.get("model", "unknown"),
+            prompt_tokens=usage.get("input_tokens", 0),
+            completion_tokens=usage.get("output_tokens", 0),
+            idempotency_key=idempotency_key,
+        )
+        return data

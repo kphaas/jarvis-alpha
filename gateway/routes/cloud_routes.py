@@ -8,7 +8,7 @@ from hashlib import sha256
 from html.parser import HTMLParser
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Awaitable, Callable, Literal
 from urllib.parse import quote, urldefrag, urljoin, urlparse
 from uuid import UUID
 
@@ -27,6 +27,8 @@ from gateway.adapters.beacon_source_search import (
     SUPPORTED_SOURCE_SEARCH_DATA_SOURCE_IDS,
     execute_source_search,
 )
+from gateway.resilience.circuit_breaker import CircuitOpenError
+from gateway.resilience.transport import request_with_resilience, run_with_resilience
 from jarvis_common.logging_config import get_logger
 from jarvis_common.secrets import get_secret
 
@@ -312,6 +314,63 @@ def _require_allowed_msgraph_mailbox(mailbox: str) -> str:
     return normalized
 
 
+async def _egress_request(
+    *,
+    operation: str,
+    method: str,
+    url: str,
+    timeout: float | httpx.Timeout,
+    headers: dict[str, str] | None = None,
+    params: dict[str, Any] | None = None,
+    json_body: Any = None,
+    data: Any = None,
+    follow_redirects: bool = False,
+    payload_summary: dict[str, object] | None = None,
+    failure_detail: str | None = None,
+) -> httpx.Response:
+    return await request_with_resilience(
+        operation=operation,
+        method=method,
+        url=url,
+        timeout=timeout,
+        headers=headers,
+        params=params,
+        json_body=json_body,
+        data=data,
+        follow_redirects=follow_redirects,
+        client_factory=httpx.AsyncClient,
+        payload_summary=payload_summary,
+        failure_detail=failure_detail,
+    )
+
+
+async def _run_gateway_egress(
+    *,
+    operation: str,
+    execute: Callable[[], Awaitable[Any]],
+    payload_summary: dict[str, object] | None = None,
+    failure_detail: str | None = None,
+) -> Any:
+    try:
+        return await run_with_resilience(
+            operation,
+            execute,
+            payload_summary=payload_summary,
+        )
+    except CircuitOpenError as exc:
+        detail = failure_detail or operation
+        raise HTTPException(
+            status_code=503,
+            detail=f"{detail} circuit is open",
+        ) from exc
+    except httpx.RequestError as exc:
+        detail = failure_detail or operation
+        raise HTTPException(
+            status_code=502,
+            detail=f"{detail} request failed",
+        ) from exc
+
+
 @router.post("/call")
 async def cloud_call(
     request: Request,
@@ -326,6 +385,8 @@ async def cloud_call(
     try:
         result = await adapter.call(req.payload, idempotency_key=idempotency_key)
         return {"provider": req.provider, "result": result}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("cloud_call: provider=%s error=%s", req.provider, e)
         raise HTTPException(status_code=502, detail=str(e))
@@ -350,12 +411,15 @@ async def github_issues(
     }
     if req.labels:
         params["labels"] = req.labels
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.get(
-            f"https://api.github.com/repos/{req.owner}/{req.repo}/issues",
-            params=params,
-            headers=headers,
-        )
+    response = await _egress_request(
+        operation="github-issues",
+        method="GET",
+        url=f"https://api.github.com/repos/{req.owner}/{req.repo}/issues",
+        timeout=60.0,
+        params=params,
+        headers=headers,
+        failure_detail="GitHub API",
+    )
     if response.status_code >= 400:
         raise HTTPException(
             status_code=502,
@@ -373,16 +437,19 @@ async def google_oauth_refresh(
     authorization: str = Header(...),
 ):
     _authorize_gateway_call(authorization)
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.post(
-            "https://oauth2.googleapis.com/token",
-            data={
-                "client_id": req.client_id,
-                "client_secret": req.client_secret,
-                "refresh_token": req.refresh_token,
-                "grant_type": req.grant_type,
-            },
-        )
+    response = await _egress_request(
+        operation="google-oauth-refresh",
+        method="POST",
+        url="https://oauth2.googleapis.com/token",
+        timeout=20.0,
+        data={
+            "client_id": req.client_id,
+            "client_secret": req.client_secret,
+            "refresh_token": req.refresh_token,
+            "grant_type": req.grant_type,
+        },
+        failure_detail="Google OAuth refresh",
+    )
     payload: Any
     try:
         payload = response.json()
@@ -399,12 +466,15 @@ async def gmail_list(
     authorization: str = Header(...),
 ):
     _authorize_gateway_call(authorization)
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(
-            f"https://gmail.googleapis.com/gmail/v1/users/{req.user_id}/messages",
-            headers={"Authorization": f"Bearer {req.access_token}"},
-            params={"q": req.query, "maxResults": req.max_results},
-        )
+    response = await _egress_request(
+        operation="gmail-list",
+        method="GET",
+        url=f"https://gmail.googleapis.com/gmail/v1/users/{req.user_id}/messages",
+        timeout=30.0,
+        headers={"Authorization": f"Bearer {req.access_token}"},
+        params={"q": req.query, "maxResults": req.max_results},
+        failure_detail="Gmail list",
+    )
     payload: Any
     try:
         payload = response.json()
@@ -419,12 +489,15 @@ async def gmail_message(
     authorization: str = Header(...),
 ):
     _authorize_gateway_call(authorization)
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(
-            f"https://gmail.googleapis.com/gmail/v1/users/{req.user_id}/messages/{req.message_id}",
-            headers={"Authorization": f"Bearer {req.access_token}"},
-            params={"format": req.format},
-        )
+    response = await _egress_request(
+        operation="gmail-message",
+        method="GET",
+        url=f"https://gmail.googleapis.com/gmail/v1/users/{req.user_id}/messages/{req.message_id}",
+        timeout=30.0,
+        headers={"Authorization": f"Bearer {req.access_token}"},
+        params={"format": req.format},
+        failure_detail="Gmail message",
+    )
     payload: Any
     try:
         payload = response.json()
@@ -440,17 +513,20 @@ async def msgraph_token(
 ):
     _authorize_gateway_call(authorization)
     token_url = f"https://login.microsoftonline.com/{req.tenant_id}/oauth2/v2.0/token"
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.post(
-            token_url,
-            data={
-                "client_id": req.client_id,
-                "scope": req.scope,
-                "grant_type": "client_credentials",
-                "client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-                "client_assertion": req.client_assertion,
-            },
-        )
+    response = await _egress_request(
+        operation="msgraph-token",
+        method="POST",
+        url=token_url,
+        timeout=20.0,
+        data={
+            "client_id": req.client_id,
+            "scope": req.scope,
+            "grant_type": "client_credentials",
+            "client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+            "client_assertion": req.client_assertion,
+        },
+        failure_detail="Microsoft Graph token",
+    )
     payload: Any
     try:
         payload = response.json()
@@ -479,16 +555,19 @@ async def msgraph_mailbox_messages(
             "webLink",
         ]
     )
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(
-            f"https://graph.microsoft.com/v1.0/users/{encoded_mailbox}/mailFolders/Inbox/messages",
-            headers={"Authorization": f"Bearer {req.access_token}"},
-            params={
-                "$top": req.max_results,
-                "$select": select,
-                "$orderby": "receivedDateTime desc",
-            },
-        )
+    response = await _egress_request(
+        operation="msgraph-mailbox-messages",
+        method="GET",
+        url=f"https://graph.microsoft.com/v1.0/users/{encoded_mailbox}/mailFolders/Inbox/messages",
+        timeout=30.0,
+        headers={"Authorization": f"Bearer {req.access_token}"},
+        params={
+            "$top": req.max_results,
+            "$select": select,
+            "$orderby": "receivedDateTime desc",
+        },
+        failure_detail="Microsoft Graph mailbox messages",
+    )
     payload: Any
     try:
         payload = response.json()
@@ -506,25 +585,28 @@ async def msgraph_mailbox_reply(
     mailbox = _require_allowed_msgraph_mailbox(req.mailbox)
     encoded_mailbox = quote(mailbox, safe="")
     encoded_message_id = quote(req.message_id, safe="")
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            (
-                "https://graph.microsoft.com/v1.0/users/"
-                f"{encoded_mailbox}/messages/{encoded_message_id}/reply"
-            ),
-            headers={
-                "Authorization": f"Bearer {req.access_token}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "message": {
-                    "body": {
-                        "contentType": "Text",
-                        "content": req.reply_body,
-                    }
+    response = await _egress_request(
+        operation="msgraph-mailbox-reply",
+        method="POST",
+        url=(
+            "https://graph.microsoft.com/v1.0/users/"
+            f"{encoded_mailbox}/messages/{encoded_message_id}/reply"
+        ),
+        timeout=30.0,
+        headers={
+            "Authorization": f"Bearer {req.access_token}",
+            "Content-Type": "application/json",
+        },
+        json_body={
+            "message": {
+                "body": {
+                    "contentType": "Text",
+                    "content": req.reply_body,
                 }
-            },
-        )
+            }
+        },
+        failure_detail="Microsoft Graph mailbox reply",
+    )
     payload: Any
     try:
         payload = response.json()
@@ -539,28 +621,31 @@ async def linkedin_member_post(
     authorization: str = Header(...),
 ):
     _authorize_gateway_call(authorization)
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            "https://api.linkedin.com/rest/posts",
-            headers={
-                "Authorization": f"Bearer {req.access_token}",
-                "Content-Type": "application/json",
-                "Linkedin-Version": req.linkedin_version,
-                "X-Restli-Protocol-Version": "2.0.0",
+    response = await _egress_request(
+        operation="linkedin-member-post",
+        method="POST",
+        url="https://api.linkedin.com/rest/posts",
+        timeout=30.0,
+        headers={
+            "Authorization": f"Bearer {req.access_token}",
+            "Content-Type": "application/json",
+            "Linkedin-Version": req.linkedin_version,
+            "X-Restli-Protocol-Version": "2.0.0",
+        },
+        json_body={
+            "author": req.author_urn,
+            "commentary": req.text,
+            "visibility": "PUBLIC",
+            "distribution": {
+                "feedDistribution": "MAIN_FEED",
+                "targetEntities": [],
+                "thirdPartyDistributionChannels": [],
             },
-            json={
-                "author": req.author_urn,
-                "commentary": req.text,
-                "visibility": "PUBLIC",
-                "distribution": {
-                    "feedDistribution": "MAIN_FEED",
-                    "targetEntities": [],
-                    "thirdPartyDistributionChannels": [],
-                },
-                "lifecycleState": "PUBLISHED",
-                "isReshareDisabledByAuthor": False,
-            },
-        )
+            "lifecycleState": "PUBLISHED",
+            "isReshareDisabledByAuthor": False,
+        },
+        failure_detail="LinkedIn member post",
+    )
     payload: Any
     try:
         payload = response.json()
@@ -584,16 +669,19 @@ async def linkedin_member_post_comments(
 ):
     _authorize_gateway_call(authorization)
     encoded_urn = quote(req.post_urn, safe="")
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(
-            f"https://api.linkedin.com/rest/socialActions/{encoded_urn}/comments",
-            params={"count": req.count},
-            headers={
-                "Authorization": f"Bearer {req.access_token}",
-                "Linkedin-Version": req.linkedin_version,
-                "X-Restli-Protocol-Version": "2.0.0",
-            },
-        )
+    response = await _egress_request(
+        operation="linkedin-member-post-comments",
+        method="GET",
+        url=f"https://api.linkedin.com/rest/socialActions/{encoded_urn}/comments",
+        timeout=30.0,
+        params={"count": req.count},
+        headers={
+            "Authorization": f"Bearer {req.access_token}",
+            "Linkedin-Version": req.linkedin_version,
+            "X-Restli-Protocol-Version": "2.0.0",
+        },
+        failure_detail="LinkedIn post comments",
+    )
     payload: Any
     try:
         payload = response.json()
@@ -609,20 +697,23 @@ async def linkedin_member_comment(
 ):
     _authorize_gateway_call(authorization)
     encoded_urn = quote(req.post_urn, safe="")
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            f"https://api.linkedin.com/rest/socialActions/{encoded_urn}/comments",
-            headers={
-                "Authorization": f"Bearer {req.access_token}",
-                "Content-Type": "application/json",
-                "Linkedin-Version": req.linkedin_version,
-                "X-Restli-Protocol-Version": "2.0.0",
-            },
-            json={
-                "actor": req.author_urn,
-                "message": {"text": req.text},
-            },
-        )
+    response = await _egress_request(
+        operation="linkedin-member-comment",
+        method="POST",
+        url=f"https://api.linkedin.com/rest/socialActions/{encoded_urn}/comments",
+        timeout=30.0,
+        headers={
+            "Authorization": f"Bearer {req.access_token}",
+            "Content-Type": "application/json",
+            "Linkedin-Version": req.linkedin_version,
+            "X-Restli-Protocol-Version": "2.0.0",
+        },
+        json_body={
+            "actor": req.author_urn,
+            "message": {"text": req.text},
+        },
+        failure_detail="LinkedIn member comment",
+    )
     payload: Any
     try:
         payload = response.json()
@@ -645,16 +736,19 @@ async def linkedin_token_introspection(
     authorization: str = Header(...),
 ):
     _authorize_gateway_call(authorization)
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.post(
-            "https://www.linkedin.com/oauth/v2/introspectToken",
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            data={
-                "token": req.token,
-                "client_id": req.client_id,
-                "client_secret": req.client_secret,
-            },
-        )
+    response = await _egress_request(
+        operation="linkedin-token-introspection",
+        method="POST",
+        url="https://www.linkedin.com/oauth/v2/introspectToken",
+        timeout=15.0,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        data={
+            "token": req.token,
+            "client_id": req.client_id,
+            "client_secret": req.client_secret,
+        },
+        failure_detail="LinkedIn token introspection",
+    )
     payload: Any
     try:
         payload = response.json()
@@ -675,15 +769,18 @@ async def anthropic_admin(
     }:
         raise HTTPException(status_code=400, detail="unsupported Anthropic admin path")
     api_key = get_secret("ANTHROPIC_ADMIN_KEY")
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.get(
-            f"https://api.anthropic.com{req.path}",
-            params=req.params,
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-            },
-        )
+    response = await _egress_request(
+        operation="anthropic-admin",
+        method="GET",
+        url=f"https://api.anthropic.com{req.path}",
+        timeout=60.0,
+        params=req.params,
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        failure_detail="Anthropic admin",
+    )
     if response.status_code != 200:
         raise HTTPException(
             status_code=502,
@@ -733,11 +830,14 @@ async def google_billing(
     if not token:
         raise HTTPException(status_code=502, detail="Google auth returned no token")
 
-    async with httpx.AsyncClient(timeout=45.0) as client:
-        response = await client.get(
-            f"https://cloudbilling.googleapis.com/v1/billingAccounts/{account_id}",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+    response = await _egress_request(
+        operation="google-billing",
+        method="GET",
+        url=f"https://cloudbilling.googleapis.com/v1/billingAccounts/{account_id}",
+        timeout=45.0,
+        headers={"Authorization": f"Bearer {token}"},
+        failure_detail="Google Billing",
+    )
     if response.status_code != 200:
         raise HTTPException(
             status_code=502,
@@ -783,11 +883,20 @@ async def internet_search(
                 continue
 
             try:
-                results = await _execute_search_provider(
-                    client=client,
-                    credential=credential,
-                    query=req.query,
-                    count=count,
+                results = await _run_gateway_egress(
+                    operation=f"beacon-search-{credential.provider}",
+                    execute=lambda: _execute_search_provider(
+                        client=client,
+                        credential=credential,
+                        query=req.query,
+                        count=count,
+                    ),
+                    payload_summary={
+                        "provider": credential.provider,
+                        "query_hash": _hash_text(req.query),
+                        "count": count,
+                    },
+                    failure_detail=f"{credential.provider.title()} Search",
                 )
             except HTTPException as exc:
                 last_error = exc
@@ -863,11 +972,20 @@ async def internet_source_search(
         raise
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            results = await execute_source_search(
-                client=client,
-                data_source_id=data_source_id,
-                query=req.query,
-                count=count,
+            results = await _run_gateway_egress(
+                operation=f"beacon-source-search-{data_source_id}",
+                execute=lambda: execute_source_search(
+                    client=client,
+                    data_source_id=data_source_id,
+                    query=req.query,
+                    count=count,
+                ),
+                payload_summary={
+                    "data_source_id": data_source_id,
+                    "query_hash": _hash_text(req.query),
+                    "count": count,
+                },
+                failure_detail=f"{data_source_id} source-search",
             )
     except HTTPException as exc:
         _record_source_search_failure(data_source_id)
@@ -1645,12 +1763,17 @@ async def privacy_removal_live_preflight(
         )
 
     try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            response = await client.get(
-                _PRIVACY_LIVE_TARGET_URL,
-                headers={"User-Agent": "jarvis-alpha-privacy-preflight/1.0"},
-            )
-    except httpx.RequestError:
+        response = await _egress_request(
+            operation="privacy-live-preflight",
+            method="GET",
+            url=_PRIVACY_LIVE_TARGET_URL,
+            timeout=10.0,
+            follow_redirects=True,
+            headers={"User-Agent": "jarvis-alpha-privacy-preflight/1.0"},
+            payload_summary={"target_id": req.target_id},
+            failure_detail="Privacy live preflight",
+        )
+    except HTTPException:
         return _privacy_live_preflight_payload(
             req,
             status="live_preflight_failed",
@@ -1928,77 +2051,89 @@ async def _fetch_public_content(
 
     max_bytes = min(max(max_bytes, 1), DEFAULT_MAX_CONTENT_BYTES)
     headers = {"User-Agent": "AT-0 Beacon/1.0"}
-    async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
-        async with client.stream(
-            "GET", safety.normalized_url, headers=headers
-        ) as response:
-            chain = [safety.normalized_url]
-            chain.extend(str(history.url) for history in response.history)
-            chain.append(str(response.url))
-            try:
-                redirect_results = validate_redirect_chain(chain)
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "error": "unsafe_redirect",
-                        "reasons": str(exc).split(", "),
-                    },
-                ) from exc
 
-            content_type = response.headers.get("content-type")
-            content_length = _int_header(response.headers.get("content-length"))
-            try:
-                require_safe_content_metadata(
-                    content_type,
-                    content_length,
-                    max_bytes=max_bytes,
-                )
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": "unsafe_content", "reasons": str(exc).split(", ")},
-                ) from exc
-
-            if response.status_code >= 400:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Fetch error: HTTP {response.status_code}",
-                )
-
-            chunks: list[bytes] = []
-            total = 0
-            async for chunk in response.aiter_bytes():
-                total += len(chunk)
-                if total > max_bytes:
+    async def _fetch_once() -> _FetchedInternetContent:
+        async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+            async with client.stream(
+                "GET", safety.normalized_url, headers=headers
+            ) as response:
+                chain = [safety.normalized_url]
+                chain.extend(str(history.url) for history in response.history)
+                chain.append(str(response.url))
+                try:
+                    redirect_results = validate_redirect_chain(chain)
+                except ValueError as exc:
                     raise HTTPException(
-                        status_code=413,
-                        detail="Fetched content exceeds Beacon byte cap",
+                        status_code=400,
+                        detail={
+                            "error": "unsafe_redirect",
+                            "reasons": str(exc).split(", "),
+                        },
+                    ) from exc
+
+                content_type = response.headers.get("content-type")
+                content_length = _int_header(response.headers.get("content-length"))
+                try:
+                    require_safe_content_metadata(
+                        content_type,
+                        content_length,
+                        max_bytes=max_bytes,
                     )
-                chunks.append(chunk)
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "error": "unsafe_content",
+                            "reasons": str(exc).split(", "),
+                        },
+                    ) from exc
 
-    final = redirect_results[-1]
-    if final.normalized_url is None or final.host is None:
-        raise HTTPException(status_code=502, detail="Final URL safety result invalid")
+                if response.status_code >= 400:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Fetch error: HTTP {response.status_code}",
+                    )
 
-    body = b"".join(chunks)
-    raw_text = body.decode("utf-8", errors="replace")
-    sanitized = sanitize_untrusted_text(raw_text, max_chars=max_bytes)
-    return _FetchedInternetContent(
-        url=final.normalized_url,
-        host=final.host,
-        status_code=response.status_code,
-        content_type=response.headers.get("content-type"),
-        fetched_at=datetime.now(UTC),
-        raw_text=raw_text,
-        text=sanitized.text,
-        truncated=sanitized.truncated,
-        risk_markers=sanitized.risk_markers,
-        redirect_chain=[
-            result.normalized_url
-            for result in redirect_results
-            if result.normalized_url is not None
-        ],
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in response.aiter_bytes():
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise HTTPException(
+                            status_code=413,
+                            detail="Fetched content exceeds Beacon byte cap",
+                        )
+                    chunks.append(chunk)
+
+        final = redirect_results[-1]
+        if final.normalized_url is None or final.host is None:
+            raise HTTPException(status_code=502, detail="Final URL safety result invalid")
+
+        body = b"".join(chunks)
+        raw_text = body.decode("utf-8", errors="replace")
+        sanitized = sanitize_untrusted_text(raw_text, max_chars=max_bytes)
+        return _FetchedInternetContent(
+            url=final.normalized_url,
+            host=final.host,
+            status_code=response.status_code,
+            content_type=response.headers.get("content-type"),
+            fetched_at=datetime.now(UTC),
+            raw_text=raw_text,
+            text=sanitized.text,
+            truncated=sanitized.truncated,
+            risk_markers=sanitized.risk_markers,
+            redirect_chain=[
+                result.normalized_url
+                for result in redirect_results
+                if result.normalized_url is not None
+            ],
+        )
+
+    return await _run_gateway_egress(
+        operation="internet-fetch",
+        execute=_fetch_once,
+        payload_summary={"url_hash": _hash_text(safety.normalized_url)},
+        failure_detail="Beacon fetch",
     )
 
 

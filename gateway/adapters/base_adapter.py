@@ -2,6 +2,7 @@ import httpx
 from abc import ABC, abstractmethod
 
 from jarvis_common.logging_config import get_logger
+from gateway.resilience.transport import request_with_resilience
 
 logger = get_logger("alpha_gateway")
 
@@ -20,6 +21,32 @@ class BaseCloudAdapter(ABC):
 
     @abstractmethod
     async def call(self, payload: dict, idempotency_key: str | None = None) -> dict: ...
+
+    async def _request(
+        self,
+        *,
+        operation: str,
+        method: str,
+        url: str,
+        headers: dict[str, str] | None = None,
+        params: dict[str, str] | None = None,
+        json_body: dict | None = None,
+        data: dict[str, str] | None = None,
+        payload_summary: dict[str, object] | None = None,
+    ) -> httpx.Response:
+        return await request_with_resilience(
+            operation=operation,
+            method=method,
+            url=url,
+            timeout=self.timeout,
+            headers=headers,
+            params=params,
+            json_body=json_body,
+            data=data,
+            client_factory=httpx.AsyncClient,
+            payload_summary=payload_summary,
+            failure_detail=f"{self.provider_name()} egress",
+        )
 
     def _emit_cost(
         self,
