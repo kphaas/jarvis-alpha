@@ -2107,7 +2107,9 @@ async def _fetch_public_content(
 
         final = redirect_results[-1]
         if final.normalized_url is None or final.host is None:
-            raise HTTPException(status_code=502, detail="Final URL safety result invalid")
+            raise HTTPException(
+                status_code=502, detail="Final URL safety result invalid"
+            )
 
         body = b"".join(chunks)
         raw_text = body.decode("utf-8", errors="replace")

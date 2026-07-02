@@ -315,7 +315,9 @@ async def request_with_resilience(
         if callable(sender):
             response = await sender(url, **request_kwargs)
         else:
-            response = await active_client.request(method.upper(), url, **request_kwargs)
+            response = await active_client.request(
+                method.upper(), url, **request_kwargs
+            )
         if response.status_code in retryable_codes:
             raise RetryableResponseError(response)
         return response
