@@ -523,12 +523,16 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "security_read",
     ],
     "POST /v1/agent-runs/{run_id}/artifacts": ["write", "security_write"],
-    # --- Alpha Agent Board — governed queue metadata, no agent execution ---
+    # --- Alpha Agent Board — governed queue metadata and TaskGraph bridge ---
     "GET /v1/agent-board": ["read", "security_read"],
     "GET /v1/agent-board/registry": ["read", "security_read"],
     "GET /v1/agent-board/skill-map": ["read", "security_read"],
     "GET /v1/agent-board/work-items/{work_item_id}": ["read", "security_read"],
     "POST /v1/agent-board/work-items": ["write", "security_write"],
+    "POST /v1/agent-board/work-items/{work_item_id}/task-graph": [
+        "write",
+        "security_write",
+    ],
     "PATCH /v1/agent-board/work-items/{work_item_id}/status": [
         "write",
         "security_write",
