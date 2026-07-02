@@ -302,6 +302,38 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         ),
     ),
     SkillSpec(
+        name="agent_board.dispatch_delegation",
+        domain="agent_board",
+        action="dispatch_delegation",
+        description=(
+            "Dispatch delegated child Agent Board work items into TaskGraphs and "
+            "record parent roll-up metadata."
+        ),
+        approval_tier="T2",
+        scope="agents.write",
+        mutates_state=True,
+        idempotency_required=True,
+        status="active",
+        metadata=_skill_metadata(
+            data_classification="ops",
+            side_effect_class="control_plane",
+            timeout_s=20,
+            retry_policy="idempotent_retry_once",
+            rate_limit="20/minute/operator",
+            compensation="cancel_child_task_graphs_and_parent_work_item",
+            test_ref="tests/test_agent_board.py",
+            extra={
+                "execution_path": "fastapi_route",
+                "operator_surface": "helm",
+                "delegation_model": "board_child_items",
+                "executor_bridge": "task_graph",
+                "approval_gate": "alpha_task_steps.approval_required",
+                "wakes_executor": True,
+                "rolls_up_to_parent": True,
+            },
+        ),
+    ),
+    SkillSpec(
         name="agent_schedule.read",
         domain="agent_schedule",
         action="read",
@@ -843,6 +875,44 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
                 "surface": "mattermost",
                 "write_commands": "blocked",
                 "execution_path": "fastapi_route",
+            },
+        ),
+    ),
+    SkillSpec(
+        name="chatops.agent_board_control",
+        domain="chatops",
+        action="agent_board_control",
+        description=(
+            "Handle token-authenticated Mattermost Agent Board queue, status, "
+            "and handoff commands."
+        ),
+        approval_tier="T2",
+        scope="chatops.write",
+        mutates_state=True,
+        idempotency_required=True,
+        status="active",
+        metadata=_skill_metadata(
+            data_classification="ops",
+            side_effect_class="control_plane",
+            timeout_s=10,
+            retry_policy="idempotent_retry_once",
+            rate_limit="20/minute/operator",
+            egress_mode="local",
+            provider="mattermost",
+            compensation="status_change_event_trail",
+            test_ref="tests/test_agent_events_chatops.py",
+            extra={
+                "surface": "mattermost",
+                "execution_path": "fastapi_route",
+                "operator_surface": "chatops",
+                "commands": [
+                    "board",
+                    "board blocked",
+                    "board needs-me",
+                    "board queue",
+                    "board approve-handoff",
+                ],
+                "does_not_bypass_alpha_gates": True,
             },
         ),
     ),

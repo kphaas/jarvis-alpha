@@ -1,7 +1,7 @@
 """Mattermost ChatOps command endpoint.
 
-Phase 2 is intentionally read-only. Mattermost can ask Alpha for status, but it
-cannot approve, kill, deploy, or mutate state through this route.
+ChatOps is token-authenticated and keeps state-changing Agent Board commands on
+the same audited queue/status paths used by Helm.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ import hmac
 import json
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, Form, HTTPException
 from pydantic import BaseModel
@@ -21,6 +22,9 @@ from jarvis_common.logging_config import get_logger
 logger = get_logger("alpha_brain")
 
 router = APIRouter(prefix="/v1/chatops", tags=["chatops"])
+
+BOARD_ROLES = {"general", "research", "code", "review", "deploy", "monitor"}
+BOARD_NEEDS_ME_STATUSES = ("needs_approval", "blocked", "handoff_ready")
 
 
 class MattermostCommandResponse(BaseModel):
@@ -83,6 +87,8 @@ async def mattermost_command(
                 body = await _approvals_text(conn)
             elif command.name in {"dreams", "dream"}:
                 body = await _dreams_text(conn, command.args)
+            elif command.name in {"board", "agent-board"}:
+                body = await _board_text(conn, command.args, audit_actor)
             else:
                 body = _unknown_text(command.name)
     except HTTPException:
@@ -100,12 +106,17 @@ async def mattermost_command(
 def _help_text() -> str:
     return "\n".join(
         [
-            "**Alpha read-only commands**",
+            "**Alpha commands**",
             "`/alpha health` - Brain, Temporal, and Dream worker status",
             "`/alpha agents` - agent registry summary",
             "`/alpha network` - read-only Sweep summary",
             "`/alpha approvals` - pending approval queue",
             "`/alpha dreams [n]` - recent Dream sessions",
+            "`/alpha board` - Agent Board status summary",
+            "`/alpha board blocked` - blocked work items",
+            "`/alpha board needs-me` - approval, blocked, and handoff-ready items",
+            "`/alpha board queue <role> <title>` - queue an Agent Board item",
+            "`/alpha board approve-handoff <id>` - mark a handoff-ready item done",
         ]
     )
 
@@ -291,6 +302,195 @@ async def _dreams_text(conn, args: tuple[str, ...]) -> str:
             f"${float(row['cost_actual_usd'] or 0):.2f}"
         )
     return "\n".join(lines)
+
+
+async def _board_text(conn, args: tuple[str, ...], actor: str) -> str:
+    if not args or args[0] in {"status", "summary"}:
+        return await _board_summary_text(conn)
+    subcommand = args[0].lower()
+    if subcommand == "blocked":
+        return await _board_list_text(conn, statuses=("blocked",), title="Blocked")
+    if subcommand in {"needs-me", "mine"}:
+        return await _board_list_text(
+            conn,
+            statuses=BOARD_NEEDS_ME_STATUSES,
+            title="Needs Operator",
+        )
+    if subcommand == "queue":
+        return await _board_queue_text(conn, args[1:], actor)
+    if subcommand in {"approve-handoff", "handoff-done"}:
+        return await _board_approve_handoff_text(conn, args[1:], actor)
+    return (
+        f"Unknown board command `{subcommand}`.\n"
+        "Try `/alpha board`, `/alpha board blocked`, "
+        "`/alpha board needs-me`, `/alpha board queue <role> <title>`, "
+        "or `/alpha board approve-handoff <id>`."
+    )
+
+
+async def _board_summary_text(conn) -> str:
+    rows = await conn.fetch(
+        """
+        SELECT status, COUNT(*) AS count
+          FROM public.alpha_agent_work_items
+         WHERE status != 'cancelled'
+         GROUP BY status
+        """
+    )
+    counts = {row["status"]: int(row["count"] or 0) for row in rows}
+    ordered_statuses = [
+        "queued",
+        "in_progress",
+        "blocked",
+        "needs_approval",
+        "handoff_ready",
+        "done",
+    ]
+    lines = ["**Alpha Agent Board**"]
+    lines.extend(
+        f"- `{status}`: `{counts.get(status, 0)}`" for status in ordered_statuses
+    )
+    return "\n".join(lines)
+
+
+async def _board_list_text(
+    conn,
+    *,
+    statuses: tuple[str, ...],
+    title: str,
+) -> str:
+    rows = await conn.fetch(
+        """
+        SELECT id, title, role, status, priority, blocked_reason, updated_at
+          FROM public.alpha_agent_work_items
+         WHERE status = ANY($1::text[])
+         ORDER BY priority DESC, updated_at ASC
+         LIMIT 8
+        """,
+        list(statuses),
+    )
+    if not rows:
+        return f"**Alpha Agent Board: {title}**\nNo matching work items."
+
+    lines = [f"**Alpha Agent Board: {title}**"]
+    for row in rows:
+        reason = f" - {row['blocked_reason']}" if row["blocked_reason"] else ""
+        lines.append(
+            f"- `{row['status']}` `{row['id']}` {row['title']} "
+            f"({row['role']}, p{row['priority']}){reason}"
+        )
+    return "\n".join(lines)
+
+
+async def _board_queue_text(conn, args: tuple[str, ...], actor: str) -> str:
+    if len(args) < 2:
+        return "Usage: `/alpha board queue <role> <title>`"
+    role = args[0].lower()
+    if role not in BOARD_ROLES:
+        roles = "`, `".join(sorted(BOARD_ROLES))
+        return f"Invalid role `{role}`. Use one of `{roles}`."
+    title = " ".join(args[1:]).strip()
+    if not title:
+        return "Usage: `/alpha board queue <role> <title>`"
+
+    async with conn.transaction():
+        row = await conn.fetchrow(
+            """
+            INSERT INTO public.alpha_agent_work_items (
+                workspace_id, title, description, source_surface, requested_by,
+                role, priority, required_skills, approval_tier,
+                acceptance_criteria, metadata
+            )
+            VALUES (
+                'personal', $1, '', 'chatops', $2,
+                $3, 5, ARRAY[]::text[], 'T1',
+                $4::jsonb, $5::jsonb
+            )
+            RETURNING id, title, role, status
+            """,
+            title[:180],
+            actor,
+            role,
+            json.dumps(["Operator queued from Mattermost ChatOps."]),
+            json.dumps({"chatops": {"command": "board queue", "actor": actor}}),
+        )
+        if row is None:
+            raise HTTPException(status_code=500, detail="Work item insert failed")
+        await conn.execute(
+            """
+            INSERT INTO public.alpha_agent_work_item_events (
+                work_item_id, event_type, actor, to_status, message, metadata
+            )
+            VALUES ($1, 'created', $2, 'queued', $3, $4::jsonb)
+            """,
+            row["id"],
+            actor,
+            "work item queued from ChatOps",
+            json.dumps({"source_surface": "chatops", "role": role}),
+        )
+    logger.info("mattermost_board_queue ok work_item_id=%s role=%s", row["id"], role)
+    return (
+        "**Alpha Agent Board**\n"
+        f"Queued `{row['id']}` as `{row['role']}`: {row['title']}"
+    )
+
+
+async def _board_approve_handoff_text(conn, args: tuple[str, ...], actor: str) -> str:
+    if len(args) != 1:
+        return "Usage: `/alpha board approve-handoff <work_item_id>`"
+    try:
+        work_item_id = UUID(args[0])
+    except ValueError:
+        return f"Invalid work item id `{args[0]}`."
+
+    async with conn.transaction():
+        current = await conn.fetchrow(
+            """
+            SELECT id, title, status
+              FROM public.alpha_agent_work_items
+             WHERE id = $1
+             FOR UPDATE
+            """,
+            work_item_id,
+        )
+        if current is None:
+            return f"Work item `{work_item_id}` was not found."
+        if current["status"] != "handoff_ready":
+            return (
+                f"Work item `{work_item_id}` is `{current['status']}`, "
+                "not `handoff_ready`."
+            )
+
+        metadata = {"chatops": {"command": "board approve-handoff", "actor": actor}}
+        updated = await conn.fetchrow(
+            """
+            UPDATE public.alpha_agent_work_items
+               SET status = 'done',
+                   completed_at = NOW(),
+                   metadata = metadata || $2::jsonb
+             WHERE id = $1
+             RETURNING id
+            """,
+            work_item_id,
+            json.dumps(metadata),
+        )
+        if updated is None:
+            raise HTTPException(status_code=500, detail="Work item update failed")
+        await conn.execute(
+            """
+            INSERT INTO public.alpha_agent_work_item_events (
+                work_item_id, event_type, actor, from_status, to_status,
+                message, metadata
+            )
+            VALUES ($1, 'status_changed', $2, 'handoff_ready', 'done', $3, $4::jsonb)
+            """,
+            work_item_id,
+            actor,
+            "handoff approved from ChatOps",
+            json.dumps(metadata),
+        )
+    logger.info("mattermost_board_handoff_approved ok work_item_id=%s", work_item_id)
+    return f"**Alpha Agent Board**\nMarked `{work_item_id}` done: {current['title']}"
 
 
 def _bounded_limit(args: tuple[str, ...], *, default: int, maximum: int) -> int:
