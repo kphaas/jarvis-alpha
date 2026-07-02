@@ -84,30 +84,38 @@ class GeminiAdapter(BaseCloudAdapter):
         api_key = get_secret("GEMINI_API_KEY")
         model, gemini_payload = _to_gemini_payload(payload)
         url = GEMINI_API_URL.format(model=model)
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(url, json=gemini_payload, params={"key": api_key})
-            try:
-                resp.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                body = resp.text[:500]
-                logger.error(
-                    "gemini_adapter: status=%d model=%s body=%s",
-                    resp.status_code,
-                    model,
-                    body,
-                )
-                raise RuntimeError(
-                    f"Gemini API status={resp.status_code}: {body}"
-                ) from e
-            data = resp.json()
-            logger.info("gemini_adapter: status=%d model=%s", resp.status_code, model)
-
-            usage = data.get("usageMetadata", {})
-            self._emit_cost(
-                model=model,
-                prompt_tokens=usage.get("promptTokenCount", 0),
-                completion_tokens=usage.get("candidatesTokenCount", 0),
-                total_tokens=usage.get("totalTokenCount", 0),
-                idempotency_key=idempotency_key,
+        resp = await self._request(
+            operation="cloud-gemini",
+            method="POST",
+            url=url,
+            params={"key": api_key},
+            json_body=gemini_payload,
+            payload_summary={
+                "provider": "gemini",
+                "model": model,
+                "has_idempotency_key": bool(idempotency_key),
+            },
+        )
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            body = resp.text[:500]
+            logger.error(
+                "gemini_adapter: status=%d model=%s body=%s",
+                resp.status_code,
+                model,
+                body,
             )
-            return data
+            raise RuntimeError(f"Gemini API status={resp.status_code}: {body}") from e
+        data = resp.json()
+        logger.info("gemini_adapter: status=%d model=%s", resp.status_code, model)
+
+        usage = data.get("usageMetadata", {})
+        self._emit_cost(
+            model=model,
+            prompt_tokens=usage.get("promptTokenCount", 0),
+            completion_tokens=usage.get("candidatesTokenCount", 0),
+            total_tokens=usage.get("totalTokenCount", 0),
+            idempotency_key=idempotency_key,
+        )
+        return data

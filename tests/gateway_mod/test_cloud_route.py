@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from gateway.adapters import beacon_source_search
+from gateway.resilience import transport as resilience_transport
 from gateway.routes import cloud_routes
 
 
@@ -35,8 +36,22 @@ def reset_search_provider_circuits(monkeypatch, tmp_path):
     monkeypatch.delenv("BEACON_SEARCH_CIRCUIT_WINDOW_SECONDS", raising=False)
     monkeypatch.delenv("BEACON_SEARCH_CIRCUIT_FAILURE_THRESHOLD", raising=False)
     monkeypatch.delenv("BEACON_SEARCH_CIRCUIT_COOLDOWN_SECONDS", raising=False)
+    monkeypatch.delenv("GATEWAY_EGRESS_RETRY_ATTEMPTS", raising=False)
+    monkeypatch.delenv("GATEWAY_EGRESS_RETRY_BASE_MS", raising=False)
+    monkeypatch.delenv("GATEWAY_EGRESS_RETRY_MAX_MS", raising=False)
+    monkeypatch.delenv("GATEWAY_EGRESS_RETRY_JITTER_FRACTION", raising=False)
+    monkeypatch.delenv("GATEWAY_EGRESS_CIRCUIT_FAILURE_THRESHOLD", raising=False)
+    monkeypatch.delenv("GATEWAY_EGRESS_CIRCUIT_WINDOW_SECONDS", raising=False)
+    monkeypatch.delenv("GATEWAY_EGRESS_CIRCUIT_OPEN_SECONDS", raising=False)
+    monkeypatch.delenv("GATEWAY_EGRESS_DLQ_PATH", raising=False)
+    monkeypatch.delenv("GATEWAY_EGRESS_DLQ_MAX_SIZE", raising=False)
     monkeypatch.delenv("SEC_EDGAR_USER_AGENT", raising=False)
     monkeypatch.setenv("BEACON_SEARCH_USAGE_DIR", str(tmp_path))
+    monkeypatch.setenv("GATEWAY_EGRESS_RETRY_BASE_MS", "1")
+    monkeypatch.setenv("GATEWAY_EGRESS_RETRY_MAX_MS", "1")
+    monkeypatch.setenv("GATEWAY_EGRESS_RETRY_JITTER_FRACTION", "0")
+    monkeypatch.setenv("GATEWAY_EGRESS_DLQ_PATH", str(tmp_path / "gateway_egress.db"))
+    resilience_transport.reset_resilience_state()
     for circuit in cloud_routes._SEARCH_CIRCUITS.values():
         circuit.failures = []
         circuit.open_until = 0.0
@@ -44,6 +59,7 @@ def reset_search_provider_circuits(monkeypatch, tmp_path):
         circuit.failures = []
         circuit.open_until = 0.0
     yield
+    resilience_transport.reset_resilience_state()
     for circuit in cloud_routes._SEARCH_CIRCUITS.values():
         circuit.failures = []
         circuit.open_until = 0.0
@@ -74,6 +90,27 @@ def test_cloud_route_accepts_gateway_token(monkeypatch):
     monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
 
     cloud_routes._authorize_gateway_call("Bearer gateway-token")
+
+
+@pytest.mark.asyncio
+async def test_cloud_call_preserves_http_exception(monkeypatch):
+    monkeypatch.setattr(cloud_routes, "get_secret", lambda name: "gateway-token")
+
+    class FailingAdapter:
+        async def call(self, payload: dict, idempotency_key: str | None = None):
+            raise HTTPException(status_code=503, detail="claude egress circuit is open")
+
+    monkeypatch.setitem(cloud_routes._adapters, "claude", FailingAdapter())
+
+    with pytest.raises(HTTPException) as exc:
+        await cloud_routes.cloud_call(
+            type("Req", (), {"headers": {}})(),
+            cloud_routes.CloudRequest(provider="claude", payload={"model": "x"}),
+            authorization="Bearer gateway-token",
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "claude egress circuit is open"
 
 
 def test_google_billing_request_does_not_accept_brain_credentials():
@@ -809,6 +846,50 @@ async def test_internet_search_uses_searxng_before_paid_providers(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_internet_search_retries_transient_provider_failure(monkeypatch):
+    def fake_secret(name: str) -> str:
+        if name == "GATEWAY_TOKEN":
+            return "gateway-token"
+        if name == "BRAVE_SEARCH_API_KEY":
+            return "brave-token"
+        raise KeyError(name)
+
+    monkeypatch.setattr(cloud_routes, "get_secret", fake_secret)
+    monkeypatch.setenv("GATEWAY_EGRESS_RETRY_ATTEMPTS", "2")
+    attempts = 0
+
+    async def fake_execute_search_provider(*, client, credential, query, count):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise HTTPException(status_code=502, detail="transient provider failure")
+        return [
+            {
+                "title": "Recovered result",
+                "url": "https://example.com/recovered",
+                "host": "example.com",
+                "description": "Recovered after retry",
+                "risk_markers": [],
+            }
+        ]
+
+    monkeypatch.setattr(
+        cloud_routes,
+        "_execute_search_provider",
+        fake_execute_search_provider,
+    )
+
+    result = await cloud_routes.internet_search(
+        cloud_routes.InternetSearchRequest(query="beacon resilience", provider="brave"),
+        authorization="Bearer gateway-token",
+    )
+
+    assert attempts == 2
+    assert result["provider"] == "brave"
+    assert result["results"][0]["title"] == "Recovered result"
+
+
+@pytest.mark.asyncio
 async def test_internet_search_uses_brave_and_filters_unsafe_results(monkeypatch):
     def fake_secret(name: str) -> str:
         if name == "GATEWAY_TOKEN":
@@ -1003,6 +1084,8 @@ async def test_internet_search_falls_back_when_brave_provider_fails(monkeypatch)
 
     assert result["provider"] == "perplexity"
     assert seen["calls"] == [
+        ("get", "https://api.search.brave.com/res/v1/web/search"),
+        ("get", "https://api.search.brave.com/res/v1/web/search"),
         ("get", "https://api.search.brave.com/res/v1/web/search"),
         ("post", "https://api.perplexity.ai/search"),
     ]
@@ -1682,7 +1765,7 @@ async def test_internet_source_search_opens_circuit_after_provider_failure(
 
     assert second.value.status_code == 503
     assert second.value.detail == "osv-dev source-search circuit is open"
-    assert calls == 1
+    assert calls == 3
 
 
 @pytest.mark.asyncio
