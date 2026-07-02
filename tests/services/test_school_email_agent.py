@@ -71,3 +71,8 @@ def test_family_school_client_requires_explicit_base_url(monkeypatch) -> None:
 
     with pytest.raises(FamilySchoolClientConfigError):
         FamilySchoolClient()
+
+
+def test_family_school_client_rejects_public_family_url() -> None:
+    with pytest.raises(FamilySchoolClientConfigError, match="https tailnet host"):
+        FamilySchoolClient("https://family.invalid")

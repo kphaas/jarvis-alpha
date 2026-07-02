@@ -9,6 +9,12 @@ from typing import Any
 
 import httpx
 
+from brain.services.family_api import (
+    FamilyApiConfigError,
+    family_api_base_url,
+    family_api_verify_tls,
+)
+
 
 class FamilySchoolClientConfigError(RuntimeError):
     pass
@@ -26,12 +32,10 @@ class FamilySchoolEmailRule:
 
 class FamilySchoolClient:
     def __init__(self, base_url: str | None = None) -> None:
-        resolved_url = base_url or os.environ.get("JARVIS_FAMILY_API_URL", "").strip()
-        if not resolved_url:
-            raise FamilySchoolClientConfigError(
-                "JARVIS_FAMILY_API_URL is not configured"
-            )
-        self.base_url = resolved_url.rstrip("/")
+        try:
+            self.base_url = family_api_base_url(base_url)
+        except FamilyApiConfigError as exc:
+            raise FamilySchoolClientConfigError(str(exc)) from exc
 
     def _token(self, scopes: list[str]) -> str:
         import jwt
@@ -59,7 +63,9 @@ class FamilySchoolClient:
 
     async def active_rules(self) -> list[FamilySchoolEmailRule]:
         token = self._token(["family.school_email.read"])
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(
+            timeout=20, verify=family_api_verify_tls()
+        ) as client:
             response = await client.get(
                 f"{self.base_url}/v1/school-email/rules/export",
                 headers={"Authorization": f"Bearer {token}"},
@@ -85,7 +91,9 @@ class FamilySchoolClient:
 
     async def _post_import(self, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
         token = self._token(["family.school_email.import"])
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(
+            timeout=20, verify=family_api_verify_tls()
+        ) as client:
             response = await client.post(
                 f"{self.base_url}/v1/school-email/imports/{kind}",
                 headers={"Authorization": f"Bearer {token}"},

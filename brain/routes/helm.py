@@ -21,6 +21,11 @@ from brain.config.secrets import get_secret
 from brain.db.rls import platform_admin_connection, rls_connection
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
+from brain.services.family_api import (
+    FamilyApiConfigError,
+    family_api_base_url,
+    family_api_verify_tls,
+)
 from brain.services.at0_self_model import At0SelfModel, build_at0_self_model
 from brain.services.internet_scout.ai_news_brief import (
     AiNewsBrief,
@@ -1407,10 +1412,10 @@ async def _beacon_summary(conn) -> HelmBeaconSummary:
 
 
 def _family_base_url() -> str:
-    value = os.environ.get("JARVIS_FAMILY_API_URL", "").strip()
-    if not value:
-        raise HTTPException(status_code=503, detail="family_api_not_configured")
-    return value.rstrip("/")
+    try:
+        return family_api_base_url()
+    except FamilyApiConfigError as exc:
+        raise HTTPException(status_code=503, detail=exc.code) from exc
 
 
 def _family_id() -> str:
@@ -1421,12 +1426,7 @@ def _family_id() -> str:
 
 
 def _family_verify_tls() -> bool:
-    return os.environ.get("JARVIS_FAMILY_VERIFY_TLS", "false").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    return family_api_verify_tls()
 
 
 def _family_service_private_key() -> str:
