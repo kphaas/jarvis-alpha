@@ -58,6 +58,53 @@ def _client(*, role: str = "admin", actor_type: str = "user") -> TestClient:
     return TestClient(app)
 
 
+def _entity(
+    entity_id: str,
+    friendly_name: str,
+    *,
+    state: str = "off",
+) -> dict[str, object]:
+    return {
+        "entity_id": entity_id,
+        "friendly_name": friendly_name,
+        "state": state,
+        "attributes": {},
+    }
+
+
+def _snapshot(*entities: dict[str, object]) -> dict[str, object]:
+    return {"snapshot": {str(entity["entity_id"]): entity for entity in entities}}
+
+
+def _executed(entity: dict[str, object], service: str) -> dict[str, object]:
+    return {
+        "mode": "executed",
+        "plan": {
+            "entity_id": entity["entity_id"],
+            "friendly_name": entity["friendly_name"],
+        },
+        "execution": {
+            "entity_id": entity["entity_id"],
+            "service": service,
+        },
+    }
+
+
+def _proposal(entity: dict[str, object], approval_id: str) -> dict[str, object]:
+    return {
+        "mode": "proposal",
+        "plan": {
+            "entity_id": entity["entity_id"],
+            "friendly_name": entity["friendly_name"],
+        },
+        "approval": {
+            "approval_id": approval_id,
+            "status": "pending_approval",
+        },
+        "proposal": {"kind": "approval_handoff"},
+    }
+
+
 def test_trusted_actor_headers_map_alpha_session_to_homie_headers() -> None:
     assert homie._trusted_actor_headers(_request()) == {
         "X-Actor-Id": "ken",
@@ -219,6 +266,8 @@ def test_homie_events_stream_route_proxies_expected_gateway_path(
 def test_homie_intent_route_reads_device_status_from_live_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    kitchen = _entity("light.kitchen", "Kitchen Lights")
+
     async def fake_request(
         method: str,
         path: str,
@@ -228,16 +277,7 @@ def test_homie_intent_route_reads_device_status_from_live_snapshot(
     ) -> dict[str, object]:
         assert method == "GET"
         assert path == "/v1/home/homie/state"
-        return {
-            "snapshot": {
-                "light.kitchen": {
-                    "entity_id": "light.kitchen",
-                    "friendly_name": "Kitchen Lights",
-                    "state": "off",
-                    "attributes": {},
-                }
-            }
-        }
+        return _snapshot(kitchen)
 
     monkeypatch.setattr(homie, "_request_homie_gateway", fake_request)
     client = _client()
@@ -256,6 +296,7 @@ def test_homie_intent_route_delegates_direct_actions_to_gateway(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, str, dict[str, object] | None]] = []
+    bass = _entity("number.living_room_bass", "Living Room Bass", state="5")
 
     async def fake_request(
         method: str,
@@ -266,27 +307,8 @@ def test_homie_intent_route_delegates_direct_actions_to_gateway(
     ) -> dict[str, object]:
         calls.append((method, path, body))
         if method == "GET":
-            return {
-                "snapshot": {
-                    "number.living_room_bass": {
-                        "entity_id": "number.living_room_bass",
-                        "friendly_name": "Living Room Bass",
-                        "state": "5",
-                        "attributes": {},
-                    }
-                }
-            }
-        return {
-            "mode": "executed",
-            "plan": {
-                "entity_id": "number.living_room_bass",
-                "friendly_name": "Living Room Bass",
-            },
-            "execution": {
-                "entity_id": "number.living_room_bass",
-                "service": "set_value",
-            },
-        }
+            return _snapshot(bass)
+        return _executed(bass, "set_value")
 
     monkeypatch.setattr(homie, "_request_homie_gateway", fake_request)
     client = _client()
@@ -329,6 +351,8 @@ def test_homie_intent_route_delegates_direct_actions_to_gateway(
 def test_homie_intent_route_surfaces_approval_handoffs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    coffee_maker = _entity("switch.coffee_maker", "Coffee Maker")
+
     async def fake_request(
         method: str,
         path: str,
@@ -337,25 +361,8 @@ def test_homie_intent_route_surfaces_approval_handoffs(
         body: dict[str, object] | None = None,
     ) -> dict[str, object]:
         if method == "GET":
-            return {
-                "snapshot": {
-                    "switch.coffee_maker": {
-                        "entity_id": "switch.coffee_maker",
-                        "friendly_name": "Coffee Maker",
-                        "state": "off",
-                        "attributes": {},
-                    }
-                }
-            }
-        return {
-            "mode": "proposal",
-            "plan": {
-                "entity_id": "switch.coffee_maker",
-                "friendly_name": "Coffee Maker",
-            },
-            "approval": {"approval_id": "abc-123", "status": "pending_approval"},
-            "proposal": {"kind": "approval_handoff"},
-        }
+            return _snapshot(coffee_maker)
+        return _proposal(coffee_maker, "abc-123")
 
     monkeypatch.setattr(homie, "_request_homie_gateway", fake_request)
     client = _client()
@@ -379,6 +386,7 @@ def test_homie_voice_intent_route_reuses_voice_transcription_and_executes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, str, dict[str, object] | None]] = []
+    kitchen = _entity("light.kitchen", "Kitchen Lights")
 
     async def fake_read_voice_upload(file) -> tuple[bytes, str, str]:
         return (b"audio", "voice.webm", "audio/webm")
@@ -404,21 +412,8 @@ def test_homie_voice_intent_route_reuses_voice_transcription_and_executes(
     ) -> dict[str, object]:
         calls.append((method, path, body))
         if method == "GET":
-            return {
-                "snapshot": {
-                    "light.kitchen": {
-                        "entity_id": "light.kitchen",
-                        "friendly_name": "Kitchen Lights",
-                        "state": "off",
-                        "attributes": {},
-                    }
-                }
-            }
-        return {
-            "mode": "executed",
-            "plan": {"entity_id": "light.kitchen", "friendly_name": "Kitchen Lights"},
-            "execution": {"entity_id": "light.kitchen", "service": "turn_on"},
-        }
+            return _snapshot(kitchen)
+        return _executed(kitchen, "turn_on")
 
     monkeypatch.setattr(homie, "_read_voice_upload", fake_read_voice_upload)
     monkeypatch.setattr(homie, "_forward_voice_upload", fake_forward_voice_upload)
@@ -447,6 +442,8 @@ def test_homie_voice_intent_route_reuses_voice_transcription_and_executes(
 def test_homie_voice_intent_route_can_surface_approval(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    coffee_maker = _entity("switch.coffee_maker", "Coffee Maker")
+
     async def fake_read_voice_upload(file) -> tuple[bytes, str, str]:
         return (b"audio", "voice.webm", "audio/webm")
 
@@ -467,25 +464,8 @@ def test_homie_voice_intent_route_can_surface_approval(
         body: dict[str, object] | None = None,
     ) -> dict[str, object]:
         if method == "GET":
-            return {
-                "snapshot": {
-                    "switch.coffee_maker": {
-                        "entity_id": "switch.coffee_maker",
-                        "friendly_name": "Coffee Maker",
-                        "state": "off",
-                        "attributes": {},
-                    }
-                }
-            }
-        return {
-            "mode": "proposal",
-            "plan": {
-                "entity_id": "switch.coffee_maker",
-                "friendly_name": "Coffee Maker",
-            },
-            "approval": {"approval_id": "approval-1", "status": "pending_approval"},
-            "proposal": {"kind": "approval_handoff"},
-        }
+            return _snapshot(coffee_maker)
+        return _proposal(coffee_maker, "approval-1")
 
     monkeypatch.setattr(homie, "_read_voice_upload", fake_read_voice_upload)
     monkeypatch.setattr(homie, "_forward_voice_upload", fake_forward_voice_upload)

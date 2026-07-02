@@ -244,14 +244,16 @@ async def _request_homie_gateway(
     headers = _gateway_headers(request, gateway_token)
     try:
         async with httpx.AsyncClient(timeout=_HOME_GATEWAY_TIMEOUT_S) as client:
-            request_kwargs: dict[str, object] = {"headers": headers}
-            if body is not None:
-                request_kwargs["json"] = body
-            response = await client.request(
-                method,
-                f"{base_url.rstrip('/')}{path}",
-                **request_kwargs,
-            )
+            url = f"{base_url.rstrip('/')}{path}"
+            if body is None:
+                response = await client.request(method, url, headers=headers)
+            else:
+                response = await client.request(
+                    method,
+                    url,
+                    headers=headers,
+                    json=body,
+                )
     except httpx.HTTPError as exc:
         logger.warning("homie_gateway_unreachable path=%s error=%s", path, exc)
         raise HTTPException(
