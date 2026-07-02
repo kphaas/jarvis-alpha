@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from brain.db.rls import rls_connection
@@ -24,13 +24,28 @@ class BuddyEventsResponse(BaseModel):
     unread_count: int
 
 
+def _principal_buddy_user_id(request: Request, requested_user_id: str | None) -> str:
+    principal_user_id = str(getattr(request.state, "user_id", "") or "").strip()
+    if not principal_user_id or principal_user_id == "unknown":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if requested_user_id is None:
+        return principal_user_id
+
+    requested = requested_user_id.strip()
+    if requested and requested != principal_user_id:
+        raise HTTPException(status_code=403, detail="buddy_user_mismatch")
+    return principal_user_id
+
+
 @router.get("/events", response_model=BuddyEventsResponse)
 async def get_events(
     request: Request,
-    user_id: str = Query(default="anon"),
+    user_id: str | None = Query(default=None),
     limit: int = Query(default=20, le=100),
     unread_only: bool = Query(default=False),
 ) -> BuddyEventsResponse:
+    principal_user_id = _principal_buddy_user_id(request, user_id)
     async with rls_connection(request) as conn:
         where = "WHERE (user_id = $1 OR user_id IS NULL)"
         if unread_only:
@@ -46,7 +61,7 @@ async def get_events(
             ORDER BY created_at DESC
             LIMIT $2
             """,
-            user_id,
+            principal_user_id,
             limit,
         )
 
@@ -56,7 +71,7 @@ async def get_events(
             WHERE (user_id = $1 OR user_id IS NULL)
               AND read = false
             """,
-            user_id,
+            principal_user_id,
         )
 
     return BuddyEventsResponse(
@@ -67,22 +82,36 @@ async def get_events(
 
 @router.post("/events/{event_id}/read")
 async def mark_read(event_id: str, request: Request) -> dict:
+    principal_user_id = _principal_buddy_user_id(request, None)
     async with rls_connection(request) as conn:
-        await conn.execute(
-            "UPDATE alpha_buddy_events SET read = true WHERE id = $1::uuid",
+        marked_id = await conn.fetchval(
+            """
+            UPDATE alpha_buddy_events
+            SET read = true
+            WHERE id = $1::uuid
+              AND (user_id = $2 OR user_id IS NULL)
+            RETURNING id::text
+            """,
             event_id,
+            principal_user_id,
         )
-    return {"marked_read": event_id}
+    if marked_id is None:
+        raise HTTPException(status_code=404, detail="buddy_event_not_found")
+    return {"marked_read": marked_id}
 
 
 @router.post("/events/read-all")
-async def mark_all_read(request: Request, user_id: str = Query(default="anon")) -> dict:
+async def mark_all_read(
+    request: Request,
+    user_id: str | None = Query(default=None),
+) -> dict:
+    principal_user_id = _principal_buddy_user_id(request, user_id)
     async with rls_connection(request) as conn:
         await conn.execute(
             """
             UPDATE alpha_buddy_events SET read = true
             WHERE user_id = $1 OR user_id IS NULL
             """,
-            user_id,
+            principal_user_id,
         )
-    return {"marked_all_read": True, "user_id": user_id}
+    return {"marked_all_read": True, "user_id": principal_user_id}
