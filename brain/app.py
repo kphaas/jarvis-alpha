@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from jarvis_common.logging_config import get_logger
 from brain.middleware.rate_limit_middleware import RateLimitMiddleware
 from brain.middleware.approval import ApprovalMiddleware
+from brain.middleware.route_access import RouteAccessMiddleware
 from brain.middleware.log_middleware import LogMiddleware
 from brain.middleware.trace_id import TraceIdMiddleware
 from brain.middleware.approval_audit import audit_route_classifications
@@ -94,6 +95,7 @@ app = FastAPI(title="jarvis-alpha", version="0.1.0", lifespan=lifespan)
 app.add_middleware(LogMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(ApprovalMiddleware)
+app.add_middleware(RouteAccessMiddleware)
 app.add_middleware(JWTAuthMiddleware)
 
 app.add_middleware(
