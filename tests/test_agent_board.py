@@ -27,6 +27,7 @@ def _skill_row(
     *,
     status: str = "active",
     mutates_state: bool = False,
+    metadata: dict[str, object] | None = None,
 ) -> dict[str, object]:
     domain, action = name.split(".", 1)
     return {
@@ -40,7 +41,7 @@ def _skill_row(
         "mutates_state": mutates_state,
         "body_access": False,
         "idempotency_required": mutates_state,
-        "metadata": "{}",
+        "metadata": json.dumps(metadata or {}),
     }
 
 
@@ -128,6 +129,7 @@ def test_work_item_row_conversion_returns_board_payload() -> None:
 def test_agent_board_routes_are_governed_without_execution_tiers() -> None:
     read_classes = classify_route("GET", "/v1/agent-board")
     registry_classes = classify_route("GET", "/v1/agent-board/registry")
+    skill_map_classes = classify_route("GET", "/v1/agent-board/skill-map")
     create_classes = classify_route("POST", "/v1/agent-board/work-items")
     status_classes = classify_route(
         "PATCH",
@@ -136,8 +138,145 @@ def test_agent_board_routes_are_governed_without_execution_tiers() -> None:
 
     assert determine_risk_tier(read_classes) == "T2"
     assert determine_risk_tier(registry_classes) == "T2"
+    assert determine_risk_tier(skill_map_classes) == "T2"
     assert determine_risk_tier(create_classes) == "T2"
     assert determine_risk_tier(status_classes) == "T2"
+
+
+def test_skill_discovery_entry_maps_skill_policy_to_candidate_agents() -> None:
+    skill = next(
+        iter(
+            agent_board._skills_from_rows(
+                [
+                    _skill_row(
+                        "internet_scout.deep_research",
+                        "T3",
+                        metadata={
+                            "manifest": {
+                                "data_classification": "message_body",
+                                "side_effect_class": "read",
+                                "egress": {"mode": "external"},
+                                "cost": {"mode": "metered"},
+                                "test_ref": "tests/test_internet_scout_route.py",
+                                "runbook_ref": "docs/adr/ADR-0019-beacon-internet-scout.md",
+                            }
+                        },
+                    )
+                ]
+            ).values()
+        )
+    )
+    agents = [
+        agent_board.AgentBoardAgentOut(
+            agent_id="internet_scout",
+            display_name="Internet Scout",
+            purpose="Research",
+            risk_tier="T4",
+            status="active",
+            enabled=True,
+            allowed_skills=["internet_scout.deep_research"],
+            allowed_scopes=["internet_scout.research"],
+        ),
+        agent_board.AgentBoardAgentOut(
+            agent_id="disabled_research",
+            display_name="Disabled Research",
+            purpose="Research",
+            risk_tier="T3",
+            status="disabled",
+            enabled=False,
+            allowed_skills=[],
+            allowed_scopes=[skill.scope],
+        ),
+    ]
+
+    entry = agent_board._skill_discovery_entry(skill, agents)
+
+    assert entry.data_classification == "message_body"
+    assert entry.side_effect_class == "read"
+    assert entry.egress_mode == "external"
+    assert entry.cost_mode == "metered"
+    assert entry.allowed_agent_count == 2
+    assert entry.enabled_agent_count == 1
+    assert entry.candidate_agents[0].agent_id == "internet_scout"
+    assert entry.candidate_agents[0].match_type == "allowed_skill"
+    assert entry.candidate_agents[1].match_type == "allowed_scope"
+    assert entry.assignment_notes == []
+
+
+def test_skill_discovery_entry_marks_unmapped_skills() -> None:
+    skill = next(
+        iter(
+            agent_board._skills_from_rows(
+                [_skill_row("reports.generate", "T2")]
+            ).values()
+        )
+    )
+
+    entry = agent_board._skill_discovery_entry(skill, [])
+
+    assert entry.allowed_agent_count == 0
+    assert entry.enabled_agent_count == 0
+    assert entry.assignment_notes == ["no registered agent advertises this skill"]
+
+
+@pytest.mark.asyncio
+async def test_skill_map_route_filters_registry_and_returns_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fetch_calls: list[tuple[str, tuple[object, ...]]] = []
+
+    class FakeConn:
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            fetch_calls.append((query, args))
+            if "FROM public.alpha_skill_registry" in query:
+                assert args == ("internet_scout", "active", "%research%", 25)
+                assert "LIMIT $4" in query
+                return [_skill_row("internet_scout.deep_research", "T3")]
+            assert "FROM public.alpha_agents" in query
+            assert args == ()
+            return [
+                {
+                    "agent_id": "internet_scout",
+                    "display_name": "Internet Scout",
+                    "purpose": "Research",
+                    "risk_tier": "T4",
+                    "status": "active",
+                    "enabled": True,
+                    "allowed_skills": ["internet_scout.deep_research"],
+                    "allowed_scopes": ["internet_scout.research"],
+                    "metadata": "{}",
+                }
+            ]
+
+    class FakeRlsConnection:
+        async def __aenter__(self) -> FakeConn:
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(agent_board, "check_scopes", lambda *args: None)
+    monkeypatch.setattr(
+        agent_board,
+        "rls_connection",
+        lambda request: FakeRlsConnection(),
+    )
+
+    request = SimpleNamespace(state=SimpleNamespace(user_id="ken", role="admin"))
+
+    out = await agent_board.get_agent_board_skill_map(
+        request,
+        query=" research ",
+        domain="internet_scout",
+        status="active",
+        limit=25,
+    )
+
+    assert out.count == 1
+    assert out.unmapped_skill_count == 0
+    assert out.entries[0].skill.name == "internet_scout.deep_research"
+    assert out.entries[0].candidate_agents[0].agent_id == "internet_scout"
+    assert len(fetch_calls) == 2
 
 
 @pytest.mark.asyncio

@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from uuid import UUID, uuid4, uuid5, NAMESPACE_DNS
 from typing import AsyncGenerator, Literal
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from brain.core.config import OLLAMA_URL
@@ -230,6 +230,36 @@ class CompletionRequest(BaseModel):
 class ThreadPatch(BaseModel):
     title: str | None = None
     pinned: bool | None = None
+
+
+class SessionSearchSnippet(BaseModel):
+    message_id: str
+    role: str
+    snippet: str
+    created_at: datetime
+
+
+class SessionSearchResult(BaseModel):
+    thread_id: str
+    title: str | None = None
+    mode: str | None = None
+    model_used: str | None = None
+    project_id: int | None = None
+    pinned: bool
+    message_count: int
+    matched_message_count: int
+    last_message_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    snippets: list[SessionSearchSnippet] = Field(default_factory=list)
+
+
+class SessionSearchResponse(BaseModel):
+    query: str
+    count: int
+    source: Literal["chat_sessions"] = "chat_sessions"
+    memory_searched: bool = False
+    results: list[SessionSearchResult] = Field(default_factory=list)
 
 
 class EscalateRequest(BaseModel):
@@ -856,6 +886,91 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
         if key in internet_metadata:
             payload[key] = internet_metadata[key]
     return payload
+
+
+def _decode_json_list(value: object) -> list[object]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(decoded, list):
+            return decoded
+    return []
+
+
+def _normalize_session_search_query(query: str) -> str:
+    return re.sub(r"\s+", " ", query).strip()
+
+
+def _session_snippet(content: object, query: str, limit: int = 240) -> str:
+    cleaned = re.sub(r"\s+", " ", str(content or "")).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+
+    match_index = cleaned.lower().find(query.lower())
+    if match_index < 0:
+        return f"{cleaned[:limit].rstrip()}..."
+
+    start = max(0, match_index - (limit // 3))
+    end = min(len(cleaned), start + limit)
+    start = max(0, end - limit)
+    prefix = "..." if start else ""
+    suffix = "..." if end < len(cleaned) else ""
+    return f"{prefix}{cleaned[start:end].strip()}{suffix}"
+
+
+def _session_datetime(value: object) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value))
+
+
+def _session_optional_datetime(value: object) -> datetime | None:
+    if value is None:
+        return None
+    return _session_datetime(value)
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _session_search_result_from_row(
+    row: Mapping[str, object],
+    query: str,
+) -> SessionSearchResult:
+    payload = dict(row)
+    snippets: list[SessionSearchSnippet] = []
+    for item in _decode_json_list(payload.get("snippets")):
+        if not isinstance(item, Mapping):
+            continue
+        snippets.append(
+            SessionSearchSnippet(
+                message_id=str(item.get("message_id")),
+                role=str(item.get("role")),
+                snippet=_session_snippet(item.get("content"), query),
+                created_at=_session_datetime(item.get("created_at")),
+            )
+        )
+
+    project_id = payload.get("project_id")
+    return SessionSearchResult(
+        thread_id=str(payload["thread_id"]),
+        title=_optional_str(payload.get("title")),
+        mode=_optional_str(payload.get("mode")),
+        model_used=_optional_str(payload.get("model_used")),
+        project_id=project_id if isinstance(project_id, int) else None,
+        pinned=bool(payload["pinned"]),
+        message_count=int(payload["message_count"]),
+        matched_message_count=int(payload["matched_message_count"]),
+        last_message_at=_session_optional_datetime(payload.get("last_message_at")),
+        created_at=_session_datetime(payload["created_at"]),
+        updated_at=_session_datetime(payload["updated_at"]),
+        snippets=snippets,
+    )
 
 
 async def _embed(text: str) -> list[float]:
@@ -1793,6 +1908,75 @@ async def list_threads(request: Request):
             user_id,
         )
     return [dict(r) for r in rows]
+
+
+@router.get("/v1/sessions/search", response_model=SessionSearchResponse)
+async def search_sessions(
+    request: Request,
+    query: str = Query(min_length=2, max_length=120),
+    limit: int = Query(default=20, ge=1, le=50),
+) -> SessionSearchResponse:
+    user_id = _user_id(request)
+    normalized_query = _normalize_session_search_query(query)
+    if len(normalized_query) < 2:
+        raise HTTPException(400, "session search query must be at least 2 characters")
+
+    async with rls_connection(request) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT t.id::text AS thread_id, t.title, t.mode, t.model_used,
+                   t.project_id, t.pinned, t.created_at, t.updated_at,
+                   COALESCE(total.message_count, 0)::int AS message_count,
+                   COALESCE(matches.matched_message_count, 0)::int AS matched_message_count,
+                   matches.last_message_at,
+                   COALESCE(matches.snippets, '[]'::jsonb) AS snippets
+              FROM chat_threads t
+              LEFT JOIN LATERAL (
+                   SELECT COUNT(*)::int AS message_count
+                     FROM chat_messages all_messages
+                    WHERE all_messages.thread_id = t.id
+              ) total ON TRUE
+              LEFT JOIN LATERAL (
+                   SELECT COUNT(*)::int AS matched_message_count,
+                          MAX(matched_messages.created_at) AS last_message_at,
+                          COALESCE(
+                              jsonb_agg(
+                                  jsonb_build_object(
+                                      'message_id', matched_messages.id::text,
+                                      'role', matched_messages.role,
+                                      'content', matched_messages.content,
+                                      'created_at', matched_messages.created_at
+                                  )
+                                  ORDER BY matched_messages.created_at DESC
+                              ) FILTER (WHERE matched_messages.rank <= 3),
+                              '[]'::jsonb
+                          ) AS snippets
+                     FROM (
+                          SELECT id, role, content, created_at,
+                                 ROW_NUMBER() OVER (ORDER BY created_at DESC) AS rank
+                            FROM chat_messages
+                           WHERE thread_id = t.id
+                             AND content ILIKE $2
+                     ) matched_messages
+              ) matches ON TRUE
+             WHERE t.user_id = $1
+               AND t.archived_at IS NULL
+               AND (t.title ILIKE $2 OR matches.matched_message_count > 0)
+             ORDER BY COALESCE(matches.last_message_at, t.updated_at) DESC,
+                      t.updated_at DESC
+             LIMIT $3
+            """,
+            user_id,
+            f"%{normalized_query}%",
+            limit,
+        )
+
+    results = [_session_search_result_from_row(row, normalized_query) for row in rows]
+    return SessionSearchResponse(
+        query=normalized_query,
+        count=len(results),
+        results=results,
+    )
 
 
 @router.patch("/v1/threads/{thread_id}")
