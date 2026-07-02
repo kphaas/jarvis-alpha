@@ -11,9 +11,11 @@ from jarvis_common.logging_config import get_logger
 logger = get_logger("alpha_brain")
 
 ALPHA_SESSION_COOKIE = "alpha_session"
+ALPHA_REVOKED_JTIS_ENV = "ALPHA_REVOKED_JTIS"
+USER_ISSUER = "user"
 
 # Issuer → public key mapping
-# "user" is the default for PIN-authenticated user tokens
+# "user" is the PIN-authenticated user issuer.
 _KEY_REGISTRY: dict[str, Path] = {}
 
 
@@ -24,7 +26,7 @@ def _build_key_registry() -> dict[str, Path]:
     # User key (existing — backward compatible)
     user_key = Path(os.path.dirname(__file__)).parent / "pki" / "jwt_public.pem"
     if user_key.exists():
-        registry["user"] = user_key
+        registry[USER_ISSUER] = user_key
 
     # Service keys
     services_dir = Path.home() / "jarvis" / "pki" / "services"
@@ -42,13 +44,49 @@ def _get_public_key(iss: str | None) -> str:
     if not _KEY_REGISTRY:
         _KEY_REGISTRY = _build_key_registry()
 
-    # If no iss claim, try user key (backward compat for PIN tokens)
-    if not iss or iss not in _KEY_REGISTRY:
-        if "user" in _KEY_REGISTRY:
-            return _KEY_REGISTRY["user"].read_text()
+    if not iss:
+        raise ValueError("Missing issuer claim")
+
+    if iss not in _KEY_REGISTRY:
         raise ValueError(f"No public key found for issuer: {iss}")
 
     return _KEY_REGISTRY[iss].read_text()
+
+
+def _allowed_actor_types(iss: str) -> frozenset[str]:
+    if iss == USER_ISSUER:
+        return frozenset({"user"})
+    return frozenset({"service"})
+
+
+def _validate_issuer_actor_binding(payload: dict[str, object]) -> None:
+    iss = payload.get("iss")
+    actor_type = payload.get("actor_type")
+
+    if not isinstance(iss, str) or not iss:
+        raise ValueError("Missing issuer claim")
+    if not isinstance(actor_type, str) or not actor_type:
+        raise ValueError("Missing actor_type claim")
+
+    allowed = _allowed_actor_types(iss)
+    if actor_type not in allowed:
+        raise ValueError(
+            f"issuer_actor_type_mismatch issuer={iss} actor_type={actor_type}"
+        )
+
+
+def _revoked_jtis() -> set[str]:
+    raw = os.environ.get(ALPHA_REVOKED_JTIS_ENV, "")
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def _validate_jti(payload: dict[str, object]) -> str:
+    jti = payload.get("jti")
+    if not isinstance(jti, str) or not jti.strip():
+        raise ValueError("Missing jti claim")
+    if jti in _revoked_jtis():
+        raise ValueError(f"revoked_jti {jti}")
+    return jti
 
 
 PUBLIC_HEALTH_PATHS = frozenset({"/health", "/health/ready"})
@@ -119,6 +157,8 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             iss = unverified.get("iss")
             public_key = _get_public_key(iss)
             payload = jwt.decode(token, public_key, algorithms=["RS256"])
+            _validate_issuer_actor_binding(payload)
+            jti = _validate_jti(payload)
             # Decoded — propagate ALL claims to request.state
             # Canonical name is user_id; sub is set as an alias for backward compat
             sub_value = payload.get("sub", "unknown")
@@ -135,6 +175,7 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             request.state.child_age = payload.get("child_age")
             request.state.jwt_token = token
             request.state.jwt_exp = payload.get("exp")
+            request.state.jwt_jti = jti
         except jwt.ExpiredSignatureError:
             return JSONResponse(status_code=401, content={"error": "Token expired"})
         except jwt.InvalidTokenError as e:

@@ -1,6 +1,8 @@
 import os
 import time
 import uuid
+from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -27,6 +29,7 @@ router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
 _DEFAULT_KEY = "~/jarvis/pki/jwt/jwt_private.pem"
 _SESSION_COOKIE_SAMESITE: Literal["strict"] = "strict"
+_PIN_ATTEMPTS: dict[str, "PinAttemptState"] = {}
 
 
 class PinRequest(BaseModel):
@@ -90,6 +93,13 @@ class SessionBrokerResponse(BaseModel):
     applications: dict[str, SessionApplicationGrant]
 
 
+@dataclass
+class PinAttemptState:
+    # ponytail: single-process in-memory lockout is enough until Brain fans out.
+    failures: deque[float] = field(default_factory=deque)
+    lockout_until: float | None = None
+
+
 def _pin_status(pin_hash: str) -> Literal["set", "placeholder"]:
     if pin_hash == "PLACEHOLDER_MIGRATE_FROM_ALPHA_PIN":
         try:
@@ -118,12 +128,96 @@ def _session_hours() -> int:
         return 24
 
 
+def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
+    try:
+        return max(int(os.environ.get(name, str(default))), minimum)
+    except ValueError:
+        return default
+
+
 def _profile_scopes(role: str) -> list[str]:
     if role == "admin":
         return ["*"]
     if role == "child":
         return ["ask", "chat.read", "health.read"]
     return ["ask", "chat.read", "health.read", "vault.read"]
+
+
+def _pin_failure_window_seconds() -> int:
+    return _env_int("ALPHA_PIN_FAILURE_WINDOW_SECONDS", 300)
+
+
+def _pin_max_failures() -> int:
+    return _env_int("ALPHA_PIN_MAX_FAILURES", 5)
+
+
+def _pin_lockout_seconds() -> int:
+    return _env_int("ALPHA_PIN_LOCKOUT_SECONDS", 300)
+
+
+def _pin_rate_key(profile_id: str) -> str:
+    profile = profile_id.strip().lower()
+    return profile or "unknown"
+
+
+def _pin_attempt_state(profile_id: str) -> PinAttemptState:
+    return _PIN_ATTEMPTS.setdefault(_pin_rate_key(profile_id), PinAttemptState())
+
+
+def _prune_pin_failures(state: PinAttemptState, *, now: float) -> None:
+    cutoff = now - _pin_failure_window_seconds()
+    while state.failures and state.failures[0] < cutoff:
+        state.failures.popleft()
+    if state.lockout_until is not None and state.lockout_until <= now:
+        state.lockout_until = None
+        state.failures.clear()
+
+
+def _assert_pin_not_locked(profile_id: str) -> None:
+    now = time.time()
+    state = _pin_attempt_state(profile_id)
+    _prune_pin_failures(state, now=now)
+    if state.lockout_until is None:
+        return
+    retry_after = max(int(state.lockout_until - now), 1)
+    raise HTTPException(
+        status_code=429,
+        detail="pin_temporarily_locked",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _record_pin_failure(profile_id: str) -> tuple[int, int | None]:
+    now = time.time()
+    state = _pin_attempt_state(profile_id)
+    _prune_pin_failures(state, now=now)
+    state.failures.append(now)
+    if len(state.failures) < _pin_max_failures():
+        return len(state.failures), None
+    retry_after = _pin_lockout_seconds()
+    state.lockout_until = now + retry_after
+    return len(state.failures), retry_after
+
+
+def _clear_pin_failures(profile_id: str) -> None:
+    _PIN_ATTEMPTS.pop(_pin_rate_key(profile_id), None)
+
+
+def _raise_pin_auth_failure(*, profile_id: str, reason: str) -> None:
+    attempts, retry_after = _record_pin_failure(profile_id)
+    logger.warning(
+        "AUTH_FAIL reason=%s profile=%s attempts=%s",
+        reason,
+        profile_id,
+        attempts,
+    )
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="pin_temporarily_locked",
+            headers={"Retry-After": str(retry_after)},
+        )
+    raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
 def _set_alpha_session_cookie(
@@ -287,6 +381,7 @@ _PROFILE_SELECT_SQL = """
 
 @router.post("/pin")
 async def authenticate_pin(req: PinRequest, response: Response):
+    _assert_pin_not_locked(req.profile_id)
     async with platform_admin_connection(source="http", audit_actor="auth_pin") as conn:
         profile = await conn.fetchrow(
             "SELECT * FROM alpha_profiles WHERE id = $1 AND active = true",
@@ -304,8 +399,7 @@ async def authenticate_pin(req: PinRequest, response: Response):
         )
 
     if not profile:
-        logger.warning("AUTH_FAIL reason=profile_not_found profile=%s", req.profile_id)
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        _raise_pin_auth_failure(profile_id=req.profile_id, reason="profile_not_found")
 
     if profile["pin_hash"] == "PLACEHOLDER_MIGRATE_FROM_ALPHA_PIN":
         try:
@@ -316,8 +410,7 @@ async def authenticate_pin(req: PinRequest, response: Response):
                 detail="ALPHA_PIN not configured",
             )
         if req.pin != alpha_pin:
-            logger.warning("AUTH_FAIL reason=bad_pin profile=%s", req.profile_id)
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+            _raise_pin_auth_failure(profile_id=req.profile_id, reason="bad_pin")
     elif profile["pin_hash"].startswith("PLACEHOLDER"):
         logger.warning("AUTH_FAIL reason=pin_not_set profile=%s", req.profile_id)
         raise HTTPException(
@@ -329,10 +422,10 @@ async def authenticate_pin(req: PinRequest, response: Response):
             req.pin.encode("utf-8"),
             profile["pin_hash"].encode("utf-8"),
         ):
-            logger.warning("AUTH_FAIL reason=bad_pin profile=%s", req.profile_id)
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+            _raise_pin_auth_failure(profile_id=req.profile_id, reason="bad_pin")
 
     workspace_id = workspace_row["workspace_id"] if workspace_row else None
+    _clear_pin_failures(req.profile_id)
 
     key_path = os.environ.get("ALPHA_JWT_PRIVATE_KEY", _DEFAULT_KEY)
     pem_path = Path(key_path).expanduser()
@@ -460,6 +553,7 @@ async def set_child_pin(request: Request, req: SetChildPinRequest):
         )
 
     family_sync_status = await _sync_family_pin_status(req.profile_id, pin_hash)
+    _clear_pin_failures(req.profile_id)
     logger.info(
         "CHILD_PIN_SET profile=%s family_sync_status=%s by=%s",
         req.profile_id,
@@ -502,6 +596,7 @@ async def set_profile_pin(request: Request, req: SetProfilePinRequest):
         )
 
     family_sync_status = await _sync_family_pin_status(req.profile_id, pin_hash)
+    _clear_pin_failures(req.profile_id)
     logger.info(
         "PROFILE_PIN_SET profile=%s role=%s family_sync_status=%s by=%s",
         req.profile_id,
@@ -565,6 +660,7 @@ async def set_admin_pin(request: Request, req: SetAdminPinRequest):
         )
 
     family_sync_status = await _sync_family_pin_status("ken", pin_hash)
+    _clear_pin_failures("ken")
     logger.info(
         "SET_ADMIN_PIN_SUCCESS profile=ken family_sync_status=%s",
         family_sync_status,

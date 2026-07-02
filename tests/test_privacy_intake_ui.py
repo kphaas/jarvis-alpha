@@ -219,14 +219,25 @@ def test_privacy_page_has_guided_setup_mode_before_advanced_details() -> None:
 
 def test_alpha_pin_gate_supports_longer_pins_and_session_cookie_refresh() -> None:
     source = PIN_GATE.read_text(encoding="utf-8")
+    api_fetch_source = (REPO_ROOT / "ui" / "src" / "lib" / "apiFetch.ts").read_text(
+        encoding="utf-8"
+    )
+    index_source = (REPO_ROOT / "ui" / "index.html").read_text(encoding="utf-8")
 
     assert "const MAX_PIN_LENGTH = 12" in source
     assert "maxLength={MAX_PIN_LENGTH}" in source
     assert "slice(0, MAX_PIN_LENGTH)" in source
-    assert "await refreshHttpOnlySessionCookie(data.token)" in source
+    assert "/v1/auth/session" in source
+    assert "Restoring Alpha session..." in source
+    assert "Too many PIN attempts." in source
+    assert "localStorage.getItem('alpha_token')" not in source
+    assert "localStorage.setItem('alpha_token'" not in source
     assert "Invalid PIN for ${selectedProfile?.display_name" in source
     assert "One Alpha session unlocks approved AT-0 operator surfaces." in source
     assert "Numeric PINs up to {MAX_PIN_LENGTH} digits are supported." in source
+    assert 'credentials: options?.credentials ?? "include"' in api_fetch_source
+    assert 'localStorage.getItem("alpha_token")' not in api_fetch_source
+    assert "Content-Security-Policy" in index_source
 
 
 def test_privacy_approval_handoff_ui_links_to_review_packet() -> None:

@@ -6,6 +6,8 @@ import {
   type ReactNode,
 } from 'react'
 
+import { apiFetch, apiJson } from '../lib/apiFetch'
+
 type PinGateProps = {
   children: ReactNode
 }
@@ -20,45 +22,21 @@ type LoginProfile = {
 
 const MAX_PIN_LENGTH = 12
 
-function getJwtExpSeconds(token: string): number | null {
-  try {
-    const parts = token.split('.')
-    if (parts.length !== 3) return null
-    let b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
-    const pad = (4 - (b64.length % 4)) % 4
-    b64 += '='.repeat(pad)
-    const payload = JSON.parse(atob(b64)) as { exp?: unknown }
-    const exp = payload.exp
-    return typeof exp === 'number' ? exp : null
-  } catch {
-    return null
+function lockoutMessage(retryAfter: string | null): string {
+  const seconds = Number(retryAfter ?? Number.NaN)
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return 'Too many PIN attempts. Try again shortly.'
   }
-}
-
-async function refreshHttpOnlySessionCookie(token: string): Promise<void> {
-  const base = import.meta.env.VITE_BRAIN_URL as string
-  const urls =
-    window.location.origin === base
-      ? [`${base}/v1/auth/session-cookie`]
-      : ['/v1/auth/session-cookie', `${base}/v1/auth/session-cookie`]
-
-  for (const url of urls) {
-    try {
-      await fetch(url, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
-    } catch {
-      continue
-    }
+  if (seconds >= 60) {
+    const minutes = Math.ceil(seconds / 60)
+    return `Too many PIN attempts. Try again in about ${minutes} minute${minutes === 1 ? '' : 's'}.`
   }
+  return `Too many PIN attempts. Try again in about ${Math.ceil(seconds)} seconds.`
 }
 
 export function PinGate({ children }: PinGateProps) {
   const [authenticated, setAuthenticated] = useState(false)
+  const [bootstrapping, setBootstrapping] = useState(true)
   const [pin, setPin] = useState('')
   const [profiles, setProfiles] = useState<LoginProfile[]>([])
   const [selectedProfileId, setSelectedProfileId] = useState('ken')
@@ -69,26 +47,37 @@ export function PinGate({ children }: PinGateProps) {
   const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId)
 
   useEffect(() => {
-    const token = localStorage.getItem('alpha_token')
-    if (!token) return
-    const exp = getJwtExpSeconds(token)
-    if (exp !== null && exp > Date.now() / 1000) {
-      setAuthenticated(true)
-      void refreshHttpOnlySessionCookie(token).catch(() => undefined)
+    let cancelled = false
+
+    async function bootstrapSession() {
+      try {
+        const res = await apiFetch('/v1/auth/session')
+        if (!cancelled && res.ok) {
+          setAuthenticated(true)
+        }
+      } catch {
+        // No session yet — show the gate.
+      } finally {
+        if (!cancelled) {
+          setBootstrapping(false)
+        }
+      }
+    }
+
+    void bootstrapSession()
+    return () => {
+      cancelled = true
     }
   }, [])
 
   useEffect(() => {
-    if (authenticated) return
+    if (authenticated || bootstrapping) return
 
     let cancelled = false
     async function loadProfiles() {
       setProfilesLoading(true)
       try {
-        const base = import.meta.env.VITE_BRAIN_URL as string
-        const res = await fetch(`${base}/v1/auth/login-profiles`)
-        if (!res.ok) throw new Error('profile_load_failed')
-        const rows = (await res.json()) as LoginProfile[]
+        const rows = await apiJson<LoginProfile[]>('/v1/auth/login-profiles')
         if (!cancelled) {
           setProfiles(rows)
           setSelectedProfileId(rows[0]?.id ?? 'ken')
@@ -107,7 +96,7 @@ export function PinGate({ children }: PinGateProps) {
     return () => {
       cancelled = true
     }
-  }, [authenticated])
+  }, [authenticated, bootstrapping])
 
   useEffect(() => {
     if (!authenticated && inputRef.current) {
@@ -120,20 +109,18 @@ export function PinGate({ children }: PinGateProps) {
     setError(null)
     setLoading(true)
     try {
-      const base = import.meta.env.VITE_BRAIN_URL as string
-      const res = await fetch(`${base}/v1/auth/pin`, {
+      const res = await apiFetch('/v1/auth/pin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pin, profile_id: selectedProfileId }),
       })
       if (res.status === 200) {
-        const data = (await res.json()) as { token: string; expires_at: string }
-        localStorage.setItem('alpha_token', data.token)
-        await refreshHttpOnlySessionCookie(data.token).catch(() => undefined)
         setAuthenticated(true)
         setPin('')
       } else if (res.status === 401) {
         setError(`Invalid PIN for ${selectedProfile?.display_name ?? 'selected profile'}`)
+      } else if (res.status === 429) {
+        setError(lockoutMessage(res.headers.get('Retry-After')))
       } else {
         setError('Server error — try again')
       }
@@ -146,6 +133,16 @@ export function PinGate({ children }: PinGateProps) {
 
   if (authenticated) {
     return <>{children}</>
+  }
+
+  if (bootstrapping) {
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/95">
+        <div className="rounded-xl border border-gray-700 bg-gray-800 px-6 py-4 text-sm text-gray-300 shadow-2xl">
+          Restoring Alpha session...
+        </div>
+      </div>
+    )
   }
 
   return (

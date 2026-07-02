@@ -68,7 +68,7 @@ export function PinModal({ theme, title = 'Vault', subtitle = 'Enter PIN to unlo
         >
           {checking ? 'Verifying...' : 'Unlock'}
         </button>
-        <p className="text-[9px] font-mono opacity-20 uppercase">Session unlock · Resets on refresh</p>
+        <p className="text-[9px] font-mono opacity-20 uppercase">Session unlock · Expires automatically</p>
       </motion.div>
     </div>
   )

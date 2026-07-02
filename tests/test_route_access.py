@@ -75,6 +75,13 @@ def test_route_access_denies_child_logs_query() -> None:
     assert response.status_code == 403
 
 
+def test_route_access_denies_child_health_agents() -> None:
+    response = enforce_route_access(_request("/v1/health/agents", role="child"))
+
+    assert response is not None
+    assert response.status_code == 403
+
+
 def test_route_access_denies_child_prompt_registry_read() -> None:
     response = enforce_route_access(_request("/v1/prompts/weekly-brief", role="child"))
 

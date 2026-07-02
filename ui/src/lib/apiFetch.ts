@@ -7,12 +7,8 @@ export async function apiFetch(
     throw new Error("VITE_BRAIN_URL not set");
   }
 
-  const token = localStorage.getItem("alpha_token");
   const headers = new Headers();
   headers.set("Content-Type", "application/json");
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
   if (options?.headers) {
     new Headers(options.headers).forEach((value, key) => {
       headers.set(key, value);
@@ -22,6 +18,7 @@ export async function apiFetch(
   const url = `${baseUrl}${path}`;
   return fetch(url, {
     ...options,
+    credentials: options?.credentials ?? "include",
     headers,
   });
 }
