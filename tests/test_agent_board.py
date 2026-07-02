@@ -48,24 +48,34 @@ def _skill_row(
 def _work_item_row(
     metadata: dict[str, object] | None = None,
     *,
+    item_id: UUID | None = None,
+    title: str = "Research Hermes patterns",
+    description: str = "Prepare operator handoff",
+    role: str = "research",
     status: str = "queued",
+    priority: int = 8,
+    assigned_agent_id: str | None = "internet_scout",
+    required_skills: list[str] | None = None,
     approval_tier: str = "T3",
     task_graph_id: UUID | None = None,
+    acceptance_criteria: list[str] | None = None,
 ) -> dict[str, object]:
     now = datetime(2026, 6, 25, 13, 0, tzinfo=UTC)
     return {
-        "id": UUID("11111111-1111-1111-1111-111111111111"),
+        "id": item_id or UUID("11111111-1111-1111-1111-111111111111"),
         "workspace_id": "helm",
-        "title": "Research Hermes patterns",
-        "description": "Prepare operator handoff",
+        "title": title,
+        "description": description,
         "source_surface": "helm_companion",
         "requested_by": "ken",
-        "role": "research",
+        "role": role,
         "status": status,
-        "priority": 8,
-        "assigned_agent_id": "internet_scout",
+        "priority": priority,
+        "assigned_agent_id": assigned_agent_id,
         "assigned_agent_display_name": "Internet Scout",
-        "required_skills": [
+        "required_skills": required_skills
+        if required_skills is not None
+        else [
             "internet_scout.deep_research",
             "agent_board.queue_item",
         ],
@@ -76,7 +86,7 @@ def _work_item_row(
         "started_at": None,
         "completed_at": None,
         "blocked_reason": None,
-        "acceptance_criteria": json.dumps(["Summarize gaps"]),
+        "acceptance_criteria": json.dumps(acceptance_criteria or ["Summarize gaps"]),
         "handoff": "{}",
         "metadata": json.dumps(metadata or {}),
         "created_at": now,
@@ -145,6 +155,10 @@ def test_agent_board_routes_are_governed_without_execution_tiers() -> None:
         "POST",
         "/v1/agent-board/work-items/11111111-1111-1111-1111-111111111111/task-graph",
     )
+    delegate_classes = classify_route(
+        "POST",
+        "/v1/agent-board/work-items/11111111-1111-1111-1111-111111111111/delegations",
+    )
 
     assert determine_risk_tier(read_classes) == "T2"
     assert determine_risk_tier(registry_classes) == "T2"
@@ -152,6 +166,7 @@ def test_agent_board_routes_are_governed_without_execution_tiers() -> None:
     assert determine_risk_tier(create_classes) == "T2"
     assert determine_risk_tier(status_classes) == "T2"
     assert determine_risk_tier(dispatch_classes) == "T2"
+    assert determine_risk_tier(delegate_classes) == "T2"
 
 
 def test_skill_discovery_entry_maps_skill_policy_to_candidate_agents() -> None:
@@ -575,6 +590,199 @@ async def test_bridge_work_item_is_idempotent_when_graph_already_linked(
 
 
 @pytest.mark.asyncio
+async def test_delegate_work_item_queues_child_items_with_output_contracts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent_id = UUID("11111111-1111-1111-1111-111111111111")
+    child_ids = [
+        UUID("44444444-4444-4444-4444-444444444444"),
+        UUID("55555555-5555-5555-5555-555555555555"),
+    ]
+    inserts: list[tuple[object, ...]] = []
+    parent_update: tuple[object, ...] | None = None
+    execute_calls: list[tuple[str, tuple[object, ...]]] = []
+
+    class FakeTransaction:
+        async def __aenter__(self) -> None:
+            return None
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeConn:
+        def transaction(self) -> FakeTransaction:
+            return FakeTransaction()
+
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            assert "FROM public.alpha_skill_registry" in query
+            names = set(args[0])
+            if names == {"agent_board.queue_item", "internet_scout.deep_research"}:
+                return [
+                    _skill_row("agent_board.queue_item", "T2", mutates_state=True),
+                    _skill_row("internet_scout.deep_research", "T3"),
+                ]
+            if names == {"agent_board.queue_item"}:
+                return [_skill_row("agent_board.queue_item", "T2", mutates_state=True)]
+            raise AssertionError(f"unexpected skill lookup: {names}")
+
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+            nonlocal parent_update
+            if "FROM public.alpha_agent_work_items" in query and "FOR UPDATE" in query:
+                return _work_item_row(
+                    {
+                        "delegation": {
+                            "child_work_item_ids": [
+                                "33333333-3333-3333-3333-333333333333"
+                            ]
+                        }
+                    }
+                )
+            if "INSERT INTO public.alpha_agent_work_items" in query:
+                child_id = child_ids[len(inserts)]
+                inserts.append(args)
+                metadata = json.loads(str(args[12]))
+                return _work_item_row(
+                    metadata=metadata,
+                    item_id=child_id,
+                    title=str(args[1]),
+                    description=str(args[2]),
+                    role=str(args[5]),
+                    priority=int(args[6]),
+                    assigned_agent_id=args[7] if isinstance(args[7], str) else None,
+                    required_skills=list(args[8]),  # type: ignore[arg-type]
+                    approval_tier=str(args[9]),
+                    acceptance_criteria=json.loads(str(args[11])),
+                )
+            if "UPDATE public.alpha_agent_work_items" in query:
+                parent_update = args
+                return _work_item_row(json.loads(str(args[1])))
+            raise AssertionError(f"unexpected fetchrow query: {query}")
+
+        async def execute(self, query: str, *args: object) -> None:
+            execute_calls.append((query, args))
+
+    class FakeRlsConnection:
+        async def __aenter__(self) -> FakeConn:
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(agent_board, "check_scopes", lambda *args: None)
+    monkeypatch.setattr(
+        agent_board,
+        "rls_connection",
+        lambda request: FakeRlsConnection(),
+    )
+
+    request = SimpleNamespace(state=SimpleNamespace(user_id="ken", role="admin"))
+    body = agent_board.DelegateWorkItemRequest(
+        delegations=[
+            agent_board.DelegatedWorkItemSpec(
+                role="research",
+                required_skills=["internet_scout.deep_research"],
+                acceptance_criteria=["Return sources"],
+                output_contract={
+                    "artifact": "research-brief",
+                    "format": "markdown",
+                },
+            ),
+            agent_board.DelegatedWorkItemSpec(
+                role="review",
+                title="Review Hermes handoff",
+                required_skills=["agent_board.queue_item"],
+            ),
+        ]
+    )
+
+    out = await agent_board.delegate_work_item(parent_id, request, body)
+
+    assert len(out.children) == 2
+    assert out.children[0].metadata["delegation"]["parent_work_item_id"] == str(
+        parent_id
+    )
+    assert out.children[0].metadata["delegation"]["output_contract"] == {
+        "artifact": "research-brief",
+        "format": "markdown",
+    }
+    assert (
+        out.children[1].metadata["delegation"]["output_contract"]["artifact"]
+        == "review-handoff"
+    )
+    assert (
+        out.children[0].metadata["delegation"]["isolated_context"][
+            "no_shared_runtime_state"
+        ]
+        is True
+    )
+    assert parent_update is not None
+    parent_metadata = json.loads(str(parent_update[1]))
+    assert parent_metadata["delegation"]["child_work_item_ids"] == [
+        "33333333-3333-3333-3333-333333333333",
+        str(child_ids[0]),
+        str(child_ids[1]),
+    ]
+    assert len(inserts) == 2
+    assert inserts[0][9] == "T3"
+    assert inserts[1][9] == "T2"
+    assert sum("alpha_agent_work_item_events" in call[0] for call in execute_calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_delegate_work_item_rejects_closed_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execute_calls: list[tuple[str, tuple[object, ...]]] = []
+
+    class FakeTransaction:
+        async def __aenter__(self) -> None:
+            return None
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeConn:
+        def transaction(self) -> FakeTransaction:
+            return FakeTransaction()
+
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
+            assert "FROM public.alpha_agent_work_items" in query
+            return _work_item_row(status="done")
+
+        async def execute(self, query: str, *args: object) -> None:
+            execute_calls.append((query, args))
+
+    class FakeRlsConnection:
+        async def __aenter__(self) -> FakeConn:
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(agent_board, "check_scopes", lambda *args: None)
+    monkeypatch.setattr(
+        agent_board,
+        "rls_connection",
+        lambda request: FakeRlsConnection(),
+    )
+
+    request = SimpleNamespace(state=SimpleNamespace(user_id="ken", role="admin"))
+    body = agent_board.DelegateWorkItemRequest(
+        delegations=[agent_board.DelegatedWorkItemSpec(role="research")]
+    )
+
+    with pytest.raises(agent_board.HTTPException) as exc:
+        await agent_board.delegate_work_item(
+            UUID("11111111-1111-1111-1111-111111111111"),
+            request,
+            body,
+        )
+
+    assert getattr(exc.value, "status_code") == 409
+    assert execute_calls == []
+
+
+@pytest.mark.asyncio
 async def test_approved_task_step_resumes_pending_and_notifies_executor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -690,6 +898,26 @@ def test_agent_board_executor_bridge_skill_migration_is_reversible() -> None:
     assert "executor_bridge" in migration_text
     assert "DELETE FROM public.alpha_skill_registry" in rollback_text
     assert "agent_board.dispatch_item" in rollback_text
+
+
+def test_agent_board_delegation_skill_migration_is_reversible() -> None:
+    migration = (
+        REPO_ROOT
+        / "brain/db/migrations/20260702_213000_agent_board_delegation_skill.sql"
+    )
+    rollback = (
+        REPO_ROOT
+        / "brain/db/rollbacks/20260702_213000_agent_board_delegation_skill_rollback.sql"
+    )
+
+    migration_text = migration.read_text(encoding="utf-8")
+    rollback_text = rollback.read_text(encoding="utf-8")
+
+    assert "agent_board.delegate_item" in migration_text
+    assert "delegation_model" in migration_text
+    assert "does_not_execute_agents" in migration_text
+    assert "DELETE FROM public.alpha_skill_registry" in rollback_text
+    assert "agent_board.delegate_item" in rollback_text
 
 
 def test_skill_discovery_mapping_migration_is_reversible() -> None:

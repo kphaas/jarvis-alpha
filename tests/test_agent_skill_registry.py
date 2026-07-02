@@ -30,6 +30,7 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert "agent_board.queue_item" in names
     assert "agent_board.update_status" in names
     assert "agent_board.dispatch_item" in names
+    assert "agent_board.delegate_item" in names
     assert "agent_schedule.read" in names
     assert "agent_schedule.create" in names
     assert "agent_schedule.materialize_due" in names
@@ -65,6 +66,12 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
         "task_graph"
     )
     assert skills["agent_board.dispatch_item"].metadata["wakes_executor"] is True
+    assert skills["agent_board.delegate_item"].metadata["delegation_model"] == (
+        "board_child_items"
+    )
+    assert (
+        skills["agent_board.delegate_item"].metadata["does_not_execute_agents"] is True
+    )
     assert skills["agent_schedule.read"].approval_tier == "T1"
     assert skills["agent_schedule.create"].approval_tier == "T2"
     assert skills["agent_schedule.create"].metadata["does_not_execute_agents"] is True

@@ -271,6 +271,37 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         ),
     ),
     SkillSpec(
+        name="agent_board.delegate_item",
+        domain="agent_board",
+        action="delegate_item",
+        description=(
+            "Split a governed Agent Board work item into role-specific child "
+            "items with isolated context and output contracts."
+        ),
+        approval_tier="T2",
+        scope="agents.write",
+        mutates_state=True,
+        idempotency_required=True,
+        status="active",
+        metadata=_skill_metadata(
+            data_classification="ops",
+            side_effect_class="control_plane",
+            timeout_s=10,
+            retry_policy="idempotent_retry_once",
+            rate_limit="30/minute/operator",
+            compensation="cancel_delegated_child_items",
+            test_ref="tests/test_agent_board.py",
+            extra={
+                "execution_path": "fastapi_route",
+                "operator_surface": "helm",
+                "delegation_model": "board_child_items",
+                "queues_agent_board_items": True,
+                "does_not_execute_agents": True,
+                "output_contract_required": True,
+            },
+        ),
+    ),
+    SkillSpec(
         name="agent_schedule.read",
         domain="agent_schedule",
         action="read",
