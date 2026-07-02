@@ -170,7 +170,34 @@ def test_skill_discovery_entry_maps_skill_policy_to_candidate_agents() -> None:
                                 "cost": {"mode": "metered"},
                                 "test_ref": "tests/test_internet_scout_route.py",
                                 "runbook_ref": "docs/adr/ADR-0019-beacon-internet-scout.md",
-                            }
+                            },
+                            "discovery": {
+                                "codex_skill_refs": [
+                                    {
+                                        "name": "at0-gap-analysis",
+                                        "ref": "codex://skills/at0-gap-analysis/SKILL.md",
+                                        "description": "Gap analysis operator workflow.",
+                                    }
+                                ],
+                                "claude_skill_refs": [
+                                    "claude://skills/anthropic-skills/pdf/SKILL.md"
+                                ],
+                                "mcp_tool_refs": [
+                                    {
+                                        "name": "beacon.crawler.scrape",
+                                        "ref": "mcp://beacon-crawler/beacon.crawler.scrape",
+                                        "metadata": {
+                                            "contract_ref": "docs/contracts/beacon_crawler_mcp_adapter.v1.json"
+                                        },
+                                    }
+                                ],
+                                "agentfs_refs": [
+                                    {
+                                        "name": "research_handoff",
+                                        "ref": "agentfs://runs/{run_id}/outputs/research-handoff.json",
+                                    }
+                                ],
+                            },
                         },
                     )
                 ]
@@ -206,6 +233,18 @@ def test_skill_discovery_entry_maps_skill_policy_to_candidate_agents() -> None:
     assert entry.side_effect_class == "read"
     assert entry.egress_mode == "external"
     assert entry.cost_mode == "metered"
+    assert entry.runbook_refs[0].ref == "docs/adr/ADR-0019-beacon-internet-scout.md"
+    assert entry.codex_skill_refs[0].name == "at0-gap-analysis"
+    assert (
+        entry.claude_skill_refs[0].ref
+        == "claude://skills/anthropic-skills/pdf/SKILL.md"
+    )
+    assert entry.mcp_tool_refs[0].name == "beacon.crawler.scrape"
+    assert (
+        entry.mcp_tool_refs[0].metadata["contract_ref"]
+        == "docs/contracts/beacon_crawler_mcp_adapter.v1.json"
+    )
+    assert entry.agentfs_refs[0].ref.endswith("/outputs/research-handoff.json")
     assert entry.allowed_agent_count == 2
     assert entry.enabled_agent_count == 1
     assert entry.candidate_agents[0].agent_id == "internet_scout"
@@ -227,6 +266,8 @@ def test_skill_discovery_entry_marks_unmapped_skills() -> None:
 
     assert entry.allowed_agent_count == 0
     assert entry.enabled_agent_count == 0
+    assert entry.agentfs_refs[0].ref == "agentfs://runs/{run_id}/artifacts"
+    assert entry.agentfs_refs[0].metadata["stores_skill_file_bodies"] is False
     assert entry.assignment_notes == ["no registered agent advertises this skill"]
 
 
@@ -649,3 +690,24 @@ def test_agent_board_executor_bridge_skill_migration_is_reversible() -> None:
     assert "executor_bridge" in migration_text
     assert "DELETE FROM public.alpha_skill_registry" in rollback_text
     assert "agent_board.dispatch_item" in rollback_text
+
+
+def test_skill_discovery_mapping_migration_is_reversible() -> None:
+    migration = (
+        REPO_ROOT / "brain/db/migrations/20260702_151500_skill_discovery_mapping.sql"
+    )
+    rollback = (
+        REPO_ROOT
+        / "brain/db/rollbacks/20260702_151500_skill_discovery_mapping_rollback.sql"
+    )
+
+    migration_text = migration.read_text(encoding="utf-8")
+    rollback_text = rollback.read_text(encoding="utf-8")
+
+    assert "codex_skill_refs" in migration_text
+    assert "claude_skill_refs" in migration_text
+    assert "mcp_tool_refs" in migration_text
+    assert "agentfs_refs" in migration_text
+    assert "docs/contracts/beacon_crawler_mcp_adapter.v1.json" in migration_text
+    assert "20260702_151500_skill_discovery_mapping" in rollback_text
+    assert "metadata - 'discovery'" in rollback_text

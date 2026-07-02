@@ -124,6 +124,14 @@ class SkillDiscoveryAgentOut(BaseModel):
     matched_value: str
 
 
+class SkillDiscoveryReferenceOut(BaseModel):
+    name: str
+    ref: str
+    status: str = "mapped"
+    description: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class SkillDiscoveryEntryOut(BaseModel):
     skill: SkillPolicyOut
     data_classification: str
@@ -132,6 +140,11 @@ class SkillDiscoveryEntryOut(BaseModel):
     cost_mode: str
     test_ref: str | None = None
     runbook_ref: str | None = None
+    runbook_refs: list[SkillDiscoveryReferenceOut] = Field(default_factory=list)
+    codex_skill_refs: list[SkillDiscoveryReferenceOut] = Field(default_factory=list)
+    claude_skill_refs: list[SkillDiscoveryReferenceOut] = Field(default_factory=list)
+    mcp_tool_refs: list[SkillDiscoveryReferenceOut] = Field(default_factory=list)
+    agentfs_refs: list[SkillDiscoveryReferenceOut] = Field(default_factory=list)
     candidate_agents: list[SkillDiscoveryAgentOut] = Field(default_factory=list)
     allowed_agent_count: int
     enabled_agent_count: int
@@ -332,6 +345,123 @@ def _skill_manifest_summary(skill: SkillPolicyOut) -> dict[str, str | None]:
     }
 
 
+def _skill_discovery_metadata(skill: SkillPolicyOut) -> dict[str, Any]:
+    raw = skill.metadata.get("discovery")
+    if isinstance(raw, dict):
+        return raw
+    raw = skill.metadata.get("tooling")
+    return raw if isinstance(raw, dict) else {}
+
+
+def _reference_name_from_ref(ref: str) -> str:
+    cleaned = ref.strip().rstrip("/")
+    if not cleaned:
+        return "unknown"
+    return cleaned.rsplit("/", 1)[-1]
+
+
+def _reference_from_value(value: Any) -> SkillDiscoveryReferenceOut | None:
+    if isinstance(value, str):
+        ref = value.strip()
+        if not ref:
+            return None
+        return SkillDiscoveryReferenceOut(name=_reference_name_from_ref(ref), ref=ref)
+    if not isinstance(value, dict):
+        return None
+
+    ref_value = (
+        value.get("ref")
+        or value.get("file_ref")
+        or value.get("path")
+        or value.get("route")
+        or value.get("tool_ref")
+        or value.get("name")
+    )
+    if not isinstance(ref_value, str) or not ref_value.strip():
+        return None
+    ref = ref_value.strip()
+    name_value = value.get("name") or value.get("tool") or value.get("skill")
+    name = str(name_value).strip() if name_value else _reference_name_from_ref(ref)
+    status = value.get("status")
+    description = value.get("description")
+    metadata = value.get("metadata")
+    return SkillDiscoveryReferenceOut(
+        name=name or _reference_name_from_ref(ref),
+        ref=ref,
+        status=str(status).strip() if status else "mapped",
+        description=str(description).strip() if description else "",
+        metadata=metadata if isinstance(metadata, dict) else {},
+    )
+
+
+def _references_from_metadata(
+    discovery: dict[str, Any],
+    *keys: str,
+) -> list[SkillDiscoveryReferenceOut]:
+    refs: list[SkillDiscoveryReferenceOut] = []
+    seen: set[tuple[str, str]] = set()
+    for key in keys:
+        raw_items = discovery.get(key)
+        if raw_items is None:
+            continue
+        if isinstance(raw_items, (str, dict)):
+            items = [raw_items]
+        elif isinstance(raw_items, list):
+            items = raw_items
+        else:
+            continue
+        for item in items:
+            ref = _reference_from_value(item)
+            if ref is None:
+                continue
+            dedupe_key = (ref.name, ref.ref)
+            if dedupe_key in seen:
+                continue
+            refs.append(ref)
+            seen.add(dedupe_key)
+    return refs
+
+
+def _runbook_refs(
+    summary: dict[str, str | None],
+    discovery: dict[str, Any],
+) -> list[SkillDiscoveryReferenceOut]:
+    refs = _references_from_metadata(discovery, "runbook_refs", "runbooks")
+    runbook_ref = summary.get("runbook_ref")
+    if runbook_ref and all(existing.ref != runbook_ref for existing in refs):
+        refs.insert(
+            0,
+            SkillDiscoveryReferenceOut(
+                name=_reference_name_from_ref(runbook_ref),
+                ref=runbook_ref,
+                status="mapped",
+                description="Skill manifest runbook reference.",
+            ),
+        )
+    return refs
+
+
+def _agentfs_refs(discovery: dict[str, Any]) -> list[SkillDiscoveryReferenceOut]:
+    refs = _references_from_metadata(discovery, "agentfs_refs", "agentfs")
+    if refs:
+        return refs
+    return [
+        SkillDiscoveryReferenceOut(
+            name="governed_run_artifacts",
+            ref="agentfs://runs/{run_id}/artifacts",
+            status="available",
+            description=(
+                "Execution outputs and handoffs are stored as governed AgentFS "
+                "run artifacts; skill discovery stores references only."
+            ),
+            metadata={
+                "artifact_table": "public.alpha_agent_run_artifacts",
+                "stores_skill_file_bodies": False,
+            },
+        )
+    ]
+
+
 def _skill_agent_match(
     skill: SkillPolicyOut, agent: AgentBoardAgentOut
 ) -> tuple[SkillDiscoveryMatchType, str] | None:
@@ -382,6 +512,7 @@ def _skill_discovery_entry(
         notes.append("mutating skill is missing idempotency requirement")
 
     summary = _skill_manifest_summary(skill)
+    discovery = _skill_discovery_metadata(skill)
     return SkillDiscoveryEntryOut(
         skill=skill,
         data_classification=summary["data_classification"] or "unknown",
@@ -390,6 +521,17 @@ def _skill_discovery_entry(
         cost_mode=summary["cost_mode"] or "unknown",
         test_ref=summary["test_ref"],
         runbook_ref=summary["runbook_ref"],
+        runbook_refs=_runbook_refs(summary, discovery),
+        codex_skill_refs=_references_from_metadata(
+            discovery, "codex_skill_refs", "codex_skills"
+        ),
+        claude_skill_refs=_references_from_metadata(
+            discovery, "claude_skill_refs", "claude_skills"
+        ),
+        mcp_tool_refs=_references_from_metadata(
+            discovery, "mcp_tool_refs", "mcp_tools"
+        ),
+        agentfs_refs=_agentfs_refs(discovery),
         candidate_agents=candidate_agents,
         allowed_agent_count=len(candidate_agents),
         enabled_agent_count=enabled_agent_count,
