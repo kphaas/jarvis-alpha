@@ -20,6 +20,7 @@ logger = get_logger("alpha_brain")
 router = APIRouter(prefix="/v1/agent-board", tags=["agent-board"])
 
 WorkItemRole = Literal["general", "research", "code", "review", "deploy", "monitor"]
+DelegationRole = Literal["research", "code", "review", "deploy", "monitor"]
 WorkItemStatus = Literal[
     "queued",
     "in_progress",
@@ -208,6 +209,45 @@ class BridgeWorkItemToTaskGraphOut(BaseModel):
     step_id: str | None = None
     dispatch_status: Literal["started", "approval_required", "already_linked"]
     approval_required: bool
+
+
+class DelegatedWorkItemSpec(BaseModel):
+    role: DelegationRole
+    title: str | None = Field(default=None, max_length=180)
+    description: str = Field(default="", max_length=4000)
+    assigned_agent_id: str | None = Field(default=None, max_length=64)
+    priority: int | None = Field(default=None, ge=1, le=10)
+    required_skills: list[str] = Field(default_factory=list, max_length=20)
+    acceptance_criteria: list[str] = Field(default_factory=list, max_length=20)
+    output_contract: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("title")
+    @classmethod
+    def strip_optional_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        title = value.strip()
+        return title or None
+
+    @field_validator("required_skills")
+    @classmethod
+    def validate_required_skills(cls, value: list[str]) -> list[str]:
+        return normalize_required_skills(value)
+
+    @field_validator("acceptance_criteria")
+    @classmethod
+    def strip_acceptance_criteria(cls, value: list[str]) -> list[str]:
+        return [item.strip() for item in value if item.strip()]
+
+
+class DelegateWorkItemRequest(BaseModel):
+    delegations: list[DelegatedWorkItemSpec] = Field(min_length=1, max_length=5)
+
+
+class DelegateWorkItemOut(BaseModel):
+    parent_work_item: WorkItemOut
+    children: list[WorkItemOut]
 
 
 def normalize_required_skills(value: list[str]) -> list[str]:
@@ -618,6 +658,41 @@ def _executor_prompt(row: Any) -> str:
     )
 
 
+def _default_output_contract(role: DelegationRole) -> dict[str, Any]:
+    return {
+        "artifact": f"{role}-handoff",
+        "format": "markdown",
+        "required_sections": ["summary", "evidence", "next_action"],
+        "done_when": "acceptance_criteria_met",
+    }
+
+
+def _delegated_child_metadata(
+    parent: Any,
+    spec: DelegatedWorkItemSpec,
+    actor: str,
+) -> dict[str, Any]:
+    metadata = dict(spec.metadata)
+    parent_handoff = _jsonb_dict(parent["handoff"])
+    metadata["delegation"] = {
+        "parent_work_item_id": str(parent["id"]),
+        "parent_title": parent["title"],
+        "parent_role": parent["role"],
+        "delegated_by": actor,
+        "role": spec.role,
+        "output_contract": spec.output_contract or _default_output_contract(spec.role),
+        "isolated_context": {
+            "workspace_id": parent["workspace_id"],
+            "source_surface": parent["source_surface"],
+            "required_skills": list(parent["required_skills"] or []),
+            "acceptance_criteria": _jsonb_list(parent["acceptance_criteria"]),
+            "handoff_keys": sorted(parent_handoff.keys()),
+            "no_shared_runtime_state": True,
+        },
+    }
+    return metadata
+
+
 def _executor_step_input(row: Any, step_type: ExecutorStepType) -> dict[str, Any]:
     if step_type == "tool":
         required_skills = list(row["required_skills"] or [])
@@ -1003,6 +1078,214 @@ async def create_work_item(
         approval_tier,
     )
     return _work_item_from_row(row, skills_by_name)
+
+
+@router.post(
+    "/work-items/{work_item_id}/delegations",
+    response_model=DelegateWorkItemOut,
+)
+async def delegate_work_item(
+    work_item_id: UUID,
+    request: Request,
+    body: DelegateWorkItemRequest,
+) -> DelegateWorkItemOut:
+    check_scopes(request, "agents.write", "agent_board.write")
+    actor = str(getattr(request.state, "user_id", "unknown"))
+
+    async with rls_connection(request) as conn:
+        async with conn.transaction():
+            parent = await conn.fetchrow(
+                """
+                SELECT wi.id, wi.workspace_id, wi.title, wi.description,
+                       wi.source_surface, wi.requested_by, wi.role, wi.status,
+                       wi.priority, wi.assigned_agent_id,
+                       a.display_name AS assigned_agent_display_name,
+                       wi.required_skills, wi.approval_tier, wi.approval_queue_id,
+                       wi.task_graph_id, wi.due_at, wi.started_at, wi.completed_at,
+                       wi.blocked_reason, wi.acceptance_criteria, wi.handoff,
+                       wi.metadata, wi.created_at, wi.updated_at
+                  FROM public.alpha_agent_work_items wi
+                  LEFT JOIN public.alpha_agents a
+                    ON a.agent_id = wi.assigned_agent_id
+                 WHERE wi.id = $1
+                 FOR UPDATE OF wi
+                """,
+                work_item_id,
+            )
+            if parent is None:
+                raise HTTPException(status_code=404, detail="Work item not found")
+            if parent["status"] in {"done", "cancelled"}:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "work_item_not_delegable",
+                        "status": parent["status"],
+                    },
+                )
+
+            skill_names = sorted(
+                {
+                    skill_name
+                    for spec in body.delegations
+                    for skill_name in spec.required_skills
+                }
+            )
+            skills_by_name = await _load_skill_policies(conn, skill_names)
+            parent_skills = await _load_referenced_skills(conn, [parent])
+            children: list[WorkItemOut] = []
+            child_ids: list[str] = []
+            roles: list[str] = []
+
+            for spec in body.delegations:
+                assigned_agent = await _load_agent(conn, spec.assigned_agent_id)
+                spec_skills = [skills_by_name[name] for name in spec.required_skills]
+                approval_tier = highest_approval_tier(spec_skills)
+                metadata = _delegated_child_metadata(parent, spec, actor)
+                warnings = _assignment_warnings(
+                    assigned_agent,
+                    spec.required_skills,
+                    approval_tier,
+                )
+                if warnings:
+                    metadata["assignment_warnings"] = warnings
+
+                child_title = spec.title or f"{spec.role.title()}: {parent['title']}"
+                child_description = spec.description or parent["description"]
+                child_acceptance = spec.acceptance_criteria or _jsonb_list(
+                    parent["acceptance_criteria"]
+                )
+                child_row = await conn.fetchrow(
+                    """
+                    INSERT INTO public.alpha_agent_work_items (
+                        workspace_id, title, description, source_surface,
+                        requested_by, role, priority, assigned_agent_id,
+                        required_skills, approval_tier, due_at,
+                        acceptance_criteria, metadata
+                    )
+                    VALUES (
+                        $1, $2, $3, $4,
+                        $5, $6, $7, $8,
+                        $9::text[], $10, $11,
+                        $12::jsonb, $13::jsonb
+                    )
+                    RETURNING id, workspace_id, title, description,
+                              source_surface, requested_by, role, status,
+                              priority, assigned_agent_id,
+                              NULL::text AS assigned_agent_display_name,
+                              required_skills, approval_tier,
+                              approval_queue_id, task_graph_id, due_at,
+                              started_at, completed_at, blocked_reason,
+                              acceptance_criteria, handoff, metadata,
+                              created_at, updated_at
+                    """,
+                    parent["workspace_id"],
+                    child_title,
+                    child_description,
+                    parent["source_surface"],
+                    actor,
+                    spec.role,
+                    spec.priority if spec.priority is not None else parent["priority"],
+                    spec.assigned_agent_id,
+                    spec.required_skills,
+                    approval_tier,
+                    parent["due_at"],
+                    json.dumps(child_acceptance),
+                    json.dumps(metadata),
+                )
+                if child_row is None:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Delegated work item insert failed",
+                    )
+                await conn.execute(
+                    """
+                    INSERT INTO public.alpha_agent_work_item_events (
+                        work_item_id, event_type, actor, to_status, message,
+                        metadata
+                    )
+                    VALUES ($1, 'created', $2, 'queued', $3, $4::jsonb)
+                    """,
+                    child_row["id"],
+                    actor,
+                    "delegated child work item queued",
+                    json.dumps(
+                        {
+                            "parent_work_item_id": str(parent["id"]),
+                            "delegation_role": spec.role,
+                        }
+                    ),
+                )
+                child_ids.append(str(child_row["id"]))
+                roles.append(spec.role)
+                children.append(_work_item_from_row(child_row, skills_by_name))
+
+            parent_metadata = _jsonb_dict(parent["metadata"])
+            existing_delegation = parent_metadata.get("delegation")
+            if not isinstance(existing_delegation, dict):
+                existing_delegation = {}
+            existing_child_ids = existing_delegation.get("child_work_item_ids")
+            if not isinstance(existing_child_ids, list):
+                existing_child_ids = []
+            delegation_metadata = {
+                "delegation": {
+                    **existing_delegation,
+                    "child_work_item_ids": [
+                        *[str(item) for item in existing_child_ids],
+                        *child_ids,
+                    ],
+                    "last_roles": roles,
+                    "last_delegated_by": actor,
+                }
+            }
+            parent_row = await conn.fetchrow(
+                """
+                UPDATE public.alpha_agent_work_items
+                   SET metadata = metadata || $2::jsonb
+                 WHERE id = $1
+                 RETURNING id, workspace_id, title, description, source_surface,
+                           requested_by, role, status, priority, assigned_agent_id,
+                           (
+                             SELECT display_name
+                               FROM public.alpha_agents a
+                              WHERE a.agent_id = alpha_agent_work_items.assigned_agent_id
+                           ) AS assigned_agent_display_name,
+                           required_skills, approval_tier, approval_queue_id,
+                           task_graph_id, due_at, started_at, completed_at,
+                           blocked_reason, acceptance_criteria, handoff, metadata,
+                           created_at, updated_at
+                """,
+                work_item_id,
+                json.dumps(delegation_metadata),
+            )
+            if parent_row is None:
+                raise HTTPException(status_code=500, detail="Parent update failed")
+            await conn.execute(
+                """
+                INSERT INTO public.alpha_agent_work_item_events (
+                    work_item_id, event_type, actor, message, metadata
+                )
+                VALUES ($1, 'comment', $2, $3, $4::jsonb)
+                """,
+                work_item_id,
+                actor,
+                "delegated child work items queued",
+                json.dumps(
+                    {
+                        "child_work_item_ids": child_ids,
+                        "delegation_roles": roles,
+                    }
+                ),
+            )
+
+    logger.info(
+        "AGENT_BOARD_WORK_ITEM_DELEGATED work_item_id=%s child_count=%s",
+        work_item_id,
+        len(children),
+    )
+    return DelegateWorkItemOut(
+        parent_work_item=_work_item_from_row(parent_row, parent_skills),
+        children=children,
+    )
 
 
 @router.post(
