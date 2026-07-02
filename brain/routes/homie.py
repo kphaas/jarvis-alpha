@@ -94,7 +94,9 @@ async def post_homie_intent(
     request: Request,
     _user_id: str = Depends(require_auth),
 ) -> dict[str, Any]:
-    return await _handle_homie_intent_text(body.text, surface=body.surface, request=request)
+    return await _handle_homie_intent_text(
+        body.text, surface=body.surface, request=request
+    )
 
 
 @router.post("/voice-intent")
@@ -124,7 +126,9 @@ async def _handle_homie_intent_text(
     surface: Literal["chat", "voice"],
     request: Request,
 ) -> dict[str, Any]:
-    state_payload = await _request_homie_gateway("GET", "/v1/home/homie/state", request=request)
+    state_payload = await _request_homie_gateway(
+        "GET", "/v1/home/homie/state", request=request
+    )
     snapshot = _expect_snapshot(state_payload.get("snapshot"))
     parsed = _parse_intent(text, snapshot)
     stream = {"path": "/v1/home/homie/events/stream", "transport": "sse"}
@@ -171,7 +175,11 @@ async def _handle_homie_intent_text(
             "kind": "action",
             "entity_id": parsed["entity"]["entity_id"],
             "service": parsed["service"],
-            **({"service_data": parsed["service_data"]} if "service_data" in parsed else {}),
+            **(
+                {"service_data": parsed["service_data"]}
+                if "service_data" in parsed
+                else {}
+            ),
         },
         "gateway": gateway_result,
         "stream": stream,
@@ -246,15 +254,21 @@ async def _request_homie_gateway(
             )
     except httpx.HTTPError as exc:
         logger.warning("homie_gateway_unreachable path=%s error=%s", path, exc)
-        raise HTTPException(status_code=502, detail="homie_gateway_unreachable") from exc
+        raise HTTPException(
+            status_code=502, detail="homie_gateway_unreachable"
+        ) from exc
 
     if response.is_success:
         try:
             payload = response.json()
         except ValueError as exc:
-            raise HTTPException(status_code=502, detail="homie_gateway_invalid_response") from exc
+            raise HTTPException(
+                status_code=502, detail="homie_gateway_invalid_response"
+            ) from exc
         if not isinstance(payload, dict):
-            raise HTTPException(status_code=502, detail="homie_gateway_invalid_response")
+            raise HTTPException(
+                status_code=502, detail="homie_gateway_invalid_response"
+            )
         return payload
 
     raise HTTPException(
@@ -329,7 +343,9 @@ def _required_config(key: str) -> str:
     try:
         secret_value = get_secret(key).strip()
     except KeyError as exc:
-        raise HTTPException(status_code=503, detail=f"{key.lower()}_not_configured") from exc
+        raise HTTPException(
+            status_code=503, detail=f"{key.lower()}_not_configured"
+        ) from exc
     if not secret_value:
         raise HTTPException(status_code=503, detail=f"{key.lower()}_not_configured")
     return secret_value
@@ -365,7 +381,9 @@ def _parse_intent(
     if numeric_value is not None:
         entity_id = str(entity.get("entity_id", ""))
         if entity_id.startswith(("number.", "input_number.")):
-            value: int | float = int(numeric_value) if numeric_value.is_integer() else numeric_value
+            value: int | float = (
+                int(numeric_value) if numeric_value.is_integer() else numeric_value
+            )
             return {
                 "kind": "action",
                 "entity": entity,
@@ -454,7 +472,11 @@ def _whole_home_summary(
             continue
         friendly_name = entity.get("friendly_name")
         entity_id = entity.get("entity_id")
-        label = friendly_name if isinstance(friendly_name, str) and friendly_name else entity_id
+        label = (
+            friendly_name
+            if isinstance(friendly_name, str) and friendly_name
+            else entity_id
+        )
         if isinstance(label, str):
             active_names.append(label)
 
@@ -495,21 +517,29 @@ def _action_reply(
         return f"Done. {label} was updated."
     if mode == "proposal":
         approval = gateway_result.get("approval")
-        approval_id = approval.get("approval_id") if isinstance(approval, dict) else None
+        approval_id = (
+            approval.get("approval_id") if isinstance(approval, dict) else None
+        )
         if isinstance(approval_id, str) and approval_id:
             if surface == "voice":
                 return f"{label} needs approval. Request {approval_id} is ready."
             return f"{label} needs approval. Request `{approval_id}` is ready."
         return f"{label} needs approval before I can execute it."
     if mode == "denied":
-        reason = entity.get("reason") if isinstance(entity.get("reason"), str) else "not allowed"
+        reason = (
+            entity.get("reason")
+            if isinstance(entity.get("reason"), str)
+            else "not allowed"
+        )
         return f"I can't do that: {reason}."
     return "I could not complete that home action."
 
 
 def _unresolved_reply(*, surface: Literal["chat", "voice"]) -> str:
     if surface == "voice":
-        return "I could not match that to a home device yet. Say the room and device name."
+        return (
+            "I could not match that to a home device yet. Say the room and device name."
+        )
     return (
         "I could not match that to a home device yet. Try the room and device name, "
         "like `turn on kitchen lights`."

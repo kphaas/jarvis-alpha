@@ -158,14 +158,20 @@ def test_homie_routes_proxy_expected_gateway_paths(
     client = _client()
 
     assert client.get("/v1/home/homie/state").json()["path"] == "/v1/home/homie/state"
-    assert client.post(
-        "/v1/home/homie/action",
-        json={"entity_id": "light.kitchen", "service": "turn_on"},
-    ).json()["path"] == "/v1/home/homie/action"
-    assert client.post(
-        "/v1/home/homie/approvals/abc/review",
-        json={"decision": "approve"},
-    ).json()["path"] == "/v1/home/homie/approvals/abc/review"
+    assert (
+        client.post(
+            "/v1/home/homie/action",
+            json={"entity_id": "light.kitchen", "service": "turn_on"},
+        ).json()["path"]
+        == "/v1/home/homie/action"
+    )
+    assert (
+        client.post(
+            "/v1/home/homie/approvals/abc/review",
+            json={"decision": "approve"},
+        ).json()["path"]
+        == "/v1/home/homie/approvals/abc/review"
+    )
     assert client.post("/v1/home/homie/approvals/abc/resume").json()["path"] == (
         "/v1/home/homie/approvals/abc/resume"
     )
@@ -175,7 +181,11 @@ def test_homie_routes_proxy_expected_gateway_paths(
 
     assert calls == [
         ("GET", "/v1/home/homie/state", None),
-        ("POST", "/v1/home/homie/action", {"entity_id": "light.kitchen", "service": "turn_on"}),
+        (
+            "POST",
+            "/v1/home/homie/action",
+            {"entity_id": "light.kitchen", "service": "turn_on"},
+        ),
         ("POST", "/v1/home/homie/approvals/abc/review", {"decision": "approve"}),
         ("POST", "/v1/home/homie/approvals/abc/resume", None),
         ("POST", "/v1/home/homie/approvals/abc/execute", None),
@@ -272,7 +282,10 @@ def test_homie_intent_route_delegates_direct_actions_to_gateway(
                 "entity_id": "number.living_room_bass",
                 "friendly_name": "Living Room Bass",
             },
-            "execution": {"entity_id": "number.living_room_bass", "service": "set_value"},
+            "execution": {
+                "entity_id": "number.living_room_bass",
+                "service": "set_value",
+            },
         }
 
     monkeypatch.setattr(homie, "_request_homie_gateway", fake_request)
@@ -466,7 +479,10 @@ def test_homie_voice_intent_route_can_surface_approval(
             }
         return {
             "mode": "proposal",
-            "plan": {"entity_id": "switch.coffee_maker", "friendly_name": "Coffee Maker"},
+            "plan": {
+                "entity_id": "switch.coffee_maker",
+                "friendly_name": "Coffee Maker",
+            },
             "approval": {"approval_id": "approval-1", "status": "pending_approval"},
             "proposal": {"kind": "approval_handoff"},
         }
@@ -523,21 +539,33 @@ def test_home_homie_routes_are_classified() -> None:
         "read",
         "security_read",
     ]
-    assert ROUTE_CLASSIFICATION["POST /v1/home/homie/intent"] == ["write", "security_write"]
+    assert ROUTE_CLASSIFICATION["POST /v1/home/homie/intent"] == [
+        "write",
+        "security_write",
+    ]
     assert ROUTE_CLASSIFICATION["POST /v1/home/homie/voice-intent"] == [
         "write",
         "security_write",
     ]
-    assert ROUTE_CLASSIFICATION["POST /v1/home/homie/action"] == ["write", "security_write"]
-    assert ROUTE_CLASSIFICATION["POST /v1/home/homie/approvals/{approval_id}/review"] == [
+    assert ROUTE_CLASSIFICATION["POST /v1/home/homie/action"] == [
         "write",
         "security_write",
     ]
-    assert ROUTE_CLASSIFICATION["POST /v1/home/homie/approvals/{approval_id}/resume"] == [
+    assert ROUTE_CLASSIFICATION[
+        "POST /v1/home/homie/approvals/{approval_id}/review"
+    ] == [
         "write",
         "security_write",
     ]
-    assert ROUTE_CLASSIFICATION["POST /v1/home/homie/approvals/{approval_id}/execute"] == [
+    assert ROUTE_CLASSIFICATION[
+        "POST /v1/home/homie/approvals/{approval_id}/resume"
+    ] == [
+        "write",
+        "security_write",
+    ]
+    assert ROUTE_CLASSIFICATION[
+        "POST /v1/home/homie/approvals/{approval_id}/execute"
+    ] == [
         "write",
         "security_write",
     ]
