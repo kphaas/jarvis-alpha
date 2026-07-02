@@ -31,12 +31,14 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     assert "agent_board.update_status" in names
     assert "agent_board.dispatch_item" in names
     assert "agent_board.delegate_item" in names
+    assert "agent_board.dispatch_delegation" in names
     assert "agent_schedule.read" in names
     assert "agent_schedule.create" in names
     assert "agent_schedule.materialize_due" in names
     assert "approval.canary_t4" in names
     assert "secrets.rotate" in names
     assert "chatops.command_read" in names
+    assert "chatops.agent_board_control" in names
     assert "unifi.wan_status" in names
     assert "weather.current" in names
     assert "gmail.send" in names
@@ -71,6 +73,10 @@ def test_initial_skill_catalog_has_minimum_foundation_entries():
     )
     assert (
         skills["agent_board.delegate_item"].metadata["does_not_execute_agents"] is True
+    )
+    assert skills["agent_board.dispatch_delegation"].metadata["wakes_executor"] is True
+    assert (
+        skills["agent_board.dispatch_delegation"].metadata["rolls_up_to_parent"] is True
     )
     assert skills["agent_schedule.read"].approval_tier == "T1"
     assert skills["agent_schedule.create"].approval_tier == "T2"
