@@ -33,6 +33,7 @@ SourceSurface = Literal[
     "helm_companion", "helm_ask", "alpha", "chatops", "manual", "system"
 ]
 RegistryStatusFilter = Literal["planned", "active", "disabled", "all"]
+SkillDiscoveryMatchType = Literal["allowed_skill", "allowed_scope"]
 
 _SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
 _TIER_RANK = {"T1": 1, "T2": 2, "T3": 3, "T4": 4, "T5": 5}
@@ -110,6 +111,36 @@ class AgentBoardRegistryOut(BaseModel):
     agent_count: int
     skills: list[SkillPolicyOut]
     agents: list[AgentBoardAgentOut]
+
+
+class SkillDiscoveryAgentOut(BaseModel):
+    agent_id: str
+    display_name: str
+    risk_tier: str
+    status: str
+    enabled: bool
+    match_type: SkillDiscoveryMatchType
+    matched_value: str
+
+
+class SkillDiscoveryEntryOut(BaseModel):
+    skill: SkillPolicyOut
+    data_classification: str
+    side_effect_class: str
+    egress_mode: str
+    cost_mode: str
+    test_ref: str | None = None
+    runbook_ref: str | None = None
+    candidate_agents: list[SkillDiscoveryAgentOut] = Field(default_factory=list)
+    allowed_agent_count: int
+    enabled_agent_count: int
+    assignment_notes: list[str] = Field(default_factory=list)
+
+
+class SkillDiscoveryMapOut(BaseModel):
+    count: int
+    unmapped_skill_count: int
+    entries: list[SkillDiscoveryEntryOut]
 
 
 class CreateWorkItemRequest(BaseModel):
@@ -255,6 +286,99 @@ def _assignment_warnings(
     if not assigned_agent.enabled:
         warnings.append("assigned agent is disabled")
     return warnings
+
+
+def _skill_manifest_summary(skill: SkillPolicyOut) -> dict[str, str | None]:
+    manifest = skill.metadata.get("manifest")
+    if not isinstance(manifest, dict):
+        manifest = {}
+    egress = manifest.get("egress")
+    if not isinstance(egress, dict):
+        egress = {}
+    cost = manifest.get("cost")
+    if not isinstance(cost, dict):
+        cost = {}
+
+    return {
+        "data_classification": str(manifest.get("data_classification") or "unknown"),
+        "side_effect_class": str(
+            manifest.get("side_effect_class")
+            or ("write" if skill.mutates_state else "read")
+        ),
+        "egress_mode": str(egress.get("mode") or "unknown"),
+        "cost_mode": str(cost.get("mode") or "unknown"),
+        "test_ref": manifest.get("test_ref")
+        if isinstance(manifest.get("test_ref"), str)
+        else None,
+        "runbook_ref": manifest.get("runbook_ref")
+        if isinstance(manifest.get("runbook_ref"), str)
+        else None,
+    }
+
+
+def _skill_agent_match(
+    skill: SkillPolicyOut, agent: AgentBoardAgentOut
+) -> tuple[SkillDiscoveryMatchType, str] | None:
+    if skill.name in agent.allowed_skills:
+        return "allowed_skill", skill.name
+    if skill.scope in agent.allowed_scopes:
+        return "allowed_scope", skill.scope
+    return None
+
+
+def _skill_discovery_entry(
+    skill: SkillPolicyOut,
+    agents: list[AgentBoardAgentOut],
+) -> SkillDiscoveryEntryOut:
+    candidate_agents: list[SkillDiscoveryAgentOut] = []
+    for agent in agents:
+        match = _skill_agent_match(skill, agent)
+        if match is None:
+            continue
+        match_type, matched_value = match
+        candidate_agents.append(
+            SkillDiscoveryAgentOut(
+                agent_id=agent.agent_id,
+                display_name=agent.display_name,
+                risk_tier=agent.risk_tier,
+                status=agent.status,
+                enabled=agent.enabled,
+                match_type=match_type,
+                matched_value=matched_value,
+            )
+        )
+
+    enabled_agent_count = len(
+        [
+            agent
+            for agent in candidate_agents
+            if agent.enabled and agent.status != "disabled"
+        ]
+    )
+    notes: list[str] = []
+    if skill.status == "disabled":
+        notes.append("skill is disabled")
+    if not candidate_agents:
+        notes.append("no registered agent advertises this skill")
+    elif enabled_agent_count == 0:
+        notes.append("no enabled agent advertises this skill")
+    if skill.mutates_state and not skill.idempotency_required:
+        notes.append("mutating skill is missing idempotency requirement")
+
+    summary = _skill_manifest_summary(skill)
+    return SkillDiscoveryEntryOut(
+        skill=skill,
+        data_classification=summary["data_classification"] or "unknown",
+        side_effect_class=summary["side_effect_class"] or "unknown",
+        egress_mode=summary["egress_mode"] or "unknown",
+        cost_mode=summary["cost_mode"] or "unknown",
+        test_ref=summary["test_ref"],
+        runbook_ref=summary["runbook_ref"],
+        candidate_agents=candidate_agents,
+        allowed_agent_count=len(candidate_agents),
+        enabled_agent_count=enabled_agent_count,
+        assignment_notes=notes,
+    )
 
 
 def _work_item_from_row(
@@ -476,6 +600,70 @@ async def get_agent_board_registry(
         agent_count=len(agents),
         skills=skills,
         agents=agents,
+    )
+
+
+@router.get("/skill-map", response_model=SkillDiscoveryMapOut)
+async def get_agent_board_skill_map(
+    request: Request,
+    query: str | None = Query(default=None, max_length=120),
+    domain: str | None = Query(default=None),
+    status: RegistryStatusFilter = Query(default="all"),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> SkillDiscoveryMapOut:
+    check_scopes(request, "agents.read", "skills.read", "agent_board.read")
+    filters: list[str] = []
+    params: list[Any] = []
+    if domain:
+        params.append(domain)
+        filters.append(f"domain = ${len(params)}")
+    if status != "all":
+        params.append(status)
+        filters.append(f"status = ${len(params)}")
+    if query and query.strip():
+        params.append(f"%{query.strip()}%")
+        param = f"${len(params)}"
+        filters.append(
+            "("
+            f"skill_name ILIKE {param} OR domain ILIKE {param} "
+            f"OR action ILIKE {param} OR scope ILIKE {param} "
+            f"OR description ILIKE {param}"
+            ")"
+        )
+    params.append(limit)
+    limit_param = f"${len(params)}"
+    where = " AND ".join(filters) if filters else "TRUE"
+
+    async with rls_connection(request) as conn:
+        skill_rows = await conn.fetch(
+            f"""
+            SELECT skill_name, domain, action, description, approval_tier, scope,
+                   status, mutates_state, body_access, idempotency_required, metadata
+              FROM public.alpha_skill_registry
+             WHERE {where}
+             ORDER BY domain ASC, skill_name ASC
+             LIMIT {limit_param}
+            """,
+            *params,
+        )
+        agent_rows = await conn.fetch(
+            """
+            SELECT agent_id, display_name, purpose, risk_tier, status, enabled,
+                   allowed_skills, allowed_scopes, metadata
+              FROM public.alpha_agents
+             ORDER BY enabled DESC, status ASC, agent_id ASC
+            """,
+        )
+
+    skills = list(_skills_from_rows(skill_rows).values())
+    agents = [_agent_from_row(row) for row in agent_rows]
+    entries = [_skill_discovery_entry(skill, agents) for skill in skills]
+    return SkillDiscoveryMapOut(
+        count=len(entries),
+        unmapped_skill_count=len(
+            [entry for entry in entries if entry.allowed_agent_count == 0]
+        ),
+        entries=entries,
     )
 
 

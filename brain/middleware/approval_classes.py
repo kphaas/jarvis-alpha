@@ -126,6 +126,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # archive guarded in-route for child profiles, so it stays T2 instead of
     # approval-gated T5.
     "GET /v1/threads": ["read"],
+    "GET /v1/sessions/search": ["read", "security_read"],
     "GET /v1/threads/{thread_id}": ["read"],
     "GET /v1/threads/{thread_id}/messages": ["read"],
     "POST /v1/threads": ["write"],
@@ -519,6 +520,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # --- Alpha Agent Board — governed queue metadata, no agent execution ---
     "GET /v1/agent-board": ["read", "security_read"],
     "GET /v1/agent-board/registry": ["read", "security_read"],
+    "GET /v1/agent-board/skill-map": ["read", "security_read"],
     "GET /v1/agent-board/work-items/{work_item_id}": ["read", "security_read"],
     "POST /v1/agent-board/work-items": ["write", "security_write"],
     "PATCH /v1/agent-board/work-items/{work_item_id}/status": [
