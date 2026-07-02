@@ -334,6 +334,38 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
         ),
     ),
     SkillSpec(
+        name="agent_board.rollup_delegation",
+        domain="agent_board",
+        action="rollup_delegation",
+        description=(
+            "Roll delegated child work item results into a parent Agent Board "
+            "handoff with TaskGraph output references."
+        ),
+        approval_tier="T2",
+        scope="agents.write",
+        mutates_state=True,
+        idempotency_required=True,
+        status="active",
+        metadata=_skill_metadata(
+            data_classification="ops",
+            side_effect_class="control_plane",
+            timeout_s=10,
+            retry_policy="idempotent_retry_once",
+            rate_limit="30/minute/operator",
+            compensation="status_change_event_trail",
+            test_ref="tests/test_agent_board_rollup.py",
+            extra={
+                "execution_path": "fastapi_route",
+                "executor_hook": "task_graph_completion",
+                "operator_surface": "helm",
+                "delegation_model": "board_child_items",
+                "handoff_artifact_refs": "task_graph_step_outputs",
+                "rolls_up_to_parent": True,
+                "does_not_execute_agents": True,
+            },
+        ),
+    ),
+    SkillSpec(
         name="agent_schedule.read",
         domain="agent_schedule",
         action="read",

@@ -541,6 +541,10 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "write",
         "security_write",
     ],
+    "POST /v1/agent-board/work-items/{work_item_id}/delegations/roll-up": [
+        "write",
+        "security_write",
+    ],
     "PATCH /v1/agent-board/work-items/{work_item_id}/status": [
         "write",
         "security_write",
