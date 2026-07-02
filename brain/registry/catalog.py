@@ -341,9 +341,10 @@ INITIAL_SKILLS: tuple[SkillSpec, ...] = (
             compensation="cancel_materialized_work_item",
             test_ref="tests/test_agent_schedules.py",
             extra={
-                "execution_path": "launchagent_or_fastapi_route",
+                "execution_path": "fastapi_route",
                 "operator_surface": "helm",
                 "does_not_execute_agents": True,
+                "scheduler_path": "launchagent",
                 "queues_agent_board_items": True,
             },
         ),

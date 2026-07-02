@@ -211,9 +211,10 @@ VALUES
           "test_ref": "tests/test_agent_schedules.py",
           "runbook_ref": "docs/JARVIS_Alpha_Skills_Agents_Catalog_v0_9.md"
         },
-        "execution_path": "launchagent_or_fastapi_route",
+        "execution_path": "fastapi_route",
         "operator_surface": "helm",
         "does_not_execute_agents": true,
+        "scheduler_path": "launchagent",
         "queues_agent_board_items": true
       }'::jsonb)
 ON CONFLICT (skill_name) DO UPDATE
