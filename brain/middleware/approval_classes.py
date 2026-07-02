@@ -5,6 +5,12 @@ Every API route is classified by action classes, which determine risk tier.
 Unclassified routes default to T5 (deny by default).
 """
 
+from collections.abc import Mapping
+from typing import TypeVar
+
+
+_T = TypeVar("_T")
+
 # Action class → route mapping
 # Lookup is method + longest prefix match
 ROUTE_CLASSIFICATION: dict[str, list[str]] = {
@@ -632,24 +638,23 @@ TIER_RULES: list[tuple[set[str], str]] = [
 ]
 
 
-def classify_route(method: str, path: str) -> list[str]:
-    """Classify a route by method + longest prefix match.
-
-    Returns action classes list. Unregistered routes return ["unclassified"].
-    """
+def lookup_route_registry(
+    method: str, path: str, registry: Mapping[str, _T]
+) -> _T | None:
+    """Resolve a method/path pair against a route registry."""
     method = method.upper()
 
     # Exact match first
     key = f"{method} {path}"
-    if key in ROUTE_CLASSIFICATION:
-        return ROUTE_CLASSIFICATION[key]
+    if key in registry:
+        return registry[key]
 
     # Longest prefix match — strip path segments from the right
     # e.g., "GET /v1/approval/abc-123/status" matches "GET /v1/approval/{id}/status"
     # But we can't match {id} literally — so match by prefix up to the parameterized segment
     best_match: str | None = None
     best_length = 0
-    for registered_key, classes in ROUTE_CLASSIFICATION.items():
+    for registered_key in registry:
         reg_method, reg_path = registered_key.split(" ", 1)
         if reg_method != method:
             continue
@@ -675,7 +680,19 @@ def classify_route(method: str, path: str) -> list[str]:
             best_match = registered_key
 
     if best_match:
-        return ROUTE_CLASSIFICATION[best_match]
+        return registry[best_match]
+
+    return None
+
+
+def classify_route(method: str, path: str) -> list[str]:
+    """Classify a route by method + longest prefix match.
+
+    Returns action classes list. Unregistered routes return ["unclassified"].
+    """
+    classes = lookup_route_registry(method, path, ROUTE_CLASSIFICATION)
+    if classes is not None:
+        return classes
 
     return ["unclassified"]
 
