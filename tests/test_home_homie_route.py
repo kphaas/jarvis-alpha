@@ -72,36 +72,69 @@ def _entity(
     }
 
 
-def _snapshot(*entities: dict[str, object]) -> dict[str, object]:
-    return {"snapshot": {str(entity["entity_id"]): entity for entity in entities}}
+def _snapshot(
+    *entities: dict[str, object],
+    context: dict[str, dict[str, object]] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "snapshot": {str(entity["entity_id"]): entity for entity in entities}
+    }
+    if context is not None:
+        payload["context"] = context
+    return payload
 
 
-def _executed(entity: dict[str, object], service: str) -> dict[str, object]:
-    return {
+def _executed(
+    entity: dict[str, object],
+    service: str,
+    *,
+    policy_summary: str = "Adults can directly control this device.",
+    confirmed_state: dict[str, object] | None = None,
+    plan_context: dict[str, object] | None = None,
+) -> dict[str, object]:
+    payload = {
         "mode": "executed",
         "plan": {
             "entity_id": entity["entity_id"],
             "friendly_name": entity["friendly_name"],
+            "governance": {"policy_summary": policy_summary},
         },
         "execution": {
             "entity_id": entity["entity_id"],
             "service": service,
         },
     }
+    if plan_context is not None:
+        payload["plan"]["context"] = plan_context
+    if confirmed_state is not None:
+        payload["confirmed_state"] = confirmed_state
+        payload["execution"]["confirmed_state"] = confirmed_state
+    return payload
 
 
-def _proposal(entity: dict[str, object], approval_id: str) -> dict[str, object]:
+def _proposal(
+    entity: dict[str, object],
+    approval_id: str,
+    *,
+    policy_summary: str = "This device stays approval-gated before execution.",
+    plan_context: dict[str, object] | None = None,
+) -> dict[str, object]:
     return {
         "mode": "proposal",
         "plan": {
             "entity_id": entity["entity_id"],
             "friendly_name": entity["friendly_name"],
+            "governance": {"policy_summary": policy_summary},
+            **({"context": plan_context} if plan_context is not None else {}),
         },
         "approval": {
             "approval_id": approval_id,
             "status": "pending_approval",
         },
-        "proposal": {"kind": "approval_handoff"},
+        "proposal": {
+            "kind": "approval_handoff",
+            "governance": {"policy_summary": policy_summary},
+        },
     }
 
 
@@ -320,14 +353,9 @@ def test_homie_intent_route_delegates_direct_actions_to_gateway(
 
     assert response.status_code == 200
     assert response.json()["mode"] == "executed"
-    assert response.json()["plan"] == {
-        "entity_id": "number.living_room_bass",
-        "friendly_name": "Living Room Bass",
-    }
-    assert response.json()["execution"] == {
-        "entity_id": "number.living_room_bass",
-        "service": "set_value",
-    }
+    assert response.json()["plan"]["entity_id"] == "number.living_room_bass"
+    assert response.json()["execution"]["entity_id"] == "number.living_room_bass"
+    assert response.json()["reply"].startswith("Done. Living Room Bass")
     assert response.json()["intent"] == {
         "kind": "action",
         "entity_id": "number.living_room_bass",
@@ -374,12 +402,57 @@ def test_homie_intent_route_surfaces_approval_handoffs(
 
     assert response.status_code == 200
     assert response.json()["mode"] == "proposal"
-    assert response.json()["proposal"] == {"kind": "approval_handoff"}
+    assert response.json()["proposal"]["kind"] == "approval_handoff"
     assert response.json()["approval"] == {
         "approval_id": "abc-123",
         "status": "pending_approval",
     }
     assert "abc-123" in response.json()["reply"]
+    assert "approval-gated" in response.json()["reply"]
+
+
+def test_homie_intent_route_uses_gateway_context_to_disambiguate_rooms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+    ryleigh = _entity("switch.sound_machine_ryleigh", "Sound Machine")
+    sloane = _entity("switch.sound_machine_sloane", "Sound Machine")
+    context = {
+        "switch.sound_machine_ryleigh": {
+            "room": {"id": "ryleigh_room", "label": "Ryleigh Room", "aliases": ["ryleigh room", "ryleigh"]}
+        },
+        "switch.sound_machine_sloane": {
+            "room": {"id": "sloane_room", "label": "Sloane Room", "aliases": ["sloane room", "sloane"]}
+        },
+    }
+
+    async def fake_request(
+        method: str,
+        path: str,
+        *,
+        request: Request,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return _snapshot(ryleigh, sloane, context=context)
+        return _executed(
+            ryleigh,
+            "turn_on",
+            confirmed_state={"entity_id": "switch.sound_machine_ryleigh", "state": "on"},
+        )
+
+    monkeypatch.setattr(homie, "_request_homie_gateway", fake_request)
+    client = _client()
+
+    response = client.post(
+        "/v1/home/homie/intent",
+        json={"text": "Turn on the sound machine in Ryleigh room", "surface": "chat"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["intent"]["entity_id"] == "switch.sound_machine_ryleigh"
+    assert calls[1][2] == {"entity_id": "switch.sound_machine_ryleigh", "service": "turn_on"}
 
 
 def test_homie_voice_intent_route_reuses_voice_transcription_and_executes(
@@ -480,7 +553,7 @@ def test_homie_voice_intent_route_can_surface_approval(
     assert response.status_code == 200
     assert response.json()["mode"] == "proposal"
     assert response.json()["transcript"] == "turn on coffee maker"
-    assert response.json()["proposal"] == {"kind": "approval_handoff"}
+    assert response.json()["proposal"]["kind"] == "approval_handoff"
     assert response.json()["approval"] == {
         "approval_id": "approval-1",
         "status": "pending_approval",

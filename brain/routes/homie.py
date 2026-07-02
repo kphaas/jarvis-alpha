@@ -130,16 +130,18 @@ async def _handle_homie_intent_text(
         "GET", "/v1/home/homie/state", request=request
     )
     snapshot = _expect_snapshot(state_payload.get("snapshot"))
-    parsed = _parse_intent(text, snapshot)
+    context_index = _optional_context_index(state_payload.get("context"))
+    parsed = _parse_intent(text, snapshot, context_index)
     stream = {"path": "/v1/home/homie/events/stream", "transport": "sse"}
 
     if parsed["kind"] == "read":
         entity = parsed.get("entity")
         if isinstance(entity, dict):
+            entity_context = context_index.get(str(entity.get("entity_id", "")), {})
             return {
                 "mode": "read",
                 "surface": surface,
-                "reply": _entity_status_reply(entity, surface=surface),
+                "reply": _entity_status_reply(entity, surface=surface, entity_context=entity_context),
                 "intent": {"kind": "read", "entity_id": entity.get("entity_id")},
                 "entity": entity,
                 "stream": stream,
@@ -147,7 +149,7 @@ async def _handle_homie_intent_text(
         return {
             "mode": "read",
             "surface": surface,
-            "reply": _whole_home_summary(snapshot, surface=surface),
+            "reply": _whole_home_summary(snapshot, context_index, surface=surface),
             "intent": {"kind": "read", "scope": "whole_home"},
             "stream": stream,
         }
@@ -360,12 +362,13 @@ def _sse_event(name: str, payload: dict[str, Any]) -> str:
 def _parse_intent(
     text: str,
     snapshot: dict[str, dict[str, Any]],
+    context_index: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     normalized = _normalize_text(text)
     if _is_whole_home_read(normalized):
         return {"kind": "read"}
 
-    entity = _resolve_entity(text, snapshot)
+    entity = _resolve_entity(text, snapshot, context_index)
     if _is_read_query(text, normalized):
         if entity is None:
             return {"kind": "read"}
@@ -407,6 +410,7 @@ def _parse_intent(
 def _resolve_entity(
     text: str,
     snapshot: dict[str, dict[str, Any]],
+    context_index: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
     normalized_text = _normalize_text(text)
     text_tokens = _meaningful_tokens(normalized_text)
@@ -421,6 +425,7 @@ def _resolve_entity(
         friendly_name = entity.get("friendly_name")
         if isinstance(friendly_name, str) and friendly_name.strip():
             names.insert(0, friendly_name)
+        names.extend(_context_names(context_index.get(entity_id)))
 
         score = 0
         for name in names:
@@ -464,6 +469,7 @@ def _is_whole_home_read(normalized: str) -> bool:
 
 def _whole_home_summary(
     snapshot: dict[str, dict[str, Any]],
+    context_index: dict[str, dict[str, Any]],
     *,
     surface: Literal["chat", "voice"],
 ) -> str:
@@ -480,7 +486,7 @@ def _whole_home_summary(
             else entity_id
         )
         if isinstance(label, str):
-            active_names.append(label)
+            active_names.append(_entity_label_with_room({"entity_id": entity_id, "friendly_name": label}, context_index.get(entity_id)))
 
     if not active_names:
         return "Nothing is on right now."
@@ -496,8 +502,9 @@ def _entity_status_reply(
     entity: dict[str, Any],
     *,
     surface: Literal["chat", "voice"],
+    entity_context: dict[str, Any] | None = None,
 ) -> str:
-    label = _entity_label(entity)
+    label = _entity_label_with_room(entity, entity_context)
     state = entity.get("state")
     if not isinstance(state, str) or not state:
         return f"I found {label}, but its current state is unavailable."
@@ -515,24 +522,41 @@ def _action_reply(
     entity = plan if isinstance(plan, dict) else {}
     label = _entity_label(entity)
     mode = gateway_result.get("mode")
+    policy_summary = _policy_summary(entity)
+    quiet_hours_note = _quiet_hours_note(entity)
+    confirmed_state = _confirmed_state(gateway_result)
     if mode == "executed":
-        return f"Done. {label} was updated."
+        if isinstance(confirmed_state, dict):
+            observed_state = confirmed_state.get("state")
+            if isinstance(observed_state, str) and observed_state:
+                reply = f"Done. {label} is now {observed_state}."
+            else:
+                reply = f"Done. {label} was updated."
+        else:
+            reply = f"Done. {label} was updated."
+        if surface == "chat" and policy_summary:
+            reply = f"{reply} {policy_summary}"
+        if surface == "chat" and quiet_hours_note:
+            reply = f"{reply} {quiet_hours_note}"
+        return reply
     if mode == "proposal":
         approval = gateway_result.get("approval")
         approval_id = (
             approval.get("approval_id") if isinstance(approval, dict) else None
         )
+        if policy_summary:
+            prefix = f"{label} needs approval. {policy_summary}"
+        else:
+            prefix = f"{label} needs approval before I can execute it."
         if isinstance(approval_id, str) and approval_id:
             if surface == "voice":
-                return f"{label} needs approval. Request {approval_id} is ready."
-            return f"{label} needs approval. Request `{approval_id}` is ready."
-        return f"{label} needs approval before I can execute it."
+                return f"{prefix} Request {approval_id} is ready."
+            return f"{prefix} Request `{approval_id}` is ready."
+        return prefix
     if mode == "denied":
-        reason = (
-            entity.get("reason")
-            if isinstance(entity.get("reason"), str)
-            else "not allowed"
-        )
+        if policy_summary:
+            return f"I can't do that. {policy_summary}"
+        reason = entity.get("reason") if isinstance(entity.get("reason"), str) else "not allowed"
         return f"I can't do that: {reason}."
     return "I could not complete that home action."
 
@@ -569,6 +593,21 @@ def _entity_label(entity: dict[str, Any]) -> str:
     return "That device"
 
 
+def _entity_label_with_room(entity: dict[str, Any], entity_context: dict[str, Any] | None) -> str:
+    label = _entity_label(entity)
+    if not isinstance(entity_context, dict):
+        return label
+    room = entity_context.get("room")
+    if not isinstance(room, dict):
+        return label
+    room_label = room.get("label")
+    if not isinstance(room_label, str) or not room_label:
+        return label
+    if room_label.lower() in label.lower():
+        return label
+    return f"{label} ({room_label})"
+
+
 def _expect_snapshot(value: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(value, dict):
         raise HTTPException(status_code=502, detail="homie_gateway_invalid_response")
@@ -578,6 +617,16 @@ def _expect_snapshot(value: Any) -> dict[str, dict[str, Any]]:
         if isinstance(entity_id, str) and isinstance(entity, dict):
             snapshot[entity_id] = entity
     return snapshot
+
+
+def _optional_context_index(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    context_index: dict[str, dict[str, Any]] = {}
+    for entity_id, entity_context in value.items():
+        if isinstance(entity_id, str) and isinstance(entity_context, dict):
+            context_index[entity_id] = entity_context
+    return context_index
 
 
 def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
@@ -601,6 +650,72 @@ def _meaningful_tokens(text: str) -> set[str]:
         for token in text.split()
         if token and token not in _INTENT_STOP_WORDS and not token.isdigit()
     }
+
+
+def _context_names(entity_context: dict[str, Any] | None) -> list[str]:
+    if not isinstance(entity_context, dict):
+        return []
+    names: list[str] = []
+    room = entity_context.get("room")
+    if isinstance(room, dict):
+        label = room.get("label")
+        if isinstance(label, str) and label.strip():
+            names.append(label)
+        aliases = room.get("aliases")
+        if isinstance(aliases, list):
+            names.extend(alias for alias in aliases if isinstance(alias, str) and alias.strip())
+    routines = entity_context.get("routines")
+    if isinstance(routines, list):
+        for routine in routines:
+            if not isinstance(routine, dict):
+                continue
+            label = routine.get("label")
+            if isinstance(label, str) and label.strip():
+                names.append(label)
+            aliases = routine.get("aliases")
+            if isinstance(aliases, list):
+                names.extend(alias for alias in aliases if isinstance(alias, str) and alias.strip())
+    return names
+
+
+def _policy_summary(plan: dict[str, Any]) -> str | None:
+    governance = plan.get("governance")
+    if not isinstance(governance, dict):
+        return None
+    summary = governance.get("policy_summary")
+    if not isinstance(summary, str) or not summary.strip():
+        return None
+    return summary.strip()
+
+
+def _quiet_hours_note(plan: dict[str, Any]) -> str | None:
+    context = plan.get("context")
+    if not isinstance(context, dict):
+        return None
+    quiet_hours = context.get("quiet_hours")
+    if not isinstance(quiet_hours, dict) or quiet_hours.get("active") is not True:
+        return None
+    room = context.get("room")
+    room_label = room.get("label") if isinstance(room, dict) else None
+    if isinstance(room_label, str) and room_label.strip():
+        return f"Quiet hours are active for {room_label}."
+    label = quiet_hours.get("label")
+    if isinstance(label, str) and label.strip():
+        return f"{label} is active."
+    return "Quiet hours are active."
+
+
+def _confirmed_state(gateway_result: dict[str, Any]) -> dict[str, Any] | None:
+    direct = gateway_result.get("confirmed_state")
+    if isinstance(direct, dict):
+        return direct
+    execution = gateway_result.get("execution")
+    if not isinstance(execution, dict):
+        return None
+    confirmed_state = execution.get("confirmed_state")
+    if isinstance(confirmed_state, dict):
+        return confirmed_state
+    return None
 
 
 def _upstream_detail(response: httpx.Response) -> Any:
