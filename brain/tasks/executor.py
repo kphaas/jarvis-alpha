@@ -24,6 +24,7 @@ from brain.tasks.dispatch import (
     call_llm_agent,
     call_tool_agent,
 )
+from brain.services.agent_board_rollup import sync_work_item_for_task_graph
 
 # --------------- config ---------------
 
@@ -227,6 +228,7 @@ async def run_graph(pool: asyncpg.Pool, graph_id: UUID) -> None:
                         """,
                         graph_id,
                     )
+                    await _sync_agent_board_graph(conn, graph_id)
                     log.info("Graph %s completed", graph_id)
                 else:
                     awaiting = await conn.fetchval(
@@ -265,6 +267,7 @@ async def run_graph(pool: asyncpg.Pool, graph_id: UUID) -> None:
                                 """,
                                 graph_id,
                             )
+                            await _sync_agent_board_graph(conn, graph_id)
                             log.info(
                                 "Graph %s failed — %s failed steps",
                                 graph_id,
@@ -397,6 +400,17 @@ async def run_graph(pool: asyncpg.Pool, graph_id: UUID) -> None:
                             "Step %s failed permanently — downstream skipped",
                             step_id,
                         )
+
+
+async def _sync_agent_board_graph(conn: asyncpg.Connection, graph_id: UUID) -> None:
+    try:
+        await sync_work_item_for_task_graph(
+            conn,
+            graph_id,
+            actor="alpha_executor",
+        )
+    except Exception:
+        log.exception("Agent Board roll-up failed for graph %s", graph_id)
 
 
 async def _run_graph_with_semaphore(

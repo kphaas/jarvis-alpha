@@ -163,6 +163,10 @@ def test_agent_board_routes_are_governed_without_execution_tiers() -> None:
         "POST",
         "/v1/agent-board/work-items/11111111-1111-1111-1111-111111111111/delegations/dispatch",
     )
+    delegation_rollup_classes = classify_route(
+        "POST",
+        "/v1/agent-board/work-items/11111111-1111-1111-1111-111111111111/delegations/roll-up",
+    )
 
     assert determine_risk_tier(read_classes) == "T2"
     assert determine_risk_tier(registry_classes) == "T2"
@@ -172,6 +176,7 @@ def test_agent_board_routes_are_governed_without_execution_tiers() -> None:
     assert determine_risk_tier(dispatch_classes) == "T2"
     assert determine_risk_tier(delegate_classes) == "T2"
     assert determine_risk_tier(delegation_dispatch_classes) == "T2"
+    assert determine_risk_tier(delegation_rollup_classes) == "T2"
 
 
 def test_skill_discovery_entry_maps_skill_policy_to_candidate_agents() -> None:
@@ -1049,6 +1054,47 @@ async def test_approve_step_rejects_non_pending_step(
     assert execute_calls == []
 
 
+@pytest.mark.asyncio
+async def test_deny_step_does_not_fail_when_board_sync_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph_id = UUID("22222222-2222-2222-2222-222222222222")
+    execute_calls: list[tuple[str, tuple[object, ...]]] = []
+    sync_calls: list[tuple[UUID, str]] = []
+
+    class FakeConn:
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
+            assert "SELECT graph_id::text" in query
+            return {"graph_id": str(graph_id)}
+
+        async def execute(self, query: str, *args: object) -> None:
+            execute_calls.append((query, args))
+
+    class FakeRlsConnection:
+        async def __aenter__(self) -> FakeConn:
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    async def fail_sync(conn: object, sync_graph_id: UUID, *, actor: str) -> None:
+        sync_calls.append((sync_graph_id, actor))
+        raise RuntimeError("roll-up failed")
+
+    monkeypatch.setattr(tasks, "rls_connection", lambda request: FakeRlsConnection())
+    monkeypatch.setattr(tasks, "sync_work_item_for_task_graph", fail_sync)
+
+    request = SimpleNamespace(state=SimpleNamespace(user_id="ken", role="admin"))
+    response = await tasks.deny_step(
+        "33333333-3333-3333-3333-333333333333",
+        request,
+    )
+
+    assert response.status_code == 200
+    assert len(execute_calls) == 2
+    assert sync_calls == [(graph_id, "ken")]
+
+
 def test_agent_board_migration_is_reversible_and_rls_guarded() -> None:
     migration = (
         REPO_ROOT / "brain/db/migrations/20260625_130000_agent_board_work_queue.sql"
@@ -1127,6 +1173,26 @@ def test_chatops_delegation_execution_skill_migration_is_reversible() -> None:
     assert "DELETE FROM public.alpha_skill_registry" in rollback_text
     assert "chatops.agent_board_control" in rollback_text
     assert "agent_board.dispatch_delegation" in rollback_text
+
+
+def test_agent_board_delegation_rollup_skill_migration_is_reversible() -> None:
+    migration = (
+        REPO_ROOT
+        / "brain/db/migrations/20260702_234500_agent_board_delegation_rollup_skill.sql"
+    )
+    rollback = (
+        REPO_ROOT
+        / "brain/db/rollbacks/20260702_234500_agent_board_delegation_rollup_skill_rollback.sql"
+    )
+
+    migration_text = migration.read_text(encoding="utf-8")
+    rollback_text = rollback.read_text(encoding="utf-8")
+
+    assert "agent_board.rollup_delegation" in migration_text
+    assert "task_graph_step_outputs" in migration_text
+    assert "does_not_execute_agents" in migration_text
+    assert "DELETE FROM public.alpha_skill_registry" in rollback_text
+    assert "agent_board.rollup_delegation" in rollback_text
 
 
 def test_skill_discovery_mapping_migration_is_reversible() -> None:

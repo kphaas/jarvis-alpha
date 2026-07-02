@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from brain.db.rls import rls_connection
 from brain.middleware.scopes import check_scopes
+from brain.services.agent_board_rollup import roll_up_delegated_parent
 from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
@@ -261,6 +262,11 @@ class DispatchDelegatedWorkItemsRequest(BaseModel):
 class DispatchDelegatedWorkItemsOut(BaseModel):
     parent_work_item: WorkItemOut
     children: list[BridgeWorkItemToTaskGraphOut]
+
+
+class RollUpDelegatedWorkItemsOut(BaseModel):
+    parent_work_item: WorkItemOut
+    rollup: dict[str, Any]
 
 
 def normalize_required_skills(value: list[str]) -> list[str]:
@@ -1696,6 +1702,38 @@ async def dispatch_delegated_work_items(
     return DispatchDelegatedWorkItemsOut(
         parent_work_item=_work_item_from_row(parent_row, parent_skills),
         children=child_results,
+    )
+
+
+@router.post(
+    "/work-items/{work_item_id}/delegations/roll-up",
+    response_model=RollUpDelegatedWorkItemsOut,
+)
+async def roll_up_delegated_work_items(
+    work_item_id: UUID,
+    request: Request,
+) -> RollUpDelegatedWorkItemsOut:
+    check_scopes(request, "agents.write", "agent_board.write")
+    actor = str(getattr(request.state, "user_id", "unknown"))
+
+    async with rls_connection(request) as conn:
+        async with conn.transaction():
+            rollup = await roll_up_delegated_parent(conn, work_item_id, actor=actor)
+            if rollup.get("reason") == "parent_not_found":
+                raise HTTPException(status_code=404, detail="Work item not found")
+            parent_row = await _fetch_work_item_for_update(conn, work_item_id)
+            if parent_row is None:
+                raise HTTPException(status_code=404, detail="Work item not found")
+            parent_skills = await _load_referenced_skills(conn, [parent_row])
+
+    logger.info(
+        "AGENT_BOARD_DELEGATION_ROLLED_UP work_item_id=%s status=%s",
+        work_item_id,
+        rollup.get("status"),
+    )
+    return RollUpDelegatedWorkItemsOut(
+        parent_work_item=_work_item_from_row(parent_row, parent_skills),
+        rollup=rollup,
     )
 
 
