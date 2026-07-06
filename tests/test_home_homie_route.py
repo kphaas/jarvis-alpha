@@ -419,10 +419,18 @@ def test_homie_intent_route_uses_gateway_context_to_disambiguate_rooms(
     sloane = _entity("switch.sound_machine_sloane", "Sound Machine")
     context = {
         "switch.sound_machine_ryleigh": {
-            "room": {"id": "ryleigh_room", "label": "Ryleigh Room", "aliases": ["ryleigh room", "ryleigh"]}
+            "room": {
+                "id": "ryleigh_room",
+                "label": "Ryleigh Room",
+                "aliases": ["ryleigh room", "ryleigh"],
+            }
         },
         "switch.sound_machine_sloane": {
-            "room": {"id": "sloane_room", "label": "Sloane Room", "aliases": ["sloane room", "sloane"]}
+            "room": {
+                "id": "sloane_room",
+                "label": "Sloane Room",
+                "aliases": ["sloane room", "sloane"],
+            }
         },
     }
 
@@ -439,7 +447,10 @@ def test_homie_intent_route_uses_gateway_context_to_disambiguate_rooms(
         return _executed(
             ryleigh,
             "turn_on",
-            confirmed_state={"entity_id": "switch.sound_machine_ryleigh", "state": "on"},
+            confirmed_state={
+                "entity_id": "switch.sound_machine_ryleigh",
+                "state": "on",
+            },
         )
 
     monkeypatch.setattr(homie, "_request_homie_gateway", fake_request)
@@ -452,7 +463,10 @@ def test_homie_intent_route_uses_gateway_context_to_disambiguate_rooms(
 
     assert response.status_code == 200
     assert response.json()["intent"]["entity_id"] == "switch.sound_machine_ryleigh"
-    assert calls[1][2] == {"entity_id": "switch.sound_machine_ryleigh", "service": "turn_on"}
+    assert calls[1][2] == {
+        "entity_id": "switch.sound_machine_ryleigh",
+        "service": "turn_on",
+    }
 
 
 def test_homie_voice_intent_route_reuses_voice_transcription_and_executes(

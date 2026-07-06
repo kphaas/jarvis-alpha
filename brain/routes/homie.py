@@ -141,7 +141,9 @@ async def _handle_homie_intent_text(
             return {
                 "mode": "read",
                 "surface": surface,
-                "reply": _entity_status_reply(entity, surface=surface, entity_context=entity_context),
+                "reply": _entity_status_reply(
+                    entity, surface=surface, entity_context=entity_context
+                ),
                 "intent": {"kind": "read", "entity_id": entity.get("entity_id")},
                 "entity": entity,
                 "stream": stream,
@@ -486,7 +488,12 @@ def _whole_home_summary(
             else entity_id
         )
         if isinstance(label, str):
-            active_names.append(_entity_label_with_room({"entity_id": entity_id, "friendly_name": label}, context_index.get(entity_id)))
+            active_names.append(
+                _entity_label_with_room(
+                    {"entity_id": entity_id, "friendly_name": label},
+                    context_index.get(entity_id),
+                )
+            )
 
     if not active_names:
         return "Nothing is on right now."
@@ -556,7 +563,11 @@ def _action_reply(
     if mode == "denied":
         if policy_summary:
             return f"I can't do that. {policy_summary}"
-        reason = entity.get("reason") if isinstance(entity.get("reason"), str) else "not allowed"
+        reason = (
+            entity.get("reason")
+            if isinstance(entity.get("reason"), str)
+            else "not allowed"
+        )
         return f"I can't do that: {reason}."
     return "I could not complete that home action."
 
@@ -593,7 +604,9 @@ def _entity_label(entity: dict[str, Any]) -> str:
     return "That device"
 
 
-def _entity_label_with_room(entity: dict[str, Any], entity_context: dict[str, Any] | None) -> str:
+def _entity_label_with_room(
+    entity: dict[str, Any], entity_context: dict[str, Any] | None
+) -> str:
     label = _entity_label(entity)
     if not isinstance(entity_context, dict):
         return label
@@ -663,7 +676,9 @@ def _context_names(entity_context: dict[str, Any] | None) -> list[str]:
             names.append(label)
         aliases = room.get("aliases")
         if isinstance(aliases, list):
-            names.extend(alias for alias in aliases if isinstance(alias, str) and alias.strip())
+            names.extend(
+                alias for alias in aliases if isinstance(alias, str) and alias.strip()
+            )
     routines = entity_context.get("routines")
     if isinstance(routines, list):
         for routine in routines:
@@ -674,7 +689,11 @@ def _context_names(entity_context: dict[str, Any] | None) -> list[str]:
                 names.append(label)
             aliases = routine.get("aliases")
             if isinstance(aliases, list):
-                names.extend(alias for alias in aliases if isinstance(alias, str) and alias.strip())
+                names.extend(
+                    alias
+                    for alias in aliases
+                    if isinstance(alias, str) and alias.strip()
+                )
     return names
 
 
