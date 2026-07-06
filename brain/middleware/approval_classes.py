@@ -533,6 +533,18 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
         "write",
         "security_write",
     ],
+    "POST /v1/agent-board/work-items/{work_item_id}/delegations": [
+        "write",
+        "security_write",
+    ],
+    "POST /v1/agent-board/work-items/{work_item_id}/delegations/dispatch": [
+        "write",
+        "security_write",
+    ],
+    "POST /v1/agent-board/work-items/{work_item_id}/delegations/roll-up": [
+        "write",
+        "security_write",
+    ],
     "PATCH /v1/agent-board/work-items/{work_item_id}/status": [
         "write",
         "security_write",
@@ -612,8 +624,8 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     ],
     "GET /v1/privacy/targets": ["read", "security_read"],
     "POST /v1/privacy/targets/refresh": ["write", "security_write"],
-    # --- ChatOps command ingress — read-only, token-authenticated by route ---
-    "POST /v1/chatops/mattermost/command": ["read", "security_read"],
+    # --- ChatOps command ingress — token-authenticated board controls ---
+    "POST /v1/chatops/mattermost/command": ["write", "security_write"],
     # --- Financial approval bridge — route-local RS256 service auth ---
     "GET /v1/bridge/health": ["read", "security_read"],
     "POST /v1/bridge/approvals/submit": ["write"],

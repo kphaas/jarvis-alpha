@@ -11,14 +11,24 @@ from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 
 from brain.db.rls import rls_connection
+from brain.services.agent_board_rollup import sync_work_item_for_task_graph
+from jarvis_common.logging_config import get_logger
 
 tasks_router = APIRouter(tags=["tasks"])
+logger = get_logger("alpha_brain")
 
 
 def _iso(dt: datetime | None) -> str | None:
     if dt is None:
         return None
     return dt.isoformat()
+
+
+async def _sync_agent_board_graph(conn: Any, graph_id: UUID, *, actor: str) -> None:
+    try:
+        await sync_work_item_for_task_graph(conn, graph_id, actor=actor)
+    except Exception:
+        logger.exception("Agent Board roll-up failed for task graph %s", graph_id)
 
 
 class CreateGraphBody(BaseModel):
@@ -464,6 +474,16 @@ async def approve_step(step_id: str, request: Request):
 async def deny_step(step_id: str, request: Request):
     user_id = getattr(request.state, "user_id", "anon")
     async with rls_connection(request) as conn:
+        step = await conn.fetchrow(
+            """
+            SELECT graph_id::text
+            FROM alpha_task_steps
+            WHERE id = $1
+            """,
+            UUID(step_id),
+        )
+        if step is None:
+            raise HTTPException(status_code=404, detail="step not found")
         await conn.execute(
             """
             UPDATE alpha_task_steps
@@ -485,6 +505,11 @@ async def deny_step(step_id: str, request: Request):
             """,
             UUID(step_id),
         )
+        await _sync_agent_board_graph(
+            conn,
+            UUID(step["graph_id"]),
+            actor=str(user_id),
+        )
     return JSONResponse({"denied": True, "step_id": step_id})
 
 
@@ -495,6 +520,7 @@ async def deny_step(step_id: str, request: Request):
 
 @tasks_router.post("/v1/tasks/{graph_id}/cancel")
 async def cancel_graph(graph_id: str, request: Request):
+    user_id = getattr(request.state, "user_id", "anon")
     async with rls_connection(request) as conn:
         await conn.execute(
             """
@@ -511,6 +537,11 @@ async def cancel_graph(graph_id: str, request: Request):
             WHERE graph_id = $1 AND status IN ('pending', 'queued', 'running')
             """,
             UUID(graph_id),
+        )
+        await _sync_agent_board_graph(
+            conn,
+            UUID(graph_id),
+            actor=str(user_id),
         )
     return JSONResponse({"cancelled": True, "graph_id": graph_id})
 

@@ -17,7 +17,7 @@ import httpx
 from collections.abc import Mapping
 from datetime import datetime
 from uuid import UUID, uuid4, uuid5, NAMESPACE_DNS
-from typing import AsyncGenerator, Literal
+from typing import AsyncGenerator, Literal, cast
 from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -64,6 +64,7 @@ THREAD_CAP_ACTIVE_FILTER = (
 )
 InternetMode = Literal["none", "web_search", "deep_research"]
 AskResponseSurface = Literal["chat", "voice", "avatar"]
+AgentWorkSearchSource = Literal["agent_run", "board_item", "handoff", "pull_request"]
 AskPersonalityId = Literal[
     "loyal_sidekick",
     "playful_buddy",
@@ -254,12 +255,30 @@ class SessionSearchResult(BaseModel):
     snippets: list[SessionSearchSnippet] = Field(default_factory=list)
 
 
+class AgentWorkSearchResult(BaseModel):
+    source: AgentWorkSearchSource
+    id: str
+    title: str
+    status: str | None = None
+    role: str | None = None
+    agent_id: str | None = None
+    workspace_id: str | None = None
+    task_graph_id: str | None = None
+    url: str | None = None
+    snippet: str
+    created_at: datetime
+    updated_at: datetime | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
 class SessionSearchResponse(BaseModel):
     query: str
     count: int
     source: Literal["chat_sessions"] = "chat_sessions"
     memory_searched: bool = False
     results: list[SessionSearchResult] = Field(default_factory=list)
+    work_result_count: int = 0
+    work_results: list[AgentWorkSearchResult] = Field(default_factory=list)
 
 
 class EscalateRequest(BaseModel):
@@ -938,6 +957,15 @@ def _optional_str(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _can_search_agent_work(request: Request) -> bool:
+    actor_type = getattr(request.state, "actor_type", "user")
+    role = getattr(request.state, "role", None)
+    caller_scopes = set(getattr(request.state, "scopes", []) or [])
+    if actor_type == "user" and role == "admin":
+        return True
+    return bool({"*", "agents.read", "agent_board.read"} & caller_scopes)
+
+
 def _session_search_result_from_row(
     row: Mapping[str, object],
     query: str,
@@ -971,6 +999,233 @@ def _session_search_result_from_row(
         updated_at=_session_datetime(payload["updated_at"]),
         snippets=snippets,
     )
+
+
+def _agent_work_search_source(value: object) -> AgentWorkSearchSource:
+    source = str(value)
+    allowed = {"agent_run", "board_item", "handoff", "pull_request"}
+    if source not in allowed:
+        raise ValueError(f"unknown agent work search source: {source}")
+    return cast(AgentWorkSearchSource, source)
+
+
+def _work_search_result_from_row(
+    row: Mapping[str, object],
+    query: str,
+) -> AgentWorkSearchResult:
+    payload = dict(row)
+    return AgentWorkSearchResult(
+        source=_agent_work_search_source(payload["source"]),
+        id=str(payload["id"]),
+        title=str(payload["title"]),
+        status=_optional_str(payload.get("status")),
+        role=_optional_str(payload.get("role")),
+        agent_id=_optional_str(payload.get("agent_id")),
+        workspace_id=_optional_str(payload.get("workspace_id")),
+        task_graph_id=_optional_str(payload.get("task_graph_id")),
+        url=_optional_str(payload.get("url")),
+        snippet=_session_snippet(payload.get("snippet_text"), query),
+        created_at=_session_datetime(payload["created_at"]),
+        updated_at=_session_optional_datetime(payload.get("updated_at")),
+        metadata=_decode_json_object(payload.get("metadata")),
+    )
+
+
+async def _search_agent_work(
+    conn: object,
+    *,
+    query_pattern: str,
+    normalized_query: str,
+    limit: int,
+) -> list[AgentWorkSearchResult]:
+    run_rows = await conn.fetch(
+        """
+        SELECT 'agent_run' AS source,
+               r.id::text AS id,
+               COALESCE(a.display_name, r.agent_id) || ' run' AS title,
+               r.status,
+               NULL::text AS role,
+               r.agent_id,
+               NULLIF(r.metadata->>'workspace_id', '') AS workspace_id,
+               NULL::text AS task_graph_id,
+               COALESCE(
+                   NULLIF(r.metadata->>'pr_url', ''),
+                   NULLIF(r.metadata#>>'{github,pr_url}', ''),
+                   NULLIF(r.metadata#>>'{executor_bridge,pr_url}', '')
+               ) AS url,
+               concat_ws(
+                   ' ',
+                   r.agent_id,
+                   a.display_name,
+                   r.status,
+                   r.trigger_type,
+                   r.trace_id,
+                   r.error_text,
+                   r.workspace_root,
+                   r.metadata::text
+               ) AS snippet_text,
+               r.created_at,
+               COALESCE(r.completed_at, r.started_at, r.created_at) AS updated_at,
+               jsonb_build_object(
+                   'trigger_type', r.trigger_type,
+                   'trace_id', r.trace_id,
+                   'cost_usd', r.cost_usd,
+                   'workspace_backend', r.workspace_backend,
+                   'workspace_root', r.workspace_root,
+                   'retention_class', r.retention_class,
+                   'approval_scope', r.approval_scope
+               ) AS metadata
+          FROM public.alpha_agent_runs r
+          LEFT JOIN public.alpha_agents a ON a.agent_id = r.agent_id
+         WHERE r.agent_id ILIKE $1
+            OR r.status ILIKE $1
+            OR r.trigger_type ILIKE $1
+            OR COALESCE(r.trace_id, '') ILIKE $1
+            OR COALESCE(r.error_text, '') ILIKE $1
+            OR COALESCE(a.display_name, '') ILIKE $1
+            OR COALESCE(a.purpose, '') ILIKE $1
+            OR r.metadata::text ILIKE $1
+            OR r.workspace_root ILIKE $1
+         ORDER BY r.created_at DESC
+         LIMIT $2
+        """,
+        query_pattern,
+        limit,
+    )
+    work_item_rows = await conn.fetch(
+        """
+        SELECT CASE
+                   WHEN (
+                       wi.metadata::text ILIKE '%github.com/%/pull/%'
+                       OR wi.handoff::text ILIKE '%github.com/%/pull/%'
+                   ) THEN 'pull_request'
+                   WHEN wi.handoff::text ILIKE $1 THEN 'handoff'
+                   ELSE 'board_item'
+               END AS source,
+               wi.id::text AS id,
+               wi.title,
+               wi.status,
+               wi.role,
+               wi.assigned_agent_id AS agent_id,
+               wi.workspace_id,
+               wi.task_graph_id::text AS task_graph_id,
+               COALESCE(
+                   NULLIF(wi.metadata->>'pr_url', ''),
+                   NULLIF(wi.metadata#>>'{github,pr_url}', ''),
+                   NULLIF(wi.metadata#>>'{executor_bridge,pr_url}', ''),
+                   NULLIF(wi.handoff->>'pr_url', ''),
+                   NULLIF(wi.handoff#>>'{github,pr_url}', ''),
+                   NULLIF(wi.handoff->>'url', '')
+               ) AS url,
+               concat_ws(
+                   ' ',
+                   wi.title,
+                   wi.description,
+                   wi.source_surface,
+                   wi.requested_by,
+                   wi.role,
+                   wi.status,
+                   wi.blocked_reason,
+                   wi.required_skills::text,
+                   wi.acceptance_criteria::text,
+                   wi.handoff::text,
+                   wi.metadata::text
+               ) AS snippet_text,
+               wi.created_at,
+               wi.updated_at,
+               jsonb_build_object(
+                   'source_surface', wi.source_surface,
+                   'requested_by', wi.requested_by,
+                   'priority', wi.priority,
+                   'required_skills', wi.required_skills,
+                   'approval_tier', wi.approval_tier,
+                   'approval_queue_id', wi.approval_queue_id::text,
+                   'has_handoff', wi.handoff <> '{}'::jsonb
+               ) AS metadata
+          FROM public.alpha_agent_work_items wi
+         WHERE wi.title ILIKE $1
+            OR wi.description ILIKE $1
+            OR wi.source_surface ILIKE $1
+            OR wi.requested_by ILIKE $1
+            OR wi.role ILIKE $1
+            OR wi.status ILIKE $1
+            OR COALESCE(wi.blocked_reason, '') ILIKE $1
+            OR wi.required_skills::text ILIKE $1
+            OR wi.acceptance_criteria::text ILIKE $1
+            OR wi.handoff::text ILIKE $1
+            OR wi.metadata::text ILIKE $1
+         ORDER BY wi.updated_at DESC, wi.created_at DESC
+         LIMIT $2
+        """,
+        query_pattern,
+        limit,
+    )
+    artifact_rows = await conn.fetch(
+        """
+        SELECT 'handoff' AS source,
+               art.id::text AS id,
+               'AgentFS artifact: ' || art.relative_path AS title,
+               r.status,
+               NULL::text AS role,
+               art.agent_id,
+               NULLIF(r.metadata->>'workspace_id', '') AS workspace_id,
+               NULL::text AS task_graph_id,
+               NULL::text AS url,
+               concat_ws(
+                   ' ',
+                   art.relative_path,
+                   art.kind,
+                   art.content_type,
+                   art.sha256,
+                   r.agent_id,
+                   r.status,
+                   r.metadata::text
+               ) AS snippet_text,
+               art.created_at,
+               COALESCE(r.completed_at, r.started_at, art.created_at) AS updated_at,
+               jsonb_build_object(
+                   'run_id', art.run_id::text,
+                   'relative_path', art.relative_path,
+                   'kind', art.kind,
+                   'content_type', art.content_type,
+                   'size_bytes', art.size_bytes,
+                   'sha256', art.sha256,
+                   'policy_labels', art.policy_labels,
+                   'workspace_root', r.workspace_root
+               ) AS metadata
+          FROM public.alpha_agent_run_artifacts art
+          JOIN public.alpha_agent_runs r ON r.id = art.run_id
+         WHERE (
+                   art.relative_path ILIKE '%handoff%'
+                   OR art.kind ILIKE '%handoff%'
+                   OR art.kind IN ('report', 'artifact')
+               )
+           AND (
+                   art.relative_path ILIKE $1
+                OR art.kind ILIKE $1
+                OR art.content_type ILIKE $1
+                OR COALESCE(art.sha256, '') ILIKE $1
+                OR art.agent_id ILIKE $1
+                OR r.status ILIKE $1
+                OR r.metadata::text ILIKE $1
+               )
+         ORDER BY art.created_at DESC
+         LIMIT $2
+        """,
+        query_pattern,
+        limit,
+    )
+
+    results = [
+        *(_work_search_result_from_row(row, normalized_query) for row in run_rows),
+        *(
+            _work_search_result_from_row(row, normalized_query)
+            for row in work_item_rows
+        ),
+        *(_work_search_result_from_row(row, normalized_query) for row in artifact_rows),
+    ]
+    results.sort(key=lambda item: item.updated_at or item.created_at, reverse=True)
+    return results[:limit]
 
 
 async def _embed(text: str) -> list[float]:
@@ -1970,12 +2225,24 @@ async def search_sessions(
             f"%{normalized_query}%",
             limit,
         )
+        work_results = (
+            await _search_agent_work(
+                conn,
+                query_pattern=f"%{normalized_query}%",
+                normalized_query=normalized_query,
+                limit=limit,
+            )
+            if _can_search_agent_work(request)
+            else []
+        )
 
     results = [_session_search_result_from_row(row, normalized_query) for row in rows]
     return SessionSearchResponse(
         query=normalized_query,
         count=len(results),
         results=results,
+        work_result_count=len(work_results),
+        work_results=work_results,
     )
 
 

@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from brain.db.rls import rls_connection
 from brain.middleware.scopes import check_scopes
+from brain.services.agent_board_rollup import roll_up_delegated_parent
 from jarvis_common.logging_config import get_logger
 
 logger = get_logger("alpha_brain")
@@ -20,6 +21,7 @@ logger = get_logger("alpha_brain")
 router = APIRouter(prefix="/v1/agent-board", tags=["agent-board"])
 
 WorkItemRole = Literal["general", "research", "code", "review", "deploy", "monitor"]
+DelegationRole = Literal["research", "code", "review", "deploy", "monitor"]
 WorkItemStatus = Literal[
     "queued",
     "in_progress",
@@ -124,6 +126,14 @@ class SkillDiscoveryAgentOut(BaseModel):
     matched_value: str
 
 
+class SkillDiscoveryReferenceOut(BaseModel):
+    name: str
+    ref: str
+    status: str = "mapped"
+    description: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class SkillDiscoveryEntryOut(BaseModel):
     skill: SkillPolicyOut
     data_classification: str
@@ -132,6 +142,11 @@ class SkillDiscoveryEntryOut(BaseModel):
     cost_mode: str
     test_ref: str | None = None
     runbook_ref: str | None = None
+    runbook_refs: list[SkillDiscoveryReferenceOut] = Field(default_factory=list)
+    codex_skill_refs: list[SkillDiscoveryReferenceOut] = Field(default_factory=list)
+    claude_skill_refs: list[SkillDiscoveryReferenceOut] = Field(default_factory=list)
+    mcp_tool_refs: list[SkillDiscoveryReferenceOut] = Field(default_factory=list)
+    agentfs_refs: list[SkillDiscoveryReferenceOut] = Field(default_factory=list)
     candidate_agents: list[SkillDiscoveryAgentOut] = Field(default_factory=list)
     allowed_agent_count: int
     enabled_agent_count: int
@@ -197,6 +212,63 @@ class BridgeWorkItemToTaskGraphOut(BaseModel):
     approval_required: bool
 
 
+class DelegatedWorkItemSpec(BaseModel):
+    role: DelegationRole
+    title: str | None = Field(default=None, max_length=180)
+    description: str = Field(default="", max_length=4000)
+    assigned_agent_id: str | None = Field(default=None, max_length=64)
+    priority: int | None = Field(default=None, ge=1, le=10)
+    required_skills: list[str] = Field(default_factory=list, max_length=20)
+    acceptance_criteria: list[str] = Field(default_factory=list, max_length=20)
+    output_contract: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("title")
+    @classmethod
+    def strip_optional_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        title = value.strip()
+        return title or None
+
+    @field_validator("required_skills")
+    @classmethod
+    def validate_required_skills(cls, value: list[str]) -> list[str]:
+        return normalize_required_skills(value)
+
+    @field_validator("acceptance_criteria")
+    @classmethod
+    def strip_acceptance_criteria(cls, value: list[str]) -> list[str]:
+        return [item.strip() for item in value if item.strip()]
+
+
+class DelegateWorkItemRequest(BaseModel):
+    delegations: list[DelegatedWorkItemSpec] = Field(min_length=1, max_length=5)
+
+
+class DelegateWorkItemOut(BaseModel):
+    parent_work_item: WorkItemOut
+    children: list[WorkItemOut]
+
+
+class DispatchDelegatedWorkItemsRequest(BaseModel):
+    child_work_item_ids: list[UUID] = Field(default_factory=list, max_length=20)
+    step_type: ExecutorStepType = "llm"
+    approval_required: bool | None = None
+    timeout_seconds: int = Field(default=900, ge=30, le=3600)
+    max_retries: int = Field(default=1, ge=0, le=5)
+
+
+class DispatchDelegatedWorkItemsOut(BaseModel):
+    parent_work_item: WorkItemOut
+    children: list[BridgeWorkItemToTaskGraphOut]
+
+
+class RollUpDelegatedWorkItemsOut(BaseModel):
+    parent_work_item: WorkItemOut
+    rollup: dict[str, Any]
+
+
 def normalize_required_skills(value: list[str]) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -245,6 +317,34 @@ def _iso(value: Any) -> str | None:
     if hasattr(value, "isoformat"):
         return value.isoformat()
     return str(value)
+
+
+def _uuid_strings(values: list[Any], *, field_name: str) -> list[str]:
+    ids: list[str] = []
+    for value in values:
+        try:
+            ids.append(str(UUID(str(value))))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "invalid_delegation_metadata",
+                    "field": field_name,
+                    "value": str(value),
+                },
+            ) from exc
+    return ids
+
+
+def _delegated_child_ids(parent: Any) -> list[str]:
+    metadata = _jsonb_dict(parent["metadata"])
+    delegation = metadata.get("delegation")
+    if not isinstance(delegation, dict):
+        return []
+    child_ids = delegation.get("child_work_item_ids")
+    if not isinstance(child_ids, list):
+        return []
+    return _uuid_strings(child_ids, field_name="delegation.child_work_item_ids")
 
 
 def _skills_from_rows(rows: list[Any]) -> dict[str, SkillPolicyOut]:
@@ -332,6 +432,123 @@ def _skill_manifest_summary(skill: SkillPolicyOut) -> dict[str, str | None]:
     }
 
 
+def _skill_discovery_metadata(skill: SkillPolicyOut) -> dict[str, Any]:
+    raw = skill.metadata.get("discovery")
+    if isinstance(raw, dict):
+        return raw
+    raw = skill.metadata.get("tooling")
+    return raw if isinstance(raw, dict) else {}
+
+
+def _reference_name_from_ref(ref: str) -> str:
+    cleaned = ref.strip().rstrip("/")
+    if not cleaned:
+        return "unknown"
+    return cleaned.rsplit("/", 1)[-1]
+
+
+def _reference_from_value(value: Any) -> SkillDiscoveryReferenceOut | None:
+    if isinstance(value, str):
+        ref = value.strip()
+        if not ref:
+            return None
+        return SkillDiscoveryReferenceOut(name=_reference_name_from_ref(ref), ref=ref)
+    if not isinstance(value, dict):
+        return None
+
+    ref_value = (
+        value.get("ref")
+        or value.get("file_ref")
+        or value.get("path")
+        or value.get("route")
+        or value.get("tool_ref")
+        or value.get("name")
+    )
+    if not isinstance(ref_value, str) or not ref_value.strip():
+        return None
+    ref = ref_value.strip()
+    name_value = value.get("name") or value.get("tool") or value.get("skill")
+    name = str(name_value).strip() if name_value else _reference_name_from_ref(ref)
+    status = value.get("status")
+    description = value.get("description")
+    metadata = value.get("metadata")
+    return SkillDiscoveryReferenceOut(
+        name=name or _reference_name_from_ref(ref),
+        ref=ref,
+        status=str(status).strip() if status else "mapped",
+        description=str(description).strip() if description else "",
+        metadata=metadata if isinstance(metadata, dict) else {},
+    )
+
+
+def _references_from_metadata(
+    discovery: dict[str, Any],
+    *keys: str,
+) -> list[SkillDiscoveryReferenceOut]:
+    refs: list[SkillDiscoveryReferenceOut] = []
+    seen: set[tuple[str, str]] = set()
+    for key in keys:
+        raw_items = discovery.get(key)
+        if raw_items is None:
+            continue
+        if isinstance(raw_items, (str, dict)):
+            items = [raw_items]
+        elif isinstance(raw_items, list):
+            items = raw_items
+        else:
+            continue
+        for item in items:
+            ref = _reference_from_value(item)
+            if ref is None:
+                continue
+            dedupe_key = (ref.name, ref.ref)
+            if dedupe_key in seen:
+                continue
+            refs.append(ref)
+            seen.add(dedupe_key)
+    return refs
+
+
+def _runbook_refs(
+    summary: dict[str, str | None],
+    discovery: dict[str, Any],
+) -> list[SkillDiscoveryReferenceOut]:
+    refs = _references_from_metadata(discovery, "runbook_refs", "runbooks")
+    runbook_ref = summary.get("runbook_ref")
+    if runbook_ref and all(existing.ref != runbook_ref for existing in refs):
+        refs.insert(
+            0,
+            SkillDiscoveryReferenceOut(
+                name=_reference_name_from_ref(runbook_ref),
+                ref=runbook_ref,
+                status="mapped",
+                description="Skill manifest runbook reference.",
+            ),
+        )
+    return refs
+
+
+def _agentfs_refs(discovery: dict[str, Any]) -> list[SkillDiscoveryReferenceOut]:
+    refs = _references_from_metadata(discovery, "agentfs_refs", "agentfs")
+    if refs:
+        return refs
+    return [
+        SkillDiscoveryReferenceOut(
+            name="governed_run_artifacts",
+            ref="agentfs://runs/{run_id}/artifacts",
+            status="available",
+            description=(
+                "Execution outputs and handoffs are stored as governed AgentFS "
+                "run artifacts; skill discovery stores references only."
+            ),
+            metadata={
+                "artifact_table": "public.alpha_agent_run_artifacts",
+                "stores_skill_file_bodies": False,
+            },
+        )
+    ]
+
+
 def _skill_agent_match(
     skill: SkillPolicyOut, agent: AgentBoardAgentOut
 ) -> tuple[SkillDiscoveryMatchType, str] | None:
@@ -382,6 +599,7 @@ def _skill_discovery_entry(
         notes.append("mutating skill is missing idempotency requirement")
 
     summary = _skill_manifest_summary(skill)
+    discovery = _skill_discovery_metadata(skill)
     return SkillDiscoveryEntryOut(
         skill=skill,
         data_classification=summary["data_classification"] or "unknown",
@@ -390,6 +608,17 @@ def _skill_discovery_entry(
         cost_mode=summary["cost_mode"] or "unknown",
         test_ref=summary["test_ref"],
         runbook_ref=summary["runbook_ref"],
+        runbook_refs=_runbook_refs(summary, discovery),
+        codex_skill_refs=_references_from_metadata(
+            discovery, "codex_skill_refs", "codex_skills"
+        ),
+        claude_skill_refs=_references_from_metadata(
+            discovery, "claude_skill_refs", "claude_skills"
+        ),
+        mcp_tool_refs=_references_from_metadata(
+            discovery, "mcp_tool_refs", "mcp_tools"
+        ),
+        agentfs_refs=_agentfs_refs(discovery),
         candidate_agents=candidate_agents,
         allowed_agent_count=len(candidate_agents),
         enabled_agent_count=enabled_agent_count,
@@ -476,6 +705,41 @@ def _executor_prompt(row: Any) -> str:
     )
 
 
+def _default_output_contract(role: DelegationRole) -> dict[str, Any]:
+    return {
+        "artifact": f"{role}-handoff",
+        "format": "markdown",
+        "required_sections": ["summary", "evidence", "next_action"],
+        "done_when": "acceptance_criteria_met",
+    }
+
+
+def _delegated_child_metadata(
+    parent: Any,
+    spec: DelegatedWorkItemSpec,
+    actor: str,
+) -> dict[str, Any]:
+    metadata = dict(spec.metadata)
+    parent_handoff = _jsonb_dict(parent["handoff"])
+    metadata["delegation"] = {
+        "parent_work_item_id": str(parent["id"]),
+        "parent_title": parent["title"],
+        "parent_role": parent["role"],
+        "delegated_by": actor,
+        "role": spec.role,
+        "output_contract": spec.output_contract or _default_output_contract(spec.role),
+        "isolated_context": {
+            "workspace_id": parent["workspace_id"],
+            "source_surface": parent["source_surface"],
+            "required_skills": list(parent["required_skills"] or []),
+            "acceptance_criteria": _jsonb_list(parent["acceptance_criteria"]),
+            "handoff_keys": sorted(parent_handoff.keys()),
+            "no_shared_runtime_state": True,
+        },
+    }
+    return metadata
+
+
 def _executor_step_input(row: Any, step_type: ExecutorStepType) -> dict[str, Any]:
     if step_type == "tool":
         required_skills = list(row["required_skills"] or [])
@@ -511,6 +775,196 @@ def _bridge_requires_step_approval(
         )
     return (
         forced_by_policy if body.approval_required is None else body.approval_required
+    )
+
+
+async def _fetch_work_item_for_update(conn: Any, work_item_id: UUID) -> Any | None:
+    return await conn.fetchrow(
+        """
+        SELECT wi.id, wi.workspace_id, wi.title, wi.description,
+               wi.source_surface, wi.requested_by, wi.role, wi.status,
+               wi.priority, wi.assigned_agent_id,
+               a.display_name AS assigned_agent_display_name,
+               wi.required_skills, wi.approval_tier, wi.approval_queue_id,
+               wi.task_graph_id, wi.due_at, wi.started_at, wi.completed_at,
+               wi.blocked_reason, wi.acceptance_criteria, wi.handoff,
+               wi.metadata, wi.created_at, wi.updated_at
+          FROM public.alpha_agent_work_items wi
+          LEFT JOIN public.alpha_agents a
+            ON a.agent_id = wi.assigned_agent_id
+         WHERE wi.id = $1
+         FOR UPDATE OF wi
+        """,
+        work_item_id,
+    )
+
+
+async def _bridge_locked_work_item_to_task_graph(
+    conn: Any,
+    current: Any,
+    actor: str,
+    body: BridgeWorkItemToTaskGraphRequest,
+) -> BridgeWorkItemToTaskGraphOut:
+    skills_by_name = await _load_referenced_skills(conn, [current])
+    work_item_id = current["id"]
+    if current["task_graph_id"]:
+        work_item = _work_item_from_row(current, skills_by_name)
+        bridge = work_item.metadata.get("executor_bridge")
+        linked_approval_required = (
+            bool(bridge.get("approval_required"))
+            if isinstance(bridge, dict)
+            else _TIER_RANK[current["approval_tier"]] >= _TIER_RANK["T3"]
+        )
+        return BridgeWorkItemToTaskGraphOut(
+            work_item=work_item,
+            task_graph_id=str(current["task_graph_id"]),
+            dispatch_status="already_linked",
+            approval_required=linked_approval_required,
+        )
+
+    if current["status"] not in {
+        "queued",
+        "needs_approval",
+        "handoff_ready",
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "work_item_not_dispatchable",
+                "status": current["status"],
+            },
+        )
+
+    approval_required = _bridge_requires_step_approval(current, body)
+    graph_metadata = {
+        "source": "agent_board",
+        "work_item_id": str(work_item_id),
+        "assigned_agent_id": current["assigned_agent_id"],
+        "required_skills": list(current["required_skills"] or []),
+        "approval_tier": current["approval_tier"],
+    }
+    graph_row = await conn.fetchrow(
+        """
+        INSERT INTO public.alpha_task_graphs (
+            user_id, title, description, graph_type, user_type,
+            content_tier, priority, metadata, source, ci_required
+        )
+        VALUES (
+            $1, $2, $3, 'agent', 'adult',
+            'unrestricted', $4, $5::jsonb, 'agent', false
+        )
+        RETURNING id
+        """,
+        actor,
+        f"Agent Board: {current['title']}",
+        current["description"],
+        current["priority"],
+        json.dumps(graph_metadata),
+    )
+    if graph_row is None:
+        raise HTTPException(status_code=500, detail="Task graph insert failed")
+
+    step_row = await conn.fetchrow(
+        """
+        INSERT INTO public.alpha_task_steps (
+            graph_id, user_id, step_name, step_type, step_order,
+            status, content_tier, input, approval_required,
+            timeout_seconds, max_retries
+        )
+        VALUES (
+            $1, $2, $3, $4, 1,
+            'pending', 'unrestricted', $5::jsonb, $6,
+            $7, $8
+        )
+        RETURNING id
+        """,
+        graph_row["id"],
+        actor,
+        current["title"],
+        body.step_type,
+        json.dumps(_executor_step_input(current, body.step_type)),
+        approval_required,
+        body.timeout_seconds,
+        body.max_retries,
+    )
+    if step_row is None:
+        raise HTTPException(status_code=500, detail="Task step insert failed")
+
+    next_status: WorkItemStatus = (
+        "needs_approval" if approval_required else "in_progress"
+    )
+    bridge_metadata = {
+        "executor_bridge": {
+            "task_graph_id": str(graph_row["id"]),
+            "step_id": str(step_row["id"]),
+            "step_type": body.step_type,
+            "approval_required": approval_required,
+            "dispatched_by": actor,
+        }
+    }
+    row = await conn.fetchrow(
+        """
+        UPDATE public.alpha_agent_work_items
+           SET task_graph_id = $2,
+               status = $3,
+               metadata = metadata || $4::jsonb,
+               started_at = CASE
+                 WHEN $3 = 'in_progress' AND started_at IS NULL THEN NOW()
+                 ELSE started_at
+               END
+         WHERE id = $1
+         RETURNING id, workspace_id, title, description, source_surface,
+                   requested_by, role, status, priority, assigned_agent_id,
+                   (
+                     SELECT display_name
+                       FROM public.alpha_agents a
+                      WHERE a.agent_id = alpha_agent_work_items.assigned_agent_id
+                   ) AS assigned_agent_display_name,
+                   required_skills, approval_tier, approval_queue_id,
+                   task_graph_id, due_at, started_at, completed_at,
+                   blocked_reason, acceptance_criteria, handoff, metadata,
+                   created_at, updated_at
+        """,
+        work_item_id,
+        graph_row["id"],
+        next_status,
+        json.dumps(bridge_metadata),
+    )
+    if row is None:
+        raise HTTPException(status_code=500, detail="Work item update failed")
+
+    await conn.execute(
+        """
+        INSERT INTO public.alpha_agent_work_item_events (
+            work_item_id, event_type, actor, from_status, to_status,
+            message, metadata
+        )
+        VALUES ($1, 'task_graph_linked', $2, $3, $4, $5, $6::jsonb)
+        """,
+        work_item_id,
+        actor,
+        current["status"],
+        next_status,
+        "task graph linked and executor notified",
+        json.dumps(bridge_metadata["executor_bridge"]),
+    )
+    await conn.execute(
+        "SELECT pg_notify('graph_submitted', $1::text)",
+        str(graph_row["id"]),
+    )
+
+    logger.info(
+        "AGENT_BOARD_TASK_GRAPH_LINKED work_item_id=%s task_graph_id=%s approval_required=%s",
+        work_item_id,
+        graph_row["id"],
+        approval_required,
+    )
+    return BridgeWorkItemToTaskGraphOut(
+        work_item=_work_item_from_row(row, skills_by_name),
+        task_graph_id=str(graph_row["id"]),
+        step_id=str(step_row["id"]),
+        dispatch_status="approval_required" if approval_required else "started",
+        approval_required=approval_required,
     )
 
 
@@ -864,20 +1318,20 @@ async def create_work_item(
 
 
 @router.post(
-    "/work-items/{work_item_id}/task-graph",
-    response_model=BridgeWorkItemToTaskGraphOut,
+    "/work-items/{work_item_id}/delegations",
+    response_model=DelegateWorkItemOut,
 )
-async def bridge_work_item_to_task_graph(
+async def delegate_work_item(
     work_item_id: UUID,
     request: Request,
-    body: BridgeWorkItemToTaskGraphRequest,
-) -> BridgeWorkItemToTaskGraphOut:
+    body: DelegateWorkItemRequest,
+) -> DelegateWorkItemOut:
     check_scopes(request, "agents.write", "agent_board.write")
     actor = str(getattr(request.state, "user_id", "unknown"))
 
     async with rls_connection(request) as conn:
         async with conn.transaction():
-            current = await conn.fetchrow(
+            parent = await conn.fetchrow(
                 """
                 SELECT wi.id, wi.workspace_id, wi.title, wi.description,
                        wi.source_surface, wi.requested_by, wi.role, wi.status,
@@ -895,113 +1349,313 @@ async def bridge_work_item_to_task_graph(
                 """,
                 work_item_id,
             )
-            if current is None:
+            if parent is None:
                 raise HTTPException(status_code=404, detail="Work item not found")
-
-            skills_by_name = await _load_referenced_skills(conn, [current])
-            if current["task_graph_id"]:
-                work_item = _work_item_from_row(current, skills_by_name)
-                bridge = work_item.metadata.get("executor_bridge")
-                linked_approval_required = (
-                    bool(bridge.get("approval_required"))
-                    if isinstance(bridge, dict)
-                    else _TIER_RANK[current["approval_tier"]] >= _TIER_RANK["T3"]
-                )
-                return BridgeWorkItemToTaskGraphOut(
-                    work_item=work_item,
-                    task_graph_id=str(current["task_graph_id"]),
-                    dispatch_status="already_linked",
-                    approval_required=linked_approval_required,
-                )
-
-            if current["status"] not in {
-                "queued",
-                "needs_approval",
-                "handoff_ready",
-            }:
+            if parent["status"] in {"done", "cancelled"}:
                 raise HTTPException(
                     status_code=409,
                     detail={
-                        "error": "work_item_not_dispatchable",
-                        "status": current["status"],
+                        "error": "work_item_not_delegable",
+                        "status": parent["status"],
                     },
                 )
 
-            approval_required = _bridge_requires_step_approval(current, body)
-            graph_metadata = {
-                "source": "agent_board",
-                "work_item_id": str(current["id"]),
-                "assigned_agent_id": current["assigned_agent_id"],
-                "required_skills": list(current["required_skills"] or []),
-                "approval_tier": current["approval_tier"],
-            }
-            graph_row = await conn.fetchrow(
-                """
-                INSERT INTO public.alpha_task_graphs (
-                    user_id, title, description, graph_type, user_type,
-                    content_tier, priority, metadata, source, ci_required
-                )
-                VALUES (
-                    $1, $2, $3, 'agent', 'adult',
-                    'unrestricted', $4, $5::jsonb, 'agent', false
-                )
-                RETURNING id
-                """,
-                actor,
-                f"Agent Board: {current['title']}",
-                current["description"],
-                current["priority"],
-                json.dumps(graph_metadata),
+            skill_names = sorted(
+                {
+                    skill_name
+                    for spec in body.delegations
+                    for skill_name in spec.required_skills
+                }
             )
-            if graph_row is None:
-                raise HTTPException(status_code=500, detail="Task graph insert failed")
+            skills_by_name = await _load_skill_policies(conn, skill_names)
+            parent_skills = await _load_referenced_skills(conn, [parent])
+            children: list[WorkItemOut] = []
+            child_ids: list[str] = []
+            roles: list[str] = []
 
-            step_row = await conn.fetchrow(
-                """
-                INSERT INTO public.alpha_task_steps (
-                    graph_id, user_id, step_name, step_type, step_order,
-                    status, content_tier, input, approval_required,
-                    timeout_seconds, max_retries
+            for spec in body.delegations:
+                assigned_agent = await _load_agent(conn, spec.assigned_agent_id)
+                spec_skills = [skills_by_name[name] for name in spec.required_skills]
+                approval_tier = highest_approval_tier(spec_skills)
+                metadata = _delegated_child_metadata(parent, spec, actor)
+                warnings = _assignment_warnings(
+                    assigned_agent,
+                    spec.required_skills,
+                    approval_tier,
                 )
-                VALUES (
-                    $1, $2, $3, $4, 1,
-                    'pending', 'unrestricted', $5::jsonb, $6,
-                    $7, $8
-                )
-                RETURNING id
-                """,
-                graph_row["id"],
-                actor,
-                current["title"],
-                body.step_type,
-                json.dumps(_executor_step_input(current, body.step_type)),
-                approval_required,
-                body.timeout_seconds,
-                body.max_retries,
-            )
-            if step_row is None:
-                raise HTTPException(status_code=500, detail="Task step insert failed")
+                if warnings:
+                    metadata["assignment_warnings"] = warnings
 
-            next_status: WorkItemStatus = (
-                "needs_approval" if approval_required else "in_progress"
-            )
-            bridge_metadata = {
-                "executor_bridge": {
-                    "task_graph_id": str(graph_row["id"]),
-                    "step_id": str(step_row["id"]),
-                    "step_type": body.step_type,
-                    "approval_required": approval_required,
-                    "dispatched_by": actor,
+                child_title = spec.title or f"{spec.role.title()}: {parent['title']}"
+                child_description = spec.description or parent["description"]
+                child_acceptance = spec.acceptance_criteria or _jsonb_list(
+                    parent["acceptance_criteria"]
+                )
+                child_row = await conn.fetchrow(
+                    """
+                    INSERT INTO public.alpha_agent_work_items (
+                        workspace_id, title, description, source_surface,
+                        requested_by, role, priority, assigned_agent_id,
+                        required_skills, approval_tier, due_at,
+                        acceptance_criteria, metadata
+                    )
+                    VALUES (
+                        $1, $2, $3, $4,
+                        $5, $6, $7, $8,
+                        $9::text[], $10, $11,
+                        $12::jsonb, $13::jsonb
+                    )
+                    RETURNING id, workspace_id, title, description,
+                              source_surface, requested_by, role, status,
+                              priority, assigned_agent_id,
+                              NULL::text AS assigned_agent_display_name,
+                              required_skills, approval_tier,
+                              approval_queue_id, task_graph_id, due_at,
+                              started_at, completed_at, blocked_reason,
+                              acceptance_criteria, handoff, metadata,
+                              created_at, updated_at
+                    """,
+                    parent["workspace_id"],
+                    child_title,
+                    child_description,
+                    parent["source_surface"],
+                    actor,
+                    spec.role,
+                    spec.priority if spec.priority is not None else parent["priority"],
+                    spec.assigned_agent_id,
+                    spec.required_skills,
+                    approval_tier,
+                    parent["due_at"],
+                    json.dumps(child_acceptance),
+                    json.dumps(metadata),
+                )
+                if child_row is None:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Delegated work item insert failed",
+                    )
+                await conn.execute(
+                    """
+                    INSERT INTO public.alpha_agent_work_item_events (
+                        work_item_id, event_type, actor, to_status, message,
+                        metadata
+                    )
+                    VALUES ($1, 'created', $2, 'queued', $3, $4::jsonb)
+                    """,
+                    child_row["id"],
+                    actor,
+                    "delegated child work item queued",
+                    json.dumps(
+                        {
+                            "parent_work_item_id": str(parent["id"]),
+                            "delegation_role": spec.role,
+                        }
+                    ),
+                )
+                child_ids.append(str(child_row["id"]))
+                roles.append(spec.role)
+                children.append(_work_item_from_row(child_row, skills_by_name))
+
+            parent_metadata = _jsonb_dict(parent["metadata"])
+            existing_delegation = parent_metadata.get("delegation")
+            if not isinstance(existing_delegation, dict):
+                existing_delegation = {}
+            existing_child_ids = existing_delegation.get("child_work_item_ids")
+            if not isinstance(existing_child_ids, list):
+                existing_child_ids = []
+            delegation_metadata = {
+                "delegation": {
+                    **existing_delegation,
+                    "child_work_item_ids": [
+                        *[str(item) for item in existing_child_ids],
+                        *child_ids,
+                    ],
+                    "last_roles": roles,
+                    "last_delegated_by": actor,
                 }
             }
-            row = await conn.fetchrow(
+            parent_row = await conn.fetchrow(
                 """
                 UPDATE public.alpha_agent_work_items
-                   SET task_graph_id = $2,
-                       status = $3,
-                       metadata = metadata || $4::jsonb,
+                   SET metadata = metadata || $2::jsonb
+                 WHERE id = $1
+                 RETURNING id, workspace_id, title, description, source_surface,
+                           requested_by, role, status, priority, assigned_agent_id,
+                           (
+                             SELECT display_name
+                               FROM public.alpha_agents a
+                              WHERE a.agent_id = alpha_agent_work_items.assigned_agent_id
+                           ) AS assigned_agent_display_name,
+                           required_skills, approval_tier, approval_queue_id,
+                           task_graph_id, due_at, started_at, completed_at,
+                           blocked_reason, acceptance_criteria, handoff, metadata,
+                           created_at, updated_at
+                """,
+                work_item_id,
+                json.dumps(delegation_metadata),
+            )
+            if parent_row is None:
+                raise HTTPException(status_code=500, detail="Parent update failed")
+            await conn.execute(
+                """
+                INSERT INTO public.alpha_agent_work_item_events (
+                    work_item_id, event_type, actor, message, metadata
+                )
+                VALUES ($1, 'comment', $2, $3, $4::jsonb)
+                """,
+                work_item_id,
+                actor,
+                "delegated child work items queued",
+                json.dumps(
+                    {
+                        "child_work_item_ids": child_ids,
+                        "delegation_roles": roles,
+                    }
+                ),
+            )
+
+    logger.info(
+        "AGENT_BOARD_WORK_ITEM_DELEGATED work_item_id=%s child_count=%s",
+        work_item_id,
+        len(children),
+    )
+    return DelegateWorkItemOut(
+        parent_work_item=_work_item_from_row(parent_row, parent_skills),
+        children=children,
+    )
+
+
+@router.post(
+    "/work-items/{work_item_id}/task-graph",
+    response_model=BridgeWorkItemToTaskGraphOut,
+)
+async def bridge_work_item_to_task_graph(
+    work_item_id: UUID,
+    request: Request,
+    body: BridgeWorkItemToTaskGraphRequest,
+) -> BridgeWorkItemToTaskGraphOut:
+    check_scopes(request, "agents.write", "agent_board.write")
+    actor = str(getattr(request.state, "user_id", "unknown"))
+
+    async with rls_connection(request) as conn:
+        async with conn.transaction():
+            current = await _fetch_work_item_for_update(conn, work_item_id)
+            if current is None:
+                raise HTTPException(status_code=404, detail="Work item not found")
+            return await _bridge_locked_work_item_to_task_graph(
+                conn,
+                current,
+                actor,
+                body,
+            )
+
+
+@router.post(
+    "/work-items/{work_item_id}/delegations/dispatch",
+    response_model=DispatchDelegatedWorkItemsOut,
+)
+async def dispatch_delegated_work_items(
+    work_item_id: UUID,
+    request: Request,
+    body: DispatchDelegatedWorkItemsRequest,
+) -> DispatchDelegatedWorkItemsOut:
+    check_scopes(request, "agents.write", "agent_board.write")
+    actor = str(getattr(request.state, "user_id", "unknown"))
+    bridge_body = BridgeWorkItemToTaskGraphRequest(
+        step_type=body.step_type,
+        approval_required=body.approval_required,
+        timeout_seconds=body.timeout_seconds,
+        max_retries=body.max_retries,
+    )
+
+    async with rls_connection(request) as conn:
+        async with conn.transaction():
+            parent = await _fetch_work_item_for_update(conn, work_item_id)
+            if parent is None:
+                raise HTTPException(status_code=404, detail="Work item not found")
+
+            known_child_ids = _delegated_child_ids(parent)
+            if not known_child_ids:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"error": "work_item_has_no_delegated_children"},
+                )
+            requested_child_ids = [str(item) for item in body.child_work_item_ids]
+            target_child_ids = requested_child_ids or known_child_ids
+            unknown_child_ids = sorted(set(target_child_ids) - set(known_child_ids))
+            if unknown_child_ids:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "child_not_registered_on_parent",
+                        "child_work_item_ids": unknown_child_ids,
+                    },
+                )
+
+            child_results: list[BridgeWorkItemToTaskGraphOut] = []
+            for child_id_text in target_child_ids:
+                child_id = UUID(child_id_text)
+                child = await _fetch_work_item_for_update(conn, child_id)
+                if child is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail={
+                            "error": "delegated_child_not_found",
+                            "child_work_item_id": child_id_text,
+                        },
+                    )
+                child_delegation = _jsonb_dict(child["metadata"]).get("delegation")
+                if not isinstance(child_delegation, dict) or str(
+                    child_delegation.get("parent_work_item_id")
+                ) != str(parent["id"]):
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "error": "child_parent_mismatch",
+                            "child_work_item_id": child_id_text,
+                        },
+                    )
+                child_results.append(
+                    await _bridge_locked_work_item_to_task_graph(
+                        conn,
+                        child,
+                        actor,
+                        bridge_body,
+                    )
+                )
+
+            parent_metadata = _jsonb_dict(parent["metadata"])
+            delegation = parent_metadata.get("delegation")
+            if not isinstance(delegation, dict):
+                delegation = {}
+            dispatch_metadata = {
+                "delegation": {
+                    **delegation,
+                    "last_dispatch": {
+                        "child_work_item_ids": target_child_ids,
+                        "task_graph_ids": [
+                            result.task_graph_id for result in child_results
+                        ],
+                        "dispatch_statuses": [
+                            result.dispatch_status for result in child_results
+                        ],
+                        "approval_required_count": sum(
+                            1 for result in child_results if result.approval_required
+                        ),
+                        "dispatched_by": actor,
+                    },
+                }
+            }
+            parent_next_status: WorkItemStatus = (
+                "in_progress" if parent["status"] == "queued" else parent["status"]
+            )
+            parent_row = await conn.fetchrow(
+                """
+                UPDATE public.alpha_agent_work_items
+                   SET status = $2,
+                       metadata = metadata || $3::jsonb,
                        started_at = CASE
-                         WHEN $3 = 'in_progress' AND started_at IS NULL THEN NOW()
+                         WHEN $2 = 'in_progress' AND started_at IS NULL THEN NOW()
                          ELSE started_at
                        END
                  WHERE id = $1
@@ -1018,45 +1672,68 @@ async def bridge_work_item_to_task_graph(
                            created_at, updated_at
                 """,
                 work_item_id,
-                graph_row["id"],
-                next_status,
-                json.dumps(bridge_metadata),
+                parent_next_status,
+                json.dumps(dispatch_metadata),
             )
-            if row is None:
-                raise HTTPException(status_code=500, detail="Work item update failed")
-
+            if parent_row is None:
+                raise HTTPException(status_code=500, detail="Parent update failed")
             await conn.execute(
                 """
                 INSERT INTO public.alpha_agent_work_item_events (
                     work_item_id, event_type, actor, from_status, to_status,
                     message, metadata
                 )
-                VALUES ($1, 'task_graph_linked', $2, $3, $4, $5, $6::jsonb)
+                VALUES ($1, 'comment', $2, $3, $4, $5, $6::jsonb)
                 """,
                 work_item_id,
                 actor,
-                current["status"],
-                next_status,
-                "task graph linked and executor notified",
-                json.dumps(bridge_metadata["executor_bridge"]),
+                parent["status"],
+                parent_next_status,
+                "delegated child work items dispatched",
+                json.dumps(dispatch_metadata["delegation"]["last_dispatch"]),
             )
-            await conn.execute(
-                "SELECT pg_notify('graph_submitted', $1::text)",
-                str(graph_row["id"]),
-            )
+            parent_skills = await _load_referenced_skills(conn, [parent_row])
 
     logger.info(
-        "AGENT_BOARD_TASK_GRAPH_LINKED work_item_id=%s task_graph_id=%s approval_required=%s",
+        "AGENT_BOARD_DELEGATION_DISPATCHED work_item_id=%s child_count=%s",
         work_item_id,
-        graph_row["id"],
-        approval_required,
+        len(child_results),
     )
-    return BridgeWorkItemToTaskGraphOut(
-        work_item=_work_item_from_row(row, skills_by_name),
-        task_graph_id=str(graph_row["id"]),
-        step_id=str(step_row["id"]),
-        dispatch_status="approval_required" if approval_required else "started",
-        approval_required=approval_required,
+    return DispatchDelegatedWorkItemsOut(
+        parent_work_item=_work_item_from_row(parent_row, parent_skills),
+        children=child_results,
+    )
+
+
+@router.post(
+    "/work-items/{work_item_id}/delegations/roll-up",
+    response_model=RollUpDelegatedWorkItemsOut,
+)
+async def roll_up_delegated_work_items(
+    work_item_id: UUID,
+    request: Request,
+) -> RollUpDelegatedWorkItemsOut:
+    check_scopes(request, "agents.write", "agent_board.write")
+    actor = str(getattr(request.state, "user_id", "unknown"))
+
+    async with rls_connection(request) as conn:
+        async with conn.transaction():
+            rollup = await roll_up_delegated_parent(conn, work_item_id, actor=actor)
+            if rollup.get("reason") == "parent_not_found":
+                raise HTTPException(status_code=404, detail="Work item not found")
+            parent_row = await _fetch_work_item_for_update(conn, work_item_id)
+            if parent_row is None:
+                raise HTTPException(status_code=404, detail="Work item not found")
+            parent_skills = await _load_referenced_skills(conn, [parent_row])
+
+    logger.info(
+        "AGENT_BOARD_DELEGATION_ROLLED_UP work_item_id=%s status=%s",
+        work_item_id,
+        rollup.get("status"),
+    )
+    return RollUpDelegatedWorkItemsOut(
+        parent_work_item=_work_item_from_row(parent_row, parent_skills),
+        rollup=rollup,
     )
 
 
