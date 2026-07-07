@@ -376,6 +376,111 @@ def test_homie_intent_route_delegates_direct_actions_to_gateway(
     ]
 
 
+def test_homie_intent_route_delegates_select_actions_to_gateway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+    speech = _entity(
+        "select.living_room_speech_enhancement",
+        "Living Room Speech Enhancement",
+        state="Off",
+    )
+    speech["attributes"] = {"options": ["Off", "Low", "Medium", "High"]}
+
+    async def fake_request(
+        method: str,
+        path: str,
+        *,
+        request: Request,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return _snapshot(speech)
+        return _executed(speech, "select_option")
+
+    monkeypatch.setattr(homie, "_request_homie_gateway", fake_request)
+    client = _client()
+
+    response = client.post(
+        "/v1/home/homie/intent",
+        json={
+            "text": "Set living room speech enhancement to Medium",
+            "surface": "chat",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == "executed"
+    assert response.json()["intent"] == {
+        "kind": "action",
+        "entity_id": "select.living_room_speech_enhancement",
+        "service": "select_option",
+        "service_data": {"option": "Medium"},
+    }
+    assert calls == [
+        ("GET", "/v1/home/homie/state", None),
+        (
+            "POST",
+            "/v1/home/homie/action",
+            {
+                "entity_id": "select.living_room_speech_enhancement",
+                "service": "select_option",
+                "service_data": {"option": "Medium"},
+            },
+        ),
+    ]
+
+
+def test_homie_intent_route_delegates_climate_mode_actions_to_gateway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+    thermostat = _entity("climate.downstairs", "Downstairs Thermostat", state="cool")
+    thermostat["attributes"] = {"hvac_modes": ["off", "heat", "cool", "auto"]}
+
+    async def fake_request(
+        method: str,
+        path: str,
+        *,
+        request: Request,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return _snapshot(thermostat)
+        return _executed(thermostat, "set_hvac_mode")
+
+    monkeypatch.setattr(homie, "_request_homie_gateway", fake_request)
+    client = _client()
+
+    response = client.post(
+        "/v1/home/homie/intent",
+        json={"text": "Set downstairs thermostat to heat", "surface": "chat"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == "executed"
+    assert response.json()["intent"] == {
+        "kind": "action",
+        "entity_id": "climate.downstairs",
+        "service": "set_hvac_mode",
+        "service_data": {"hvac_mode": "heat"},
+    }
+    assert calls == [
+        ("GET", "/v1/home/homie/state", None),
+        (
+            "POST",
+            "/v1/home/homie/action",
+            {
+                "entity_id": "climate.downstairs",
+                "service": "set_hvac_mode",
+                "service_data": {"hvac_mode": "heat"},
+            },
+        ),
+    ]
+
+
 def test_homie_intent_route_surfaces_approval_handoffs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
