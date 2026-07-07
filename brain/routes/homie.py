@@ -406,6 +406,26 @@ def _parse_intent(
                 "service_data": {"temperature": value},
             }
 
+    entity_id = str(entity.get("entity_id", ""))
+    if entity_id.startswith("select."):
+        option = _match_entity_option(entity, normalized, attribute_key="options")
+        if option is not None:
+            return {
+                "kind": "action",
+                "entity": entity,
+                "service": "select_option",
+                "service_data": {"option": option},
+            }
+    if entity_id.startswith("climate."):
+        hvac_mode = _match_entity_option(entity, normalized, attribute_key="hvac_modes")
+        if hvac_mode is not None:
+            return {
+                "kind": "action",
+                "entity": entity,
+                "service": "set_hvac_mode",
+                "service_data": {"hvac_mode": hvac_mode},
+            }
+
     return {"kind": "unresolved"}
 
 
@@ -651,6 +671,37 @@ def _extract_numeric_value(text: str) -> float | None:
     if match is None:
         return None
     return float(match.group(1))
+
+
+def _match_entity_option(
+    entity: dict[str, Any],
+    normalized_text: str,
+    *,
+    attribute_key: str,
+) -> str | None:
+    attributes = entity.get("attributes")
+    if not isinstance(attributes, dict):
+        return None
+    raw_options = attributes.get(attribute_key)
+    if not isinstance(raw_options, list):
+        return None
+
+    matches: list[tuple[int, str]] = []
+    for raw_option in raw_options:
+        if not isinstance(raw_option, str) or not raw_option.strip():
+            continue
+        normalized_option = _normalize_text(raw_option)
+        if not normalized_option:
+            continue
+        if (
+            normalized_text.endswith(normalized_option)
+            or f" to {normalized_option}" in normalized_text
+        ):
+            matches.append((len(normalized_option), raw_option))
+
+    if not matches:
+        return None
+    return max(matches, key=lambda item: item[0])[1]
 
 
 def _normalize_text(text: str) -> str:
