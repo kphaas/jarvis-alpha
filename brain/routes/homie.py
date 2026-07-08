@@ -131,7 +131,8 @@ async def _handle_homie_intent_text(
     )
     snapshot = _expect_snapshot(state_payload.get("snapshot"))
     context_index = _optional_context_index(state_payload.get("context"))
-    parsed = _parse_intent(text, snapshot, context_index)
+    mapping_index = _optional_mapping_index(state_payload.get("mapping"))
+    parsed = _parse_intent(text, snapshot, context_index, mapping_index)
     stream = {"path": "/v1/home/homie/events/stream", "transport": "sse"}
 
     if parsed["kind"] == "read":
@@ -365,12 +366,13 @@ def _parse_intent(
     text: str,
     snapshot: dict[str, dict[str, Any]],
     context_index: dict[str, dict[str, Any]],
+    mapping_index: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     normalized = _normalize_text(text)
     if _is_whole_home_read(normalized):
         return {"kind": "read"}
 
-    entity = _resolve_entity(text, snapshot, context_index)
+    entity = _resolve_entity(text, snapshot, context_index, mapping_index or {})
     if _is_read_query(text, normalized):
         if entity is None:
             return {"kind": "read"}
@@ -433,6 +435,7 @@ def _resolve_entity(
     text: str,
     snapshot: dict[str, dict[str, Any]],
     context_index: dict[str, dict[str, Any]],
+    mapping_index: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
     normalized_text = _normalize_text(text)
     text_tokens = _meaningful_tokens(normalized_text)
@@ -448,6 +451,7 @@ def _resolve_entity(
         if isinstance(friendly_name, str) and friendly_name.strip():
             names.insert(0, friendly_name)
         names.extend(_context_names(context_index.get(entity_id)))
+        names.extend(_mapping_names(mapping_index.get(entity_id)))
 
         score = 0
         for name in names:
@@ -502,18 +506,19 @@ def _whole_home_summary(
             continue
         friendly_name = entity.get("friendly_name")
         entity_id = entity.get("entity_id")
+        if not isinstance(entity_id, str):
+            continue
         label = (
             friendly_name
             if isinstance(friendly_name, str) and friendly_name
             else entity_id
         )
-        if isinstance(label, str):
-            active_names.append(
-                _entity_label_with_room(
-                    {"entity_id": entity_id, "friendly_name": label},
-                    context_index.get(entity_id),
-                )
+        active_names.append(
+            _entity_label_with_room(
+                {"entity_id": entity_id, "friendly_name": label},
+                context_index.get(entity_id),
             )
+        )
 
     if not active_names:
         return "Nothing is on right now."
@@ -662,6 +667,22 @@ def _optional_context_index(value: Any) -> dict[str, dict[str, Any]]:
     return context_index
 
 
+def _optional_mapping_index(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    mapped = value.get("mapped")
+    if not isinstance(mapped, list):
+        return {}
+    index: dict[str, dict[str, Any]] = {}
+    for entry in mapped:
+        if not isinstance(entry, dict):
+            continue
+        entity_id = entry.get("entity_id")
+        if isinstance(entity_id, str) and entity_id:
+            index[entity_id] = entry
+    return index
+
+
 def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(needle in text for needle in needles)
 
@@ -745,6 +766,26 @@ def _context_names(entity_context: dict[str, Any] | None) -> list[str]:
                     for alias in aliases
                     if isinstance(alias, str) and alias.strip()
                 )
+    return names
+
+
+def _mapping_names(mapping: dict[str, Any] | None) -> list[str]:
+    if not isinstance(mapping, dict):
+        return []
+    names: list[str] = []
+    for key in ("display_name", "friendly_name"):
+        value = mapping.get(key)
+        if isinstance(value, str) and value.strip():
+            names.append(value)
+    aliases = mapping.get("aliases")
+    if isinstance(aliases, list):
+        names.extend(
+            alias for alias in aliases if isinstance(alias, str) and alias.strip()
+        )
+    if mapping.get("device_role") == "primary":
+        group_label = mapping.get("device_group_label")
+        if isinstance(group_label, str) and group_label.strip():
+            names.append(group_label)
     return names
 
 

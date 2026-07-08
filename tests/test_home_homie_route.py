@@ -75,12 +75,15 @@ def _entity(
 def _snapshot(
     *entities: dict[str, object],
     context: dict[str, dict[str, object]] | None = None,
+    mapping: dict[str, object] | None = None,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "snapshot": {str(entity["entity_id"]): entity for entity in entities}
     }
     if context is not None:
         payload["context"] = context
+    if mapping is not None:
+        payload["mapping"] = mapping
     return payload
 
 
@@ -572,6 +575,141 @@ def test_homie_intent_route_uses_gateway_context_to_disambiguate_rooms(
         "entity_id": "switch.sound_machine_ryleigh",
         "service": "turn_on",
     }
+
+
+def test_homie_intent_route_resolves_gateway_mapping_aliases_for_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holiday = _entity("switch.holdiay_decor_living", "Holdiay Decor Living", state="on")
+    mapping = {
+        "mapped": [
+            {
+                "entity_id": "switch.holdiay_decor_living",
+                "friendly_name": "Holdiay Decor Living",
+                "display_name": "Holiday Decor Living",
+                "aliases": ["holiday living", "living room holiday decor"],
+                "device_role": "primary",
+                "device_group_label": "Holiday Decor Living",
+            }
+        ]
+    }
+
+    async def fake_request(
+        method: str,
+        path: str,
+        *,
+        request: Request,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        assert method == "GET"
+        return _snapshot(holiday, mapping=mapping)
+
+    monkeypatch.setattr(homie, "_request_homie_gateway", fake_request)
+    client = _client()
+
+    response = client.post(
+        "/v1/home/homie/intent",
+        json={"text": "is holiday living on?", "surface": "chat"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == "read"
+    assert response.json()["intent"]["entity_id"] == "switch.holdiay_decor_living"
+
+
+def test_homie_intent_route_resolves_gateway_mapping_aliases_for_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+    workdesk = _entity("switch.x_ken_workdesk", "X Ken Workdesk")
+    mapping = {
+        "mapped": [
+            {
+                "entity_id": "switch.x_ken_workdesk",
+                "display_name": "Ken Workdesk",
+                "aliases": ["ken desk", "work desk"],
+                "device_role": "primary",
+                "device_group_label": "Ken Workdesk",
+            }
+        ]
+    }
+
+    async def fake_request(
+        method: str,
+        path: str,
+        *,
+        request: Request,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return _snapshot(workdesk, mapping=mapping)
+        return _executed(workdesk, "turn_off")
+
+    monkeypatch.setattr(homie, "_request_homie_gateway", fake_request)
+    client = _client()
+
+    response = client.post(
+        "/v1/home/homie/intent",
+        json={"text": "turn off ken desk", "surface": "chat"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == "executed"
+    assert response.json()["intent"]["entity_id"] == "switch.x_ken_workdesk"
+    assert calls[1][2] == {
+        "entity_id": "switch.x_ken_workdesk",
+        "service": "turn_off",
+    }
+
+
+def test_homie_intent_route_prefers_primary_mapping_over_child_helpers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+    parent = _entity("switch.3d_printer", "3D Printer")
+    child = _entity("sensor.3d_printer_current", "Current")
+    mapping = {
+        "mapped": [
+            {
+                "entity_id": "sensor.3d_printer_current",
+                "display_name": "Current",
+                "device_role": "helper",
+                "device_group_label": "3D Printer",
+            },
+            {
+                "entity_id": "switch.3d_printer",
+                "display_name": "3D Printer",
+                "aliases": ["printer"],
+                "device_role": "primary",
+                "device_group_label": "3D Printer",
+            },
+        ]
+    }
+
+    async def fake_request(
+        method: str,
+        path: str,
+        *,
+        request: Request,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return _snapshot(child, parent, mapping=mapping)
+        return _executed(parent, "turn_off")
+
+    monkeypatch.setattr(homie, "_request_homie_gateway", fake_request)
+    client = _client()
+
+    response = client.post(
+        "/v1/home/homie/intent",
+        json={"text": "turn off 3d printer", "surface": "chat"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["intent"]["entity_id"] == "switch.3d_printer"
+    assert calls[1][2] == {"entity_id": "switch.3d_printer", "service": "turn_off"}
 
 
 def test_homie_voice_intent_route_reuses_voice_transcription_and_executes(
