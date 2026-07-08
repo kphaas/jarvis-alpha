@@ -549,6 +549,38 @@ class FakeConn:
         ]
 
 
+class FakeOutcomeConn:
+    def __init__(self) -> None:
+        self.fetch_calls: list[tuple[str, tuple[object, ...]]] = []
+
+    async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+        self.fetch_calls.append((query, args))
+        return [
+            {
+                "message_id": str(MESSAGE_ID),
+                "thread_id": str(THREAD_ID),
+                "thread_title": "Outcome smoke",
+                "model_used": "council/synthesis",
+                "council_detail": json.dumps(
+                    {
+                        "schema_version": chat.COUNCIL_DETAIL_SCHEMA_VERSION,
+                        "model_count": 2,
+                    }
+                ),
+                "internet_metadata": json.dumps(
+                    {
+                        "chat_outcome_schema_version": chat.CHAT_OUTCOME_SCHEMA_VERSION,
+                        "chat_outcome_model_label": "council/synthesis",
+                        "chat_outcome_route_mode": "local",
+                        "chat_outcome_quality_action": "accept",
+                        "chat_outcome_escalation_rung": "none",
+                    }
+                ),
+                "created_at": datetime(2026, 6, 12, 20, 40, tzinfo=UTC),
+            }
+        ]
+
+
 @pytest.mark.asyncio
 async def test_save_message_persists_redacted_internet_metadata(
     monkeypatch: pytest.MonkeyPatch,
@@ -580,6 +612,37 @@ async def test_save_message_persists_redacted_internet_metadata(
         persisted_metadata["citations"][0]["source_url"] == "https://example.com/report"
     )
     assert "citation_text" not in json.dumps(persisted_metadata)
+
+
+@pytest.mark.asyncio
+async def test_list_chat_outcomes_returns_compact_audit_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = FakeOutcomeConn()
+
+    @asynccontextmanager
+    async def fake_rls_connection(_request: object):
+        yield conn
+
+    monkeypatch.setattr(chat, "rls_connection", fake_rls_connection)
+
+    response = await chat.list_chat_outcomes(
+        cast(Request, SimpleNamespace(state=SimpleNamespace(user_id="ken"))),
+        limit=5,
+        thread_id=None,
+    )
+
+    assert response["schema_version"] == "chat_outcome_audit.v1"
+    assert response["count"] == 1
+    outcome = response["outcomes"][0]
+    assert "content" not in outcome
+    assert outcome["message_id"] == str(MESSAGE_ID)
+    assert outcome["thread_id"] == str(THREAD_ID)
+    assert outcome["used_council"] is True
+    assert outcome["council_model_count"] == 2
+    assert outcome["chat_outcome_schema_version"] == chat.CHAT_OUTCOME_SCHEMA_VERSION
+    assert outcome["chat_outcome_quality_action"] == "accept"
+    assert conn.fetch_calls[0][1] == ("ken", 5)
 
 
 @pytest.mark.asyncio

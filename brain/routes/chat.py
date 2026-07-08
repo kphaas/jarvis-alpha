@@ -1033,6 +1033,26 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
     return payload
 
 
+def _chat_outcome_from_row(row: Mapping[str, object]) -> dict[str, object]:
+    metadata = _decode_json_object(row.get("internet_metadata"))
+    council_detail = _decode_json_object(row.get("council_detail"))
+    payload = {
+        "message_id": str(row.get("message_id")),
+        "thread_id": str(row.get("thread_id")),
+        "thread_title": row.get("thread_title"),
+        "model_used": row.get("model_used"),
+        "created_at": row.get("created_at"),
+        "used_council": bool(council_detail),
+    }
+    for key in CHAT_OUTCOME_METADATA_KEYS:
+        if key in metadata:
+            payload[key] = metadata[key]
+    if council_detail:
+        payload["council_schema_version"] = council_detail.get("schema_version")
+        payload["council_model_count"] = council_detail.get("model_count")
+    return payload
+
+
 def _decode_json_list(value: object) -> list[object]:
     if isinstance(value, list):
         return value
@@ -2595,6 +2615,50 @@ async def search_sessions(
         work_result_count=len(work_results),
         work_results=work_results,
     )
+
+
+@router.get("/v1/chat/outcomes")
+async def list_chat_outcomes(
+    request: Request,
+    limit: int = Query(default=25, ge=1, le=100),
+    thread_id: str | None = Query(default=None),
+) -> dict[str, object]:
+    user_id = _user_id(request)
+    values: list[object] = [user_id]
+    thread_filter = ""
+    if thread_id:
+        try:
+            values.append(UUID(thread_id))
+        except ValueError as exc:
+            raise HTTPException(400, "invalid_thread_id") from exc
+        thread_filter = f"AND t.id=${len(values)}"
+    values.append(limit)
+    limit_param = len(values)
+
+    async with rls_connection(request) as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT m.id::text AS message_id, m.thread_id::text AS thread_id,
+                   t.title AS thread_title, m.model_used, m.council_detail,
+                   m.internet_metadata, m.created_at
+              FROM chat_messages m
+              JOIN chat_threads t ON t.id = m.thread_id
+             WHERE t.user_id = $1
+               AND t.archived_at IS NULL
+               AND m.role = 'assistant'
+               AND m.internet_metadata ? 'chat_outcome_schema_version'
+               {thread_filter}
+             ORDER BY m.created_at DESC
+             LIMIT ${limit_param}
+            """,
+            *values,
+        )
+    outcomes = [_chat_outcome_from_row(row) for row in rows]
+    return {
+        "schema_version": "chat_outcome_audit.v1",
+        "count": len(outcomes),
+        "outcomes": outcomes,
+    }
 
 
 @router.patch("/v1/threads/{thread_id}")
