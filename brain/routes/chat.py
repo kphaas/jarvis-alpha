@@ -34,6 +34,11 @@ from brain.memory.semantic_commands import (
 from brain.middleware.scopes import check_scopes
 from brain.routing.router import route
 from brain.services.at0_self_model import build_at0_self_model, is_at0_self_query
+from brain.services.chat_evidence_pack import (
+    ChatEvidencePack,
+    build_chat_evidence_pack,
+    render_chat_evidence_prompt,
+)
 from brain.services.internet_scout.chat_adapter import (
     InternetChatContext,
     build_chat_internet_context,
@@ -323,54 +328,20 @@ def _build_enriched_prompt(
         response_surface=response_surface,
         personality_id=personality_id,
     )
-    if (
-        not memory_context
-        and not internet_context
-        and not web_suggestion_context
-        and not at0_self_context
-        and not conversation_context
-        and not response_style_context
-    ):
-        return user_msg
-
-    parts: list[str] = []
-    if internet_context:
-        parts.append(BEACON_INTERNET_AUTHORITY_RULE)
-        parts.append(
-            "Beacon evidence "
-            "(authoritative for current/public web claims):\n"
-            f"{internet_context}"
-        )
-        if memory_context:
-            parts.append(
-                "Context from memory "
-                "(secondary; must not override Beacon evidence):\n"
-                f"{memory_context}"
-            )
-    elif web_suggestion_context:
-        parts.append(WEB_SUGGESTION_BOUNDARY_RULE)
-        parts.append(web_suggestion_context)
-        if memory_context:
-            parts.append(
-                "Context from memory "
-                "(unverified for current/public web claims):\n"
-                f"{memory_context}"
-            )
-    elif memory_context:
-        parts.append(f"Context from memory:\n{memory_context}")
-    if at0_self_context:
-        parts.append(at0_self_context)
-    if conversation_context:
-        parts.append(
-            "Recent conversation "
-            "(oldest to newest; use for follow-ups and pronouns; "
-            "do not treat as fresh web evidence):\n"
-            f"{conversation_context}"
-        )
-    if response_style_context:
-        parts.append(response_style_context)
-    parts.append(f"User: {user_msg}")
-    return "\n\n".join(parts)
+    evidence_pack = build_chat_evidence_pack(
+        memory_context=memory_context,
+        internet_context=internet_context,
+        web_suggestion_context=web_suggestion_context,
+        at0_self_context=at0_self_context,
+        conversation_context=conversation_context,
+    )
+    return render_chat_evidence_prompt(
+        evidence_pack=evidence_pack,
+        user_msg=user_msg,
+        response_style_context=response_style_context,
+        beacon_authority_rule=BEACON_INTERNET_AUTHORITY_RULE,
+        web_suggestion_boundary_rule=WEB_SUGGESTION_BOUNDARY_RULE,
+    )
 
 
 def _message_text(
@@ -642,6 +613,17 @@ def _chat_strategy_sse_metadata(
     payload = {key: result[key] for key in CHAT_STRATEGY_METADATA_KEYS if key in result}
     if not payload:
         return None
+    payload["thread_id"] = thread_id
+    payload["done"] = False
+    return payload
+
+
+def _chat_evidence_sse_metadata(
+    *,
+    evidence_pack: ChatEvidencePack,
+    thread_id: str,
+) -> dict[str, object]:
+    payload = evidence_pack.to_metadata()
     payload["thread_id"] = thread_id
     payload["done"] = False
     return payload
@@ -1936,7 +1918,8 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 },
             )
             at0_self_context = (await build_at0_self_model(None)).prompt_context
-    enriched = _build_enriched_prompt(
+    conversation_context = _conversation_context_from_messages(body.messages)
+    evidence_pack = build_chat_evidence_pack(
         memory_context=context,
         internet_context=internet_context.prompt_context if internet_context else None,
         web_suggestion_context=(
@@ -1945,10 +1928,34 @@ async def chat_completions(body: CompletionRequest, request: Request):
             else None
         ),
         at0_self_context=at0_self_context,
-        conversation_context=_conversation_context_from_messages(body.messages),
+        conversation_context=conversation_context,
+        memory_context_priority=(
+            internet_context.memory_boundary.memory_context_priority
+            if internet_context
+            else None
+        ),
+        raw_web_content_is_untrusted=(
+            internet_context.raw_web_content_is_untrusted if internet_context else False
+        ),
+    )
+    response_style_context = _response_style_prompt(
         response_surface=body.response_surface,
         personality_id=body.personality_id,
+    )
+    enriched = render_chat_evidence_prompt(
+        evidence_pack=evidence_pack,
         user_msg=user_msg,
+        response_style_context=response_style_context,
+        beacon_authority_rule=BEACON_INTERNET_AUTHORITY_RULE,
+        web_suggestion_boundary_rule=WEB_SUGGESTION_BOUNDARY_RULE,
+    )
+    logger.info(
+        "CHAT_EVIDENCE_PACK_COMPILED",
+        extra={
+            "event": "CHAT_EVIDENCE_PACK_COMPILED",
+            "thread_id": thread_id,
+            **evidence_pack.to_metadata(),
+        },
     )
 
     await _save_message(request, thread_id, user_id, "user", user_msg)
@@ -1960,6 +1967,12 @@ async def chat_completions(body: CompletionRequest, request: Request):
     delta_parts: list[str] = []
 
     async def _generator():
+        evidence_payload = _chat_evidence_sse_metadata(
+            evidence_pack=evidence_pack,
+            thread_id=thread_id,
+        )
+        yield f"data: {json.dumps(evidence_payload)}\n\n"
+
         if web_suggestion:
             payload = _web_suggestion_sse_metadata(
                 suggestion=web_suggestion,

@@ -1325,6 +1325,26 @@ async def test_chat_emits_web_suggestion_without_running_beacon(
         for frame in stream.split("\n\n")
         if frame.startswith("data: {") and "web_suggestion_mode" in frame
     ]
+    evidence_frames = [
+        json.loads(frame.removeprefix("data: "))
+        for frame in stream.split("\n\n")
+        if frame.startswith("data: {") and "chat_evidence_schema_version" in frame
+    ]
+    assert evidence_frames == [
+        {
+            "chat_evidence_schema_version": "chat_evidence_pack.v1",
+            "chat_evidence_count": 1,
+            "chat_evidence_memory_used": False,
+            "chat_evidence_internet_used": False,
+            "chat_evidence_web_suggestion_used": True,
+            "chat_evidence_at0_self_used": False,
+            "chat_evidence_conversation_used": False,
+            "chat_evidence_memory_context_priority": None,
+            "chat_evidence_raw_web_content_is_untrusted": False,
+            "thread_id": str(THREAD_ID),
+            "done": False,
+        }
+    ]
     assert suggestion_frames == [
         {
             "web_suggestion_mode": "deep_research",
