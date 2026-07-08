@@ -735,6 +735,54 @@ def test_thread_messages_return_flattened_web_suggestion_metadata() -> None:
     assert message["web_suggestion_requires_confirmation"] is True
 
 
+def test_chat_message_from_row_decodes_persisted_council_detail() -> None:
+    row = {
+        "id": MESSAGE_ID,
+        "role": "assistant",
+        "content": "Synthesized answer.",
+        "model_used": "council/synthesis",
+        "council_detail": json.dumps(
+            {
+                "schema_version": chat.COUNCIL_DETAIL_SCHEMA_VERSION,
+                "model_count": 1,
+                "models": [],
+            }
+        ),
+        "memory_injected": False,
+        "latency_ms": 42,
+        "internet_metadata": None,
+        "created_at": datetime(2026, 6, 12, 20, 40, tzinfo=UTC),
+    }
+
+    message = chat._chat_message_from_row(row)
+
+    assert message["council_detail"] == {
+        "schema_version": chat.COUNCIL_DETAIL_SCHEMA_VERSION,
+        "model_count": 1,
+        "models": [],
+    }
+
+
+def test_build_council_detail_v2_truncates_model_responses() -> None:
+    long_response = "x" * (chat.COUNCIL_DETAIL_RESPONSE_MAX_CHARS + 3)
+
+    detail = chat._build_council_detail_v2(
+        results={"local": {"result": long_response, "mode": "local"}},
+        user_msg="Summarize.",
+        synthesis_model="local",
+        show_council=True,
+    )
+
+    model = detail["models"][0]
+    assert detail["schema_version"] == chat.COUNCIL_DETAIL_SCHEMA_VERSION
+    assert detail["model_count"] == 1
+    assert model["model"] == "local"
+    assert model["status"] == "ok"
+    assert model["response"] == "x" * chat.COUNCIL_DETAIL_RESPONSE_MAX_CHARS
+    assert model["response_char_count"] == chat.COUNCIL_DETAIL_RESPONSE_MAX_CHARS + 3
+    assert model["response_truncated"] is True
+
+
 @pytest.mark.asyncio
 async def test_chat_memory_command_saves_semantic_without_model_call(
     monkeypatch: pytest.MonkeyPatch,
@@ -1147,6 +1195,107 @@ async def test_chat_injects_at0_self_context_for_capability_questions(
     assert captured_prompts
     assert "AT-0 self model: verified web is degraded." in captured_prompts[0]
     assert "Smart Web Suggestion boundary" not in captured_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_chat_council_persists_v2_detail_and_keeps_legacy_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = FakeConn()
+
+    @asynccontextmanager
+    async def fake_rls_connection(_request: object):
+        yield conn
+
+    class FakeMemoryService:
+        async def build_context(self, **_kwargs: object) -> str:
+            return ""
+
+    async def fake_get_or_create_thread(*_args: object, **_kwargs: object) -> str:
+        return str(THREAD_ID)
+
+    async def fake_embed(_text: str) -> list[float]:
+        return []
+
+    async def fake_route(prompt: str, mode: str):
+        if prompt.startswith("Synthesize these responses"):
+            return {"result": "Final council answer.", "mode": "local"}
+        return {"result": f"{mode} says one useful point.", "mode": mode}
+
+    async def fake_store_memory_bg(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(chat, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(chat, "MemoryService", FakeMemoryService)
+    monkeypatch.setattr(chat, "_get_or_create_thread", fake_get_or_create_thread)
+    monkeypatch.setattr(chat, "_embed", fake_embed)
+    monkeypatch.setattr(chat, "route", fake_route)
+    monkeypatch.setattr(chat, "_store_memory_bg", fake_store_memory_bg)
+
+    body = chat.CompletionRequest(
+        messages=[
+            {
+                "role": "user",
+                "content": "Explain how council detail should be preserved.",
+            }
+        ],
+        model="council",
+        council_models=["local", "claude"],
+        show_council=True,
+        thread_id=str(THREAD_ID),
+    )
+    request = cast(
+        Request,
+        SimpleNamespace(state=SimpleNamespace(user_id="ken", role="adult")),
+    )
+
+    response = await chat.chat_completions(body, request)
+    chunks = [
+        chunk.decode() if isinstance(chunk, bytes) else str(chunk)
+        async for chunk in response.body_iterator
+    ]
+    for _ in range(3):
+        await asyncio.sleep(0)
+    stream = "".join(chunks)
+    frames = [
+        json.loads(frame.removeprefix("data: "))
+        for frame in stream.split("\n\n")
+        if frame.startswith("data: {")
+    ]
+    detail_frames = [
+        frame for frame in frames if "chat_council_detail_schema_version" in frame
+    ]
+    synthesis_frames = [
+        frame
+        for frame in frames
+        if frame.get("model") == "council/synthesis" and "council_detail" in frame
+    ]
+
+    assert detail_frames
+    detail = detail_frames[0]["chat_council_detail"]
+    assert detail["schema_version"] == chat.COUNCIL_DETAIL_SCHEMA_VERSION
+    assert detail["model_count"] == 2
+    assert detail["synthesis_model"] == "local"
+    assert [model["model"] for model in detail["models"]] == ["local", "claude"]
+    assert synthesis_frames
+    assert synthesis_frames[0]["council_detail"] == {
+        "local": "local says one useful point.",
+        "claude": "claude says one useful point.",
+    }
+
+    message_inserts = [
+        args
+        for query, args in conn.execute_calls
+        if "INSERT INTO chat_messages" in query
+    ]
+    assert len(message_inserts) == 2
+    assistant_args = message_inserts[1]
+    assert assistant_args[1] == "assistant"
+    assert assistant_args[3] == "council/synthesis"
+    persisted_detail = json.loads(str(assistant_args[4]))
+    assert persisted_detail["schema_version"] == chat.COUNCIL_DETAIL_SCHEMA_VERSION
+    assert persisted_detail["model_count"] == 2
+    assert persisted_detail["models"][0]["response"] == "local says one useful point."
 
 
 @pytest.mark.asyncio
