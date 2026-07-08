@@ -1330,6 +1330,12 @@ async def test_chat_emits_web_suggestion_without_running_beacon(
         for frame in stream.split("\n\n")
         if frame.startswith("data: {") and "chat_evidence_schema_version" in frame
     ]
+    verification_frames = [
+        json.loads(frame.removeprefix("data: "))
+        for frame in stream.split("\n\n")
+        if frame.startswith("data: {")
+        and "chat_response_verification_schema_version" in frame
+    ]
     assert evidence_frames == [
         {
             "chat_evidence_schema_version": "chat_evidence_pack.v1",
@@ -1341,6 +1347,20 @@ async def test_chat_emits_web_suggestion_without_running_beacon(
             "chat_evidence_conversation_used": False,
             "chat_evidence_memory_context_priority": None,
             "chat_evidence_raw_web_content_is_untrusted": False,
+            "thread_id": str(THREAD_ID),
+            "done": False,
+        }
+    ]
+    assert verification_frames == [
+        {
+            "chat_response_verification_schema_version": (
+                "chat_response_verification.v1"
+            ),
+            "chat_response_verified": True,
+            "chat_response_issue_count": 0,
+            "chat_response_issues": [],
+            "chat_response_requires_web_verification": True,
+            "chat_response_evidence_count": 1,
             "thread_id": str(THREAD_ID),
             "done": False,
         }

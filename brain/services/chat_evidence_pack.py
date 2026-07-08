@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+
+UNSUPPORTED_WEB_PROOF_RE = re.compile(
+    r"(?is)\b(?:Beacon|web|internet|online|source|citation).{0,60}"
+    r"\b(?:verified|checked|confirmed|found|looked\s+up)\b|"
+    r"\bI(?:'ve| have)?\s+(?:checked|searched|looked\s+up|found).{0,60}"
+    r"\b(?:web|internet|online|source|citation|Beacon)\b"
+)
 
 
 @dataclass(frozen=True)
@@ -63,6 +71,26 @@ class ChatEvidencePack:
         }
 
 
+@dataclass(frozen=True)
+class ChatResponseVerification:
+    verified: bool
+    issues: tuple[str, ...]
+    requires_web_verification: bool
+    evidence_count: int
+
+    def to_metadata(self) -> dict[str, object]:
+        return {
+            "chat_response_verification_schema_version": (
+                "chat_response_verification.v1"
+            ),
+            "chat_response_verified": self.verified,
+            "chat_response_issue_count": len(self.issues),
+            "chat_response_issues": list(self.issues),
+            "chat_response_requires_web_verification": self.requires_web_verification,
+            "chat_response_evidence_count": self.evidence_count,
+        }
+
+
 def build_chat_evidence_pack(
     *,
     memory_context: str,
@@ -99,6 +127,29 @@ def build_chat_evidence_pack(
         raw_web_content_is_untrusted=bool(
             effective_internet_context and raw_web_content_is_untrusted
         ),
+    )
+
+
+def verify_chat_response(
+    *,
+    response_text: str,
+    evidence_pack: ChatEvidencePack,
+) -> ChatResponseVerification:
+    issues: list[str] = []
+    cleaned = response_text.strip()
+    if not cleaned:
+        issues.append("empty_response")
+    if not evidence_pack.internet_used and UNSUPPORTED_WEB_PROOF_RE.search(cleaned):
+        issues.append("unsupported_web_verification_claim")
+
+    requires_web_verification = (
+        evidence_pack.web_suggestion_used and not evidence_pack.internet_used
+    )
+    return ChatResponseVerification(
+        verified=not issues,
+        issues=tuple(issues),
+        requires_web_verification=requires_web_verification,
+        evidence_count=evidence_pack.evidence_count,
     )
 
 
