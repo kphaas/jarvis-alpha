@@ -132,6 +132,7 @@ ROUTE_CLASSIFICATION: dict[str, list[str]] = {
     # archive guarded in-route for child profiles, so it stays T2 instead of
     # approval-gated T5.
     "GET /v1/threads": ["read"],
+    "GET /v1/chat/outcomes": ["read", "security_read"],
     "GET /v1/sessions/search": ["read", "security_read"],
     "GET /v1/threads/{thread_id}": ["read"],
     "GET /v1/threads/{thread_id}/messages": ["read"],

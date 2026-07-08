@@ -38,3 +38,10 @@ def test_temporal_graph_memory_routes_are_classified():
     assert determine_risk_tier(propose_classes) == "T2"
     assert execute_classes == ["write"]
     assert determine_risk_tier(execute_classes) == "T2"
+
+
+def test_chat_outcome_audit_route_is_security_read():
+    classes = classify_route("GET", "/v1/chat/outcomes")
+
+    assert classes == ["read", "security_read"]
+    assert determine_risk_tier(classes) == "T2"
