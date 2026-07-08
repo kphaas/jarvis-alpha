@@ -487,7 +487,18 @@ def test_homie_intent_route_delegates_climate_mode_actions_to_gateway(
 def test_homie_intent_route_surfaces_approval_handoffs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    coffee_maker = _entity("switch.coffee_maker", "Coffee Maker")
+    coffee_maker = _entity("switch.coffee_maker", "X Coffee Maker")
+    mapping = {
+        "mapped": [
+            {
+                "entity_id": "switch.coffee_maker",
+                "display_name": "Coffee Maker",
+                "aliases": ["coffee maker"],
+                "device_role": "primary",
+                "device_group_label": "Coffee Maker",
+            }
+        ]
+    }
 
     async def fake_request(
         method: str,
@@ -497,7 +508,7 @@ def test_homie_intent_route_surfaces_approval_handoffs(
         body: dict[str, object] | None = None,
     ) -> dict[str, object]:
         if method == "GET":
-            return _snapshot(coffee_maker)
+            return _snapshot(coffee_maker, mapping=mapping)
         return _proposal(coffee_maker, "abc-123")
 
     monkeypatch.setattr(homie, "_request_homie_gateway", fake_request)
@@ -515,6 +526,8 @@ def test_homie_intent_route_surfaces_approval_handoffs(
         "approval_id": "abc-123",
         "status": "pending_approval",
     }
+    assert response.json()["reply"].startswith("Coffee Maker needs approval.")
+    assert response.json()["plan"]["display_name"] == "Coffee Maker"
     assert "abc-123" in response.json()["reply"]
     assert "approval-gated" in response.json()["reply"]
 
@@ -615,6 +628,46 @@ def test_homie_intent_route_resolves_gateway_mapping_aliases_for_reads(
     assert response.status_code == 200
     assert response.json()["mode"] == "read"
     assert response.json()["intent"]["entity_id"] == "switch.holdiay_decor_living"
+    assert response.json()["entity"]["display_name"] == "Holiday Decor Living"
+    assert response.json()["reply"] == "Holiday Decor Living is currently on."
+
+
+def test_homie_intent_route_uses_mapping_labels_for_whole_home_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holiday = _entity("switch.holdiay_decor_living", "Holdiay Decor Living", state="on")
+    mapping = {
+        "mapped": [
+            {
+                "entity_id": "switch.holdiay_decor_living",
+                "friendly_name": "Holdiay Decor Living",
+                "display_name": "Holiday Decor Living",
+                "device_role": "primary",
+                "device_group_label": "Holiday Decor Living",
+            }
+        ]
+    }
+
+    async def fake_request(
+        method: str,
+        path: str,
+        *,
+        request: Request,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        assert method == "GET"
+        return _snapshot(holiday, mapping=mapping)
+
+    monkeypatch.setattr(homie, "_request_homie_gateway", fake_request)
+    client = _client()
+
+    response = client.post(
+        "/v1/home/homie/intent",
+        json={"text": "what is on?", "surface": "chat"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "Currently on: Holiday Decor Living."
 
 
 def test_homie_intent_route_resolves_gateway_mapping_aliases_for_actions(
@@ -657,6 +710,8 @@ def test_homie_intent_route_resolves_gateway_mapping_aliases_for_actions(
     assert response.status_code == 200
     assert response.json()["mode"] == "executed"
     assert response.json()["intent"]["entity_id"] == "switch.x_ken_workdesk"
+    assert response.json()["reply"].startswith("Done. Ken Workdesk was updated.")
+    assert response.json()["plan"]["display_name"] == "Ken Workdesk"
     assert calls[1][2] == {
         "entity_id": "switch.x_ken_workdesk",
         "service": "turn_off",

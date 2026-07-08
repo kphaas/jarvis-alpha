@@ -152,7 +152,12 @@ async def _handle_homie_intent_text(
         return {
             "mode": "read",
             "surface": surface,
-            "reply": _whole_home_summary(snapshot, context_index, surface=surface),
+            "reply": _whole_home_summary(
+                snapshot,
+                context_index,
+                mapping_index,
+                surface=surface,
+            ),
             "intent": {"kind": "read", "scope": "whole_home"},
             "stream": stream,
         }
@@ -172,10 +177,13 @@ async def _handle_homie_intent_text(
         request=request,
         body=_action_body(parsed),
     )
+    reply_gateway_result = _gateway_result_with_entity_label(
+        gateway_result, parsed["entity"]
+    )
     response = {
-        "mode": gateway_result.get("mode"),
+        "mode": reply_gateway_result.get("mode"),
         "surface": surface,
-        "reply": _action_reply(gateway_result, surface=surface),
+        "reply": _action_reply(reply_gateway_result, surface=surface),
         "intent": {
             "kind": "action",
             "entity_id": parsed["entity"]["entity_id"],
@@ -190,7 +198,7 @@ async def _handle_homie_intent_text(
         "stream": stream,
     }
     for key in ("plan", "proposal", "approval", "execution"):
-        value = gateway_result.get(key)
+        value = reply_gateway_result.get(key)
         if value is not None:
             response[key] = value
     return response
@@ -446,12 +454,13 @@ def _resolve_entity(
         entity_id = entity.get("entity_id")
         if not isinstance(entity_id, str) or not entity_id:
             continue
+        mapping = mapping_index.get(entity_id)
         names = [entity_id.replace(".", " ").replace("_", " ")]
         friendly_name = entity.get("friendly_name")
         if isinstance(friendly_name, str) and friendly_name.strip():
             names.insert(0, friendly_name)
         names.extend(_context_names(context_index.get(entity_id)))
-        names.extend(_mapping_names(mapping_index.get(entity_id)))
+        names.extend(_mapping_names(mapping))
 
         score = 0
         for name in names:
@@ -467,7 +476,7 @@ def _resolve_entity(
         if entity_id.lower() in text.lower():
             score = max(score, 200)
         if score > best_score:
-            best = entity
+            best = _entity_with_mapping_label(entity, mapping)
             best_score = score
 
     if best_score < 20:
@@ -496,6 +505,7 @@ def _is_whole_home_read(normalized: str) -> bool:
 def _whole_home_summary(
     snapshot: dict[str, dict[str, Any]],
     context_index: dict[str, dict[str, Any]],
+    mapping_index: dict[str, dict[str, Any]],
     *,
     surface: Literal["chat", "voice"],
 ) -> str:
@@ -508,14 +518,17 @@ def _whole_home_summary(
         entity_id = entity.get("entity_id")
         if not isinstance(entity_id, str):
             continue
+        mapping_label = _mapping_label(mapping_index.get(entity_id))
         label = (
-            friendly_name
+            mapping_label
+            if isinstance(mapping_label, str) and mapping_label
+            else friendly_name
             if isinstance(friendly_name, str) and friendly_name
             else entity_id
         )
         active_names.append(
             _entity_label_with_room(
-                {"entity_id": entity_id, "friendly_name": label},
+                {"entity_id": entity_id, "display_name": label},
                 context_index.get(entity_id),
             )
         )
@@ -528,6 +541,49 @@ def _whole_home_summary(
     if len(active_names) > len(shown):
         return f"Currently on: {names}, and {len(active_names) - len(shown)} more."
     return f"Currently on: {names}."
+
+
+def _entity_with_mapping_label(
+    entity: dict[str, Any],
+    mapping: dict[str, Any] | None,
+) -> dict[str, Any]:
+    label = _mapping_label(mapping)
+    if label is None:
+        return entity
+    return {**entity, "display_name": label}
+
+
+def _gateway_result_with_entity_label(
+    gateway_result: dict[str, Any],
+    entity: dict[str, Any],
+) -> dict[str, Any]:
+    label = entity.get("display_name")
+    if not isinstance(label, str) or not label.strip():
+        return gateway_result
+
+    plan = gateway_result.get("plan")
+    if not isinstance(plan, dict):
+        return gateway_result
+    if plan.get("display_name") == label:
+        return gateway_result
+
+    return {**gateway_result, "plan": {**plan, "display_name": label.strip()}}
+
+
+def _mapping_label(mapping: dict[str, Any] | None) -> str | None:
+    if not isinstance(mapping, dict):
+        return None
+    display_name = mapping.get("display_name")
+    if isinstance(display_name, str) and display_name.strip():
+        return display_name.strip()
+    if mapping.get("device_role") == "primary":
+        group_label = mapping.get("device_group_label")
+        if isinstance(group_label, str) and group_label.strip():
+            return group_label.strip()
+    friendly_name = mapping.get("friendly_name")
+    if isinstance(friendly_name, str) and friendly_name.strip():
+        return friendly_name.strip()
+    return None
 
 
 def _entity_status_reply(
@@ -620,6 +676,9 @@ def _action_body(parsed: dict[str, Any]) -> dict[str, Any]:
 
 
 def _entity_label(entity: dict[str, Any]) -> str:
+    display_name = entity.get("display_name")
+    if isinstance(display_name, str) and display_name.strip():
+        return display_name.strip()
     friendly_name = entity.get("friendly_name")
     if isinstance(friendly_name, str) and friendly_name.strip():
         return friendly_name.strip()
