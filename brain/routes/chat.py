@@ -79,6 +79,12 @@ AT0_SELF_MODEL_LABEL = "alpha/at0-self-model"
 CONVERSATION_QUALITY_MODEL_LABEL = "alpha/conversation-quality-contract"
 ROLLING_CONTEXT_MAX_MESSAGES = 8
 ROLLING_CONTEXT_MESSAGE_CHAR_LIMIT = 420
+CHAT_STRATEGY_METADATA_KEYS = (
+    "chat_strategy",
+    "chat_route_mode",
+    "chat_model_path",
+    "chat_strategy_reason",
+)
 BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
     [
         "Beacon authority rule:",
@@ -624,6 +630,18 @@ def _internet_sse_metadata(
     thread_id: str,
 ) -> dict[str, object]:
     payload = _internet_message_metadata(context)
+    payload["thread_id"] = thread_id
+    payload["done"] = False
+    return payload
+
+
+def _chat_strategy_sse_metadata(
+    result: Mapping[str, object],
+    thread_id: str,
+) -> dict[str, object] | None:
+    payload = {key: result[key] for key in CHAT_STRATEGY_METADATA_KEYS if key in result}
+    if not payload:
+        return None
     payload["thread_id"] = thread_id
     payload["done"] = False
     return payload
@@ -1633,6 +1651,10 @@ async def _stream_single(
     """Stream tokens from router → SSE events."""
     jarvis_prompt = f"{JARVIS_SYSTEM_PROMPT}\n\n{_runtime_context_prompt()}\n\n{prompt}"
     result = await route(jarvis_prompt, mode)
+    strategy_metadata = _chat_strategy_sse_metadata(result, thread_id)
+    if strategy_metadata:
+        yield f"data: {json.dumps(strategy_metadata)}\n\n"
+
     text = _finalize_model_response(
         result.get("result", ""),
         response_surface,
