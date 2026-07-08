@@ -90,6 +90,7 @@ AT0_SELF_MODEL_LABEL = "alpha/at0-self-model"
 CONVERSATION_QUALITY_MODEL_LABEL = "alpha/conversation-quality-contract"
 COUNCIL_DETAIL_SCHEMA_VERSION = "chat_council_detail.v2"
 COUNCIL_DETAIL_RESPONSE_MAX_CHARS = 2000
+CHAT_OUTCOME_SCHEMA_VERSION = "chat_outcome.v1"
 ROLLING_CONTEXT_MAX_MESSAGES = 8
 ROLLING_CONTEXT_MESSAGE_CHAR_LIMIT = 420
 CHAT_STRATEGY_METADATA_KEYS = (
@@ -97,6 +98,25 @@ CHAT_STRATEGY_METADATA_KEYS = (
     "chat_route_mode",
     "chat_model_path",
     "chat_strategy_reason",
+)
+CHAT_OUTCOME_METADATA_KEYS = (
+    "chat_outcome_schema_version",
+    "chat_outcome_model_label",
+    "chat_outcome_strategy",
+    "chat_outcome_route_mode",
+    "chat_outcome_model_path",
+    "chat_outcome_strategy_reason",
+    "chat_outcome_verified",
+    "chat_outcome_issue_count",
+    "chat_outcome_quality_action",
+    "chat_outcome_quality_passed",
+    "chat_outcome_quality_reason",
+    "chat_outcome_fallback_used",
+    "chat_outcome_escalation_required",
+    "chat_outcome_escalation_rung",
+    "chat_outcome_escalation_action",
+    "chat_outcome_escalation_requires_confirmation",
+    "chat_outcome_evidence_count",
 )
 BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
     [
@@ -683,6 +703,54 @@ def _chat_council_detail_sse_metadata(
     }
 
 
+def _chat_outcome_message_metadata(
+    *,
+    model_label: str,
+    route_result: Mapping[str, object],
+    verification: ChatResponseVerification,
+    gate: ChatQualityGateDecision,
+    escalation: ChatEscalationDecision,
+) -> dict[str, object]:
+    verification_metadata = verification.to_metadata()
+    gate_metadata = gate.to_metadata()
+    escalation_metadata = escalation.to_metadata()
+    return {
+        "chat_outcome_schema_version": CHAT_OUTCOME_SCHEMA_VERSION,
+        "chat_outcome_model_label": model_label,
+        "chat_outcome_strategy": route_result.get("chat_strategy"),
+        "chat_outcome_route_mode": route_result.get("chat_route_mode")
+        or route_result.get("mode"),
+        "chat_outcome_model_path": route_result.get("chat_model_path"),
+        "chat_outcome_strategy_reason": route_result.get("chat_strategy_reason"),
+        "chat_outcome_verified": verification_metadata["chat_response_verified"],
+        "chat_outcome_issue_count": verification_metadata["chat_response_issue_count"],
+        "chat_outcome_quality_action": gate_metadata["chat_quality_action"],
+        "chat_outcome_quality_passed": gate_metadata["chat_quality_passed"],
+        "chat_outcome_quality_reason": gate_metadata["chat_quality_reason"],
+        "chat_outcome_fallback_used": gate_metadata["chat_quality_fallback_used"],
+        "chat_outcome_escalation_required": escalation_metadata[
+            "chat_escalation_required"
+        ],
+        "chat_outcome_escalation_rung": escalation_metadata["chat_escalation_rung"],
+        "chat_outcome_escalation_action": escalation_metadata["chat_escalation_action"],
+        "chat_outcome_escalation_requires_confirmation": escalation_metadata[
+            "chat_escalation_requires_user_confirmation"
+        ],
+        "chat_outcome_evidence_count": verification_metadata[
+            "chat_response_evidence_count"
+        ],
+    }
+
+
+def _merge_chat_outcome_metadata(
+    existing: dict[str, object] | None,
+    outcome: dict[str, object],
+) -> dict[str, object] | None:
+    if not existing and not outcome:
+        return None
+    return {**(existing or {}), **outcome}
+
+
 def _internet_message_metadata(
     context: InternetChatContext,
 ) -> dict[str, object]:
@@ -958,6 +1026,7 @@ def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
         "web_suggestion_query",
         "web_suggestion_requires_confirmation",
         "web_suggestion_source",
+        *CHAT_OUTCOME_METADATA_KEYS,
     ):
         if key in internet_metadata:
             payload[key] = internet_metadata[key]
@@ -1720,6 +1789,7 @@ async def _stream_single(
     response_surface: AskResponseSurface = "chat",
     internet_verified: bool = False,
     evidence_pack: ChatEvidencePack | None = None,
+    chat_outcome_holder: dict[str, object] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream tokens from router → SSE events."""
     jarvis_prompt = f"{JARVIS_SYSTEM_PROMPT}\n\n{_runtime_context_prompt()}\n\n{prompt}"
@@ -1746,6 +1816,16 @@ async def _stream_single(
             strategy_metadata=result,
         )
         escalation = plan_chat_escalation(quality_gate=gate)
+        if chat_outcome_holder is not None:
+            chat_outcome_holder.update(
+                _chat_outcome_message_metadata(
+                    model_label=model_label,
+                    route_result=result,
+                    verification=verification,
+                    gate=gate,
+                    escalation=escalation,
+                )
+            )
         payload = _chat_response_verification_sse_metadata(
             verification=verification,
             thread_id=thread_id,
@@ -1821,6 +1901,7 @@ async def _stream_council(
     user_msg: str,
     evidence_pack: ChatEvidencePack | None = None,
     council_detail_holder: dict[str, object] | None = None,
+    chat_outcome_holder: dict[str, object] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Parallel council calls → optional per-model stream → synthesis."""
     tasks = {m: asyncio.create_task(route(prompt, m)) for m in models}
@@ -1893,6 +1974,16 @@ async def _stream_council(
             strategy_metadata=synth_result,
         )
         escalation = plan_chat_escalation(quality_gate=gate)
+        if chat_outcome_holder is not None:
+            chat_outcome_holder.update(
+                _chat_outcome_message_metadata(
+                    model_label="council/synthesis",
+                    route_result=synth_result,
+                    verification=verification,
+                    gate=gate,
+                    escalation=escalation,
+                )
+            )
         payload = _chat_response_verification_sse_metadata(
             verification=verification,
             thread_id=thread_id,
@@ -2168,6 +2259,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
 
     delta_parts: list[str] = []
     council_detail_v2: dict[str, object] = {}
+    chat_outcome: dict[str, object] = {}
 
     async def _generator():
         evidence_payload = _chat_evidence_sse_metadata(
@@ -2331,6 +2423,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 user_msg,
                 evidence_pack=evidence_pack,
                 council_detail_holder=council_detail_v2,
+                chat_outcome_holder=chat_outcome,
             )
         else:
             gen = _stream_single(
@@ -2342,6 +2435,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 response_surface=body.response_surface,
                 internet_verified=bool(internet_context),
                 evidence_pack=evidence_pack,
+                chat_outcome_holder=chat_outcome,
             )
 
         async for chunk in gen:
@@ -2364,6 +2458,11 @@ async def chat_completions(body: CompletionRequest, request: Request):
         )
         model_label = "council/synthesis" if is_council else body.model
         council_raw = council_detail_v2 if is_council and council_detail_v2 else None
+        base_metadata = (
+            _internet_message_metadata(internet_context)
+            if internet_context
+            else _web_suggestion_message_metadata(web_suggestion)
+        )
 
         asyncio.create_task(
             _save_message(
@@ -2376,10 +2475,9 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 council_detail=council_raw,
                 memory_injected=memory_injected,
                 latency_ms=latency,
-                internet_metadata=(
-                    _internet_message_metadata(internet_context)
-                    if internet_context
-                    else _web_suggestion_message_metadata(web_suggestion)
+                internet_metadata=_merge_chat_outcome_metadata(
+                    base_metadata,
+                    chat_outcome,
                 ),
             )
         )
