@@ -36,8 +36,10 @@ from brain.routing.router import route
 from brain.services.at0_self_model import build_at0_self_model, is_at0_self_query
 from brain.services.chat_evidence_pack import (
     ChatEvidencePack,
+    ChatResponseVerification,
     build_chat_evidence_pack,
     render_chat_evidence_prompt,
+    verify_chat_response,
 )
 from brain.services.internet_scout.chat_adapter import (
     InternetChatContext,
@@ -624,6 +626,17 @@ def _chat_evidence_sse_metadata(
     thread_id: str,
 ) -> dict[str, object]:
     payload = evidence_pack.to_metadata()
+    payload["thread_id"] = thread_id
+    payload["done"] = False
+    return payload
+
+
+def _chat_response_verification_sse_metadata(
+    *,
+    verification: ChatResponseVerification,
+    thread_id: str,
+) -> dict[str, object]:
+    payload = verification.to_metadata()
     payload["thread_id"] = thread_id
     payload["done"] = False
     return payload
@@ -1629,6 +1642,7 @@ async def _stream_single(
     user_msg: str,
     response_surface: AskResponseSurface = "chat",
     internet_verified: bool = False,
+    evidence_pack: ChatEvidencePack | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream tokens from router → SSE events."""
     jarvis_prompt = f"{JARVIS_SYSTEM_PROMPT}\n\n{_runtime_context_prompt()}\n\n{prompt}"
@@ -1644,6 +1658,16 @@ async def _stream_single(
         internet_verified=internet_verified,
     )
     model_used = result.get("mode", mode)
+    if evidence_pack:
+        verification = verify_chat_response(
+            response_text=text,
+            evidence_pack=evidence_pack,
+        )
+        payload = _chat_response_verification_sse_metadata(
+            verification=verification,
+            thread_id=thread_id,
+        )
+        yield f"data: {json.dumps(payload)}\n\n"
 
     words = text.split(" ")
     for i, word in enumerate(words):
@@ -1685,6 +1709,7 @@ async def _stream_council(
     thread_id: str,
     show_council: bool,
     user_msg: str,
+    evidence_pack: ChatEvidencePack | None = None,
 ) -> AsyncGenerator[str, None]:
     """Parallel council calls → optional per-model stream → synthesis."""
     tasks = {m: asyncio.create_task(route(prompt, m)) for m in models}
@@ -1723,6 +1748,16 @@ async def _stream_council(
     synth_text = _strip_unrequested_source_references(
         synth_result.get("result", ""), user_msg
     )
+    if evidence_pack:
+        verification = verify_chat_response(
+            response_text=synth_text,
+            evidence_pack=evidence_pack,
+        )
+        payload = _chat_response_verification_sse_metadata(
+            verification=verification,
+            thread_id=thread_id,
+        )
+        yield f"data: {json.dumps(payload)}\n\n"
 
     council_summary = {
         m: _strip_unrequested_source_references(r.get("result", ""), user_msg)
@@ -2126,6 +2161,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 thread_id,
                 body.show_council,
                 user_msg,
+                evidence_pack=evidence_pack,
             )
         else:
             gen = _stream_single(
@@ -2136,6 +2172,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 user_msg,
                 response_surface=body.response_surface,
                 internet_verified=bool(internet_context),
+                evidence_pack=evidence_pack,
             )
 
         async for chunk in gen:
@@ -2144,6 +2181,18 @@ async def chat_completions(body: CompletionRequest, request: Request):
 
         latency = int((time.monotonic() - start) * 1000)
         full_text = "".join(delta_parts)
+        verification = verify_chat_response(
+            response_text=full_text,
+            evidence_pack=evidence_pack,
+        )
+        logger.info(
+            "CHAT_RESPONSE_VERIFICATION_COMPLETED",
+            extra={
+                "event": "CHAT_RESPONSE_VERIFICATION_COMPLETED",
+                "thread_id": thread_id,
+                **verification.to_metadata(),
+            },
+        )
         model_label = "council/synthesis" if is_council else body.model
         council_raw = None
 
