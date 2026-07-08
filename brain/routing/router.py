@@ -9,26 +9,23 @@ from brain.core.models import (
     LOCAL_CHAT,
     PERPLEXITY_FAST,
 )
-from brain.routing.complexity import score
 from brain.routing.council import CouncilOrchestrator
+from brain.routing.strategy import select_chat_strategy
 
 COUNCIL_TRIGGER = "manual"  # future values: "complexity", "topic"
 
 
 async def route(prompt: str, mode: str = "auto") -> dict:
     if mode == "council":
-        return await CouncilOrchestrator().run(prompt)
+        result = await CouncilOrchestrator().run(prompt)
+        result.update(
+            select_chat_strategy(prompt=prompt, requested_model=mode).metadata()
+        )
+        return result
 
-    if mode == "auto":
-        s = score(prompt)
-        if s in (1, 2) or s == "code" or s == "scrape":
-            mode = "local"
-        elif s == 3:
-            mode = "perplexity"
-        elif s == 4:
-            mode = "claude"
-        else:
-            mode = "gemini"
+    strategy_plan = select_chat_strategy(prompt=prompt, requested_model=mode)
+    mode = strategy_plan.route_mode
+    metadata = strategy_plan.metadata()
 
     def _curl_gateway(endpoint: str, payload: dict) -> dict:
         cmd = [
@@ -68,7 +65,7 @@ async def route(prompt: str, mode: str = "auto") -> dict:
                 subprocess.run, cmd, capture_output=True, text=True, timeout=65
             )
             text = json.loads(result.stdout).get("response", "").strip()
-            return {"mode": "local", "result": text}
+            return {"mode": "local", "result": text, **metadata}
 
         if mode == "claude":
             raw = await asyncio.to_thread(
@@ -87,7 +84,7 @@ async def route(prompt: str, mode: str = "auto") -> dict:
                 text = raw["result"]["content"][0]["text"]
             except (KeyError, IndexError, TypeError):
                 text = ""
-            return {"mode": "claude", "result": text}
+            return {"mode": "claude", "result": text, **metadata}
 
         if mode == "gemini":
             raw = await asyncio.to_thread(
@@ -106,7 +103,7 @@ async def route(prompt: str, mode: str = "auto") -> dict:
                 text = raw["result"]["candidates"][0]["content"]["parts"][0]["text"]
             except (KeyError, IndexError, TypeError):
                 text = ""
-            return {"mode": "gemini", "result": text}
+            return {"mode": "gemini", "result": text, **metadata}
 
         if mode == "perplexity":
             raw = await asyncio.to_thread(
@@ -124,9 +121,14 @@ async def route(prompt: str, mode: str = "auto") -> dict:
                 text = raw["result"]["choices"][0]["message"]["content"]
             except (KeyError, IndexError, TypeError):
                 text = ""
-            return {"mode": "perplexity", "result": text}
+            return {"mode": "perplexity", "result": text, **metadata}
 
-        return {"mode": mode, "result": "", "error": f"unknown mode: {mode}"}
+        return {
+            "mode": mode,
+            "result": "",
+            "error": f"unknown mode: {mode}",
+            **metadata,
+        }
 
     except Exception as e:
-        return {"mode": mode, "result": "", "error": str(e)}
+        return {"mode": mode, "result": "", "error": str(e), **metadata}

@@ -23,6 +23,10 @@ from brain.services import agent_workspace
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _fresh_created_at() -> datetime:
+    return datetime.now(tz=UTC)
+
+
 def test_local_workspace_init_writes_manifest_and_layout(tmp_path: Path) -> None:
     backend = agent_workspace.LocalWorkspaceBackend(tmp_path)
     run_id = UUID("11111111-1111-1111-1111-111111111111")
@@ -33,7 +37,7 @@ def test_local_workspace_init_writes_manifest_and_layout(tmp_path: Path) -> None
         ["memory.proposal_required"],
         "memory.review",
         "standard",
-        created_at=datetime(2026, 6, 30, 18, 0, tzinfo=UTC),
+        created_at=_fresh_created_at(),
     )
 
     workspace_root = tmp_path / str(run_id)
@@ -257,7 +261,7 @@ async def test_get_agent_run_artifact_content_reads_workspace_file(
         ["memory.proposal_required"],
         "memory.review",
         "standard",
-        created_at=datetime(2026, 6, 30, 18, 0, tzinfo=UTC),
+        created_at=_fresh_created_at(),
     )
     conn.workspace_root = manifest.workspace_root
     record = backend.write_text(
@@ -309,7 +313,7 @@ async def test_preview_agent_run_artifact_returns_bounded_safe_text(
         ["memory.proposal_required"],
         "memory.review",
         "standard",
-        created_at=datetime(2026, 6, 30, 18, 0, tzinfo=UTC),
+        created_at=_fresh_created_at(),
     )
     conn.workspace_root = manifest.workspace_root
     record = backend.write_text(
@@ -411,7 +415,7 @@ class _FakeWorkspaceConn:
             return {
                 "id": run_id,
                 "agent_id": "internet_scout",
-                "created_at": datetime(2026, 6, 30, 18, 0, tzinfo=UTC),
+                "created_at": _fresh_created_at(),
                 "workspace_backend": "local",
                 "workspace_root": self.workspace_root,
                 "policy_labels": '["finance.paper_only", "memory.proposal_required"]',
