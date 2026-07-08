@@ -88,6 +88,8 @@ BEACON_INSUFFICIENT_MODEL = "beacon/insufficient-evidence"
 MEMORY_COMMAND_MODEL = "alpha/memory-command"
 AT0_SELF_MODEL_LABEL = "alpha/at0-self-model"
 CONVERSATION_QUALITY_MODEL_LABEL = "alpha/conversation-quality-contract"
+COUNCIL_DETAIL_SCHEMA_VERSION = "chat_council_detail.v2"
+COUNCIL_DETAIL_RESPONSE_MAX_CHARS = 2000
 ROLLING_CONTEXT_MAX_MESSAGES = 8
 ROLLING_CONTEXT_MESSAGE_CHAR_LIMIT = 420
 CHAT_STRATEGY_METADATA_KEYS = (
@@ -668,6 +670,19 @@ def _chat_escalation_sse_metadata(
     return payload
 
 
+def _chat_council_detail_sse_metadata(
+    *,
+    council_detail: dict[str, object],
+    thread_id: str,
+) -> dict[str, object]:
+    return {
+        "chat_council_detail_schema_version": COUNCIL_DETAIL_SCHEMA_VERSION,
+        "chat_council_detail": council_detail,
+        "thread_id": thread_id,
+        "done": False,
+    }
+
+
 def _internet_message_metadata(
     context: InternetChatContext,
 ) -> dict[str, object]:
@@ -875,6 +890,9 @@ def _decode_json_object(value: object) -> dict[str, object]:
 
 def _chat_message_from_row(row: Mapping[str, object]) -> dict[str, object]:
     payload = dict(row)
+    payload["council_detail"] = (
+        _decode_json_object(payload.get("council_detail")) or None
+    )
     internet_metadata = _decode_json_object(payload.pop("internet_metadata", None))
     for key in (
         "internet_mode",
@@ -1640,6 +1658,39 @@ def _strip_unrequested_source_references(text: str, user_msg: str) -> str:
     return cleaned.strip()
 
 
+def _build_council_detail_v2(
+    *,
+    results: Mapping[str, Mapping[str, object]],
+    user_msg: str,
+    synthesis_model: str,
+    show_council: bool,
+) -> dict[str, object]:
+    models: list[dict[str, object]] = []
+    for requested_model, result in results.items():
+        response = _strip_unrequested_source_references(
+            str(result.get("result") or ""), user_msg
+        )
+        models.append(
+            {
+                "model": requested_model,
+                "model_used": str(result.get("mode") or requested_model),
+                "status": "error"
+                if response.startswith(f"[{requested_model} error:")
+                else "ok",
+                "response": response[:COUNCIL_DETAIL_RESPONSE_MAX_CHARS],
+                "response_char_count": len(response),
+                "response_truncated": len(response) > COUNCIL_DETAIL_RESPONSE_MAX_CHARS,
+            }
+        )
+    return {
+        "schema_version": COUNCIL_DETAIL_SCHEMA_VERSION,
+        "model_count": len(models),
+        "show_council": show_council,
+        "synthesis_model": synthesis_model,
+        "models": models,
+    }
+
+
 def _finalize_model_response(
     text: str,
     response_surface: AskResponseSurface,
@@ -1769,6 +1820,7 @@ async def _stream_council(
     show_council: bool,
     user_msg: str,
     evidence_pack: ChatEvidencePack | None = None,
+    council_detail_holder: dict[str, object] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Parallel council calls → optional per-model stream → synthesis."""
     tasks = {m: asyncio.create_task(route(prompt, m)) for m in models}
@@ -1807,6 +1859,29 @@ async def _stream_council(
     synth_text = _strip_unrequested_source_references(
         synth_result.get("result", ""), user_msg
     )
+    council_detail_v2 = _build_council_detail_v2(
+        results=results,
+        user_msg=user_msg,
+        synthesis_model=str(synth_result.get("mode") or "local"),
+        show_council=show_council,
+    )
+    if council_detail_holder is not None:
+        council_detail_holder.update(council_detail_v2)
+    logger.info(
+        "CHAT_COUNCIL_DETAIL_COMPILED",
+        extra={
+            "event": "CHAT_COUNCIL_DETAIL_COMPILED",
+            "thread_id": thread_id,
+            "schema_version": COUNCIL_DETAIL_SCHEMA_VERSION,
+            "model_count": council_detail_v2["model_count"],
+            "show_council": show_council,
+        },
+    )
+    detail_payload = _chat_council_detail_sse_metadata(
+        council_detail=council_detail_v2,
+        thread_id=thread_id,
+    )
+    yield f"data: {json.dumps(detail_payload)}\n\n"
     if evidence_pack:
         verification = verify_chat_response(
             response_text=synth_text,
@@ -2092,6 +2167,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
         asyncio.create_task(_auto_name_thread(request, thread_id, user_id, user_msg))
 
     delta_parts: list[str] = []
+    council_detail_v2: dict[str, object] = {}
 
     async def _generator():
         evidence_payload = _chat_evidence_sse_metadata(
@@ -2254,6 +2330,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 body.show_council,
                 user_msg,
                 evidence_pack=evidence_pack,
+                council_detail_holder=council_detail_v2,
             )
         else:
             gen = _stream_single(
@@ -2286,7 +2363,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
             },
         )
         model_label = "council/synthesis" if is_council else body.model
-        council_raw = None
+        council_raw = council_detail_v2 if is_council and council_detail_v2 else None
 
         asyncio.create_task(
             _save_message(
