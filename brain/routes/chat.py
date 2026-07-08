@@ -36,8 +36,10 @@ from brain.routing.router import route
 from brain.services.at0_self_model import build_at0_self_model, is_at0_self_query
 from brain.services.chat_evidence_pack import (
     ChatEvidencePack,
+    ChatQualityGateDecision,
     ChatResponseVerification,
     build_chat_evidence_pack,
+    evaluate_chat_quality_gate,
     render_chat_evidence_prompt,
     verify_chat_response,
 )
@@ -637,6 +639,17 @@ def _chat_response_verification_sse_metadata(
     thread_id: str,
 ) -> dict[str, object]:
     payload = verification.to_metadata()
+    payload["thread_id"] = thread_id
+    payload["done"] = False
+    return payload
+
+
+def _chat_quality_gateway_sse_metadata(
+    *,
+    decision: ChatQualityGateDecision,
+    thread_id: str,
+) -> dict[str, object]:
+    payload = decision.to_metadata()
     payload["thread_id"] = thread_id
     payload["done"] = False
     return payload
@@ -1663,11 +1676,30 @@ async def _stream_single(
             response_text=text,
             evidence_pack=evidence_pack,
         )
+        gate = evaluate_chat_quality_gate(
+            evidence_pack=evidence_pack,
+            verification=verification,
+            strategy_metadata=result,
+        )
         payload = _chat_response_verification_sse_metadata(
             verification=verification,
             thread_id=thread_id,
         )
         yield f"data: {json.dumps(payload)}\n\n"
+        gateway_payload = _chat_quality_gateway_sse_metadata(
+            decision=gate,
+            thread_id=thread_id,
+        )
+        yield f"data: {json.dumps(gateway_payload)}\n\n"
+        logger.info(
+            "CHAT_QUALITY_GATEWAY_DECIDED",
+            extra={
+                "event": "CHAT_QUALITY_GATEWAY_DECIDED",
+                "thread_id": thread_id,
+                **gate.to_metadata(),
+            },
+        )
+        text = gate.fallback_response or text
 
     words = text.split(" ")
     for i, word in enumerate(words):
@@ -1753,11 +1785,30 @@ async def _stream_council(
             response_text=synth_text,
             evidence_pack=evidence_pack,
         )
+        gate = evaluate_chat_quality_gate(
+            evidence_pack=evidence_pack,
+            verification=verification,
+            strategy_metadata=synth_result,
+        )
         payload = _chat_response_verification_sse_metadata(
             verification=verification,
             thread_id=thread_id,
         )
         yield f"data: {json.dumps(payload)}\n\n"
+        gateway_payload = _chat_quality_gateway_sse_metadata(
+            decision=gate,
+            thread_id=thread_id,
+        )
+        yield f"data: {json.dumps(gateway_payload)}\n\n"
+        logger.info(
+            "CHAT_QUALITY_GATEWAY_DECIDED",
+            extra={
+                "event": "CHAT_QUALITY_GATEWAY_DECIDED",
+                "thread_id": thread_id,
+                **gate.to_metadata(),
+            },
+        )
+        synth_text = gate.fallback_response or synth_text
 
     council_summary = {
         m: _strip_unrequested_source_references(r.get("result", ""), user_msg)

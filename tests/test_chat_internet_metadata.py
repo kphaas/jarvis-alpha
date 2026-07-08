@@ -1336,6 +1336,19 @@ async def test_chat_emits_web_suggestion_without_running_beacon(
         if frame.startswith("data: {")
         and "chat_response_verification_schema_version" in frame
     ]
+    quality_frames = [
+        json.loads(frame.removeprefix("data: "))
+        for frame in stream.split("\n\n")
+        if frame.startswith("data: {")
+        and "chat_quality_gateway_schema_version" in frame
+    ]
+    streamed_text = "".join(
+        str(payload.get("delta", ""))
+        for frame in stream.split("\n\n")
+        if frame.startswith("data: {")
+        for payload in [json.loads(frame.removeprefix("data: "))]
+        if payload.get("done") is not True
+    )
     assert evidence_frames == [
         {
             "chat_evidence_schema_version": "chat_evidence_pack.v1",
@@ -1365,6 +1378,25 @@ async def test_chat_emits_web_suggestion_without_running_beacon(
             "done": False,
         }
     ]
+    assert quality_frames == [
+        {
+            "chat_quality_gateway_schema_version": "chat_quality_gateway.v1",
+            "chat_quality_action": "require_beacon",
+            "chat_quality_passed": False,
+            "chat_quality_reason": "web_verification_required",
+            "chat_quality_fallback_used": True,
+            "chat_quality_response_verified": True,
+            "chat_quality_response_issues": [],
+            "chat_quality_evidence_count": 1,
+            "chat_quality_strategy": None,
+            "chat_quality_model_path": None,
+            "thread_id": str(THREAD_ID),
+            "done": False,
+        }
+    ]
+    assert streamed_text == (
+        "I need Beacon verification before I can answer that as current or verified."
+    )
     assert suggestion_frames == [
         {
             "web_suggestion_mode": "deep_research",
