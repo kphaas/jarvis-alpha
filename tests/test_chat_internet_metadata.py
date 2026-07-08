@@ -735,6 +735,34 @@ def test_thread_messages_return_flattened_web_suggestion_metadata() -> None:
     assert message["web_suggestion_requires_confirmation"] is True
 
 
+def test_thread_messages_return_flattened_chat_outcome_metadata() -> None:
+    row = {
+        "id": MESSAGE_ID,
+        "role": "assistant",
+        "content": "Answer.",
+        "model_used": "auto",
+        "council_detail": None,
+        "memory_injected": False,
+        "latency_ms": 42,
+        "internet_metadata": json.dumps(
+            {
+                "chat_outcome_schema_version": chat.CHAT_OUTCOME_SCHEMA_VERSION,
+                "chat_outcome_model_label": "auto",
+                "chat_outcome_route_mode": "local",
+                "chat_outcome_quality_action": "accept",
+            }
+        ),
+        "created_at": datetime(2026, 6, 12, 20, 40, tzinfo=UTC),
+    }
+
+    message = chat._chat_message_from_row(row)
+
+    assert message["chat_outcome_schema_version"] == chat.CHAT_OUTCOME_SCHEMA_VERSION
+    assert message["chat_outcome_model_label"] == "auto"
+    assert message["chat_outcome_route_mode"] == "local"
+    assert message["chat_outcome_quality_action"] == "accept"
+
+
 def test_chat_message_from_row_decodes_persisted_council_detail() -> None:
     row = {
         "id": MESSAGE_ID,
@@ -1296,6 +1324,14 @@ async def test_chat_council_persists_v2_detail_and_keeps_legacy_stream(
     assert persisted_detail["schema_version"] == chat.COUNCIL_DETAIL_SCHEMA_VERSION
     assert persisted_detail["model_count"] == 2
     assert persisted_detail["models"][0]["response"] == "local says one useful point."
+    persisted_metadata = json.loads(str(assistant_args[-1]))
+    assert persisted_metadata["chat_outcome_schema_version"] == (
+        chat.CHAT_OUTCOME_SCHEMA_VERSION
+    )
+    assert persisted_metadata["chat_outcome_model_label"] == "council/synthesis"
+    assert persisted_metadata["chat_outcome_route_mode"] == "local"
+    assert persisted_metadata["chat_outcome_quality_action"] == "accept"
+    assert persisted_metadata["chat_outcome_escalation_rung"] == "none"
 
 
 @pytest.mark.asyncio
