@@ -1342,6 +1342,11 @@ async def test_chat_emits_web_suggestion_without_running_beacon(
         if frame.startswith("data: {")
         and "chat_quality_gateway_schema_version" in frame
     ]
+    escalation_frames = [
+        json.loads(frame.removeprefix("data: "))
+        for frame in stream.split("\n\n")
+        if frame.startswith("data: {") and "chat_escalation_schema_version" in frame
+    ]
     streamed_text = "".join(
         str(payload.get("delta", ""))
         for frame in stream.split("\n\n")
@@ -1390,6 +1395,20 @@ async def test_chat_emits_web_suggestion_without_running_beacon(
             "chat_quality_evidence_count": 1,
             "chat_quality_strategy": None,
             "chat_quality_model_path": None,
+            "thread_id": str(THREAD_ID),
+            "done": False,
+        }
+    ]
+    assert escalation_frames == [
+        {
+            "chat_escalation_schema_version": "chat_escalation_ladder.v1",
+            "chat_escalation_required": True,
+            "chat_escalation_rung": "beacon",
+            "chat_escalation_action": "run_beacon",
+            "chat_escalation_reason": "web_verification_required",
+            "chat_escalation_automatic": False,
+            "chat_escalation_requires_user_confirmation": True,
+            "chat_escalation_source_quality_action": "require_beacon",
             "thread_id": str(THREAD_ID),
             "done": False,
         }

@@ -35,11 +35,13 @@ from brain.middleware.scopes import check_scopes
 from brain.routing.router import route
 from brain.services.at0_self_model import build_at0_self_model, is_at0_self_query
 from brain.services.chat_evidence_pack import (
+    ChatEscalationDecision,
     ChatEvidencePack,
     ChatQualityGateDecision,
     ChatResponseVerification,
     build_chat_evidence_pack,
     evaluate_chat_quality_gate,
+    plan_chat_escalation,
     render_chat_evidence_prompt,
     verify_chat_response,
 )
@@ -647,6 +649,17 @@ def _chat_response_verification_sse_metadata(
 def _chat_quality_gateway_sse_metadata(
     *,
     decision: ChatQualityGateDecision,
+    thread_id: str,
+) -> dict[str, object]:
+    payload = decision.to_metadata()
+    payload["thread_id"] = thread_id
+    payload["done"] = False
+    return payload
+
+
+def _chat_escalation_sse_metadata(
+    *,
+    decision: ChatEscalationDecision,
     thread_id: str,
 ) -> dict[str, object]:
     payload = decision.to_metadata()
@@ -1681,6 +1694,7 @@ async def _stream_single(
             verification=verification,
             strategy_metadata=result,
         )
+        escalation = plan_chat_escalation(quality_gate=gate)
         payload = _chat_response_verification_sse_metadata(
             verification=verification,
             thread_id=thread_id,
@@ -1691,12 +1705,25 @@ async def _stream_single(
             thread_id=thread_id,
         )
         yield f"data: {json.dumps(gateway_payload)}\n\n"
+        escalation_payload = _chat_escalation_sse_metadata(
+            decision=escalation,
+            thread_id=thread_id,
+        )
+        yield f"data: {json.dumps(escalation_payload)}\n\n"
         logger.info(
             "CHAT_QUALITY_GATEWAY_DECIDED",
             extra={
                 "event": "CHAT_QUALITY_GATEWAY_DECIDED",
                 "thread_id": thread_id,
                 **gate.to_metadata(),
+            },
+        )
+        logger.info(
+            "CHAT_ESCALATION_LADDER_DECIDED",
+            extra={
+                "event": "CHAT_ESCALATION_LADDER_DECIDED",
+                "thread_id": thread_id,
+                **escalation.to_metadata(),
             },
         )
         text = gate.fallback_response or text
@@ -1790,6 +1817,7 @@ async def _stream_council(
             verification=verification,
             strategy_metadata=synth_result,
         )
+        escalation = plan_chat_escalation(quality_gate=gate)
         payload = _chat_response_verification_sse_metadata(
             verification=verification,
             thread_id=thread_id,
@@ -1800,12 +1828,25 @@ async def _stream_council(
             thread_id=thread_id,
         )
         yield f"data: {json.dumps(gateway_payload)}\n\n"
+        escalation_payload = _chat_escalation_sse_metadata(
+            decision=escalation,
+            thread_id=thread_id,
+        )
+        yield f"data: {json.dumps(escalation_payload)}\n\n"
         logger.info(
             "CHAT_QUALITY_GATEWAY_DECIDED",
             extra={
                 "event": "CHAT_QUALITY_GATEWAY_DECIDED",
                 "thread_id": thread_id,
                 **gate.to_metadata(),
+            },
+        )
+        logger.info(
+            "CHAT_ESCALATION_LADDER_DECIDED",
+            extra={
+                "event": "CHAT_ESCALATION_LADDER_DECIDED",
+                "thread_id": thread_id,
+                **escalation.to_metadata(),
             },
         )
         synth_text = gate.fallback_response or synth_text

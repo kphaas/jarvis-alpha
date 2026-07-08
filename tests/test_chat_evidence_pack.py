@@ -1,6 +1,7 @@
 from brain.services.chat_evidence_pack import (
     build_chat_evidence_pack,
     evaluate_chat_quality_gate,
+    plan_chat_escalation,
     render_chat_evidence_prompt,
     verify_chat_response,
 )
@@ -209,3 +210,59 @@ def test_quality_gate_replaces_unsupported_web_claim() -> None:
     assert gate.fallback_response == (
         "I need Beacon verification before I can claim this was checked online."
     )
+
+
+def test_escalation_ladder_does_nothing_when_quality_passes() -> None:
+    pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+    verification = verify_chat_response(
+        response_text="Plain answer.", evidence_pack=pack
+    )
+    gate = evaluate_chat_quality_gate(evidence_pack=pack, verification=verification)
+
+    escalation = plan_chat_escalation(quality_gate=gate)
+
+    assert escalation.to_metadata() == {
+        "chat_escalation_schema_version": "chat_escalation_ladder.v1",
+        "chat_escalation_required": False,
+        "chat_escalation_rung": "none",
+        "chat_escalation_action": "none",
+        "chat_escalation_reason": "quality_gate_passed",
+        "chat_escalation_automatic": False,
+        "chat_escalation_requires_user_confirmation": False,
+        "chat_escalation_source_quality_action": "accept",
+    }
+
+
+def test_escalation_ladder_routes_web_requirement_to_beacon() -> None:
+    pack = build_chat_evidence_pack(
+        memory_context="",
+        internet_context=None,
+        web_suggestion_context="Smart Web Suggestion: use Beacon.",
+    )
+    verification = verify_chat_response(
+        response_text="I can answer generally.",
+        evidence_pack=pack,
+    )
+    gate = evaluate_chat_quality_gate(evidence_pack=pack, verification=verification)
+
+    escalation = plan_chat_escalation(quality_gate=gate)
+
+    assert escalation.required is True
+    assert escalation.rung == "beacon"
+    assert escalation.action == "run_beacon"
+    assert escalation.reason == "web_verification_required"
+    assert escalation.automatic is False
+    assert escalation.requires_user_confirmation is True
+
+
+def test_escalation_ladder_routes_empty_response_to_local_retry() -> None:
+    pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+    verification = verify_chat_response(response_text="", evidence_pack=pack)
+    gate = evaluate_chat_quality_gate(evidence_pack=pack, verification=verification)
+
+    escalation = plan_chat_escalation(quality_gate=gate)
+
+    assert escalation.required is True
+    assert escalation.rung == "retry_local"
+    assert escalation.action == "retry_local_once"
+    assert escalation.requires_user_confirmation is False
