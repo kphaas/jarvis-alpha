@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 UNSUPPORTED_WEB_PROOF_RE = re.compile(
@@ -91,6 +92,33 @@ class ChatResponseVerification:
         }
 
 
+@dataclass(frozen=True)
+class ChatQualityGateDecision:
+    action: str
+    passed: bool
+    reason: str
+    fallback_response: str | None
+    response_verified: bool
+    response_issues: tuple[str, ...]
+    evidence_count: int
+    strategy: str | None = None
+    model_path: str | None = None
+
+    def to_metadata(self) -> dict[str, object]:
+        return {
+            "chat_quality_gateway_schema_version": "chat_quality_gateway.v1",
+            "chat_quality_action": self.action,
+            "chat_quality_passed": self.passed,
+            "chat_quality_reason": self.reason,
+            "chat_quality_fallback_used": self.fallback_response is not None,
+            "chat_quality_response_verified": self.response_verified,
+            "chat_quality_response_issues": list(self.response_issues),
+            "chat_quality_evidence_count": self.evidence_count,
+            "chat_quality_strategy": self.strategy,
+            "chat_quality_model_path": self.model_path,
+        }
+
+
 def build_chat_evidence_pack(
     *,
     memory_context: str,
@@ -130,6 +158,53 @@ def build_chat_evidence_pack(
     )
 
 
+def evaluate_chat_quality_gate(
+    *,
+    evidence_pack: ChatEvidencePack,
+    verification: ChatResponseVerification,
+    strategy_metadata: Mapping[str, object] | None = None,
+) -> ChatQualityGateDecision:
+    strategy_metadata = strategy_metadata or {}
+    strategy = _metadata_string(strategy_metadata.get("chat_strategy"))
+    model_path = _metadata_string(strategy_metadata.get("chat_model_path"))
+    fallback_response: str | None = None
+    action = "accept"
+    reason = "verified_response"
+
+    if "empty_response" in verification.issues:
+        action = "replace_with_safe_fallback"
+        reason = "empty_response"
+        fallback_response = (
+            "I could not generate a reliable answer. Try again or switch to a "
+            "stronger model."
+        )
+    elif "unsupported_web_verification_claim" in verification.issues:
+        action = "replace_with_safe_fallback"
+        reason = "unsupported_web_verification_claim"
+        fallback_response = (
+            "I need Beacon verification before I can claim this was checked online."
+        )
+    elif verification.requires_web_verification:
+        action = "require_beacon"
+        reason = "web_verification_required"
+        fallback_response = (
+            "I need Beacon verification before I can answer that as current or "
+            "verified."
+        )
+
+    return ChatQualityGateDecision(
+        action=action,
+        passed=action == "accept",
+        reason=reason,
+        fallback_response=fallback_response,
+        response_verified=verification.verified,
+        response_issues=verification.issues,
+        evidence_count=evidence_pack.evidence_count,
+        strategy=strategy,
+        model_path=model_path,
+    )
+
+
 def verify_chat_response(
     *,
     response_text: str,
@@ -151,6 +226,10 @@ def verify_chat_response(
         requires_web_verification=requires_web_verification,
         evidence_count=evidence_pack.evidence_count,
     )
+
+
+def _metadata_string(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def render_chat_evidence_prompt(

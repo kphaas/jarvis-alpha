@@ -1,5 +1,6 @@
 from brain.services.chat_evidence_pack import (
     build_chat_evidence_pack,
+    evaluate_chat_quality_gate,
     render_chat_evidence_prompt,
     verify_chat_response,
 )
@@ -141,3 +142,70 @@ def test_response_verification_allows_beacon_claim_with_internet_evidence() -> N
 
     assert verification.verified is True
     assert verification.issues == ()
+
+
+def test_quality_gate_accepts_verified_response() -> None:
+    pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+    verification = verify_chat_response(
+        response_text="Plain answer.", evidence_pack=pack
+    )
+
+    gate = evaluate_chat_quality_gate(
+        evidence_pack=pack,
+        verification=verification,
+        strategy_metadata={
+            "chat_strategy": "fast_local",
+            "chat_model_path": "local",
+        },
+    )
+
+    assert gate.to_metadata() == {
+        "chat_quality_gateway_schema_version": "chat_quality_gateway.v1",
+        "chat_quality_action": "accept",
+        "chat_quality_passed": True,
+        "chat_quality_reason": "verified_response",
+        "chat_quality_fallback_used": False,
+        "chat_quality_response_verified": True,
+        "chat_quality_response_issues": [],
+        "chat_quality_evidence_count": 0,
+        "chat_quality_strategy": "fast_local",
+        "chat_quality_model_path": "local",
+    }
+
+
+def test_quality_gate_requires_beacon_for_web_suggestion_without_internet() -> None:
+    pack = build_chat_evidence_pack(
+        memory_context="",
+        internet_context=None,
+        web_suggestion_context="Smart Web Suggestion: use Beacon.",
+    )
+    verification = verify_chat_response(
+        response_text="I can answer generally.",
+        evidence_pack=pack,
+    )
+
+    gate = evaluate_chat_quality_gate(evidence_pack=pack, verification=verification)
+
+    assert gate.action == "require_beacon"
+    assert gate.passed is False
+    assert gate.reason == "web_verification_required"
+    assert gate.fallback_response == (
+        "I need Beacon verification before I can answer that as current or verified."
+    )
+
+
+def test_quality_gate_replaces_unsupported_web_claim() -> None:
+    pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+    verification = verify_chat_response(
+        response_text="I searched online and verified this.",
+        evidence_pack=pack,
+    )
+
+    gate = evaluate_chat_quality_gate(evidence_pack=pack, verification=verification)
+
+    assert gate.action == "replace_with_safe_fallback"
+    assert gate.passed is False
+    assert gate.reason == "unsupported_web_verification_claim"
+    assert gate.fallback_response == (
+        "I need Beacon verification before I can claim this was checked online."
+    )
