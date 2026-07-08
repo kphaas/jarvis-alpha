@@ -119,6 +119,31 @@ class ChatQualityGateDecision:
         }
 
 
+@dataclass(frozen=True)
+class ChatEscalationDecision:
+    required: bool
+    rung: str
+    action: str
+    reason: str
+    automatic: bool
+    requires_user_confirmation: bool
+    source_quality_action: str
+
+    def to_metadata(self) -> dict[str, object]:
+        return {
+            "chat_escalation_schema_version": "chat_escalation_ladder.v1",
+            "chat_escalation_required": self.required,
+            "chat_escalation_rung": self.rung,
+            "chat_escalation_action": self.action,
+            "chat_escalation_reason": self.reason,
+            "chat_escalation_automatic": self.automatic,
+            "chat_escalation_requires_user_confirmation": (
+                self.requires_user_confirmation
+            ),
+            "chat_escalation_source_quality_action": self.source_quality_action,
+        }
+
+
 def build_chat_evidence_pack(
     *,
     memory_context: str,
@@ -155,6 +180,54 @@ def build_chat_evidence_pack(
         raw_web_content_is_untrusted=bool(
             effective_internet_context and raw_web_content_is_untrusted
         ),
+    )
+
+
+def plan_chat_escalation(
+    *,
+    quality_gate: ChatQualityGateDecision,
+) -> ChatEscalationDecision:
+    if quality_gate.action == "accept":
+        return ChatEscalationDecision(
+            required=False,
+            rung="none",
+            action="none",
+            reason="quality_gate_passed",
+            automatic=False,
+            requires_user_confirmation=False,
+            source_quality_action=quality_gate.action,
+        )
+    if quality_gate.reason in {
+        "web_verification_required",
+        "unsupported_web_verification_claim",
+    }:
+        return ChatEscalationDecision(
+            required=True,
+            rung="beacon",
+            action="run_beacon",
+            reason=quality_gate.reason,
+            automatic=False,
+            requires_user_confirmation=True,
+            source_quality_action=quality_gate.action,
+        )
+    if quality_gate.reason == "empty_response":
+        return ChatEscalationDecision(
+            required=True,
+            rung="retry_local",
+            action="retry_local_once",
+            reason="empty_response",
+            automatic=False,
+            requires_user_confirmation=False,
+            source_quality_action=quality_gate.action,
+        )
+    return ChatEscalationDecision(
+        required=True,
+        rung="operator_review",
+        action="review_quality_gate",
+        reason=quality_gate.reason,
+        automatic=False,
+        requires_user_confirmation=True,
+        source_quality_action=quality_gate.action,
     )
 
 
