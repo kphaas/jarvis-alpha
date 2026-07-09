@@ -15,6 +15,7 @@ from brain.services.chat_evidence_pack import (
     plan_chat_escalation,
     verify_chat_response,
 )
+from brain.services.chat_memory_pack import pack_chat_memory_context
 from brain.services.chat_prompt_compiler import compile_chat_prompt
 
 CHAT_EVAL_SCHEMA_VERSION = "chat_eval_harness.v1"
@@ -34,6 +35,7 @@ def run_chat_eval_harness(
 ) -> list[ChatEvalResult]:
     return [
         *_strategy_eval_results(),
+        *_memory_pack_eval_results(),
         *_prompt_compiler_eval_results(),
         *_quality_gate_eval_results(),
         _outcome_audit_contract(outcomes),
@@ -211,6 +213,61 @@ def _prompt_compiler_eval_results() -> list[ChatEvalResult]:
             expected_section="web_suggestion_boundary",
         ),
     ]
+
+
+def _memory_pack_eval_results() -> list[ChatEvalResult]:
+    return [
+        _run_memory_pack_case(
+            name="memory_pack_prefers_current_over_historical",
+            memory_context="\n".join(
+                [
+                    "[TEMPORAL GRAPH]",
+                    "- [historical] Project: old Alpha plan " + ("x" * 120),
+                    "- [current] Project: current Alpha plan",
+                    "- [needs refresh] Project: unreviewed Alpha plan " + ("y" * 120),
+                ]
+            ),
+            budget_chars=90,
+            expected_present="[current] Project: current Alpha plan",
+            expected_absent="[historical]",
+        ),
+        _run_memory_pack_case(
+            name="memory_pack_keeps_small_semantic_pack",
+            memory_context="[ALWAYS KNOWN]\n- Ken prefers concise answers.",
+            budget_chars=1000,
+            expected_present="Ken prefers concise answers.",
+            expected_absent=None,
+        ),
+    ]
+
+
+def _run_memory_pack_case(
+    *,
+    name: str,
+    memory_context: str,
+    budget_chars: int,
+    expected_present: str,
+    expected_absent: str | None,
+) -> ChatEvalResult:
+    pack = pack_chat_memory_context(memory_context, budget_chars=budget_chars)
+    failures: list[str] = []
+    if expected_present not in pack.context:
+        failures.append(f"missing:{expected_present}")
+    if expected_absent and expected_absent in pack.context:
+        failures.append(f"unexpected:{expected_absent}")
+
+    return ChatEvalResult(
+        name=name,
+        eval_group="memory_pack",
+        passed=not failures,
+        details={
+            "packed_chars": pack.manifest.packed_chars,
+            "source_chars": pack.manifest.source_chars,
+            "truncated": pack.manifest.truncated,
+            "section_order": list(pack.manifest.section_order),
+        },
+        failures=tuple(failures),
+    )
 
 
 def _run_prompt_compiler_case(
