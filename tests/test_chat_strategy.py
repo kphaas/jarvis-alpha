@@ -1,3 +1,7 @@
+from brain.routing.model_capability_registry import (
+    CHAT_MODEL_CAPABILITY_REGISTRY_VERSION,
+    ChatModelCapability,
+)
 from brain.routing.strategy import select_chat_strategy
 
 
@@ -79,6 +83,59 @@ def test_chat_strategy_sse_metadata_is_stable_for_helm() -> None:
         "chat_route_mode": "local",
         "chat_model_path": ["local"],
         "chat_strategy_reason": "auto_complexity_1",
+        "chat_model_registry_version": CHAT_MODEL_CAPABILITY_REGISTRY_VERSION,
+        "chat_model_provider": "ollama",
+        "chat_model_deployment": "local",
+        "chat_model_cost_tier": 0,
+        "chat_model_latency_tier": 1,
+        "chat_model_context_window_tokens": 32768,
+        "chat_model_supports_tools": False,
+        "chat_model_supports_web_search": False,
+        "chat_model_supports_deep_research": False,
+        "chat_model_privacy_tier": "local",
+        "chat_model_reliability_score": 78,
         "thread_id": "thread-1",
         "done": False,
     }
+
+
+def test_auto_strategy_uses_capability_registry_scores() -> None:
+    custom_capabilities = (
+        ChatModelCapability(
+            route_mode="local",
+            provider="local-test",
+            deployment="local",
+            cost_tier=0,
+            latency_tier=1,
+            context_window_tokens=4096,
+            supports_tools=False,
+            supports_web_search=False,
+            supports_deep_research=False,
+            privacy_tier="local",
+            reliability_score=80,
+            task_scores={"fast": 100, "grounded": 100, "analysis": 100, "deep": 100},
+        ),
+        ChatModelCapability(
+            route_mode="claude",
+            provider="cloud-test",
+            deployment="cloud",
+            cost_tier=5,
+            latency_tier=5,
+            context_window_tokens=200000,
+            supports_tools=True,
+            supports_web_search=False,
+            supports_deep_research=False,
+            privacy_tier="external",
+            reliability_score=99,
+            task_scores={"fast": 1, "grounded": 1, "analysis": 1, "deep": 1},
+        ),
+    )
+
+    plan = select_chat_strategy(
+        prompt="Summarize the AT-0 architecture tradeoffs.",
+        requested_model="auto",
+        capabilities=custom_capabilities,
+    )
+
+    assert plan.route_mode == "local"
+    assert plan.metadata()["chat_model_provider"] == "local-test"

@@ -100,11 +100,25 @@ COUNCIL_DETAIL_RESPONSE_MAX_CHARS = 2000
 CHAT_OUTCOME_SCHEMA_VERSION = "chat_outcome.v1"
 ROLLING_CONTEXT_MAX_MESSAGES = 8
 ROLLING_CONTEXT_MESSAGE_CHAR_LIMIT = 420
+CHAT_MODEL_CAPABILITY_METADATA_KEYS = (
+    "chat_model_registry_version",
+    "chat_model_provider",
+    "chat_model_deployment",
+    "chat_model_cost_tier",
+    "chat_model_latency_tier",
+    "chat_model_context_window_tokens",
+    "chat_model_supports_tools",
+    "chat_model_supports_web_search",
+    "chat_model_supports_deep_research",
+    "chat_model_privacy_tier",
+    "chat_model_reliability_score",
+)
 CHAT_STRATEGY_METADATA_KEYS = (
     "chat_strategy",
     "chat_route_mode",
     "chat_model_path",
     "chat_strategy_reason",
+    *CHAT_MODEL_CAPABILITY_METADATA_KEYS,
 )
 CHAT_OUTCOME_METADATA_KEYS = (
     "chat_outcome_schema_version",
@@ -124,6 +138,7 @@ CHAT_OUTCOME_METADATA_KEYS = (
     "chat_outcome_escalation_action",
     "chat_outcome_escalation_requires_confirmation",
     "chat_outcome_evidence_count",
+    *CHAT_MODEL_CAPABILITY_METADATA_KEYS,
     "chat_memory_pack_schema_version",
     "chat_memory_pack_source_chars",
     "chat_memory_pack_packed_chars",
@@ -798,6 +813,9 @@ def _chat_outcome_message_metadata(
         metadata.update(memory_pack_manifest.to_metadata())
     if prompt_manifest:
         metadata.update(prompt_manifest.to_metadata())
+    for key in CHAT_MODEL_CAPABILITY_METADATA_KEYS:
+        if key in route_result:
+            metadata[key] = route_result[key]
     return metadata
 
 
