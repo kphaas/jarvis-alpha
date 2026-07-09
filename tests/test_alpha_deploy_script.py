@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 SCRIPT = Path("scripts/jarvisalpha_deploy.sh")
+TRUSTED_CI = Path(".github/workflows/trusted-sandbox-ci.yml")
 
 
 def test_alpha_deploy_script_has_valid_bash_syntax() -> None:
@@ -53,6 +54,9 @@ def test_alpha_deploy_runs_cheap_smokes_after_fanout() -> None:
     assert "eval_memory_context.py" in text
     assert "JARVIS_SKIP_MEMORY_CONTEXT_EVAL" in text
     assert "JARVIS_ALPHA_SKIP_MEMORY_CONTEXT_EVAL" in text
+    assert "eval_chat_quality.py" in text
+    assert "JARVIS_SKIP_CHAT_QUALITY_EVAL" in text
+    assert "JARVIS_ALPHA_SKIP_CHAT_QUALITY_EVAL" in text
 
     endpoint_pull = text.index('remote_pull "Endpoint" "$ENDPOINT"')
     settings_smoke = text.index("run_post_deploy_smokes || DEPLOY_FAILED=1")
@@ -74,6 +78,9 @@ def test_alpha_deploy_runs_cheap_smokes_after_fanout() -> None:
     memory_eval_script = text.index(
         "uv run --python 3.12 python scripts/eval_memory_context.py"
     )
+    chat_eval_script = text.index(
+        "uv run --python 3.12 python scripts/eval_chat_quality.py"
+    )
     done_banner = text.index('done_banner "$HEAD_AFTER" "$total_dur"', settings_smoke)
 
     assert endpoint_pull < settings_smoke < done_banner
@@ -86,5 +93,13 @@ def test_alpha_deploy_runs_cheap_smokes_after_fanout() -> None:
         < browser_click_script
         < answer_eval_script
         < memory_eval_script
+        < chat_eval_script
         < done_banner
     )
+
+
+def test_trusted_sandbox_ci_runs_chat_quality_gate() -> None:
+    text = TRUSTED_CI.read_text(encoding="utf-8")
+
+    assert "Chat quality gates" in text
+    assert "uv run --python 3.12 python scripts/eval_chat_quality.py" in text

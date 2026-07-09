@@ -132,6 +132,11 @@ jobs:
           uv run --python 3.12 python scripts/eval_beacon_search_quality.py
           uv run --python 3.12 python scripts/export_beacon_contract_schema.py --check
 
+      - name: Chat quality gates
+        run: |
+          set -euo pipefail
+          uv run --python 3.12 python scripts/eval_chat_quality.py
+
       - name: UI install and build
         working-directory: ui
         run: |
