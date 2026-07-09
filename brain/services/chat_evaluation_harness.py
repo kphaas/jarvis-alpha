@@ -17,6 +17,7 @@ from brain.services.chat_evidence_pack import (
 )
 from brain.services.chat_memory_pack import pack_chat_memory_context
 from brain.services.chat_prompt_compiler import compile_chat_prompt
+from brain.services.chat_repair_loop import repair_chat_response_once
 
 CHAT_EVAL_SCHEMA_VERSION = "chat_eval_harness.v1"
 
@@ -44,6 +45,8 @@ class _TraceReplayCase:
     expected_quality_action: str
     expected_escalation: str
     expected_tool_policy: str
+    expected_repair_action: str = "none"
+    expected_repaired: bool = False
     memory_budget_chars: int = 6000
     expected_memory_present: str | None = None
     expected_memory_absent: str | None = None
@@ -398,6 +401,27 @@ def _trace_replay_eval_results() -> list[ChatEvalResult]:
                 expected_memory_absent="[historical]",
             )
         ),
+        _run_trace_replay_case(
+            _TraceReplayCase(
+                name="trace_replay_strips_unsupported_web_narration",
+                trace_id="synthetic-trace-repair-unsupported-web-narration",
+                prompt="What is the current Alpha plan?",
+                requested_model="auto",
+                internet_mode="none",
+                memory_context="[current] Alpha plan: build the repair loop next.",
+                internet_context=None,
+                response_text=(
+                    "I checked the web and confirmed this. "
+                    "The current Alpha plan is to build the repair loop next."
+                ),
+                expected_route_mode="perplexity",
+                expected_quality_action="accept",
+                expected_escalation="none",
+                expected_tool_policy="no_external_tool_executed",
+                expected_repair_action="strip_unsupported_web_claim",
+                expected_repaired=True,
+            )
+        ),
     ]
 
 
@@ -422,9 +446,14 @@ def _run_trace_replay_case(case: _TraceReplayCase) -> ChatEvalResult:
         response_text=case.response_text,
         evidence_pack=compiled.evidence_pack,
     )
-    gate = evaluate_chat_quality_gate(
+    repair = repair_chat_response_once(
+        response_text=case.response_text,
         evidence_pack=compiled.evidence_pack,
         verification=verification,
+    )
+    gate = evaluate_chat_quality_gate(
+        evidence_pack=compiled.evidence_pack,
+        verification=repair.verification,
         strategy_metadata=strategy.metadata(),
     )
     escalation = plan_chat_escalation(quality_gate=gate)
@@ -438,6 +467,10 @@ def _run_trace_replay_case(case: _TraceReplayCase) -> ChatEvalResult:
         failures.append(f"quality_action:{gate.action}")
     if escalation.rung != case.expected_escalation:
         failures.append(f"escalation:{escalation.rung}")
+    if repair.action != case.expected_repair_action:
+        failures.append(f"repair_action:{repair.action}")
+    if repair.repaired is not case.expected_repaired:
+        failures.append(f"repair_repaired:{repair.repaired}")
     if (
         case.expected_memory_present
         and case.expected_memory_present not in memory_pack.context
@@ -460,6 +493,8 @@ def _run_trace_replay_case(case: _TraceReplayCase) -> ChatEvalResult:
             "memory_truncated": memory_pack.manifest.truncated,
             "quality_action": gate.action,
             "escalation_rung": escalation.rung,
+            "repair_action": repair.action,
+            "repair_repaired": repair.repaired,
         },
         failures=tuple(failures),
     )

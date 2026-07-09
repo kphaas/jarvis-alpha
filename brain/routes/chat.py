@@ -52,6 +52,11 @@ from brain.services.chat_prompt_compiler import (
     ChatPromptManifest,
     compile_chat_prompt,
 )
+from brain.services.chat_repair_loop import (
+    ChatRepairAttemptResult,
+    ChatRepairLoopResult,
+    run_chat_repair_loop,
+)
 from brain.services.internet_scout.chat_adapter import (
     InternetChatContext,
     build_chat_internet_context,
@@ -133,6 +138,15 @@ CHAT_OUTCOME_METADATA_KEYS = (
     "chat_outcome_quality_passed",
     "chat_outcome_quality_reason",
     "chat_outcome_fallback_used",
+    "chat_repair_loop_schema_version",
+    "chat_repair_attempted",
+    "chat_repair_repaired",
+    "chat_repair_attempt_count",
+    "chat_repair_action",
+    "chat_repair_reason",
+    "chat_repair_before_issues",
+    "chat_repair_after_issues",
+    "chat_repair_model_used",
     "chat_outcome_escalation_required",
     "chat_outcome_escalation_rung",
     "chat_outcome_escalation_action",
@@ -746,6 +760,17 @@ def _chat_quality_gateway_sse_metadata(
     return payload
 
 
+def _chat_repair_loop_sse_metadata(
+    *,
+    repair: ChatRepairLoopResult,
+    thread_id: str,
+) -> dict[str, object]:
+    payload = repair.to_metadata()
+    payload["thread_id"] = thread_id
+    payload["done"] = False
+    return payload
+
+
 def _chat_escalation_sse_metadata(
     *,
     decision: ChatEscalationDecision,
@@ -777,6 +802,7 @@ def _chat_outcome_message_metadata(
     verification: ChatResponseVerification,
     gate: ChatQualityGateDecision,
     escalation: ChatEscalationDecision,
+    repair: ChatRepairLoopResult | None = None,
     memory_pack_manifest: ChatMemoryPackManifest | None = None,
     prompt_manifest: ChatPromptManifest | None = None,
 ) -> dict[str, object]:
@@ -809,6 +835,8 @@ def _chat_outcome_message_metadata(
             "chat_response_evidence_count"
         ],
     }
+    if repair:
+        metadata.update(repair.to_metadata())
     if memory_pack_manifest:
         metadata.update(memory_pack_manifest.to_metadata())
     if prompt_manifest:
@@ -1877,6 +1905,37 @@ def _finalize_model_response(
     return stripped or polished.strip() or text.strip()
 
 
+async def _repair_model_response(
+    *,
+    text: str,
+    user_msg: str,
+    response_surface: AskResponseSurface,
+    evidence_pack: ChatEvidencePack,
+    verification: ChatResponseVerification,
+    internet_verified: bool,
+) -> ChatRepairLoopResult:
+    async def retry_once(repair_prompt: str) -> ChatRepairAttemptResult:
+        retry_result = await route(repair_prompt, "local")
+        retry_text = _finalize_model_response(
+            str(retry_result.get("result") or ""),
+            response_surface,
+            user_msg,
+            internet_verified=internet_verified,
+        )
+        return ChatRepairAttemptResult(
+            text=retry_text,
+            model_used=str(retry_result.get("mode") or "local"),
+        )
+
+    return await run_chat_repair_loop(
+        response_text=text,
+        user_msg=user_msg,
+        evidence_pack=evidence_pack,
+        verification=verification,
+        retry_once=retry_once,
+    )
+
+
 async def _stream_single(
     prompt: str,
     mode: str,
@@ -1921,6 +1980,16 @@ async def _stream_single(
             response_text=text,
             evidence_pack=evidence_pack,
         )
+        repair = await _repair_model_response(
+            text=text,
+            user_msg=user_msg,
+            response_surface=response_surface,
+            evidence_pack=evidence_pack,
+            verification=verification,
+            internet_verified=internet_verified,
+        )
+        text = repair.text
+        verification = repair.verification
         gate = evaluate_chat_quality_gate(
             evidence_pack=evidence_pack,
             verification=verification,
@@ -1935,10 +2004,16 @@ async def _stream_single(
                     verification=verification,
                     gate=gate,
                     escalation=escalation,
+                    repair=repair,
                     memory_pack_manifest=memory_pack_manifest,
                     prompt_manifest=prompt_manifest,
                 )
             )
+        repair_payload = _chat_repair_loop_sse_metadata(
+            repair=repair,
+            thread_id=thread_id,
+        )
+        yield f"data: {json.dumps(repair_payload)}\n\n"
         payload = _chat_response_verification_sse_metadata(
             verification=verification,
             thread_id=thread_id,
@@ -1954,6 +2029,14 @@ async def _stream_single(
             thread_id=thread_id,
         )
         yield f"data: {json.dumps(escalation_payload)}\n\n"
+        logger.info(
+            "CHAT_REPAIR_LOOP_DECIDED",
+            extra={
+                "event": "CHAT_REPAIR_LOOP_DECIDED",
+                "thread_id": thread_id,
+                **repair.to_metadata(),
+            },
+        )
         logger.info(
             "CHAT_QUALITY_GATEWAY_DECIDED",
             extra={
@@ -2095,6 +2178,16 @@ async def _stream_council(
             response_text=synth_text,
             evidence_pack=evidence_pack,
         )
+        repair = await _repair_model_response(
+            text=synth_text,
+            user_msg=user_msg,
+            response_surface="chat",
+            evidence_pack=evidence_pack,
+            verification=verification,
+            internet_verified=evidence_pack.internet_used,
+        )
+        synth_text = repair.text
+        verification = repair.verification
         gate = evaluate_chat_quality_gate(
             evidence_pack=evidence_pack,
             verification=verification,
@@ -2109,10 +2202,16 @@ async def _stream_council(
                     verification=verification,
                     gate=gate,
                     escalation=escalation,
+                    repair=repair,
                     memory_pack_manifest=memory_pack_manifest,
                     prompt_manifest=prompt_manifest,
                 )
             )
+        repair_payload = _chat_repair_loop_sse_metadata(
+            repair=repair,
+            thread_id=thread_id,
+        )
+        yield f"data: {json.dumps(repair_payload)}\n\n"
         payload = _chat_response_verification_sse_metadata(
             verification=verification,
             thread_id=thread_id,
@@ -2128,6 +2227,14 @@ async def _stream_council(
             thread_id=thread_id,
         )
         yield f"data: {json.dumps(escalation_payload)}\n\n"
+        logger.info(
+            "CHAT_REPAIR_LOOP_DECIDED",
+            extra={
+                "event": "CHAT_REPAIR_LOOP_DECIDED",
+                "thread_id": thread_id,
+                **repair.to_metadata(),
+            },
+        )
         logger.info(
             "CHAT_QUALITY_GATEWAY_DECIDED",
             extra={
