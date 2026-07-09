@@ -1225,6 +1225,11 @@ async def test_chat_routes_supported_beacon_prompt_before_stale_memory(
         for payload in [json.loads(frame.removeprefix("data: "))]
         if payload.get("done") is not True
     )
+    memory_pack_frames = [
+        json.loads(frame.removeprefix("data: "))
+        for frame in stream.split("\n\n")
+        if frame.startswith("data: {") and "chat_memory_pack_schema_version" in frame
+    ]
 
     assert beacon_called is True
     assert captured_prompts
@@ -1234,6 +1239,12 @@ async def test_chat_routes_supported_beacon_prompt_before_stale_memory(
     )
     assert "Do not use memory to override" in routed_prompt
     assert "If memory conflicts with Beacon, follow Beacon" in routed_prompt
+    assert len(memory_pack_frames) == 1
+    assert memory_pack_frames[0]["chat_memory_pack_schema_version"] == (
+        "chat_memory_pack.v1"
+    )
+    assert memory_pack_frames[0]["chat_memory_pack_source_chars"] > 0
+    assert memory_pack_frames[0]["chat_memory_pack_packed_chars"] > 0
     assert "Use the platform.openai.com source." in streamed_text
 
 

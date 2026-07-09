@@ -44,6 +44,10 @@ from brain.services.chat_evidence_pack import (
     plan_chat_escalation,
     verify_chat_response,
 )
+from brain.services.chat_memory_pack import (
+    ChatMemoryPackManifest,
+    pack_chat_memory_context,
+)
 from brain.services.chat_prompt_compiler import (
     ChatPromptManifest,
     compile_chat_prompt,
@@ -120,6 +124,18 @@ CHAT_OUTCOME_METADATA_KEYS = (
     "chat_outcome_escalation_action",
     "chat_outcome_escalation_requires_confirmation",
     "chat_outcome_evidence_count",
+    "chat_memory_pack_schema_version",
+    "chat_memory_pack_source_chars",
+    "chat_memory_pack_packed_chars",
+    "chat_memory_pack_budget_chars",
+    "chat_memory_pack_source_line_count",
+    "chat_memory_pack_packed_line_count",
+    "chat_memory_pack_dropped_line_count",
+    "chat_memory_pack_section_order",
+    "chat_memory_pack_current_line_count",
+    "chat_memory_pack_historical_line_count",
+    "chat_memory_pack_needs_refresh_line_count",
+    "chat_memory_pack_truncated",
     "chat_prompt_schema_version",
     "chat_prompt_section_order",
     "chat_prompt_user_message_chars",
@@ -671,6 +687,17 @@ def _chat_evidence_sse_metadata(
     return payload
 
 
+def _chat_memory_pack_sse_metadata(
+    *,
+    manifest: ChatMemoryPackManifest,
+    thread_id: str,
+) -> dict[str, object]:
+    payload = manifest.to_metadata()
+    payload["thread_id"] = thread_id
+    payload["done"] = False
+    return payload
+
+
 def _chat_prompt_manifest_sse_metadata(
     *,
     manifest: ChatPromptManifest,
@@ -735,6 +762,7 @@ def _chat_outcome_message_metadata(
     verification: ChatResponseVerification,
     gate: ChatQualityGateDecision,
     escalation: ChatEscalationDecision,
+    memory_pack_manifest: ChatMemoryPackManifest | None = None,
     prompt_manifest: ChatPromptManifest | None = None,
 ) -> dict[str, object]:
     verification_metadata = verification.to_metadata()
@@ -766,6 +794,8 @@ def _chat_outcome_message_metadata(
             "chat_response_evidence_count"
         ],
     }
+    if memory_pack_manifest:
+        metadata.update(memory_pack_manifest.to_metadata())
     if prompt_manifest:
         metadata.update(prompt_manifest.to_metadata())
     return metadata
@@ -1838,6 +1868,7 @@ async def _stream_single(
     response_surface: AskResponseSurface = "chat",
     internet_verified: bool = False,
     evidence_pack: ChatEvidencePack | None = None,
+    memory_pack_manifest: ChatMemoryPackManifest | None = None,
     prompt_manifest: ChatPromptManifest | None = None,
     chat_outcome_holder: dict[str, object] | None = None,
 ) -> AsyncGenerator[str, None]:
@@ -1847,6 +1878,12 @@ async def _stream_single(
     strategy_metadata = _chat_strategy_sse_metadata(result, thread_id)
     if strategy_metadata:
         yield f"data: {json.dumps(strategy_metadata)}\n\n"
+    if memory_pack_manifest and memory_pack_manifest.source_chars:
+        payload = _chat_memory_pack_sse_metadata(
+            manifest=memory_pack_manifest,
+            thread_id=thread_id,
+        )
+        yield f"data: {json.dumps(payload)}\n\n"
     if prompt_manifest:
         payload = _chat_prompt_manifest_sse_metadata(
             manifest=prompt_manifest,
@@ -1880,6 +1917,7 @@ async def _stream_single(
                     verification=verification,
                     gate=gate,
                     escalation=escalation,
+                    memory_pack_manifest=memory_pack_manifest,
                     prompt_manifest=prompt_manifest,
                 )
             )
@@ -1957,6 +1995,7 @@ async def _stream_council(
     show_council: bool,
     user_msg: str,
     evidence_pack: ChatEvidencePack | None = None,
+    memory_pack_manifest: ChatMemoryPackManifest | None = None,
     prompt_manifest: ChatPromptManifest | None = None,
     council_detail_holder: dict[str, object] | None = None,
     chat_outcome_holder: dict[str, object] | None = None,
@@ -2021,6 +2060,12 @@ async def _stream_council(
         thread_id=thread_id,
     )
     yield f"data: {json.dumps(detail_payload)}\n\n"
+    if memory_pack_manifest and memory_pack_manifest.source_chars:
+        payload = _chat_memory_pack_sse_metadata(
+            manifest=memory_pack_manifest,
+            thread_id=thread_id,
+        )
+        yield f"data: {json.dumps(payload)}\n\n"
     if prompt_manifest:
         payload = _chat_prompt_manifest_sse_metadata(
             manifest=prompt_manifest,
@@ -2046,6 +2091,7 @@ async def _stream_council(
                     verification=verification,
                     gate=gate,
                     escalation=escalation,
+                    memory_pack_manifest=memory_pack_manifest,
                     prompt_manifest=prompt_manifest,
                 )
             )
@@ -2205,6 +2251,9 @@ async def chat_completions(body: CompletionRequest, request: Request):
             embedding=embedding,
             principal_id=user_id,
         )
+    memory_pack = pack_chat_memory_context(context)
+    context = memory_pack.context
+    memory_pack_manifest = memory_pack.manifest
     memory_injected = bool(context)
     sensitivity = _internet_sensitivity(request)
     at0_self_requested = is_at0_self_query(user_msg)
@@ -2307,6 +2356,14 @@ async def chat_completions(body: CompletionRequest, request: Request):
     enriched = compiled_prompt.prompt
     evidence_pack = compiled_prompt.evidence_pack
     prompt_manifest = compiled_prompt.manifest
+    logger.info(
+        "CHAT_MEMORY_PACK_COMPILED",
+        extra={
+            "event": "CHAT_MEMORY_PACK_COMPILED",
+            "thread_id": thread_id,
+            **memory_pack_manifest.to_metadata(),
+        },
+    )
     logger.info(
         "CHAT_EVIDENCE_PACK_COMPILED",
         extra={
@@ -2495,6 +2552,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 body.show_council,
                 user_msg,
                 evidence_pack=evidence_pack,
+                memory_pack_manifest=memory_pack_manifest,
                 prompt_manifest=prompt_manifest,
                 council_detail_holder=council_detail_v2,
                 chat_outcome_holder=chat_outcome,
@@ -2509,6 +2567,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 response_surface=body.response_surface,
                 internet_verified=bool(internet_context),
                 evidence_pack=evidence_pack,
+                memory_pack_manifest=memory_pack_manifest,
                 prompt_manifest=prompt_manifest,
                 chat_outcome_holder=chat_outcome,
             )

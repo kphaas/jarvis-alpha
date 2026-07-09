@@ -24,6 +24,7 @@ def test_chat_eval_harness_all_offline_contracts_pass() -> None:
     assert all(result.passed for result in results)
     assert {result.eval_group for result in results} == {
         "golden_strategy",
+        "memory_pack",
         "prompt_compiler",
         "quality_gateway",
         "outcome_audit",
@@ -55,6 +56,7 @@ def test_chat_eval_payload_scoreboards_outcome_metadata() -> None:
     assert payload["status"] == "passed"
     assert payload["failed"] == 0
     assert payload["case_groups"]["golden_strategy"]["case_count"] == 4
+    assert payload["case_groups"]["memory_pack"]["case_count"] == 2
     assert payload["case_groups"]["prompt_compiler"]["case_count"] == 2
     assert payload["case_groups"]["quality_gateway"]["case_count"] == 4
     assert payload["case_groups"]["outcome_audit"]["case_count"] == 1
