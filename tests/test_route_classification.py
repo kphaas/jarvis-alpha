@@ -45,3 +45,10 @@ def test_chat_outcome_audit_route_is_security_read():
 
     assert classes == ["read", "security_read"]
     assert determine_risk_tier(classes) == "T2"
+
+
+def test_chat_eval_route_is_security_read():
+    classes = classify_route("GET", "/v1/chat/evals")
+
+    assert classes == ["read", "security_read"]
+    assert determine_risk_tier(classes) == "T2"

@@ -34,6 +34,7 @@ from brain.memory.semantic_commands import (
 from brain.middleware.scopes import check_scopes
 from brain.routing.router import route
 from brain.services.at0_self_model import build_at0_self_model, is_at0_self_query
+from brain.services.chat_evaluation_harness import chat_eval_payload
 from brain.services.chat_evidence_pack import (
     ChatEscalationDecision,
     ChatEvidencePack,
@@ -2659,6 +2660,16 @@ async def list_chat_outcomes(
         "count": len(outcomes),
         "outcomes": outcomes,
     }
+
+
+@router.get("/v1/chat/evals")
+async def chat_eval_harness(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=100),
+) -> dict[str, object]:
+    audit = await list_chat_outcomes(request=request, limit=limit, thread_id=None)
+    outcomes = cast(list[Mapping[str, object]], audit.get("outcomes", []))
+    return chat_eval_payload(outcomes)
 
 
 @router.patch("/v1/threads/{thread_id}")
