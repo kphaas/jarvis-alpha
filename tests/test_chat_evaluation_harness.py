@@ -60,7 +60,7 @@ def test_chat_eval_payload_scoreboards_outcome_metadata() -> None:
     assert payload["case_groups"]["memory_pack"]["case_count"] == 2
     assert payload["case_groups"]["prompt_compiler"]["case_count"] == 2
     assert payload["case_groups"]["quality_gateway"]["case_count"] == 4
-    assert payload["case_groups"]["trace_replay"]["case_count"] == 3
+    assert payload["case_groups"]["trace_replay"]["case_count"] == 4
     assert payload["case_groups"]["outcome_audit"]["case_count"] == 1
     assert payload["scoreboard"] == {
         "evaluated_outcome_count": 2,
