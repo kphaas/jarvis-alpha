@@ -15,6 +15,7 @@ from brain.services.chat_evidence_pack import (
     plan_chat_escalation,
     verify_chat_response,
 )
+from brain.services.chat_prompt_compiler import compile_chat_prompt
 
 CHAT_EVAL_SCHEMA_VERSION = "chat_eval_harness.v1"
 
@@ -33,6 +34,7 @@ def run_chat_eval_harness(
 ) -> list[ChatEvalResult]:
     return [
         *_strategy_eval_results(),
+        *_prompt_compiler_eval_results(),
         *_quality_gate_eval_results(),
         _outcome_audit_contract(outcomes),
     ]
@@ -182,6 +184,80 @@ def _quality_gate_eval_results() -> list[ChatEvalResult]:
             expected_escalation="none",
         ),
     ]
+
+
+def _prompt_compiler_eval_results() -> list[ChatEvalResult]:
+    return [
+        _run_prompt_compiler_case(
+            name="beacon_evidence_precedes_stale_memory",
+            user_msg="Find the official OpenAI API docs.",
+            memory_context="Stale memory says beta.openai.com is current.",
+            internet_context="Official source: platform.openai.com/docs",
+            web_suggestion_context=None,
+            expected_before="platform.openai.com/docs",
+            expected_after="beta.openai.com",
+            expected_policy="beacon_evidence_is_authority",
+            expected_section="beacon_evidence",
+        ),
+        _run_prompt_compiler_case(
+            name="web_suggestion_is_boundary_not_evidence",
+            user_msg="Find the latest OpenAI API docs.",
+            memory_context="",
+            internet_context=None,
+            web_suggestion_context="Beacon has not run yet.",
+            expected_before="Smart Web Suggestion boundary:",
+            expected_after="Beacon has not run yet.",
+            expected_policy="web_suggestion_requires_confirmation",
+            expected_section="web_suggestion_boundary",
+        ),
+    ]
+
+
+def _run_prompt_compiler_case(
+    *,
+    name: str,
+    user_msg: str,
+    memory_context: str,
+    internet_context: str | None,
+    web_suggestion_context: str | None,
+    expected_before: str,
+    expected_after: str,
+    expected_policy: str,
+    expected_section: str,
+) -> ChatEvalResult:
+    compiled = compile_chat_prompt(
+        user_msg=user_msg,
+        memory_context=memory_context,
+        internet_context=internet_context,
+        web_suggestion_context=web_suggestion_context,
+        beacon_authority_rule="Beacon authority rule:",
+        web_suggestion_boundary_rule="Smart Web Suggestion boundary:",
+    )
+    failures: list[str] = []
+    before_index = compiled.prompt.find(expected_before)
+    after_index = compiled.prompt.find(expected_after)
+    if before_index < 0:
+        failures.append(f"missing_before:{expected_before}")
+    if after_index < 0:
+        failures.append(f"missing_after:{expected_after}")
+    if before_index >= 0 and after_index >= 0 and before_index >= after_index:
+        failures.append("section_order")
+    if compiled.manifest.tool_policy != expected_policy:
+        failures.append(f"tool_policy:{compiled.manifest.tool_policy}")
+    if expected_section not in compiled.manifest.section_order:
+        failures.append(f"missing_section:{expected_section}")
+
+    return ChatEvalResult(
+        name=name,
+        eval_group="prompt_compiler",
+        passed=not failures,
+        details={
+            "section_order": list(compiled.manifest.section_order),
+            "tool_policy": compiled.manifest.tool_policy,
+            "compiled_prompt_chars": compiled.manifest.compiled_prompt_chars,
+        },
+        failures=tuple(failures),
+    )
 
 
 def _run_quality_case(
