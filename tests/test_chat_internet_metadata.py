@@ -1603,6 +1603,11 @@ async def test_chat_emits_web_suggestion_without_running_beacon(
         for frame in stream.split("\n\n")
         if frame.startswith("data: {") and "chat_evidence_schema_version" in frame
     ]
+    prompt_frames = [
+        json.loads(frame.removeprefix("data: "))
+        for frame in stream.split("\n\n")
+        if frame.startswith("data: {") and "chat_prompt_schema_version" in frame
+    ]
     verification_frames = [
         json.loads(frame.removeprefix("data: "))
         for frame in stream.split("\n\n")
@@ -1642,6 +1647,35 @@ async def test_chat_emits_web_suggestion_without_running_beacon(
             "done": False,
         }
     ]
+    assert len(prompt_frames) == 1
+    prompt_frame = prompt_frames[0]
+    assert prompt_frame["chat_prompt_schema_version"] == "chat_prompt_manifest.v1"
+    assert prompt_frame["chat_prompt_section_order"] == [
+        "web_suggestion_boundary",
+        "web_suggestion",
+        "response_style",
+        "user_message",
+    ]
+    assert prompt_frame["chat_prompt_user_message_chars"] == len(
+        "Find the official OpenAI API reference URL."
+    )
+    assert (
+        prompt_frame["chat_prompt_compiled_chars"]
+        > (prompt_frame["chat_prompt_user_message_chars"])
+    )
+    assert prompt_frame["chat_prompt_memory_used"] is False
+    assert prompt_frame["chat_prompt_internet_used"] is False
+    assert prompt_frame["chat_prompt_web_suggestion_used"] is True
+    assert prompt_frame["chat_prompt_at0_self_used"] is False
+    assert prompt_frame["chat_prompt_conversation_used"] is False
+    assert prompt_frame["chat_prompt_raw_web_content_is_untrusted"] is False
+    assert prompt_frame["chat_prompt_memory_context_priority"] is None
+    assert prompt_frame["chat_prompt_response_style_used"] is True
+    assert prompt_frame["chat_prompt_tool_policy"] == (
+        "web_suggestion_requires_confirmation"
+    )
+    assert prompt_frame["thread_id"] == str(THREAD_ID)
+    assert prompt_frame["done"] is False
     assert verification_frames == [
         {
             "chat_response_verification_schema_version": (
@@ -1711,3 +1745,7 @@ async def test_chat_emits_web_suggestion_without_running_beacon(
     persisted_metadata = json.loads(str(assistant_args[-1]))
     assert persisted_metadata["web_suggestion_mode"] == "deep_research"
     assert persisted_metadata["web_suggestion_requires_confirmation"] is True
+    assert persisted_metadata["chat_prompt_schema_version"] == "chat_prompt_manifest.v1"
+    assert persisted_metadata["chat_prompt_tool_policy"] == (
+        "web_suggestion_requires_confirmation"
+    )

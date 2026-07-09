@@ -40,11 +40,13 @@ from brain.services.chat_evidence_pack import (
     ChatEvidencePack,
     ChatQualityGateDecision,
     ChatResponseVerification,
-    build_chat_evidence_pack,
     evaluate_chat_quality_gate,
     plan_chat_escalation,
-    render_chat_evidence_prompt,
     verify_chat_response,
+)
+from brain.services.chat_prompt_compiler import (
+    ChatPromptManifest,
+    compile_chat_prompt,
 )
 from brain.services.internet_scout.chat_adapter import (
     InternetChatContext,
@@ -118,6 +120,19 @@ CHAT_OUTCOME_METADATA_KEYS = (
     "chat_outcome_escalation_action",
     "chat_outcome_escalation_requires_confirmation",
     "chat_outcome_evidence_count",
+    "chat_prompt_schema_version",
+    "chat_prompt_section_order",
+    "chat_prompt_user_message_chars",
+    "chat_prompt_compiled_chars",
+    "chat_prompt_memory_used",
+    "chat_prompt_internet_used",
+    "chat_prompt_web_suggestion_used",
+    "chat_prompt_at0_self_used",
+    "chat_prompt_conversation_used",
+    "chat_prompt_raw_web_content_is_untrusted",
+    "chat_prompt_memory_context_priority",
+    "chat_prompt_response_style_used",
+    "chat_prompt_tool_policy",
 )
 BEACON_INTERNET_AUTHORITY_RULE = "\n".join(
     [
@@ -357,20 +372,18 @@ def _build_enriched_prompt(
         response_surface=response_surface,
         personality_id=personality_id,
     )
-    evidence_pack = build_chat_evidence_pack(
+    compiled = compile_chat_prompt(
+        user_msg=user_msg,
         memory_context=memory_context,
         internet_context=internet_context,
         web_suggestion_context=web_suggestion_context,
         at0_self_context=at0_self_context,
         conversation_context=conversation_context,
-    )
-    return render_chat_evidence_prompt(
-        evidence_pack=evidence_pack,
-        user_msg=user_msg,
         response_style_context=response_style_context,
         beacon_authority_rule=BEACON_INTERNET_AUTHORITY_RULE,
         web_suggestion_boundary_rule=WEB_SUGGESTION_BOUNDARY_RULE,
     )
+    return compiled.prompt
 
 
 def _message_text(
@@ -658,6 +671,17 @@ def _chat_evidence_sse_metadata(
     return payload
 
 
+def _chat_prompt_manifest_sse_metadata(
+    *,
+    manifest: ChatPromptManifest,
+    thread_id: str,
+) -> dict[str, object]:
+    payload = manifest.to_metadata()
+    payload["thread_id"] = thread_id
+    payload["done"] = False
+    return payload
+
+
 def _chat_response_verification_sse_metadata(
     *,
     verification: ChatResponseVerification,
@@ -711,11 +735,12 @@ def _chat_outcome_message_metadata(
     verification: ChatResponseVerification,
     gate: ChatQualityGateDecision,
     escalation: ChatEscalationDecision,
+    prompt_manifest: ChatPromptManifest | None = None,
 ) -> dict[str, object]:
     verification_metadata = verification.to_metadata()
     gate_metadata = gate.to_metadata()
     escalation_metadata = escalation.to_metadata()
-    return {
+    metadata = {
         "chat_outcome_schema_version": CHAT_OUTCOME_SCHEMA_VERSION,
         "chat_outcome_model_label": model_label,
         "chat_outcome_strategy": route_result.get("chat_strategy"),
@@ -741,6 +766,9 @@ def _chat_outcome_message_metadata(
             "chat_response_evidence_count"
         ],
     }
+    if prompt_manifest:
+        metadata.update(prompt_manifest.to_metadata())
+    return metadata
 
 
 def _merge_chat_outcome_metadata(
@@ -1810,6 +1838,7 @@ async def _stream_single(
     response_surface: AskResponseSurface = "chat",
     internet_verified: bool = False,
     evidence_pack: ChatEvidencePack | None = None,
+    prompt_manifest: ChatPromptManifest | None = None,
     chat_outcome_holder: dict[str, object] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream tokens from router → SSE events."""
@@ -1818,6 +1847,12 @@ async def _stream_single(
     strategy_metadata = _chat_strategy_sse_metadata(result, thread_id)
     if strategy_metadata:
         yield f"data: {json.dumps(strategy_metadata)}\n\n"
+    if prompt_manifest:
+        payload = _chat_prompt_manifest_sse_metadata(
+            manifest=prompt_manifest,
+            thread_id=thread_id,
+        )
+        yield f"data: {json.dumps(payload)}\n\n"
 
     text = _finalize_model_response(
         result.get("result", ""),
@@ -1845,6 +1880,7 @@ async def _stream_single(
                     verification=verification,
                     gate=gate,
                     escalation=escalation,
+                    prompt_manifest=prompt_manifest,
                 )
             )
         payload = _chat_response_verification_sse_metadata(
@@ -1921,6 +1957,7 @@ async def _stream_council(
     show_council: bool,
     user_msg: str,
     evidence_pack: ChatEvidencePack | None = None,
+    prompt_manifest: ChatPromptManifest | None = None,
     council_detail_holder: dict[str, object] | None = None,
     chat_outcome_holder: dict[str, object] | None = None,
 ) -> AsyncGenerator[str, None]:
@@ -1984,6 +2021,12 @@ async def _stream_council(
         thread_id=thread_id,
     )
     yield f"data: {json.dumps(detail_payload)}\n\n"
+    if prompt_manifest:
+        payload = _chat_prompt_manifest_sse_metadata(
+            manifest=prompt_manifest,
+            thread_id=thread_id,
+        )
+        yield f"data: {json.dumps(payload)}\n\n"
     if evidence_pack:
         verification = verify_chat_response(
             response_text=synth_text,
@@ -2003,6 +2046,7 @@ async def _stream_council(
                     verification=verification,
                     gate=gate,
                     escalation=escalation,
+                    prompt_manifest=prompt_manifest,
                 )
             )
         payload = _chat_response_verification_sse_metadata(
@@ -2233,7 +2277,12 @@ async def chat_completions(body: CompletionRequest, request: Request):
             )
             at0_self_context = (await build_at0_self_model(None)).prompt_context
     conversation_context = _conversation_context_from_messages(body.messages)
-    evidence_pack = build_chat_evidence_pack(
+    response_style_context = _response_style_prompt(
+        response_surface=body.response_surface,
+        personality_id=body.personality_id,
+    )
+    compiled_prompt = compile_chat_prompt(
+        user_msg=user_msg,
         memory_context=context,
         internet_context=internet_context.prompt_context if internet_context else None,
         web_suggestion_context=(
@@ -2251,24 +2300,27 @@ async def chat_completions(body: CompletionRequest, request: Request):
         raw_web_content_is_untrusted=(
             internet_context.raw_web_content_is_untrusted if internet_context else False
         ),
-    )
-    response_style_context = _response_style_prompt(
-        response_surface=body.response_surface,
-        personality_id=body.personality_id,
-    )
-    enriched = render_chat_evidence_prompt(
-        evidence_pack=evidence_pack,
-        user_msg=user_msg,
         response_style_context=response_style_context,
         beacon_authority_rule=BEACON_INTERNET_AUTHORITY_RULE,
         web_suggestion_boundary_rule=WEB_SUGGESTION_BOUNDARY_RULE,
     )
+    enriched = compiled_prompt.prompt
+    evidence_pack = compiled_prompt.evidence_pack
+    prompt_manifest = compiled_prompt.manifest
     logger.info(
         "CHAT_EVIDENCE_PACK_COMPILED",
         extra={
             "event": "CHAT_EVIDENCE_PACK_COMPILED",
             "thread_id": thread_id,
             **evidence_pack.to_metadata(),
+        },
+    )
+    logger.info(
+        "CHAT_PROMPT_COMPILED",
+        extra={
+            "event": "CHAT_PROMPT_COMPILED",
+            "thread_id": thread_id,
+            **prompt_manifest.to_metadata(),
         },
     )
 
@@ -2443,6 +2495,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 body.show_council,
                 user_msg,
                 evidence_pack=evidence_pack,
+                prompt_manifest=prompt_manifest,
                 council_detail_holder=council_detail_v2,
                 chat_outcome_holder=chat_outcome,
             )
@@ -2456,6 +2509,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 response_surface=body.response_surface,
                 internet_verified=bool(internet_context),
                 evidence_pack=evidence_pack,
+                prompt_manifest=prompt_manifest,
                 chat_outcome_holder=chat_outcome,
             )
 
