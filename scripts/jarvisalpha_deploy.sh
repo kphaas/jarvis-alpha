@@ -484,6 +484,34 @@ print(f"{payload.get('passed', 0)} checks passed")
     fi
   fi
 
+  if [[ "${JARVIS_SKIP_CHAT_QUALITY_EVAL:-0}" == "1" || "${JARVIS_ALPHA_SKIP_CHAT_QUALITY_EVAL:-0}" == "1" ]]; then
+    printf '  %b⏭%b %-22s %-45s %s\n' "$YELLOW" "$RESET" "chat quality eval" "SKIPPED (JARVIS_SKIP_CHAT_QUALITY_EVAL=1)" ""
+  else
+    local chat_eval_start=$SECONDS
+    local chat_eval_out
+    local chat_eval_ec
+
+    chat_eval_out=$(
+      cd "$REPO_DIR" && uv run --python 3.12 python scripts/eval_chat_quality.py 2>&1
+    )
+    chat_eval_ec=$?
+    if [ $chat_eval_ec -ne 0 ]; then
+      step_fail "chat quality eval" "failed"
+      echo "$chat_eval_out" >&2
+      smoke_failed=1
+    else
+      local chat_eval_summary
+      chat_eval_summary=$(printf '%s\n' "$chat_eval_out" | tail -1 | python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+print(f"{payload.get('passed', 0)} passed / {payload.get('failed', 0)} failed")
+' 2>/dev/null || true)
+      step_ok "chat quality eval" "${chat_eval_summary:-passed}" "$(fmt_s $((SECONDS - chat_eval_start)))"
+    fi
+  fi
+
   return $smoke_failed
 }
 
