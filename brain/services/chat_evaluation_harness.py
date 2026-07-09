@@ -30,6 +30,25 @@ class ChatEvalResult:
     failures: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class _TraceReplayCase:
+    name: str
+    trace_id: str
+    prompt: str
+    requested_model: str
+    internet_mode: str
+    memory_context: str
+    internet_context: str | None
+    response_text: str
+    expected_route_mode: str
+    expected_quality_action: str
+    expected_escalation: str
+    expected_tool_policy: str
+    memory_budget_chars: int = 6000
+    expected_memory_present: str | None = None
+    expected_memory_absent: str | None = None
+
+
 def run_chat_eval_harness(
     outcomes: Sequence[Mapping[str, object]] = (),
 ) -> list[ChatEvalResult]:
@@ -38,6 +57,7 @@ def run_chat_eval_harness(
         *_memory_pack_eval_results(),
         *_prompt_compiler_eval_results(),
         *_quality_gate_eval_results(),
+        *_trace_replay_eval_results(),
         _outcome_audit_contract(outcomes),
     ]
 
@@ -312,6 +332,134 @@ def _run_prompt_compiler_case(
             "section_order": list(compiled.manifest.section_order),
             "tool_policy": compiled.manifest.tool_policy,
             "compiled_prompt_chars": compiled.manifest.compiled_prompt_chars,
+        },
+        failures=tuple(failures),
+    )
+
+
+def _trace_replay_eval_results() -> list[ChatEvalResult]:
+    return [
+        _run_trace_replay_case(
+            _TraceReplayCase(
+                name="trace_replay_beacon_over_stale_memory",
+                trace_id="synthetic-trace-beacon-stale-memory",
+                prompt="Find the official OpenAI API docs.",
+                requested_model="auto",
+                internet_mode="web_search",
+                memory_context="Stale memory says beta.openai.com is current.",
+                internet_context="Official source: platform.openai.com/docs",
+                response_text="The official source is platform.openai.com/docs.",
+                expected_route_mode="perplexity",
+                expected_quality_action="accept",
+                expected_escalation="none",
+                expected_tool_policy="beacon_evidence_is_authority",
+            )
+        ),
+        _run_trace_replay_case(
+            _TraceReplayCase(
+                name="trace_replay_unsupported_web_claim_escalates",
+                trace_id="synthetic-trace-unsupported-web-claim",
+                prompt="Is this current?",
+                requested_model="auto",
+                internet_mode="none",
+                memory_context="",
+                internet_context=None,
+                response_text="I checked the web and confirmed this is current.",
+                expected_route_mode="perplexity",
+                expected_quality_action="replace_with_safe_fallback",
+                expected_escalation="beacon",
+                expected_tool_policy="no_external_tool_executed",
+            )
+        ),
+        _run_trace_replay_case(
+            _TraceReplayCase(
+                name="trace_replay_current_memory_survives_budget",
+                trace_id="synthetic-trace-current-memory-budget",
+                prompt="What is the current Alpha plan?",
+                requested_model="auto",
+                internet_mode="none",
+                memory_context="\n".join(
+                    [
+                        "[TEMPORAL GRAPH]",
+                        "- [historical] Alpha plan: old path " + ("x" * 120),
+                        "- [current] Alpha plan: build model registry next",
+                        "- [needs refresh] Alpha plan: unverified old note "
+                        + ("y" * 120),
+                    ]
+                ),
+                internet_context=None,
+                response_text="The current Alpha plan is to build the model registry next.",
+                expected_route_mode="perplexity",
+                expected_quality_action="accept",
+                expected_escalation="none",
+                expected_tool_policy="no_external_tool_executed",
+                memory_budget_chars=100,
+                expected_memory_present="[current] Alpha plan",
+                expected_memory_absent="[historical]",
+            )
+        ),
+    ]
+
+
+def _run_trace_replay_case(case: _TraceReplayCase) -> ChatEvalResult:
+    strategy = select_chat_strategy(
+        prompt=case.prompt,
+        requested_model=case.requested_model,
+        internet_mode=case.internet_mode,
+    )
+    memory_pack = pack_chat_memory_context(
+        case.memory_context,
+        budget_chars=case.memory_budget_chars,
+    )
+    compiled = compile_chat_prompt(
+        user_msg=case.prompt,
+        memory_context=memory_pack.context,
+        internet_context=case.internet_context,
+        beacon_authority_rule="Beacon authority rule:",
+        web_suggestion_boundary_rule="Smart Web Suggestion boundary:",
+    )
+    verification = verify_chat_response(
+        response_text=case.response_text,
+        evidence_pack=compiled.evidence_pack,
+    )
+    gate = evaluate_chat_quality_gate(
+        evidence_pack=compiled.evidence_pack,
+        verification=verification,
+        strategy_metadata=strategy.metadata(),
+    )
+    escalation = plan_chat_escalation(quality_gate=gate)
+
+    failures: list[str] = []
+    if strategy.route_mode != case.expected_route_mode:
+        failures.append(f"route:{strategy.route_mode}")
+    if compiled.manifest.tool_policy != case.expected_tool_policy:
+        failures.append(f"tool_policy:{compiled.manifest.tool_policy}")
+    if gate.action != case.expected_quality_action:
+        failures.append(f"quality_action:{gate.action}")
+    if escalation.rung != case.expected_escalation:
+        failures.append(f"escalation:{escalation.rung}")
+    if (
+        case.expected_memory_present
+        and case.expected_memory_present not in memory_pack.context
+    ):
+        failures.append("memory_missing_expected")
+    if (
+        case.expected_memory_absent
+        and case.expected_memory_absent in memory_pack.context
+    ):
+        failures.append("memory_kept_stale")
+
+    return ChatEvalResult(
+        name=case.name,
+        eval_group="trace_replay",
+        passed=not failures,
+        details={
+            "trace_id": case.trace_id,
+            "route_mode": strategy.route_mode,
+            "tool_policy": compiled.manifest.tool_policy,
+            "memory_truncated": memory_pack.manifest.truncated,
+            "quality_action": gate.action,
+            "escalation_rung": escalation.rung,
         },
         failures=tuple(failures),
     )

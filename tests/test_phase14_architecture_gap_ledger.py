@@ -32,11 +32,15 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
         "Outcome Inspector",
         "Evaluation Harness",
         "Deploy Regression Gate",
+        "Prompt Compiler v2",
+        "Memory/RAG Packing",
+        "Model Capability Registry",
+        "Trace Replay Evals",
     ):
         assert phase in text
 
     next_queue = text.split("## Next Build Queue", maxsplit=1)[1]
-    assert "Phase 15: Prompt Compiler v2" in next_queue
-    assert "Phase 16: Memory/RAG Packing" in next_queue
-    assert "Phase 17: Model Capability Registry" in next_queue
-    assert "Phase 18: Trace Replay Evals" in next_queue
+    assert "Phase 19: Repair Loop" in next_queue
+    assert "Phase 20: MCP Tool Boundary" in next_queue
+    assert "Phase 21: Trend Observability" in next_queue
+    assert "Phase 22: Redacted Real Trace Corpus" in next_queue

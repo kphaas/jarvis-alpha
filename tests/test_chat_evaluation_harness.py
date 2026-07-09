@@ -27,6 +27,7 @@ def test_chat_eval_harness_all_offline_contracts_pass() -> None:
         "memory_pack",
         "prompt_compiler",
         "quality_gateway",
+        "trace_replay",
         "outcome_audit",
     }
 
@@ -59,6 +60,7 @@ def test_chat_eval_payload_scoreboards_outcome_metadata() -> None:
     assert payload["case_groups"]["memory_pack"]["case_count"] == 2
     assert payload["case_groups"]["prompt_compiler"]["case_count"] == 2
     assert payload["case_groups"]["quality_gateway"]["case_count"] == 4
+    assert payload["case_groups"]["trace_replay"]["case_count"] == 3
     assert payload["case_groups"]["outcome_audit"]["case_count"] == 1
     assert payload["scoreboard"] == {
         "evaluated_outcome_count": 2,
@@ -91,6 +93,22 @@ def test_chat_eval_payload_fails_bad_outcome_contract() -> None:
     assert payload["status"] == "failed"
     assert result["passed"] is False
     assert result["failures"] == ["row_0:schema", "row_0:accept_escalated"]
+
+
+def test_trace_replay_eval_details_do_not_include_raw_turn_text() -> None:
+    payload = chat_eval_payload()
+
+    trace_results = [
+        result
+        for result in payload["results"]
+        if result["eval_group"] == "trace_replay"
+    ]
+
+    assert trace_results
+    assert "Find the official OpenAI API docs." not in json.dumps(trace_results)
+    assert "I checked the web and confirmed this is current." not in json.dumps(
+        trace_results
+    )
 
 
 def test_chat_eval_script_outputs_json() -> None:
