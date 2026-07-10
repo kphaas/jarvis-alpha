@@ -10,6 +10,10 @@ from pathlib import Path
 from time import perf_counter_ns
 
 from brain.routing.strategy import select_chat_strategy
+from brain.routing.model_score_calibration import (
+    CHAT_MODEL_SCORE_CALIBRATION_VERSION,
+    chat_model_score_calibration_payload,
+)
 from brain.services.chat_evidence_pack import (
     ChatEvidencePack,
     build_chat_evidence_pack,
@@ -73,6 +77,7 @@ def run_chat_eval_harness(
         *_mcp_tool_boundary_eval_results(),
         *_trace_replay_eval_results(),
         *_redacted_trace_corpus_eval_results(),
+        _model_score_calibration_contract(outcomes),
         _outcome_audit_contract(outcomes),
     ]
 
@@ -94,6 +99,7 @@ def chat_eval_payload(
         "failed": len(failed),
         "case_groups": _group_summary(results),
         "scoreboard": _outcome_scoreboard(outcomes),
+        "model_calibration": chat_model_score_calibration_payload(outcomes),
         "reporting": {
             "elapsed_ms": elapsed_ms,
             "model_calls": 0,
@@ -675,6 +681,41 @@ def _outcome_audit_contract(
     )
 
 
+def _model_score_calibration_contract(
+    outcomes: Sequence[Mapping[str, object]],
+) -> ChatEvalResult:
+    payload = chat_model_score_calibration_payload(outcomes)
+    failures: list[str] = []
+    if payload.get("schema_version") != CHAT_MODEL_SCORE_CALIBRATION_VERSION:
+        failures.append("schema")
+    rows = payload.get("calibrated_models")
+    if not isinstance(rows, list) or not rows:
+        failures.append("models_missing")
+    else:
+        for row in rows:
+            if not isinstance(row, Mapping):
+                failures.append("model_row_shape")
+                continue
+            if "route_mode" not in row:
+                failures.append("route_mode_missing")
+            calibrated = _safe_int(row.get("calibrated_reliability_score"))
+            if calibrated < 0 or calibrated > 100:
+                failures.append("calibrated_score_bounds")
+
+    return ChatEvalResult(
+        name="stored_outcomes_calibrate_model_scores",
+        eval_group="model_score_calibration",
+        passed=not failures,
+        details={
+            "schema_version": payload.get("schema_version"),
+            "evaluated_outcome_count": payload.get("evaluated_outcome_count"),
+            "model_count": len(rows) if isinstance(rows, list) else 0,
+            "min_samples": payload.get("min_samples"),
+        },
+        failures=tuple(failures),
+    )
+
+
 def _outcome_scoreboard(
     outcomes: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
@@ -702,6 +743,13 @@ def _outcome_scoreboard(
         "quality_actions": dict(sorted(action_counts.items())),
         "route_modes": dict(sorted(route_counts.items())),
     }
+
+
+def _safe_int(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _group_summary(results: Sequence[ChatEvalResult]) -> dict[str, dict[str, int]]:

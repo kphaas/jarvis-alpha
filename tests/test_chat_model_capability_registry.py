@@ -5,6 +5,7 @@ from brain.routing.model_capability_registry import (
     select_chat_model_for_task,
     task_class_for_complexity,
 )
+from brain.routing.model_score_calibration import calibrated_chat_model_capabilities
 
 
 def test_default_chat_model_registry_has_required_routing_tags() -> None:
@@ -43,3 +44,29 @@ def test_registry_contract_covers_all_default_route_modes() -> None:
     assert task_class_for_complexity(3) == "grounded"
     assert task_class_for_complexity(4) == "analysis"
     assert task_class_for_complexity(5) == "deep"
+
+
+def test_registry_can_accept_outcome_calibrated_capabilities() -> None:
+    calibrated = calibrated_chat_model_capabilities(
+        [
+            {
+                "chat_outcome_route_mode": "claude",
+                "chat_outcome_quality_action": "accept",
+                "chat_outcome_escalation_rung": "none",
+            },
+            {
+                "chat_outcome_route_mode": "claude",
+                "chat_outcome_quality_action": "accept",
+                "chat_outcome_escalation_rung": "none",
+            },
+            {
+                "chat_outcome_route_mode": "claude",
+                "chat_outcome_quality_action": "accept",
+                "chat_outcome_escalation_rung": "none",
+            },
+        ]
+    )
+
+    assert select_chat_model_for_task(
+        "analysis", capabilities=calibrated
+    ).route_mode == ("claude")
