@@ -1,8 +1,8 @@
 # AT-0 Chat Quality Architecture Review + Gap Ledger
 
 Date: 2026-07-09
-Scope: Alpha chat-quality amplification phases 1-21, with Helm as the operator display surface.
-Verdict: The shipped system now matches the original direction in architecture shape, but it is not complete. AT-0 has moved beyond routing into context, prompt compilation, memory packing, evidence, verification, bounded repair, MCP/tool trust boundaries, escalation, outcomes, registry-backed routing, trace-seeded eval gates, and trend observability. The remaining work is redacted real trace calibration and outcome-calibrated model scores.
+Scope: Alpha chat-quality amplification phases 1-22, with Helm as the operator display surface.
+Verdict: The shipped system now matches the original direction in architecture shape, but it is not complete. AT-0 has moved beyond routing into context, prompt compilation, memory packing, evidence, verification, bounded repair, MCP/tool trust boundaries, escalation, outcomes, registry-backed routing, trace-seeded eval gates, trend observability, and a redacted trace corpus contract. The remaining work is outcome-calibrated model scores and broader real-trace sampling.
 
 ## Target Architecture
 
@@ -44,7 +44,8 @@ flowchart TD
     A --> H["Helm Outcome Inspector"]
     A --> EV["Evaluation harness + trace replay"]
     EV --> T["Trend observability"]
-    T --> G["CI + deploy regression gate"]
+    T --> RC["Redacted trace corpus"]
+    RC --> G["CI + deploy regression gate"]
 ```
 
 ## Shipped Phase Ledger
@@ -70,25 +71,26 @@ flowchart TD
 | Repair Loop | Done, initial | `brain/services/chat_repair_loop.py:1` runs one bounded repair pass and `brain/routes/chat.py:1908` applies it before final gateway decisions. | Improves fixable lower-model failures without open-ended self-reflection. |
 | MCP Tool Boundary | Done, initial | `brain/services/mcp_tool_boundary.py:1` classifies MCP tools, approval policy, result trust, and prompt-injection sanitization. | Keeps tool output as data and prevents direct prompt/tool execution bypass. |
 | Trend Observability | Done, initial | `brain/services/chat_quality_trends.py:1` summarizes compact JSONL eval snapshots, `/v1/chat/evals` reads configured trend history, and `scripts/eval_chat_quality.py:1` can append metadata-only trend history. | Shows whether quality gates are stable, improving, or regressing across deploy/eval runs. |
+| Redacted Real Trace Corpus | Done, initial | `brain/services/chat_redacted_trace_corpus.py:1` redacts candidate traces and `docs/evals/chat_redacted_trace_corpus.v1.json` stores replayable metadata-safe cases. | Starts real-trace-style replay without committing raw prompt, response, contact, or private memory text. |
 
 ## Architecture Fit
 
 | Requirement | State | Evidence | Gap |
 |---|---:|---|---|
 | Model-agnostic strategy selection | Partial | Strategy plan now uses the capability registry for local, Perplexity, Claude, Gemini, council, and deep verify paths. | Needs outcome-calibrated scores and local-model benchmark data. |
-| Better lower-model output | Partial | Memory packing, prompt compilation, evidence pack, trace replay, repair loop, and verification/gateway can replace unsafe or unsupported answers before final stream. | Needs real redacted trace calibration and per-model benchmarks. |
+| Better lower-model output | Partial | Memory packing, prompt compilation, evidence pack, trace replay, redacted corpus replay, repair loop, and verification/gateway can replace unsafe or unsupported answers before final stream. | Needs broader redacted trace sampling and per-model benchmarks. |
 | Context engineering | Partial | Evidence pack and memory pack record evidence types, memory priority, token budget, freshness labels, and untrusted raw web content. | Ranking is still deterministic and shallow; no learned retrieval policy. |
 | Verification and repair | Partial | One bounded repair pass can strip unsupported web narration or retry empty evidence-backed answers before gateway/escalation. | No learned repair policy or multi-step self-critique. |
 | Operator observability | Strong | Helm surfaces outcome and eval details; Alpha logs quality and escalation decisions; eval payloads now include trend metadata. | No Helm trend chart or trace replay view. |
 | Safety boundary | Strong | Outcome/eval reads are classified `read` and `security_read`; high-risk actions still route through Alpha approvals; MCP tools now have contract-derived boundaries. | Need real invocation wrappers to consume this boundary before broad tool expansion. |
-| Evaluation | Partial | Offline deterministic eval suite has golden strategy, memory pack, prompt compiler, quality gateway, trace replay, and outcome audit groups. | Need redacted real failure corpus and per-model task evals. |
+| Evaluation | Partial | Offline deterministic eval suite has golden strategy, memory pack, prompt compiler, quality gateway, trace replay, redacted trace corpus, and outcome audit groups. | Need more real failure cases and per-model task evals. |
 
 ## 11-Pillar Audit
 
 | Pillar | Score | Evidence | Fix |
 |---|---:|---|---|
 | Scalability | 4 | Strategy, registry, and eval are pure local code; outcome endpoint limits rows to 100. | Calibrate registry from outcomes before adding many providers. |
-| Reliability | 4 | Deploy gate now runs chat eval; gateway has fallback responses, bounded repair, and synthetic trace replay. | Add a redacted corpus from real failed turns. |
+| Reliability | 4 | Deploy gate now runs chat eval; gateway has fallback responses, bounded repair, synthetic trace replay, and initial redacted corpus replay. | Add broader redacted real failed turns. |
 | Security | 4 | Eval/outcome endpoints are authenticated read/security-read; MCP output is classified as untrusted data and prompt-injection-looking text is blocked. | Apply the boundary to any future invocation wrapper. |
 | Observability | 4 | Outcome metadata plus Helm inspector exposes route, quality, evidence, escalation, and eval trend status. | Add Helm trend rendering and trace drilldown after real trace corpus exists. |
 | Maintainability | 4 | The chain is small modules: routing, evidence pack, eval harness, script gate. | Consolidate phase map in this ledger and keep future phases tied to it. |
@@ -96,10 +98,10 @@ flowchart TD
 | Usability / Accessibility | 3 | Helm uses compact chips and inspector panel. | Improve signed-out auth messaging only if operators still hit confusion. |
 | Performance | 4 | Evals run offline with zero model calls. | Add cost/latency measurement when provider calls enter evals. |
 | Cost | 4 | Current regression suite has `model_calls: 0`. | Keep trace replay deterministic by default; sample paid model evals separately. |
-| Testability | 4 | Tests assert eval groups, outcome scoring, deploy/CI gate wiring, and synthetic trace replay. | Add fixtures from production-safe anonymized traces. |
-| Privacy / Compliance | 3 | Outcome metadata is compact and authenticated. | Add redaction rules before trace replay stores prompt/response bodies. |
+| Testability | 4 | Tests assert eval groups, outcome scoring, deploy/CI gate wiring, synthetic trace replay, and redacted corpus replay. | Add more production-safe anonymized traces. |
+| Privacy / Compliance | 4 | Outcome metadata is compact and authenticated; redacted corpus fixtures reject raw contact tokens and raw fields. | Keep raw trace capture out of runtime until approval and retention policy exist. |
 
-Weakest pillars: privacy/compliance for future real traces, learned lower-model repair depth, and outcome-calibrated model scoring.
+Weakest pillars: broader real-trace sampling, learned lower-model repair depth, and outcome-calibrated model scoring.
 
 ## Market Reference Anchors
 
@@ -120,12 +122,13 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 | Repair loop | Closed initial | Reliability, output quality | One bounded repair pass now strips isolated unsupported web narration and retries empty evidence-backed answers once. | M | P1 | Ken/AT-0 | 2026-07-09 | `tests/test_chat_repair_loop.py` and trace replay evals cover repair success and Beacon non-bypass. |
 | MCP/tool boundary | Closed initial | Security, extensibility | MCP tools are classified by contract route, risk, approval policy, and untrusted result handling. | M | P1 | Ken/AT-0 | 2026-07-10 | `tests/test_mcp_tool_boundary.py` and `mcp_tool_boundary` eval cover approval-gated render tools and prompt-injection sanitization. |
 | Trend observability | Closed initial | Observability, usability | Eval payloads now include trend status, deltas, active failed groups, and next action from compact metadata-only JSONL history. | S | P2 | Ken/AT-0 | 2026-07-10 | `tests/test_chat_quality_trends.py`, `tests/test_chat_internet_metadata.py`, and `scripts/eval_chat_quality.py --record-history` cover trend deltas, route exposure, and compact snapshot persistence. |
+| Redacted real trace corpus | Closed initial | Reliability, privacy, evaluation | Redacted replay fixtures can now be loaded, validated, and replayed through the chat eval harness without raw prompt/contact leakage. | M | P1 | Ken/AT-0 | 2026-07-10 | `tests/test_chat_redacted_trace_corpus.py` and `redacted_trace_corpus` eval cover redaction and replay. |
 
 ## Next Build Queue
 
-1. Phase 22: Redacted Real Trace Corpus
-2. Phase 23: Outcome-Calibrated Model Scores
-3. Phase 24: Helm Trend Panel
+1. Phase 23: Outcome-Calibrated Model Scores
+2. Phase 24: Helm Trend Panel
+3. Phase 25: Real Trace Sampling Workflow
 
 ## Facts
 
@@ -143,6 +146,8 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 - Chat quality trend observability summarizes metadata-only eval snapshots in `brain/services/chat_quality_trends.py:1`.
 - `/v1/chat/evals` reads configured chat-quality trend history without mutating state in `brain/routes/chat.py:2903`.
 - The eval script can append compact local JSONL history for deploy trend comparisons in `scripts/eval_chat_quality.py:1`.
+- Redacted trace corpus fixtures are loaded and validated by `brain/services/chat_redacted_trace_corpus.py:1`.
+- The deterministic eval harness includes a `redacted_trace_corpus` group in `brain/services/chat_evaluation_harness.py:64`.
 - Trusted Sandbox CI and deploy now run chat quality evals in `.github/workflows/trusted-sandbox-ci.yml:135` and `scripts/jarvisalpha_deploy.sh:487`.
 - Helm reads the eval endpoint and renders an Evaluation Harness section in `src/ask/alphaAskClient.ts:2255` and `src/ask/AskWorkspace.tsx:5895`.
 
@@ -150,20 +155,20 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 
 - "Frontier-style output" means better task framing, evidence grounding, memory selection, verification, and repair around model calls, not imitation of proprietary hidden prompts.
 - Local/cloud providers will continue to change, so registry scores should be calibrated from outcomes and benchmark data over time.
-- Trace replay must store redacted or synthetic fixtures first; raw prompts/responses may contain sensitive personal data.
+- Trace replay must keep raw prompts/responses out of committed fixtures; production sampling needs explicit approval and retention policy.
 
 ## Risks
 
 | Severity | Risk | Mitigation |
 |---|---|---|
-| High | Trace replay stores sensitive raw chat content. | Start with synthetic fixtures and add redaction before production traces. |
+| High | Future trace sampling stores sensitive raw chat content. | Keep Phase 22 fixtures redacted-only; add approval, redaction, and retention before runtime capture. |
 | Medium | Model registry becomes stale. | Keep registry small, versioned, and covered by strategy tests. |
 | Medium | Memory/RAG packing overuses stale memory. | Keep freshness/source priority and Beacon-over-memory tests in the eval gate. |
 | Medium | MCP expansion bypasses Alpha approvals. | Require route classification and approval policy before any executable tool. |
 
 ## Recommendations
 
-1. Build Redacted Real Trace Corpus next.
-   - Option A: keep synthetic replay only. Safe, but misses real lower-model failures.
-   - Option B: redacted fixtures from selected production-safe traces. Recommended.
-   - Option C: raw trace storage. Do not ship; privacy risk is too high.
+1. Build Outcome-Calibrated Model Scores next.
+   - Option A: keep static registry scores. Safe, but routing will drift.
+   - Option B: calibrate model scores from outcome metadata and eval groups. Recommended.
+   - Option C: paid live benchmark suite. Later, after score contracts are stable.

@@ -30,6 +30,7 @@ def test_chat_eval_harness_all_offline_contracts_pass() -> None:
         "quality_gateway",
         "mcp_tool_boundary",
         "trace_replay",
+        "redacted_trace_corpus",
         "outcome_audit",
     }
 
@@ -64,6 +65,7 @@ def test_chat_eval_payload_scoreboards_outcome_metadata() -> None:
     assert payload["case_groups"]["quality_gateway"]["case_count"] == 4
     assert payload["case_groups"]["mcp_tool_boundary"]["case_count"] == 1
     assert payload["case_groups"]["trace_replay"]["case_count"] == 4
+    assert payload["case_groups"]["redacted_trace_corpus"]["case_count"] == 1
     assert payload["case_groups"]["outcome_audit"]["case_count"] == 1
     assert payload["scoreboard"] == {
         "evaluated_outcome_count": 2,
@@ -116,6 +118,23 @@ def test_trace_replay_eval_details_do_not_include_raw_turn_text() -> None:
     assert "I checked the web and confirmed this is current." not in json.dumps(
         trace_results
     )
+
+
+def test_redacted_trace_corpus_details_do_not_include_raw_sensitive_text() -> None:
+    payload = chat_eval_payload()
+
+    redacted_results = [
+        result
+        for result in payload["results"]
+        if result["eval_group"] == "redacted_trace_corpus"
+    ]
+    rendered = json.dumps(redacted_results)
+
+    assert redacted_results
+    assert "Ken Haas" not in rendered
+    assert "ken@example.com" not in rendered
+    assert "404-555-1212" not in rendered
+    assert "raw_trace_text_retained" in rendered
 
 
 def test_mcp_boundary_eval_details_do_not_include_raw_tool_text() -> None:
