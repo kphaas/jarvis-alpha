@@ -4,7 +4,9 @@ import json
 import os
 import re
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
@@ -21,7 +23,11 @@ logger = get_logger("alpha_brain")
 
 _HOME_GATEWAY_BASE_URL_KEY = "JARVIS_HOME_GATEWAY_BASE_URL"
 _HOME_GATEWAY_TOKEN_KEY = "JARVIS_HOME_GATEWAY_TOKEN"
+_HOME_TIME_ZONE_KEY = "JARVIS_HOME_TIME_ZONE"
+_DEFAULT_HOME_TIME_ZONE = "America/New_York"
 _HOME_GATEWAY_TIMEOUT_S = 15.0
+_QUIET_HOURS_START = 21
+_QUIET_HOURS_END = 7
 _INTENT_STOP_WORDS = {
     "a",
     "all",
@@ -133,7 +139,16 @@ async def _handle_homie_intent_text(
     context_index = _optional_context_index(state_payload.get("context"))
     mapping_index = _optional_mapping_index(state_payload.get("mapping"))
     parsed = _parse_intent(text, snapshot, context_index, mapping_index)
+    homie_context = _compile_homie_context(
+        request=request,
+        parsed=parsed,
+        context_index=context_index,
+        mapping_index=mapping_index,
+        observed_at=_utc_now(),
+        surface=surface,
+    )
     stream = {"path": "/v1/home/homie/events/stream", "transport": "sse"}
+    _log_homie_context(parsed=parsed, homie_context=homie_context, surface=surface)
 
     if parsed["kind"] == "read":
         entity = parsed.get("entity")
@@ -147,6 +162,7 @@ async def _handle_homie_intent_text(
                 ),
                 "intent": {"kind": "read", "entity_id": entity.get("entity_id")},
                 "entity": entity,
+                "homie_context": homie_context,
                 "stream": stream,
             }
         return {
@@ -159,6 +175,7 @@ async def _handle_homie_intent_text(
                 surface=surface,
             ),
             "intent": {"kind": "read", "scope": "whole_home"},
+            "homie_context": homie_context,
             "stream": stream,
         }
 
@@ -168,6 +185,7 @@ async def _handle_homie_intent_text(
             "surface": surface,
             "reply": _unresolved_reply(surface=surface),
             "intent": {"kind": "unresolved"},
+            "homie_context": homie_context,
             "stream": stream,
         }
 
@@ -195,6 +213,8 @@ async def _handle_homie_intent_text(
             ),
         },
         "gateway": gateway_result,
+        "homie_context": homie_context,
+        "explanation": homie_context["explanation"],
         "stream": stream,
     }
     for key in ("plan", "proposal", "approval", "execution"):
@@ -368,6 +388,287 @@ def _required_config(key: str) -> str:
 
 def _sse_event(name: str, payload: dict[str, Any]) -> str:
     return f"event: {name}\ndata: {json.dumps(payload, sort_keys=True)}\n\n"
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _compile_homie_context(
+    *,
+    request: Request,
+    parsed: dict[str, Any],
+    context_index: dict[str, dict[str, Any]],
+    mapping_index: dict[str, dict[str, Any]],
+    observed_at: datetime,
+    surface: Literal["chat", "voice"],
+) -> dict[str, Any]:
+    entity = parsed.get("entity")
+    entity_dict = entity if isinstance(entity, dict) else {}
+    entity_id = str(entity_dict.get("entity_id", "") or "")
+    entity_context = context_index.get(entity_id, {}) if entity_id else {}
+    mapping = mapping_index.get(entity_id) if entity_id else None
+
+    actor = _homie_actor_context(request)
+    room = _homie_room_context(entity_context)
+    time_context = _homie_time_context(observed_at)
+    presence = _homie_presence_context(entity_context, room)
+    device = _homie_device_context(entity_dict, mapping, entity_context)
+    routines = _homie_routine_context(entity_context)
+
+    context = {
+        "actor": actor,
+        "room": room,
+        "time": time_context,
+        "presence": presence,
+        "device": device,
+        "routines": routines,
+        "surface": surface,
+        "intent_kind": str(parsed.get("kind", "unknown")),
+    }
+    context["explanation"] = _homie_context_explanation(
+        context=context,
+        service=str(parsed.get("service", "") or ""),
+    )
+    return context
+
+
+def _homie_actor_context(request: Request) -> dict[str, Any]:
+    role = str(getattr(request.state, "role", "user") or "user")
+    actor_kind = "child" if role == "child" else "adult"
+    actor_id = str(getattr(request.state, "user_id", "") or "").strip()
+    profile_id = str(getattr(request.state, "profile_id", "") or "").strip()
+    display_name = str(getattr(request.state, "display_name", "") or "").strip()
+    return {
+        "id": actor_id or "unknown",
+        "profile_id": profile_id or actor_id or "unknown",
+        "kind": actor_kind,
+        "display_name": display_name or actor_id or "Unknown",
+    }
+
+
+def _homie_room_context(entity_context: dict[str, Any]) -> dict[str, Any]:
+    room = entity_context.get("room") if isinstance(entity_context, dict) else None
+    if not isinstance(room, dict):
+        return {"id": None, "label": None, "source": "unknown"}
+    return {
+        "id": _clean_context_string(room.get("id")),
+        "label": _clean_context_string(room.get("label")),
+        "source": "gateway_context",
+    }
+
+
+def _homie_time_context(observed_at: datetime) -> dict[str, Any]:
+    zone_name = os.getenv(_HOME_TIME_ZONE_KEY, _DEFAULT_HOME_TIME_ZONE).strip()
+    try:
+        zone = ZoneInfo(zone_name or _DEFAULT_HOME_TIME_ZONE)
+    except ZoneInfoNotFoundError:
+        zone = ZoneInfo("UTC")
+        zone_name = "UTC"
+    local_time = observed_at.astimezone(zone)
+    hour = local_time.hour
+    quiet_hours = hour >= _QUIET_HOURS_START or hour < _QUIET_HOURS_END
+    return {
+        "observed_at_utc": observed_at.astimezone(UTC).isoformat(),
+        "timezone": zone_name or _DEFAULT_HOME_TIME_ZONE,
+        "local_hour": hour,
+        "day_part": _day_part(hour),
+        "quiet_hours": quiet_hours,
+    }
+
+
+def _day_part(hour: int) -> str:
+    if 5 <= hour < 12:
+        return "morning"
+    if 12 <= hour < 17:
+        return "afternoon"
+    if 17 <= hour < _QUIET_HOURS_START:
+        return "evening"
+    return "night"
+
+
+def _homie_presence_context(
+    entity_context: dict[str, Any],
+    room: dict[str, Any],
+) -> dict[str, Any]:
+    presence = (
+        entity_context.get("presence") if isinstance(entity_context, dict) else None
+    )
+    if isinstance(presence, dict):
+        return {
+            "state": _clean_context_string(presence.get("state")) or "unknown",
+            "source": _clean_context_string(presence.get("source"))
+            or "gateway_context",
+            "room_label": _clean_context_string(presence.get("room_label"))
+            or room.get("label"),
+            "confidence": _clean_context_string(presence.get("confidence"))
+            or "unknown",
+        }
+    return {
+        "state": "unknown",
+        "source": "not_connected",
+        "room_label": room.get("label"),
+        "confidence": "none",
+    }
+
+
+def _homie_device_context(
+    entity: dict[str, Any],
+    mapping: dict[str, Any] | None,
+    entity_context: dict[str, Any],
+) -> dict[str, Any]:
+    entity_id = str(entity.get("entity_id", "") or "")
+    domain = entity_id.split(".", 1)[0] if "." in entity_id else None
+    tier, tier_source = _homie_device_tier(mapping, entity_context)
+    return {
+        "entity_id": entity_id or None,
+        "label": _entity_label(entity) if entity else None,
+        "domain": domain,
+        "tier": tier,
+        "tier_source": tier_source,
+    }
+
+
+def _homie_routine_context(entity_context: dict[str, Any]) -> list[dict[str, str]]:
+    routines = (
+        entity_context.get("routines") if isinstance(entity_context, dict) else None
+    )
+    if not isinstance(routines, list):
+        return []
+    compiled: list[dict[str, str]] = []
+    for routine in routines:
+        if not isinstance(routine, dict):
+            continue
+        label = _clean_context_string(routine.get("label"))
+        if label is None:
+            continue
+        routine_id = _clean_context_string(routine.get("id")) or label
+        compiled.append({"id": routine_id, "label": label})
+    return compiled
+
+
+def _homie_device_tier(
+    mapping: dict[str, Any] | None,
+    entity_context: dict[str, Any],
+) -> tuple[str, str]:
+    policy = entity_context.get("policy") if isinstance(entity_context, dict) else None
+    for source, value in (
+        ("context.policy", _tier_from(policy)),
+        ("context", _tier_from(entity_context)),
+        ("mapping", _tier_from(mapping)),
+    ):
+        if value is not None:
+            return value, source
+    return "unknown", "unmapped"
+
+
+def _tier_from(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    for key in ("device_tier", "approval_tier", "tier"):
+        tier = value.get(key)
+        if isinstance(tier, str) and tier.strip():
+            return tier.strip()
+    return None
+
+
+def _homie_context_explanation(
+    *,
+    context: dict[str, Any],
+    service: str,
+) -> str:
+    actor = context["actor"]
+    device = context["device"]
+    room = context["room"]
+    time_context = context["time"]
+    presence = context["presence"]
+    kind = context["intent_kind"]
+
+    actor_label = actor["display_name"]
+    actor_kind = actor["kind"]
+    device_label = device.get("label") or "the matched home device"
+    room_label = room.get("label") or "an unknown room"
+    tier = device.get("tier") or "unknown"
+    day_part = time_context["day_part"]
+    quiet = (
+        "quiet hours are active"
+        if time_context["quiet_hours"]
+        else "quiet hours are not active"
+    )
+    presence_text = _presence_explanation(presence)
+    routine_text = _routine_explanation(context.get("routines"))
+
+    if kind == "action":
+        action = service.replace("_", " ") if service else "control"
+        return (
+            f"{actor_label} is an {actor_kind} using Alpha {context['surface']} to "
+            f"{action} {device_label}. The device is in {room_label}, tier {tier}; "
+            f"it is {day_part} and {quiet}. {presence_text} {routine_text}"
+            "Gateway remains the final policy and execution authority."
+        )
+    if kind == "read":
+        return (
+            f"{actor_label} is an {actor_kind} using Alpha {context['surface']} for "
+            "a read-only home state check. No device action will run."
+        )
+    return "No home action will run because Homie could not match a device."
+
+
+def _presence_explanation(presence: dict[str, Any]) -> str:
+    if presence.get("source") == "not_connected":
+        return "Presence sensors are not connected yet."
+    state = presence.get("state") or "unknown"
+    room_label = presence.get("room_label")
+    if isinstance(room_label, str) and room_label:
+        return f"Presence signal says {state} near {room_label}."
+    return f"Presence signal state is {state}."
+
+
+def _routine_explanation(routines: Any) -> str:
+    if not isinstance(routines, list) or not routines:
+        return ""
+    labels: list[str] = []
+    for routine in routines:
+        if not isinstance(routine, dict):
+            continue
+        label = routine.get("label")
+        if isinstance(label, str) and label:
+            labels.append(label)
+    if not labels:
+        return ""
+    return f"Routines in scope: {', '.join(labels[:3])}. "
+
+
+def _clean_context_string(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(value, int | float):
+        return str(value)
+    return None
+
+
+def _log_homie_context(
+    *,
+    parsed: dict[str, Any],
+    homie_context: dict[str, Any],
+    surface: Literal["chat", "voice"],
+) -> None:
+    device = homie_context["device"]
+    room = homie_context["room"]
+    presence = homie_context["presence"]
+    time_context = homie_context["time"]
+    logger.info(
+        "homie_context_compiled kind=%s surface=%s entity_id=%s room_id=%s "
+        "device_tier=%s presence_source=%s day_part=%s quiet_hours=%s",
+        parsed.get("kind"),
+        surface,
+        device.get("entity_id"),
+        room.get("id"),
+        device.get("tier"),
+        presence.get("source"),
+        time_context.get("day_part"),
+        time_context.get("quiet_hours"),
+    )
 
 
 def _parse_intent(
