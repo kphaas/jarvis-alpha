@@ -1,8 +1,8 @@
 # AT-0 Chat Quality Architecture Review + Gap Ledger
 
 Date: 2026-07-09
-Scope: Alpha chat-quality amplification phases 1-19, with Helm as the operator display surface.
-Verdict: The shipped system now matches the original direction in architecture shape, but it is not complete. AT-0 has moved beyond routing into context, prompt compilation, memory packing, evidence, verification, bounded repair, escalation, outcomes, registry-backed routing, and trace-seeded eval gates. The remaining work is MCP/tool trust boundaries, trend observability, and redacted real trace calibration.
+Scope: Alpha chat-quality amplification phases 1-20, with Helm as the operator display surface.
+Verdict: The shipped system now matches the original direction in architecture shape, but it is not complete. AT-0 has moved beyond routing into context, prompt compilation, memory packing, evidence, verification, bounded repair, MCP/tool trust boundaries, escalation, outcomes, registry-backed routing, and trace-seeded eval gates. The remaining work is trend observability, redacted real trace calibration, and outcome-calibrated model scores.
 
 ## Target Architecture
 
@@ -16,7 +16,8 @@ flowchart TD
     P --> R["Model router"]
     R --> V["Response verification"]
     V --> RL["Repair loop"]
-    RL --> Q["Quality gateway"]
+    RL --> TB["MCP / tool boundary"]
+    TB --> Q["Quality gateway"]
     Q --> E["Escalation ladder"]
     E --> O["Outcome metadata"]
     O --> H["Helm operator surface"]
@@ -34,7 +35,8 @@ flowchart TD
     P --> R["Model capability registry"]
     R --> V["Response verification"]
     V --> RL["Repair loop"]
-    RL --> Q["Quality gateway"]
+    RL --> TB["MCP / tool boundary"]
+    TB --> Q["Quality gateway"]
     Q --> E["Escalation ladder"]
     E --> D["Council detail"]
     D --> O["Outcome metadata"]
@@ -65,6 +67,7 @@ flowchart TD
 | Model Capability Registry | Done, initial | `brain/routing/model_capability_registry.py:17` stores provider, deployment, cost, latency, context, tool, privacy, and reliability tags. | Moves auto routing away from hardcoded provider mapping. |
 | Trace Replay Evals | Done, synthetic | `brain/services/chat_evaluation_harness.py:45` includes synthetic trace replay cases through strategy, memory, prompt, verifier, gateway, and escalation. | Starts replay-based regression proof without storing sensitive raw traces. |
 | Repair Loop | Done, initial | `brain/services/chat_repair_loop.py:1` runs one bounded repair pass and `brain/routes/chat.py:1908` applies it before final gateway decisions. | Improves fixable lower-model failures without open-ended self-reflection. |
+| MCP Tool Boundary | Done, initial | `brain/services/mcp_tool_boundary.py:1` classifies MCP tools, approval policy, result trust, and prompt-injection sanitization. | Keeps tool output as data and prevents direct prompt/tool execution bypass. |
 
 ## Architecture Fit
 
@@ -75,7 +78,7 @@ flowchart TD
 | Context engineering | Partial | Evidence pack and memory pack record evidence types, memory priority, token budget, freshness labels, and untrusted raw web content. | Ranking is still deterministic and shallow; no learned retrieval policy. |
 | Verification and repair | Partial | One bounded repair pass can strip unsupported web narration or retry empty evidence-backed answers before gateway/escalation. | No learned repair policy or multi-step self-critique. |
 | Operator observability | Strong | Helm surfaces outcome and eval details; Alpha logs quality and escalation decisions. | No trend view or trace replay view. |
-| Safety boundary | Strong | Outcome/eval reads are classified `read` and `security_read`; high-risk actions still route through Alpha approvals. | Need MCP/tool-source trust boundaries before broad tool expansion. |
+| Safety boundary | Strong | Outcome/eval reads are classified `read` and `security_read`; high-risk actions still route through Alpha approvals; MCP tools now have contract-derived boundaries. | Need real invocation wrappers to consume this boundary before broad tool expansion. |
 | Evaluation | Partial | Offline deterministic eval suite has golden strategy, memory pack, prompt compiler, quality gateway, trace replay, and outcome audit groups. | Need redacted real failure corpus and per-model task evals. |
 
 ## 11-Pillar Audit
@@ -84,7 +87,7 @@ flowchart TD
 |---|---:|---|---|
 | Scalability | 4 | Strategy, registry, and eval are pure local code; outcome endpoint limits rows to 100. | Calibrate registry from outcomes before adding many providers. |
 | Reliability | 4 | Deploy gate now runs chat eval; gateway has fallback responses, bounded repair, and synthetic trace replay. | Add a redacted corpus from real failed turns. |
-| Security | 4 | Eval/outcome endpoints are authenticated read/security-read. | Define MCP/tool data boundary before external tool expansion. |
+| Security | 4 | Eval/outcome endpoints are authenticated read/security-read; MCP output is classified as untrusted data and prompt-injection-looking text is blocked. | Apply the boundary to any future invocation wrapper. |
 | Observability | 4 | Outcome metadata plus Helm inspector exposes route, quality, evidence, and escalation. | Add aggregate trend and trace drilldown only after trace replay exists. |
 | Maintainability | 4 | The chain is small modules: routing, evidence pack, eval harness, script gate. | Consolidate phase map in this ledger and keep future phases tied to it. |
 | Extensibility | 4 | Strategy names, model paths, and model capabilities are typed. | Keep registry versioned and outcome-calibrated. |
@@ -113,15 +116,14 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 | Gap | Type | Pillars hit | User impact | Effort | Priority | Owner | Target date | Verification |
 |---|---|---|---|---:|---:|---|---|---|
 | Repair loop | Closed initial | Reliability, output quality | One bounded repair pass now strips isolated unsupported web narration and retries empty evidence-backed answers once. | M | P1 | Ken/AT-0 | 2026-07-09 | `tests/test_chat_repair_loop.py` and trace replay evals cover repair success and Beacon non-bypass. |
-| MCP/tool boundary | At-risk | Security, extensibility | Adding tools without a standard boundary risks prompt injection and inconsistent auth. | M | P1 | Ken/AT-0 TBD | 2026-07-15 | MCP tools are classified, approval-gated, and represented as data/tool results, never instructions. |
+| MCP/tool boundary | Closed initial | Security, extensibility | MCP tools are classified by contract route, risk, approval policy, and untrusted result handling. | M | P1 | Ken/AT-0 | 2026-07-10 | `tests/test_mcp_tool_boundary.py` and `mcp_tool_boundary` eval cover approval-gated render tools and prompt-injection sanitization. |
 | Trend observability | Weak | Observability, usability | Helm shows current eval state, not quality trend or regressions over time. | S | P2 | Ken/AT-0 TBD | 2026-07-16 | Helm displays last run, failed group, and deploy gate status after trace replay exists. |
 
 ## Next Build Queue
 
-1. Phase 20: MCP Tool Boundary
-2. Phase 21: Trend Observability
-3. Phase 22: Redacted Real Trace Corpus
-4. Phase 23: Outcome-Calibrated Model Scores
+1. Phase 21: Trend Observability
+2. Phase 22: Redacted Real Trace Corpus
+3. Phase 23: Outcome-Calibrated Model Scores
 
 ## Facts
 
@@ -132,6 +134,7 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 - Memory packing emits a manifest without raw memory text in `brain/services/chat_memory_pack.py:17`.
 - Chat streaming applies verification, repair, quality gateway, escalation, outcome metadata, and fallback before final text streaming in `brain/routes/chat.py:1978`.
 - Council synthesis receives the same repair/verification/gateway/escalation path in `brain/routes/chat.py:2178`.
+- MCP tool boundaries are derived from route classification and contract output fields in `brain/services/mcp_tool_boundary.py:1`.
 - `/v1/chat/outcomes` and `/v1/chat/evals` are read/security-read routes in `brain/middleware/approval_classes.py:135`.
 - The deterministic eval harness has golden strategy, memory pack, prompt compiler, quality gateway, trace replay, and outcome audit groups in `brain/services/chat_evaluation_harness.py:72`.
 - The eval script exits nonzero when payload failures are present in `scripts/eval_chat_quality.py:20`.
@@ -155,12 +158,7 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 
 ## Recommendations
 
-1. Build MCP Tool Boundary after repair.
-   - Option A: call tools directly from prompts. Fast, but unsafe.
-   - Option B: classify MCP tools as data/tool results with approval policy and prompt-injection boundaries. Recommended.
-   - Option C: full external tool marketplace. Premature before boundary tests.
-
-2. Build Trend Observability after replay grows.
+1. Build Trend Observability after replay grows.
    - Option A: current eval chip only. Works now, but hides trends.
    - Option B: compact trend from eval/outcome snapshots. Recommended after trace corpus exists.
    - Option C: broad dashboard. Later, when there are enough runs to justify it.

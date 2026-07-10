@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, Request
 
 from brain.middleware.jwt_auth import require_auth
 from brain.middleware.scopes import check_scopes
+from brain.services.mcp_tool_boundary import boundary_registry_from_contract
 
 mcp_router = APIRouter(prefix="/v1/security/mcp", tags=["mcp"])
 
@@ -102,6 +103,7 @@ def beacon_crawler_adapter_status() -> dict[str, object]:
     contract = _beacon_crawler_contract()
     enabled = _env_enabled(BEACON_CRAWLER_MCP_ADAPTER_ENABLED)
     tools = contract.get("tools", [])
+    tool_boundaries = boundary_registry_from_contract(contract)
     return {
         "id": "beacon-crawler",
         "name": "Beacon Crawler",
@@ -113,12 +115,29 @@ def beacon_crawler_adapter_status() -> dict[str, object]:
         "contract_ref": "docs/contracts/beacon_crawler_mcp_adapter.v1.json",
         "contract_status": contract.get("status"),
         "tool_count": len(tools) if isinstance(tools, list) else 0,
+        "tool_boundary_schema_version": "mcp_tool_boundary.v1",
+        "tool_boundaries": tool_boundaries,
+        "result_boundary": {
+            "schema_version": "mcp_tool_result_boundary.v1",
+            "content_is_data": True,
+            "instructions_inside_result_ignored": True,
+            "raw_tool_output_is_untrusted": True,
+            "raw_result_text_is_not_prompt_instruction": True,
+        },
         "tools": [
             {
                 "name": tool.get("name"),
                 "route": tool.get("route"),
                 "approval": tool.get("approval"),
                 "risk_tier": tool.get("risk_tier"),
+                "boundary": next(
+                    (
+                        boundary
+                        for boundary in tool_boundaries
+                        if boundary.get("tool_name") == tool.get("name")
+                    ),
+                    None,
+                ),
             }
             for tool in tools
             if isinstance(tool, dict)
