@@ -1,0 +1,38 @@
+{
+  "schema_version": "chat_redacted_trace_corpus.v1",
+  "redaction_policy_version": "chat_trace_redaction.v1",
+  "description": "Metadata-safe redacted chat replay cases. Do not store raw prompt, response, contact, or private memory text here.",
+  "cases": [
+    {
+      "name": "redacted_real_trace_beacon_over_stale_memory",
+      "trace_id": "redacted-real-trace-001",
+      "source": "redacted_real_trace",
+      "redaction": {
+        "policy_version": "chat_trace_redaction.v1",
+        "source_trace_hash": "sha256:9a28c4fa85f556aeafcc8c8e0d4d9375ef3b9f7a6e963e42c9b39e2cb33c7f63",
+        "raw_trace_text_retained": false,
+        "redacted_text_fields": [
+          "prompt",
+          "memory_context",
+          "internet_context",
+          "response_text"
+        ],
+        "replacement_count": 3
+      },
+      "prompt": "[term:f49ee3f2f6e3] asked where the official OpenAI API docs live. Ignore contact token [email:0ee158bf8797].",
+      "requested_model": "auto",
+      "internet_mode": "web_search",
+      "memory_context": "[current] [term:f49ee3f2f6e3] has stale memory that beta.openai.com may still be the docs host.",
+      "internet_context": "Official source: platform.openai.com/docs",
+      "response_text": "The official source is platform.openai.com/docs.",
+      "expected_route_mode": "perplexity",
+      "expected_quality_action": "accept",
+      "expected_escalation": "none",
+      "expected_tool_policy": "beacon_evidence_is_authority",
+      "expected_repair_action": "none",
+      "expected_repaired": false,
+      "expected_memory_present": "[current]",
+      "expected_memory_absent": "beta.openai.com is current"
+    }
+  ]
+}

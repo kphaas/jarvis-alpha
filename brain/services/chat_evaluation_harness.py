@@ -20,6 +20,7 @@ from brain.services.chat_evidence_pack import (
 from brain.services.chat_memory_pack import pack_chat_memory_context
 from brain.services.chat_prompt_compiler import compile_chat_prompt
 from brain.services.chat_quality_trends import summarize_chat_quality_trend
+from brain.services.chat_redacted_trace_corpus import load_redacted_trace_corpus
 from brain.services.chat_repair_loop import repair_chat_response_once
 from brain.services.mcp_tool_boundary import (
     boundary_from_contract_tool,
@@ -71,6 +72,7 @@ def run_chat_eval_harness(
         *_quality_gate_eval_results(),
         *_mcp_tool_boundary_eval_results(),
         *_trace_replay_eval_results(),
+        *_redacted_trace_corpus_eval_results(),
         _outcome_audit_contract(outcomes),
     ]
 
@@ -441,6 +443,39 @@ def _trace_replay_eval_results() -> list[ChatEvalResult]:
     ]
 
 
+def _redacted_trace_corpus_eval_results() -> list[ChatEvalResult]:
+    return [
+        _run_trace_replay_case(
+            _TraceReplayCase(
+                name=case.name,
+                trace_id=case.trace_id,
+                prompt=case.prompt,
+                requested_model=case.requested_model,
+                internet_mode=case.internet_mode,
+                memory_context=case.memory_context,
+                internet_context=case.internet_context,
+                response_text=case.response_text,
+                expected_route_mode=case.expected_route_mode,
+                expected_quality_action=case.expected_quality_action,
+                expected_escalation=case.expected_escalation,
+                expected_tool_policy=case.expected_tool_policy,
+                expected_repair_action=case.expected_repair_action,
+                expected_repaired=case.expected_repaired,
+                memory_budget_chars=case.memory_budget_chars,
+                expected_memory_present=case.expected_memory_present,
+                expected_memory_absent=case.expected_memory_absent,
+            ),
+            eval_group="redacted_trace_corpus",
+            extra_details={
+                "source_trace_hash": case.source_trace_hash,
+                "redaction_policy_version": case.redaction_policy_version,
+                "raw_trace_text_retained": False,
+            },
+        )
+        for case in load_redacted_trace_corpus()
+    ]
+
+
 def _mcp_tool_boundary_eval_results() -> list[ChatEvalResult]:
     contract = json.loads(MCP_CONTRACT.read_text(encoding="utf-8"))
     boundaries = {
@@ -496,7 +531,12 @@ def _mcp_tool_boundary_eval_results() -> list[ChatEvalResult]:
     ]
 
 
-def _run_trace_replay_case(case: _TraceReplayCase) -> ChatEvalResult:
+def _run_trace_replay_case(
+    case: _TraceReplayCase,
+    *,
+    eval_group: str = "trace_replay",
+    extra_details: Mapping[str, object] | None = None,
+) -> ChatEvalResult:
     strategy = select_chat_strategy(
         prompt=case.prompt,
         requested_model=case.requested_model,
@@ -555,7 +595,7 @@ def _run_trace_replay_case(case: _TraceReplayCase) -> ChatEvalResult:
 
     return ChatEvalResult(
         name=case.name,
-        eval_group="trace_replay",
+        eval_group=eval_group,
         passed=not failures,
         details={
             "trace_id": case.trace_id,
@@ -566,6 +606,7 @@ def _run_trace_replay_case(case: _TraceReplayCase) -> ChatEvalResult:
             "escalation_rung": escalation.rung,
             "repair_action": repair.action,
             "repair_repaired": repair.repaired,
+            **dict(extra_details or {}),
         },
         failures=tuple(failures),
     )
