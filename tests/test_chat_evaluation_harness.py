@@ -15,6 +15,7 @@ from brain.services.chat_evaluation_harness import (
     chat_eval_payload,
     run_chat_eval_harness,
 )
+from brain.services.chat_quality_trends import CHAT_QUALITY_TREND_SCHEMA_VERSION
 
 
 def test_chat_eval_harness_all_offline_contracts_pass() -> None:
@@ -73,6 +74,10 @@ def test_chat_eval_payload_scoreboards_outcome_metadata() -> None:
         "route_modes": {"local": 1, "perplexity": 1},
     }
     assert payload["reporting"]["model_calls"] == 0
+    assert payload["trend_observability"]["schema_version"] == (
+        CHAT_QUALITY_TREND_SCHEMA_VERSION
+    )
+    assert payload["trend_observability"]["trend"] == "single_sample"
 
 
 def test_chat_eval_payload_fails_bad_outcome_contract() -> None:
@@ -140,3 +145,29 @@ def test_chat_eval_script_outputs_json() -> None:
     assert payload["suite"] == "alpha_chat_quality"
     assert payload["status"] == "passed"
     assert payload["failed"] == 0
+    assert payload["trend_observability"]["trend"] == "single_sample"
+
+
+def test_chat_eval_script_records_metadata_only_history(tmp_path) -> None:
+    history_path = tmp_path / "chat_quality_eval_history.jsonl"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/eval_chat_quality.py",
+            "--history-path",
+            str(history_path),
+            "--record-history",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    rows = [json.loads(line) for line in history_path.read_text().splitlines()]
+
+    assert payload["trend_observability"]["trend"] == "single_sample"
+    assert len(rows) == 1
+    assert rows[0]["schema_version"] == "chat_quality_eval_snapshot.v1"
+    assert rows[0]["suite"] == "alpha_chat_quality"
+    assert "results" not in rows[0]

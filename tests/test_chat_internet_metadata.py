@@ -18,6 +18,7 @@ os.environ.setdefault("ALPHA_DB_DSN_BUDDY", "postgresql://test:test@localhost/te
 os.environ.setdefault("ALPHA_GATEWAY_URL", "http://127.0.0.1:8188")
 
 from brain.routes import chat
+from brain.services.chat_quality_trends import chat_quality_trend_snapshot
 from brain.services.internet_scout.chat_adapter import InternetChatContext
 from brain.services.internet_scout.models import (
     InternetScoutCitationQualitySummary,
@@ -668,6 +669,47 @@ async def test_chat_eval_harness_scores_compact_outcome_rows(
     assert response["scoreboard"]["quality_actions"] == {"accept": 1}
     assert "content" not in json.dumps(response)
     assert conn.fetch_calls[0][1] == ("ken", 5)
+
+
+@pytest.mark.asyncio
+async def test_chat_eval_harness_reads_configured_trend_history(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    conn = FakeOutcomeConn()
+    history_path = tmp_path / "chat_quality_eval_history.jsonl"
+    old_payload = {
+        "suite": "alpha_chat_quality",
+        "suite_version": 1,
+        "status": "failed",
+        "passed": 17,
+        "failed": 1,
+        "case_groups": {
+            "trace_replay": {"case_count": 4, "passed": 3, "failed": 1}
+        },
+        "scoreboard": {},
+        "reporting": {"elapsed_ms": 20},
+    }
+    history_path.write_text(
+        json.dumps(chat_quality_trend_snapshot(old_payload)) + "\n",
+        encoding="utf-8",
+    )
+
+    @asynccontextmanager
+    async def fake_rls_connection(_request: object):
+        yield conn
+
+    monkeypatch.setattr(chat, "rls_connection", fake_rls_connection)
+    monkeypatch.setenv("CHAT_QUALITY_EVAL_HISTORY_PATH", str(history_path))
+
+    response = await chat.chat_eval_harness(
+        cast(Request, SimpleNamespace(state=SimpleNamespace(user_id="ken"))),
+        limit=5,
+    )
+
+    assert response["trend_observability"]["window_runs"] == 2
+    assert response["trend_observability"]["trend"] == "improving"
+    assert response["trend_observability"]["improved_groups"] == ["trace_replay"]
 
 
 @pytest.mark.asyncio

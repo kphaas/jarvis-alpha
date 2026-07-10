@@ -491,8 +491,9 @@ print(f"{payload.get('passed', 0)} checks passed")
     local chat_eval_out
     local chat_eval_ec
 
+    local chat_eval_history_path="${CHAT_QUALITY_EVAL_HISTORY_PATH:-${REPO_DIR}/logs/chat_quality_eval_history.jsonl}"
     chat_eval_out=$(
-      cd "$REPO_DIR" && uv run --python 3.12 python scripts/eval_chat_quality.py 2>&1
+      cd "$REPO_DIR" && uv run --python 3.12 python scripts/eval_chat_quality.py --history-path "$chat_eval_history_path" --record-history 2>&1
     )
     chat_eval_ec=$?
     if [ $chat_eval_ec -ne 0 ]; then
@@ -506,7 +507,8 @@ import json
 import sys
 
 payload = json.loads(sys.stdin.read())
-print(f"{payload.get('passed', 0)} passed / {payload.get('failed', 0)} failed")
+trend = (payload.get("trend_observability") or {}).get("trend", "unknown")
+print(f"{payload.get('passed', 0)} passed / {payload.get('failed', 0)} failed · trend {trend}")
 ' 2>/dev/null || true)
       step_ok "chat quality eval" "${chat_eval_summary:-passed}" "$(fmt_s $((SECONDS - chat_eval_start)))"
     fi

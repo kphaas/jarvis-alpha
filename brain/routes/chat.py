@@ -10,12 +10,14 @@ Routes:
 """
 
 import json
+import os
 import re
 import time
 import asyncio
 import httpx
 from collections.abc import Mapping
 from datetime import datetime
+from pathlib import Path
 from uuid import UUID, uuid4, uuid5, NAMESPACE_DNS
 from typing import AsyncGenerator, Literal, cast
 from fastapi import APIRouter, Request, HTTPException, Query
@@ -52,6 +54,7 @@ from brain.services.chat_prompt_compiler import (
     ChatPromptManifest,
     compile_chat_prompt,
 )
+from brain.services.chat_quality_trends import load_chat_quality_trend_history
 from brain.services.chat_repair_loop import (
     ChatRepairAttemptResult,
     ChatRepairLoopResult,
@@ -2907,7 +2910,20 @@ async def chat_eval_harness(
 ) -> dict[str, object]:
     audit = await list_chat_outcomes(request=request, limit=limit, thread_id=None)
     outcomes = cast(list[Mapping[str, object]], audit.get("outcomes", []))
-    return chat_eval_payload(outcomes)
+    return chat_eval_payload(outcomes, trend_history=_chat_eval_trend_history())
+
+
+def _chat_eval_trend_history() -> list[dict[str, object]]:
+    raw_path = os.getenv("CHAT_QUALITY_EVAL_HISTORY_PATH")
+    repo_root = Path(__file__).resolve().parents[2]
+    path = (
+        Path(raw_path).expanduser()
+        if raw_path
+        else repo_root / "logs" / "chat_quality_eval_history.jsonl"
+    )
+    if not path.is_absolute():
+        path = repo_root / path
+    return load_chat_quality_trend_history(path)
 
 
 @router.patch("/v1/threads/{thread_id}")

@@ -19,6 +19,7 @@ from brain.services.chat_evidence_pack import (
 )
 from brain.services.chat_memory_pack import pack_chat_memory_context
 from brain.services.chat_prompt_compiler import compile_chat_prompt
+from brain.services.chat_quality_trends import summarize_chat_quality_trend
 from brain.services.chat_repair_loop import repair_chat_response_once
 from brain.services.mcp_tool_boundary import (
     boundary_from_contract_tool,
@@ -76,12 +77,13 @@ def run_chat_eval_harness(
 
 def chat_eval_payload(
     outcomes: Sequence[Mapping[str, object]] = (),
+    trend_history: Sequence[Mapping[str, object]] = (),
 ) -> dict[str, object]:
     started_ns = perf_counter_ns()
     results = run_chat_eval_harness(outcomes)
     failed = [result for result in results if not result.passed]
     elapsed_ms = max(0, round((perf_counter_ns() - started_ns) / 1_000_000))
-    return {
+    payload = {
         "schema_version": CHAT_EVAL_SCHEMA_VERSION,
         "suite": "alpha_chat_quality",
         "suite_version": 1,
@@ -103,6 +105,11 @@ def chat_eval_payload(
             for result in results
         ],
     }
+    payload["trend_observability"] = summarize_chat_quality_trend(
+        payload,
+        trend_history,
+    )
+    return payload
 
 
 def _strategy_eval_results() -> list[ChatEvalResult]:
