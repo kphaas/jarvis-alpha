@@ -684,9 +684,7 @@ async def test_chat_eval_harness_reads_configured_trend_history(
         "status": "failed",
         "passed": 17,
         "failed": 1,
-        "case_groups": {
-            "trace_replay": {"case_count": 4, "passed": 3, "failed": 1}
-        },
+        "case_groups": {"trace_replay": {"case_count": 4, "passed": 3, "failed": 1}},
         "scoreboard": {},
         "reporting": {"elapsed_ms": 20},
     }

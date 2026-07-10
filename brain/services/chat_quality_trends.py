@@ -44,7 +44,9 @@ def summarize_chat_quality_trend(
         "latest_elapsed_ms": latest["elapsed_ms"],
         "latency_delta_ms": _optional_delta(latest["elapsed_ms"], oldest["elapsed_ms"]),
         "latest_accept_rate": latest["accept_rate"],
-        "accept_rate_delta": _optional_delta(latest["accept_rate"], oldest["accept_rate"]),
+        "accept_rate_delta": _optional_delta(
+            latest["accept_rate"], oldest["accept_rate"]
+        ),
         "latest_escalation_rate": latest["escalation_rate"],
         "escalation_rate_delta": _optional_delta(
             latest["escalation_rate"],
@@ -162,7 +164,8 @@ def _group_failed_deltas(
     new_groups = latest.get("groups") if isinstance(latest.get("groups"), dict) else {}
     group_names = sorted({*old_groups, *new_groups})
     return {
-        str(group): _int_value(new_groups.get(group)) - _int_value(old_groups.get(group))
+        str(group): _int_value(new_groups.get(group))
+        - _int_value(old_groups.get(group))
         for group in group_names
     }
 
