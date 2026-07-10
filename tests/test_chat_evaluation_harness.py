@@ -31,6 +31,7 @@ def test_chat_eval_harness_all_offline_contracts_pass() -> None:
         "mcp_tool_boundary",
         "trace_replay",
         "redacted_trace_corpus",
+        "model_score_calibration",
         "outcome_audit",
     }
 
@@ -66,6 +67,7 @@ def test_chat_eval_payload_scoreboards_outcome_metadata() -> None:
     assert payload["case_groups"]["mcp_tool_boundary"]["case_count"] == 1
     assert payload["case_groups"]["trace_replay"]["case_count"] == 4
     assert payload["case_groups"]["redacted_trace_corpus"]["case_count"] == 1
+    assert payload["case_groups"]["model_score_calibration"]["case_count"] == 1
     assert payload["case_groups"]["outcome_audit"]["case_count"] == 1
     assert payload["scoreboard"] == {
         "evaluated_outcome_count": 2,
@@ -75,6 +77,8 @@ def test_chat_eval_payload_scoreboards_outcome_metadata() -> None:
         "quality_actions": {"accept": 1, "require_beacon": 1},
         "route_modes": {"local": 1, "perplexity": 1},
     }
+    assert payload["model_calibration"]["evaluated_outcome_count"] == 2
+    assert len(payload["model_calibration"]["calibrated_models"]) == 4
     assert payload["reporting"]["model_calls"] == 0
     assert payload["trend_observability"]["schema_version"] == (
         CHAT_QUALITY_TREND_SCHEMA_VERSION
