@@ -38,11 +38,13 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
         "Trace Replay Evals",
         "Repair Loop",
         "MCP Tool Boundary",
+        "Trend Observability",
     ):
         assert phase in text
 
     next_queue = text.split("## Next Build Queue", maxsplit=1)[1]
     assert "Phase 19: Repair Loop" not in next_queue
     assert "Phase 20: MCP Tool Boundary" not in next_queue
-    assert "Phase 21: Trend Observability" in next_queue
+    assert "Phase 21: Trend Observability" not in next_queue
     assert "Phase 22: Redacted Real Trace Corpus" in next_queue
+    assert "Phase 23: Outcome-Calibrated Model Scores" in next_queue
