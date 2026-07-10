@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import UTC, datetime
 
 os.environ.setdefault("ALPHA_DB_DSN", "postgresql://localhost/db")
 os.environ.setdefault("ALPHA_DB_DSN_WRITER", "postgresql://localhost/db")
@@ -377,6 +378,158 @@ def test_homie_intent_route_delegates_direct_actions_to_gateway(
             },
         ),
     ]
+
+
+def test_homie_intent_route_compiles_context_for_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+    dash = _entity("switch.dash_light", "Dash Light")
+    context = {
+        "switch.dash_light": {
+            "room": {"id": "kitchen", "label": "Kitchen"},
+            "presence": {
+                "state": "operator_active",
+                "source": "mmwave",
+                "room_label": "Kitchen",
+                "confidence": "0.82",
+            },
+            "policy": {"tier": "T2"},
+            "routines": [{"id": "morning", "label": "Morning routine"}],
+        }
+    }
+    mapping = {
+        "mapped": [
+            {
+                "entity_id": "switch.dash_light",
+                "display_name": "Dash Light",
+                "aliases": ["dash light"],
+                "device_role": "primary",
+                "device_group_label": "Dash Light",
+            }
+        ]
+    }
+
+    async def fake_request(
+        method: str,
+        path: str,
+        *,
+        request: Request,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return _snapshot(dash, context=context, mapping=mapping)
+        return _executed(dash, "turn_off")
+
+    monkeypatch.setattr(
+        homie,
+        "_utc_now",
+        lambda: datetime(2026, 7, 10, 14, 30, tzinfo=UTC),
+    )
+    monkeypatch.setattr(homie, "_request_homie_gateway", fake_request)
+    client = _client()
+
+    response = client.post(
+        "/v1/home/homie/intent",
+        json={"text": "turn off dash light", "surface": "chat"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert calls[1][2] == {
+        "entity_id": "switch.dash_light",
+        "service": "turn_off",
+    }
+    assert payload["homie_context"]["actor"] == {
+        "id": "ken",
+        "profile_id": "ken",
+        "kind": "adult",
+        "display_name": "Ken",
+    }
+    assert payload["homie_context"]["room"] == {
+        "id": "kitchen",
+        "label": "Kitchen",
+        "source": "gateway_context",
+    }
+    assert payload["homie_context"]["time"] == {
+        "observed_at_utc": "2026-07-10T14:30:00+00:00",
+        "timezone": "America/New_York",
+        "local_hour": 10,
+        "day_part": "morning",
+        "quiet_hours": False,
+    }
+    assert payload["homie_context"]["presence"] == {
+        "state": "operator_active",
+        "source": "mmwave",
+        "room_label": "Kitchen",
+        "confidence": "0.82",
+    }
+    assert payload["homie_context"]["device"] == {
+        "entity_id": "switch.dash_light",
+        "label": "Dash Light",
+        "domain": "switch",
+        "tier": "T2",
+        "tier_source": "context.policy",
+    }
+    assert payload["homie_context"]["routines"] == [
+        {"id": "morning", "label": "Morning routine"}
+    ]
+    assert payload["explanation"] == payload["homie_context"]["explanation"]
+    assert "Ken is an adult" in payload["explanation"]
+    assert "turn off Dash Light" in payload["explanation"]
+    assert "tier T2" in payload["explanation"]
+    assert (
+        "Presence signal says operator_active near Kitchen." in payload["explanation"]
+    )
+    assert "Routines in scope: Morning routine." in payload["explanation"]
+    assert (
+        "Gateway remains the final policy and execution authority."
+        in payload["explanation"]
+    )
+
+
+def test_homie_intent_route_marks_presence_unknown_until_sensors_connect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kitchen = _entity("light.kitchen", "Kitchen Lights")
+
+    async def fake_request(
+        method: str,
+        path: str,
+        *,
+        request: Request,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        assert method == "GET"
+        return _snapshot(kitchen)
+
+    monkeypatch.setattr(
+        homie,
+        "_utc_now",
+        lambda: datetime(2026, 7, 10, 3, 30, tzinfo=UTC),
+    )
+    monkeypatch.setattr(homie, "_request_homie_gateway", fake_request)
+    client = _client()
+
+    response = client.post(
+        "/v1/home/homie/intent",
+        json={"text": "Are the kitchen lights on?", "surface": "chat"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == "read"
+    assert response.json()["homie_context"]["presence"] == {
+        "state": "unknown",
+        "source": "not_connected",
+        "room_label": None,
+        "confidence": "none",
+    }
+    assert response.json()["homie_context"]["time"]["quiet_hours"] is True
+    assert response.json()["homie_context"]["explanation"] == (
+        "Ken is an adult using Alpha chat for a read-only home state check. "
+        "No device action will run."
+    )
 
 
 def test_homie_intent_route_delegates_select_actions_to_gateway(
