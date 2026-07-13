@@ -60,6 +60,16 @@ def test_health_reports_auth_and_runtime(monkeypatch) -> None:
     }
 
 
+def test_default_model_path_stays_outside_git_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.delenv("JARVIS_AT0_VOICE_MODEL_PATH", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    assert service._model_path() == tmp_path / "jarvis/models/faster-whisper-base.en"
+
+
 def test_runtime_status_rejects_incomplete_model_directory(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

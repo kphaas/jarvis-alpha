@@ -21,7 +21,7 @@ from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from pydantic import BaseModel
 
 SERVICE_NAME = "at0-voice"
-DEFAULT_MODEL_PATH = "~/jarvis-alpha/endpoint/voice/models/faster-whisper-base.en"
+DEFAULT_MODEL_PATH = "~/jarvis/models/faster-whisper-base.en"
 REQUIRED_MODEL_FILES = ("config.json", "model.bin")
 DEFAULT_MAX_AUDIO_BYTES = 8 * 1024 * 1024
 ALLOWED_AUDIO_TYPES = {

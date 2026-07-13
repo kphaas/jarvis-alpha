@@ -10,7 +10,7 @@
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>set -a &amp;&amp; source /Users/jarvisendpoint/jarvis/.secrets &amp;&amp; set +a &amp;&amp; cd /Users/jarvisendpoint/jarvis-alpha &amp;&amp; exec /Users/jarvisendpoint/jarvis-alpha/endpoint/voice/.venv/bin/uvicorn endpoint.voice.at0_voice_service:app --host 127.0.0.1 --port 4212 --no-access-log</string>
+    <string>set -a &amp;&amp; source /Users/jarvisendpoint/jarvis/.secrets &amp;&amp; set +a &amp;&amp; cd /Users/jarvisendpoint/jarvis-alpha &amp;&amp; exec /Users/jarvisendpoint/jarvis-alpha/endpoint/voice/.venv/bin/uvicorn endpoint.voice.at0_voice_service:app --host ${JARVIS_AT0_VOICE_BIND_HOST:-127.0.0.1} --port 4212 --no-access-log</string>
   </array>
 
   <key>WorkingDirectory</key>
