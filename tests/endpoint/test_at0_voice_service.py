@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import sys
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from endpoint.voice import at0_voice_service as service
@@ -55,6 +58,34 @@ def test_health_reports_auth_and_runtime(monkeypatch) -> None:
         "ffmpeg_available": service.shutil.which(service._ffmpeg_bin()) is not None,
         "reason": None,
     }
+
+
+def test_runtime_status_rejects_incomplete_model_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    monkeypatch.setattr(service, "_model_path", lambda: model_path)
+
+    assert service._runtime_status() == (False, "model_files_missing")
+
+
+def test_get_model_wraps_model_load_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    class BrokenWhisperModel:
+        def __init__(self, *args, **kwargs) -> None:
+            raise RuntimeError("broken model")
+
+    service._model = None
+    monkeypatch.setattr(service, "_runtime_status", lambda: (True, None))
+    monkeypatch.setitem(
+        sys.modules,
+        "faster_whisper",
+        SimpleNamespace(WhisperModel=BrokenWhisperModel),
+    )
+
+    with pytest.raises(service.VoiceRuntimeUnavailable, match="model_load_failed"):
+        asyncio.run(service._get_model())
 
 
 def test_transcribe_requires_backend_token(monkeypatch) -> None:
