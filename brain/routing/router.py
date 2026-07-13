@@ -1,6 +1,7 @@
 import json
 import subprocess
 import asyncio
+from collections.abc import Mapping, Sequence
 
 from brain.core.config import GATEWAY_URL, OLLAMA_URL
 from brain.core.models import (
@@ -10,12 +11,26 @@ from brain.core.models import (
     PERPLEXITY_FAST,
 )
 from brain.routing.council import CouncilOrchestrator
+from brain.routing.calibrated_rollout import (
+    ChatCalibratedRoutingPolicy,
+    plan_calibrated_routing,
+)
+from brain.routing.model_capability_registry import DEFAULT_CHAT_MODEL_CAPABILITIES
 from brain.routing.strategy import select_chat_strategy
+from jarvis_common.logging_config import get_logger
 
 COUNCIL_TRIGGER = "manual"  # future values: "complexity", "topic"
+logger = get_logger("alpha_brain")
 
 
-async def route(prompt: str, mode: str = "auto") -> dict:
+async def route(
+    prompt: str,
+    mode: str = "auto",
+    *,
+    routing_outcomes: Sequence[Mapping[str, object]] = (),
+    rollout_key: str | None = None,
+    rollout_policy: ChatCalibratedRoutingPolicy | None = None,
+) -> dict:
     if mode == "council":
         result = await CouncilOrchestrator().run(prompt)
         result.update(
@@ -23,9 +38,36 @@ async def route(prompt: str, mode: str = "auto") -> dict:
         )
         return result
 
-    strategy_plan = select_chat_strategy(prompt=prompt, requested_model=mode)
+    normalized_mode = (mode or "auto").lower()
+    rollout = None
+    if normalized_mode == "auto":
+        rollout = plan_calibrated_routing(
+            prompt=prompt,
+            outcomes=routing_outcomes,
+            rollout_key=rollout_key,
+            policy=rollout_policy,
+        )
+    strategy_plan = select_chat_strategy(
+        prompt=prompt,
+        requested_model=normalized_mode,
+        capabilities=(
+            rollout.routing_capabilities
+            if rollout is not None
+            else DEFAULT_CHAT_MODEL_CAPABILITIES
+        ),
+    )
     mode = strategy_plan.route_mode
     metadata = strategy_plan.metadata()
+    if rollout is not None:
+        rollout_metadata = rollout.metadata()
+        metadata.update(rollout_metadata)
+        logger.info(
+            "CHAT_CALIBRATED_ROUTING_DECIDED",
+            extra={
+                "event": "CHAT_CALIBRATED_ROUTING_DECIDED",
+                **rollout_metadata,
+            },
+        )
 
     def _curl_gateway(endpoint: str, payload: dict) -> dict:
         cmd = [

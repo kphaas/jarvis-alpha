@@ -31,6 +31,7 @@ def test_chat_eval_harness_all_offline_contracts_pass() -> None:
         "mcp_tool_boundary",
         "trace_replay",
         "redacted_trace_corpus",
+        "calibrated_routing_rollout",
         "model_score_calibration",
         "outcome_audit",
     }
@@ -67,6 +68,7 @@ def test_chat_eval_payload_scoreboards_outcome_metadata() -> None:
     assert payload["case_groups"]["mcp_tool_boundary"]["case_count"] == 1
     assert payload["case_groups"]["trace_replay"]["case_count"] == 4
     assert payload["case_groups"]["redacted_trace_corpus"]["case_count"] == 1
+    assert payload["case_groups"]["calibrated_routing_rollout"]["case_count"] == 1
     assert payload["case_groups"]["model_score_calibration"]["case_count"] == 1
     assert payload["case_groups"]["outcome_audit"]["case_count"] == 1
     assert payload["scoreboard"] == {
@@ -79,6 +81,8 @@ def test_chat_eval_payload_scoreboards_outcome_metadata() -> None:
     }
     assert payload["model_calibration"]["evaluated_outcome_count"] == 2
     assert len(payload["model_calibration"]["calibrated_models"]) == 4
+    assert payload["calibrated_routing_rollout"]["observed_outcome_count"] == 0
+    assert payload["calibrated_routing_rollout"]["applied_outcome_count"] == 0
     assert payload["reporting"]["model_calls"] == 0
     assert payload["trend_observability"]["schema_version"] == (
         CHAT_QUALITY_TREND_SCHEMA_VERSION

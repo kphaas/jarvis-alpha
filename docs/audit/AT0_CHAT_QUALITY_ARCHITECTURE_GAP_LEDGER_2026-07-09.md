@@ -1,8 +1,8 @@
 # AT-0 Chat Quality Architecture Review + Gap Ledger
 
 Date: 2026-07-09
-Scope: Alpha chat-quality amplification phases 1-25, with Helm as the operator display surface.
-Verdict: The shipped system now matches the original direction in architecture shape, but it is not complete. AT-0 has moved beyond routing into context, prompt compilation, memory packing, evidence, verification, bounded repair, MCP/tool trust boundaries, escalation, outcomes, registry-backed routing, trace-seeded eval gates, trend observability, a redacted trace corpus contract, an approval-gated real-trace sampling workflow, outcome-calibrated model score overlays, and Helm trend rendering. The remaining work is a gated calibrated-routing rollout and broader operator-approved trace coverage.
+Scope: Alpha chat-quality amplification phases 1-26, with Helm as the operator display surface.
+Verdict: The shipped system now matches the original direction in architecture shape, but it is not complete. AT-0 has moved beyond routing into context, prompt compilation, memory packing, evidence, verification, bounded repair, MCP/tool trust boundaries, escalation, outcomes, registry-backed routing, trace-seeded eval gates, trend observability, a redacted trace corpus contract, an approval-gated real-trace sampling workflow, outcome-calibrated model score overlays, a default-off calibrated-routing rollout gate, and Helm trend rendering. The remaining work is broader operator-approved trace coverage and per-model task benchmarking before any meaningful active rollout.
 
 ## Target Architecture
 
@@ -47,7 +47,8 @@ flowchart TD
     T --> RC["Redacted trace corpus"]
     RC --> RS["Approved real-trace sampler"]
     RS --> MS["Outcome-calibrated model scores"]
-    MS --> HP["Helm trend panel"]
+    MS --> CR["Calibrated routing rollout gate"]
+    CR --> HP["Helm trend panel"]
     HP --> G["CI + deploy regression gate"]
 ```
 
@@ -78,12 +79,13 @@ flowchart TD
 | Outcome-Calibrated Model Scores | Done, initial | `brain/routing/model_score_calibration.py:1` computes reliability deltas from compact outcome metadata and `chat_eval_payload()` exposes `model_calibration`. | Turns static registry scores into inspectable outcome-calibrated overlays without changing live Auto routing yet. |
 | Helm Trend Panel | Done, initial | `jarvis-helm` PR #154 parses `/v1/chat/evals` `trend_observability` and renders trend, pass rate, deltas, failed/improved groups, and next action in the Ask Outcome inspector. | Makes quality trend movement visible to the operator without moving authority out of Alpha. |
 | Real Trace Sampling Workflow | Done, initial | `scripts/sample_chat_traces.py` prepares an out-of-repository redacted review artifact, then requires a detached Ed25519 operator signature bound to its approval reference and SHA-256 digest before writing validated corpus data through `brain/services/chat_redacted_trace_corpus.py`. | Converts approved real failure shapes into replay fixtures without adding runtime capture or raw trace storage. |
+| Calibrated Routing Rollout Gate | Done, default off | `brain/routing/calibrated_rollout.py` enforces shadow comparison, route sample minimums, bounded score deltas, deterministic canary exposure, invalid-config fail-closed behavior, and outcome rollback. | Lets observed quality influence Auto only through an explicit, inspectable, reversible policy. |
 
 ## Architecture Fit
 
 | Requirement | State | Evidence | Gap |
 |---|---:|---|---|
-| Model-agnostic strategy selection | Partial | Strategy plan now uses the capability registry for local, Perplexity, Claude, Gemini, council, and deep verify paths; calibration overlays can be computed from outcomes. | Needs controlled rollout before calibrated scores influence live routing. |
+| Model-agnostic strategy selection | Partial | Strategy plan uses the capability registry for local, Perplexity, Claude, Gemini, council, and deep verify paths; the calibrated rollout gate can shadow or canary bounded outcome overlays. | Needs shadow evidence and operator approval before active exposure. |
 | Better lower-model output | Partial | Memory packing, prompt compilation, evidence pack, trace replay, approved corpus sampling, repair loop, model-score calibration, and verification/gateway can replace unsafe or unsupported answers before final stream. | Needs operator-approved real cases and per-model benchmarks. |
 | Context engineering | Partial | Evidence pack and memory pack record evidence types, memory priority, token budget, freshness labels, and untrusted raw web content. | Ranking is still deterministic and shallow; no learned retrieval policy. |
 | Verification and repair | Partial | One bounded repair pass can strip unsupported web narration or retry empty evidence-backed answers before gateway/escalation. | No learned repair policy or multi-step self-critique. |
@@ -100,14 +102,14 @@ flowchart TD
 | Security | 4 | Eval/outcome endpoints are authenticated read/security-read; MCP output is classified as untrusted data and prompt-injection-looking text is blocked. | Apply the boundary to any future invocation wrapper. |
 | Observability | 4 | Outcome metadata plus Helm inspector exposes route, quality, evidence, escalation, eval status, and eval trend status. | Add trace drilldown after real trace corpus sampling exists. |
 | Maintainability | 4 | The chain is small modules: routing, evidence pack, eval harness, script gate. | Consolidate phase map in this ledger and keep future phases tied to it. |
-| Extensibility | 4 | Strategy names, model paths, model capabilities, and calibration overlays are typed. | Decide when calibrated capabilities feed live routing. |
+| Extensibility | 4 | Strategy names, model paths, model capabilities, calibration overlays, and rollout decisions are typed. | Add per-model task benchmarks before increasing provider coverage. |
 | Usability / Accessibility | 3 | Helm uses compact chips and inspector panel. | Improve signed-out auth messaging only if operators still hit confusion. |
 | Performance | 4 | Evals run offline with zero model calls. | Add cost/latency measurement when provider calls enter evals. |
 | Cost | 4 | Current regression suite has `model_calls: 0`. | Keep trace replay deterministic by default; sample paid model evals separately. |
 | Testability | 4 | Tests assert eval groups, outcome scoring, deploy/CI gate wiring, synthetic trace replay, redacted corpus replay, and sampling rejection paths. | Add more operator-approved anonymized traces. |
 | Privacy / Compliance | 4 | Outcome metadata is compact and authenticated; the sampler requires signed digest-bound review approval, generic/provider-native secret rejection, enforced delete-after-export retention, pseudonymous IDs, and fail-closed fixture validation. | Provision the external signing key before the first real batch. |
 
-Weakest pillars: actual approved trace volume, learned lower-model repair depth, and live-routing rollout controls for calibrated scores.
+Weakest pillars: actual approved trace volume, per-model task benchmarks, and learned lower-model repair depth.
 
 ## Market Reference Anchors
 
@@ -132,10 +134,11 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 | Outcome-calibrated model scores | Closed initial | Reliability, cost, extensibility | Eval payloads now expose model score calibration from compact outcome rows; future routing can accept calibrated capabilities explicitly. | M | P1 | Ken/AT-0 | 2026-07-10 | `tests/test_chat_model_score_calibration.py`, `tests/test_chat_model_capability_registry.py`, and `model_score_calibration` eval cover score deltas and bounds. |
 | Helm trend panel | Closed initial | Observability, usability | Helm now renders compact trend status, pass rate, deltas, active/regressed/improved groups, and next action from Alpha eval metadata. | S | P2 | Ken/AT-0 | 2026-07-10 | `jarvis-helm` PR #154 passed `npm test`, `npm run build`, `npm run lint`, GitHub guardrails, Forge native CI, static deploy, and runtime smoke. |
 | Real trace sampling workflow | Closed initial | Reliability, privacy, evaluation | Approved raw candidates outside Git can now become pseudonymous replay fixtures only after exact signed review; every sampled case belongs to one signed batch, provider-native credentials are rejected, and successful export deletes raw/review inputs. | M | P1 | Ken/AT-0 | 2026-07-13 | `tests/test_chat_redacted_trace_corpus.py`, `scripts/sample_chat_traces.py`, and ADR-0032 cover signed digest binding, post-approval tamper and unsigned-case rejection, enforced cleanup, effective redaction, provider secrets, duplicates, export, and replay loading. |
+| Calibrated routing rollout gate | Closed initial, default off | Reliability, cost, privacy, observability | Auto can compare or canary bounded outcome-calibrated routes without changing explicit choices; sparse evidence, invalid config, low acceptance, and the kill switch retain static routing. | M | P1 | Ken/AT-0 | 2026-07-13 | `tests/test_chat_calibrated_routing_rollout.py`, `tests/test_chat_calibrated_routing_integration.py`, the `calibrated_routing_rollout` eval group, and ADR-0033 cover policy, integration, metadata, and rollback. |
 
 ## Next Build Queue
 
-1. Phase 26: Calibrated Routing Rollout Gate
+1. Phase 27: Per-Model Task Benchmarks
 
 ## Facts
 
@@ -158,6 +161,8 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 - The deterministic eval harness includes a `redacted_trace_corpus` group in `brain/services/chat_evaluation_harness.py:64`.
 - Outcome-calibrated model score overlays are computed from compact outcome metadata in `brain/routing/model_score_calibration.py:1`.
 - `chat_eval_payload()` includes `model_calibration` without making live model calls in `brain/services/chat_evaluation_harness.py:80`.
+- Calibrated routing is default off; shadow and active modes require bounded compact outcome evidence in `brain/routing/calibrated_rollout.py`.
+- Active calibrated routing requires a nonzero deterministic canary percentage and automatically holds below its applied-outcome acceptance floor.
 - Trusted Sandbox CI and deploy now run chat quality evals in `.github/workflows/trusted-sandbox-ci.yml:135` and `scripts/jarvisalpha_deploy.sh:487`.
 - Helm reads the eval endpoint and renders Evaluation Harness and trend sections in `jarvis-helm` `src/ask/alphaAskClient.ts` and `src/ask/AskWorkspace.tsx`.
 
@@ -173,14 +178,14 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 |---|---|---|
 | High | Filesystem cleanup fails after the corpus is atomically written. | Emit no success status unless both raw and review inputs are deleted; the rejected run remains an explicit operator remediation event. |
 | High | The real-trace approval private key is committed or exposed to the exporter. | Keep the Ed25519 private key outside Git and the exporter; pass only the detached signature and configure the public-key path through environment. |
-| Medium | Calibrated scores steer live routing too early. | Keep Phase 23 as an overlay; add a rollout gate before wiring it into Auto. |
+| Medium | Calibrated scores steer live routing too early. | Keep the Phase 26 mode off by default; require shadow evidence, sample minimums, bounded deltas, canary exposure, and outcome rollback. |
 | Medium | Model registry becomes stale. | Keep registry small, versioned, covered by strategy tests, and calibrated from outcomes. |
 | Medium | Memory/RAG packing overuses stale memory. | Keep freshness/source priority and Beacon-over-memory tests in the eval gate. |
 | Medium | MCP expansion bypasses Alpha approvals. | Require route classification and approval policy before any executable tool. |
 
 ## Recommendations
 
-1. Build the Calibrated Routing Rollout Gate next.
-   - Option A: keep calibrated scores inspectable only. Safest, but does not improve live Auto decisions.
-   - Option B: shadow comparison, minimum sample/confidence thresholds, bounded score influence, kill switch, and outcome rollback. Recommended.
-   - Option C: immediately replace static routing scores. Not acceptable without shadow evidence and rollback controls.
+1. Build per-model task benchmarks next.
+   - Keep deterministic synthetic and approved redacted traces as the required baseline.
+   - Add paid/provider evals as an explicitly budgeted lane, not to every PR.
+   - Do not enable active calibrated routing until shadow comparisons show a measurable quality gain without unacceptable cost, privacy, or latency regression.
