@@ -6,7 +6,7 @@ VOICE_DIR="${REPO_DIR}/endpoint/voice"
 PYTHON_BIN="${PYTHON_BIN:-python3.12}"
 MODEL_REPO="${JARVIS_AT0_VOICE_MODEL_REPO:-Systran/faster-whisper-base.en}"
 MODEL_REVISION="${JARVIS_AT0_VOICE_MODEL_REVISION:-3d3d5dee26484f91867d81cb899cfcf72b96be6c}"
-MODEL_PATH="${JARVIS_AT0_VOICE_MODEL_PATH:-${VOICE_DIR}/models/faster-whisper-base.en}"
+MODEL_PATH="${JARVIS_AT0_VOICE_MODEL_PATH:-${HOME}/jarvis/models/faster-whisper-base.en}"
 MODEL_PATH="${MODEL_PATH/#\~/${HOME}}"
 
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
@@ -18,7 +18,7 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p "${VOICE_DIR}/logs" "${VOICE_DIR}/models"
+mkdir -p "${VOICE_DIR}/logs" "$(dirname "${MODEL_PATH}")"
 
 if [ ! -d "${VOICE_DIR}/.venv" ]; then
   "$PYTHON_BIN" -m venv "${VOICE_DIR}/.venv"

@@ -905,7 +905,8 @@ if [ "$NODE_SHORT" = "endpoint" ]; then
     emit ok restart node="$NODE_SHORT" service="alpha-at0-voice" pid="${AT0_VOICE_PID:-0}" dur_ms=$(($(time_ms) - AT0_INSTALL_START))
 
     AT0_HEALTH_START=$(time_ms)
-    AT0_HEALTH_URL="${JARVIS_AT0_VOICE_HEALTH_URL:-http://127.0.0.1:4212/health}"
+    AT0_HEALTH_HOST="${JARVIS_AT0_VOICE_BIND_HOST:-127.0.0.1}"
+    AT0_HEALTH_URL="${JARVIS_AT0_VOICE_HEALTH_URL:-http://${AT0_HEALTH_HOST}:4212/health}"
     AT0_HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$AT0_HEALTH_URL" 2>/dev/null || echo "000")
     if [ "$AT0_HEALTH_CODE" = "200" ]; then
       echo "✅ AT-0 voice worker reachable"
