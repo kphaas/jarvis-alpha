@@ -20,9 +20,7 @@ CHAT_REDACTED_TRACE_CORPUS_SCHEMA_VERSION = "chat_redacted_trace_corpus.v1"
 CHAT_TRACE_REDACTION_POLICY_VERSION = "chat_trace_redaction.v1"
 CHAT_TRACE_SAMPLING_WORKFLOW_VERSION = "chat_trace_sampling.v1"
 CHAT_TRACE_SAMPLE_RETENTION_POLICY = "delete_raw_after_export"
-CHAT_TRACE_APPROVAL_PUBLIC_KEY_PATH_ENV = (
-    "ALPHA_CHAT_TRACE_APPROVAL_PUBLIC_KEY_PATH"
-)
+CHAT_TRACE_APPROVAL_PUBLIC_KEY_PATH_ENV = "ALPHA_CHAT_TRACE_APPROVAL_PUBLIC_KEY_PATH"
 REDACTED_TRACE_CORPUS_PATH = Path("docs/evals/chat_redacted_trace_corpus.v1.json")
 MAX_TRACE_SAMPLE_BATCH = 25
 MAX_TRACE_TEXT_CHARS = 50_000
@@ -296,9 +294,7 @@ def load_redacted_trace_corpus(
         key_path = os.getenv(CHAT_TRACE_APPROVAL_PUBLIC_KEY_PATH_ENV, "").strip()
         if not key_path:
             raise ValueError("redacted_trace_approval_public_key_required")
-        approval_public_key_pem = load_trace_sample_approval_public_key(
-            Path(key_path)
-        )
+        approval_public_key_pem = load_trace_sample_approval_public_key(Path(key_path))
     cases = validate_redacted_trace_corpus(
         payload,
         approval_public_key_pem=approval_public_key_pem,
@@ -386,8 +382,7 @@ def validate_redacted_trace_corpus(
             raise ValueError("redacted_trace_sampling_case_multiple_batches")
         if (
             reference_count == 0
-            and _legacy_redacted_case_sha256(case)
-            not in _LEGACY_REDACTED_CASE_SHA256
+            and _legacy_redacted_case_sha256(case) not in _LEGACY_REDACTED_CASE_SHA256
         ):
             raise ValueError("redacted_trace_sampling_case_unsigned")
     return cases
@@ -688,9 +683,13 @@ def _sample_candidate(candidate: object) -> dict[str, object]:
         if isinstance(value, str) and len(value) > MAX_TRACE_TEXT_CHARS:
             raise ValueError("trace_sampling_text_too_large")
     sensitive_terms = candidate.get("sensitive_terms")
-    if not isinstance(sensitive_terms, list) or not sensitive_terms or any(
-        not isinstance(term, str) or not term.strip() or len(term) > 200
-        for term in sensitive_terms
+    if (
+        not isinstance(sensitive_terms, list)
+        or not sensitive_terms
+        or any(
+            not isinstance(term, str) or not term.strip() or len(term) > 200
+            for term in sensitive_terms
+        )
     ):
         raise ValueError("trace_sampling_sensitive_terms_required")
     if len(sensitive_terms) > 64:
@@ -809,7 +808,10 @@ def _verify_trace_sample_approval_signature(
 ) -> str:
     if len(approval_public_key_pem) > MAX_TRACE_APPROVAL_PUBLIC_KEY_BYTES:
         raise ValueError("trace_sampling_approval_public_key_too_large")
-    if not isinstance(approval_signature, str) or not 1 <= len(approval_signature) <= 256:
+    if (
+        not isinstance(approval_signature, str)
+        or not 1 <= len(approval_signature) <= 256
+    ):
         raise ValueError("trace_sampling_approval_signature_invalid")
     try:
         public_key = serialization.load_pem_public_key(approval_public_key_pem)

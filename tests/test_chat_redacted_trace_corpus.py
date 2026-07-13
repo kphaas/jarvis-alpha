@@ -283,9 +283,7 @@ def test_trace_sampling_rejects_forged_post_approval_digest(tmp_path) -> None:
         ),
         namespace="chat_trace_review_content",
     )
-    corpus["sampling_batches"][0][
-        "approved_redacted_content_sha256"
-    ] = changed_digest
+    corpus["sampling_batches"][0]["approved_redacted_content_sha256"] = changed_digest
     output = tmp_path / "forged-corpus.json"
     output.write_text(json.dumps(corpus), encoding="utf-8")
 

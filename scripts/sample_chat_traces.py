@@ -105,9 +105,7 @@ def main() -> int:
         corpus = build_approved_trace_sample_corpus(
             sample_payload,
             approval_ref=args.approval_ref,
-            approved_redacted_content_sha256=(
-                args.approved_redacted_content_sha256
-            ),
+            approved_redacted_content_sha256=(args.approved_redacted_content_sha256),
             approval_signature=args.approval_signature,
             approval_public_key_pem=approval_public_key_pem,
             existing_corpus=existing_corpus,
