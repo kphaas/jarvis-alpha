@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 SERVICE_NAME = "at0-voice"
 DEFAULT_MODEL_PATH = "~/jarvis-alpha/endpoint/voice/models/faster-whisper-base.en"
+REQUIRED_MODEL_FILES = ("config.json", "model.bin")
 DEFAULT_MAX_AUDIO_BYTES = 8 * 1024 * 1024
 ALLOWED_AUDIO_TYPES = {
     "audio/aac",
@@ -151,6 +152,8 @@ def _runtime_status() -> tuple[bool, Optional[str]]:
     model_path = _model_path()
     if not model_path.exists():
         return False, "model_path_missing"
+    if any(not (model_path / filename).is_file() for filename in REQUIRED_MODEL_FILES):
+        return False, "model_files_missing"
     if shutil.which(_ffmpeg_bin()) is None:
         return False, "ffmpeg_missing"
     try:
@@ -175,12 +178,19 @@ async def _get_model() -> WhisperModel:
 
         from faster_whisper import WhisperModel as FasterWhisperModel
 
-        model = await asyncio.to_thread(
-            FasterWhisperModel,
-            str(_model_path()),
-            device=os.getenv("JARVIS_AT0_VOICE_DEVICE", "cpu"),
-            compute_type=os.getenv("JARVIS_AT0_VOICE_COMPUTE_TYPE", "int8"),
-        )
+        try:
+            model = await asyncio.to_thread(
+                FasterWhisperModel,
+                str(_model_path()),
+                device=os.getenv("JARVIS_AT0_VOICE_DEVICE", "cpu"),
+                compute_type=os.getenv("JARVIS_AT0_VOICE_COMPUTE_TYPE", "int8"),
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.error(
+                "at0_voice_model_load_failed",
+                extra={"error_type": type(exc).__name__},
+            )
+            raise VoiceRuntimeUnavailable("model_load_failed") from exc
         _model = model
         logger.info("at0_voice_model_loaded", extra={"model_path": str(_model_path())})
         return _model
