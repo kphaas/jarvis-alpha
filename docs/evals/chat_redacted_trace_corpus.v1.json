@@ -1,7 +1,9 @@
 {
   "schema_version": "chat_redacted_trace_corpus.v1",
   "redaction_policy_version": "chat_trace_redaction.v1",
-  "description": "Metadata-safe redacted chat replay cases. Do not store raw prompt, response, contact, or private memory text here.",
+  "description": "Metadata-safe redacted chat replay cases. Do not store raw prompt, response, contact, identifier, or private memory text here.",
+  "sampling_workflow_version": "chat_trace_sampling.v1",
+  "sampling_batches": [],
   "cases": [
     {
       "name": "redacted_real_trace_beacon_over_stale_memory",
@@ -15,7 +17,9 @@
           "prompt",
           "memory_context",
           "internet_context",
-          "response_text"
+          "response_text",
+          "expected_memory_present",
+          "expected_memory_absent"
         ],
         "replacement_count": 3
       },
