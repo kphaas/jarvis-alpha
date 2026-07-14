@@ -24,6 +24,7 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, sandbox, jarvis-alpha, trusted]
     timeout-minutes: 30
     env:
+      ALPHA_CHAT_TRACE_APPROVAL_PUBLIC_KEY_PATH: ${{ vars.ALPHA_CHAT_TRACE_APPROVAL_PUBLIC_KEY_PATH }}
       PYTEST_MARKERS: ${{ vars.JARVIS_PYTEST_MARKERS != '' && vars.JARVIS_PYTEST_MARKERS || 'not integration' }}
       UV_PYTHON: "3.12"
     steps:
@@ -74,6 +75,14 @@ jobs:
           python3 --version
           node --version
           npm --version
+
+      - name: Assert chat trace approval trust anchor
+        run: |
+          set -euo pipefail
+          test -n "${ALPHA_CHAT_TRACE_APPROVAL_PUBLIC_KEY_PATH:-}"
+          test -r "${ALPHA_CHAT_TRACE_APPROVAL_PUBLIC_KEY_PATH}"
+          test "$(stat -f '%Lp' "${ALPHA_CHAT_TRACE_APPROVAL_PUBLIC_KEY_PATH}")" = "644"
+          openssl pkey -pubin -in "${ALPHA_CHAT_TRACE_APPROVAL_PUBLIC_KEY_PATH}" -noout
 
       - name: Install uv if missing
         run: |

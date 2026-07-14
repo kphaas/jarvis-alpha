@@ -10,6 +10,12 @@ from pathlib import Path
 from time import perf_counter_ns
 
 from brain.routing.strategy import select_chat_strategy
+from brain.routing.calibrated_rollout import (
+    CHAT_CALIBRATED_ROUTING_ROLLOUT_VERSION,
+    ChatCalibratedRoutingPolicy,
+    calibrated_routing_rollout_metrics,
+    plan_calibrated_routing,
+)
 from brain.routing.model_score_calibration import (
     CHAT_MODEL_SCORE_CALIBRATION_VERSION,
     chat_model_score_calibration_payload,
@@ -77,6 +83,7 @@ def run_chat_eval_harness(
         *_mcp_tool_boundary_eval_results(),
         *_trace_replay_eval_results(),
         *_redacted_trace_corpus_eval_results(),
+        _calibrated_routing_rollout_contract(),
         _model_score_calibration_contract(outcomes),
         _outcome_audit_contract(outcomes),
     ]
@@ -100,6 +107,7 @@ def chat_eval_payload(
         "case_groups": _group_summary(results),
         "scoreboard": _outcome_scoreboard(outcomes),
         "model_calibration": chat_model_score_calibration_payload(outcomes),
+        "calibrated_routing_rollout": calibrated_routing_rollout_metrics(outcomes),
         "reporting": {
             "elapsed_ms": elapsed_ms,
             "model_calls": 0,
@@ -711,6 +719,65 @@ def _model_score_calibration_contract(
             "evaluated_outcome_count": payload.get("evaluated_outcome_count"),
             "model_count": len(rows) if isinstance(rows, list) else 0,
             "min_samples": payload.get("min_samples"),
+        },
+        failures=tuple(failures),
+    )
+
+
+def _calibrated_routing_rollout_contract() -> ChatEvalResult:
+    outcomes: list[dict[str, object]] = []
+    for _ in range(10):
+        outcomes.extend(
+            (
+                {
+                    "chat_outcome_route_mode": "claude",
+                    "chat_outcome_quality_action": "replace_with_safe_fallback",
+                    "chat_outcome_escalation_rung": "operator_review",
+                    "chat_outcome_escalation_required": True,
+                    "chat_outcome_fallback_used": True,
+                    "chat_outcome_issue_count": 2,
+                },
+                {
+                    "chat_outcome_route_mode": "gemini",
+                    "chat_outcome_quality_action": "accept",
+                    "chat_outcome_escalation_rung": "none",
+                    "chat_outcome_escalation_required": False,
+                    "chat_outcome_fallback_used": False,
+                    "chat_outcome_issue_count": 0,
+                },
+            )
+        )
+    shadow = plan_calibrated_routing(
+        prompt="Summarize the AT-0 architecture tradeoffs.",
+        outcomes=outcomes,
+        rollout_key="eval-shadow",
+        policy=ChatCalibratedRoutingPolicy(mode="shadow"),
+    )
+    active = plan_calibrated_routing(
+        prompt="Summarize the AT-0 architecture tradeoffs.",
+        outcomes=outcomes,
+        rollout_key="eval-active",
+        policy=ChatCalibratedRoutingPolicy(mode="active", rollout_percent=100),
+    )
+    failures: list[str] = []
+    if shadow.applied or shadow.candidate_route_mode != "gemini":
+        failures.append("shadow_contract")
+    if not active.applied or active.candidate_route_mode != "gemini":
+        failures.append("active_contract")
+    if active.max_score_delta > 5 or active.min_samples < 10:
+        failures.append("bounds")
+    return ChatEvalResult(
+        name="calibrated_routing_requires_bounded_rollout_gate",
+        eval_group="calibrated_routing_rollout",
+        passed=not failures,
+        details={
+            "schema_version": CHAT_CALIBRATED_ROUTING_ROLLOUT_VERSION,
+            "shadow_reason": shadow.reason,
+            "shadow_candidate_route": shadow.candidate_route_mode,
+            "active_applied": active.applied,
+            "active_candidate_route": active.candidate_route_mode,
+            "min_samples": active.min_samples,
+            "max_score_delta": active.max_score_delta,
         },
         failures=tuple(failures),
     )

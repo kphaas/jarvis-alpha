@@ -35,6 +35,11 @@ from brain.memory.semantic_commands import (
 )
 from brain.middleware.scopes import check_scopes
 from brain.routing.router import route
+from brain.routing.calibrated_rollout import (
+    CHAT_CALIBRATED_ROUTING_METADATA_KEYS,
+    ChatCalibratedRoutingPolicy,
+    calibrated_routing_observation_enabled,
+)
 from brain.services.at0_self_model import build_at0_self_model, is_at0_self_query
 from brain.services.chat_evaluation_harness import chat_eval_payload
 from brain.services.chat_evidence_pack import (
@@ -127,6 +132,7 @@ CHAT_STRATEGY_METADATA_KEYS = (
     "chat_model_path",
     "chat_strategy_reason",
     *CHAT_MODEL_CAPABILITY_METADATA_KEYS,
+    *CHAT_CALIBRATED_ROUTING_METADATA_KEYS,
 )
 CHAT_OUTCOME_METADATA_KEYS = (
     "chat_outcome_schema_version",
@@ -156,6 +162,7 @@ CHAT_OUTCOME_METADATA_KEYS = (
     "chat_outcome_escalation_requires_confirmation",
     "chat_outcome_evidence_count",
     *CHAT_MODEL_CAPABILITY_METADATA_KEYS,
+    *CHAT_CALIBRATED_ROUTING_METADATA_KEYS,
     "chat_memory_pack_schema_version",
     "chat_memory_pack_source_chars",
     "chat_memory_pack_packed_chars",
@@ -845,6 +852,9 @@ def _chat_outcome_message_metadata(
     if prompt_manifest:
         metadata.update(prompt_manifest.to_metadata())
     for key in CHAT_MODEL_CAPABILITY_METADATA_KEYS:
+        if key in route_result:
+            metadata[key] = route_result[key]
+    for key in CHAT_CALIBRATED_ROUTING_METADATA_KEYS:
         if key in route_result:
             metadata[key] = route_result[key]
     return metadata
@@ -1951,10 +1961,17 @@ async def _stream_single(
     memory_pack_manifest: ChatMemoryPackManifest | None = None,
     prompt_manifest: ChatPromptManifest | None = None,
     chat_outcome_holder: dict[str, object] | None = None,
+    routing_outcomes: tuple[Mapping[str, object], ...] = (),
 ) -> AsyncGenerator[str, None]:
     """Stream tokens from router → SSE events."""
     jarvis_prompt = f"{JARVIS_SYSTEM_PROMPT}\n\n{_runtime_context_prompt()}\n\n{prompt}"
-    result = await route(jarvis_prompt, mode)
+    route_kwargs: dict[str, object] = {}
+    if calibrated_routing_observation_enabled():
+        route_kwargs = {
+            "routing_outcomes": routing_outcomes,
+            "rollout_key": thread_id,
+        }
+    result = await route(jarvis_prompt, mode, **route_kwargs)
     strategy_metadata = _chat_strategy_sse_metadata(result, thread_id)
     if strategy_metadata:
         yield f"data: {json.dumps(strategy_metadata)}\n\n"
@@ -2291,6 +2308,39 @@ def _append_sse_delta(delta_parts: list[str], chunk: str) -> None:
         pass
 
 
+async def _load_calibrated_routing_outcomes(
+    request: Request,
+) -> tuple[Mapping[str, object], ...]:
+    policy = ChatCalibratedRoutingPolicy.from_env()
+    if not calibrated_routing_observation_enabled(policy):
+        return ()
+    try:
+        audit = await list_chat_outcomes(request=request, limit=50, thread_id=None)
+    except Exception as exc:
+        logger.warning(
+            "CHAT_CALIBRATED_ROUTING_OUTCOMES_UNAVAILABLE",
+            extra={
+                "event": "CHAT_CALIBRATED_ROUTING_OUTCOMES_UNAVAILABLE",
+                "mode": policy.mode,
+                "error_type": type(exc).__name__,
+            },
+        )
+        return ()
+    outcomes = audit.get("outcomes")
+    if not isinstance(outcomes, list):
+        return ()
+    compact = tuple(row for row in outcomes if isinstance(row, Mapping))
+    logger.info(
+        "CHAT_CALIBRATED_ROUTING_OUTCOMES_LOADED",
+        extra={
+            "event": "CHAT_CALIBRATED_ROUTING_OUTCOMES_LOADED",
+            "mode": policy.mode,
+            "outcome_count": len(compact),
+        },
+    )
+    return compact
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 
@@ -2510,6 +2560,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
     )
 
     await _save_message(request, thread_id, user_id, "user", user_msg)
+    routing_outcomes = await _load_calibrated_routing_outcomes(request)
 
     is_new = body.thread_id is None
     if is_new:
@@ -2698,6 +2749,7 @@ async def chat_completions(body: CompletionRequest, request: Request):
                 memory_pack_manifest=memory_pack_manifest,
                 prompt_manifest=prompt_manifest,
                 chat_outcome_holder=chat_outcome,
+                routing_outcomes=routing_outcomes,
             )
 
         async for chunk in gen:

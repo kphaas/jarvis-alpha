@@ -103,3 +103,6 @@ def test_trusted_sandbox_ci_runs_chat_quality_gate() -> None:
 
     assert "Chat quality gates" in text
     assert "uv run --python 3.12 python scripts/eval_chat_quality.py" in text
+    assert "ALPHA_CHAT_TRACE_APPROVAL_PUBLIC_KEY_PATH" in text
+    assert "Assert chat trace approval trust anchor" in text
+    assert "openssl pkey -pubin" in text
