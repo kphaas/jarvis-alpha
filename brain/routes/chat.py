@@ -69,6 +69,7 @@ from brain.services.chat_prompt_compiler import (
 from brain.services.chat_output_contract import (
     ChatOutputContract,
     compile_explicit_chat_output_contract,
+    generation_policy_for_chat_output_contract,
     render_chat_output_contract_prompt,
 )
 from brain.services.chat_quality_trends import load_chat_quality_trend_history
@@ -1947,7 +1948,12 @@ async def _repair_model_response(
     output_contract: ChatOutputContract | None = None,
 ) -> ChatRepairLoopResult:
     async def retry_once(repair_prompt: str) -> ChatRepairAttemptResult:
-        retry_result = await route(repair_prompt, "local")
+        retry_kwargs: dict[str, object] = {}
+        if output_contract is not None:
+            retry_kwargs["generation_policy"] = (
+                generation_policy_for_chat_output_contract(output_contract)
+            )
+        retry_result = await route(repair_prompt, "local", **retry_kwargs)
         retry_text = _finalize_model_response(
             str(retry_result.get("result") or ""),
             response_surface,
@@ -1998,11 +2004,17 @@ async def _stream_single(
         f"{JARVIS_SYSTEM_PROMPT}\n\n{_runtime_context_prompt()}\n\n{routed_prompt}"
     )
     route_kwargs: dict[str, object] = {}
+    if output_contract is not None:
+        route_kwargs["generation_policy"] = generation_policy_for_chat_output_contract(
+            output_contract
+        )
     if calibrated_routing_observation_enabled():
-        route_kwargs = {
-            "routing_outcomes": routing_outcomes,
-            "rollout_key": thread_id,
-        }
+        route_kwargs.update(
+            {
+                "routing_outcomes": routing_outcomes,
+                "rollout_key": thread_id,
+            }
+        )
     result = await route(jarvis_prompt, mode, **route_kwargs)
     strategy_metadata = _chat_strategy_sse_metadata(result, thread_id)
     if strategy_metadata:
@@ -2196,7 +2208,12 @@ async def _stream_council(
             prompt=synth_prompt,
             contract=output_contract,
         )
-    synth_result = await route(synth_prompt, "local")
+    synth_route_kwargs: dict[str, object] = {}
+    if output_contract is not None:
+        synth_route_kwargs["generation_policy"] = (
+            generation_policy_for_chat_output_contract(output_contract)
+        )
+    synth_result = await route(synth_prompt, "local", **synth_route_kwargs)
     synth_text = _strip_unrequested_source_references(
         synth_result.get("result", ""), user_msg
     )

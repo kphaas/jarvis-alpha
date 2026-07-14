@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from brain.services.chat_model_task_benchmarks import (
     CHAT_MODEL_TASK_BENCHMARK_VERSION,
     DEFAULT_CHAT_MODEL_BENCHMARK_TASKS,
@@ -227,8 +229,13 @@ def test_router_import_does_not_require_database_configuration() -> None:
 def test_local_output_contract_benchmark_repairs_each_task_once() -> None:
     calls: list[str] = []
 
-    async def invoke(prompt: str, route_mode: str) -> dict[str, object]:
+    async def invoke(
+        prompt: str,
+        route_mode: str,
+        generation_policy: object,
+    ) -> dict[str, object]:
         calls.append(prompt)
+        assert getattr(generation_policy, "deterministic") is True
         task = next(
             task for task in DEFAULT_CHAT_MODEL_BENCHMARK_TASKS if task.prompt in prompt
         )
@@ -237,6 +244,10 @@ def test_local_output_contract_benchmark_repairs_each_task_once() -> None:
             "result": response,
             "mode": route_mode,
             "chat_model_id": "llama3.1:8b",
+            "chat_deterministic_decoding_applied": True,
+            "chat_structured_output_applied": bool(
+                getattr(generation_policy, "json_mode")
+            ),
         }
 
     payload = asyncio.run(run_local_output_contract_benchmark(invoke=invoke))
@@ -244,12 +255,15 @@ def test_local_output_contract_benchmark_repairs_each_task_once() -> None:
 
     assert payload["schema_version"] == CHAT_LOCAL_OUTPUT_BENCHMARK_SCHEMA_VERSION
     assert payload["status"] == "passed"
-    assert payload["passed"] == 4
-    assert payload["reporting"]["model_calls"] == 8
-    assert payload["reporting"]["repair_attempts"] == 4
+    assert payload["passed"] == 12
+    assert payload["reporting"]["model_calls"] == 24
+    assert payload["reporting"]["repair_attempts"] == 12
     assert all(row["repair_attempted"] for row in payload["results"])
     assert all(row["score"] == 100 for row in payload["results"])
     assert all(row["chat_output_contract_passed"] for row in payload["results"])
+    assert payload["stability"]["fully_passing_samples"] == 3
+    assert payload["stability"]["stable_tasks"] == 4
+    assert payload["stability"]["gate_passed"] is True
     assert "Project Atlas is paused" not in rendered
 
 
@@ -264,9 +278,27 @@ def test_local_output_contract_script_defaults_to_zero_call_plan() -> None:
 
     assert payload["status"] == "planned"
     assert payload["local_only"] is True
-    assert payload["planned_initial_calls"] == 4
-    assert payload["planned_max_calls"] == 8
+    assert payload["samples"] == 3
+    assert payload["planned_initial_calls"] == 12
+    assert payload["planned_max_calls"] == 24
     assert payload["reporting"]["model_calls"] == 0
+
+
+def test_local_output_contract_benchmark_refuses_empty_task_set() -> None:
+    async def invoke(
+        _prompt: str,
+        _route_mode: str,
+        _generation_policy: object,
+    ) -> dict[str, object]:
+        raise AssertionError("must not call adapter")
+
+    with pytest.raises(ValueError, match="at least one benchmark task"):
+        asyncio.run(
+            run_local_output_contract_benchmark(
+                invoke=invoke,
+                tasks=(),
+            )
+        )
 
 
 def test_local_output_contract_script_enforces_worst_case_call_cap() -> None:
@@ -276,7 +308,7 @@ def test_local_output_contract_script_enforces_worst_case_call_cap() -> None:
             "scripts/benchmark_local_output_contract.py",
             "--live",
             "--max-calls",
-            "7",
+            "23",
         ],
         check=False,
         capture_output=True,
@@ -284,17 +316,21 @@ def test_local_output_contract_script_enforces_worst_case_call_cap() -> None:
     )
 
     assert completed.returncode != 0
-    assert "maximum calls (8) exceed --max-calls (7)" in completed.stderr
+    assert "maximum calls (24) exceed --max-calls (23)" in completed.stderr
 
 
 def test_local_output_contract_benchmark_sanitizes_adapter_exception() -> None:
     task = DEFAULT_CHAT_MODEL_BENCHMARK_TASKS[0]
 
-    async def invoke(_prompt: str, _route_mode: str) -> dict[str, object]:
+    async def invoke(
+        _prompt: str,
+        _route_mode: str,
+        _generation_policy: object,
+    ) -> dict[str, object]:
         raise RuntimeError("provider secret detail")
 
     payload = asyncio.run(
-        run_local_output_contract_benchmark(invoke=invoke, tasks=(task,))
+        run_local_output_contract_benchmark(invoke=invoke, tasks=(task,), samples=1)
     )
     rendered = json.dumps(payload)
 
@@ -302,3 +338,44 @@ def test_local_output_contract_benchmark_sanitizes_adapter_exception() -> None:
     assert payload["reporting"]["model_calls"] == 1
     assert payload["results"][0]["error_code"] == "model_call_failed"
     assert "provider secret detail" not in rendered
+
+
+def test_local_output_contract_benchmark_fails_on_output_hash_variance() -> None:
+    task = next(
+        task
+        for task in DEFAULT_CHAT_MODEL_BENCHMARK_TASKS
+        if task.task_id == "grounded_evidence_only"
+    )
+    calls = 0
+
+    async def invoke(
+        _prompt: str,
+        route_mode: str,
+        _generation_policy: object,
+    ) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        response = task.reference_response
+        if calls == 2:
+            response = response.replace("Project Atlas is", "Atlas remains")
+        return {
+            "result": response,
+            "mode": route_mode,
+            "chat_model_id": "llama3.1:8b",
+            "chat_deterministic_decoding_applied": True,
+            "chat_structured_output_applied": False,
+        }
+
+    payload = asyncio.run(
+        run_local_output_contract_benchmark(
+            invoke=invoke,
+            tasks=(task,),
+            samples=2,
+        )
+    )
+
+    assert payload["failed"] == 0
+    assert payload["status"] == "failed"
+    assert payload["stability"]["gate_passed"] is False
+    assert payload["stability"]["tasks"][0]["quality_stable"] is True
+    assert payload["stability"]["tasks"][0]["output_stable"] is False

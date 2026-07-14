@@ -67,6 +67,13 @@ def test_chat_eval_payload_scoreboards_outcome_metadata() -> None:
     assert payload["case_groups"]["memory_pack"]["case_count"] == 2
     assert payload["case_groups"]["prompt_compiler"]["case_count"] == 2
     assert payload["case_groups"]["output_contract"]["case_count"] == 1
+    output_contract = next(
+        result
+        for result in payload["results"]
+        if result["eval_group"] == "output_contract"
+    )
+    assert output_contract["details"]["deterministic_decoding"] is True
+    assert output_contract["details"]["structured_output"] is True
     assert payload["case_groups"]["quality_gateway"]["case_count"] == 4
     assert payload["case_groups"]["mcp_tool_boundary"]["case_count"] == 1
     assert payload["case_groups"]["trace_replay"]["case_count"] == 4

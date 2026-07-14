@@ -28,6 +28,7 @@ import pytest
 
 import brain.services.ollama_client as ollama_client
 import brain.tasks.dispatch as dispatch
+from brain.routing.generation_policy import ChatGenerationPolicy
 
 
 def _recording_generate(response: dict[str, Any]):
@@ -176,12 +177,66 @@ async def test_generate_posts_non_stream_with_60s_timeout_returns_raw_json(
     assert captured["payload"]["stream"] is False
     assert captured["payload"]["model"] == "llama3.1:8b"
     assert captured["payload"]["prompt"] == "hi"
+    assert "format" not in captured["payload"]
+    assert "options" not in captured["payload"]
 
     # 60-second client timeout.
     assert captured["init_kwargs"]["timeout"] == 60.0
 
     # Raw Ollama JSON returned verbatim (token counts preserved).
     assert result == raw
+
+
+@pytest.mark.asyncio
+async def test_generate_translates_deterministic_policy_to_ollama_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        ollama_client.httpx,
+        "AsyncClient",
+        _make_client(captured, _FakeResponse({"response": '{"status":"ready"}'})),
+    )
+    await ollama_client.generate(
+        model="llama3.1:8b",
+        prompt="status",
+        options={"num_predict": 100, "temperature": 0.9},
+        generation_policy=ChatGenerationPolicy(
+            deterministic=True,
+            json_mode=True,
+        ),
+    )
+
+    assert captured["payload"]["format"] == "json"
+    assert captured["payload"]["options"] == {
+        "num_predict": 100,
+        "temperature": 0.0,
+        "seed": 42,
+    }
+
+
+@pytest.mark.asyncio
+async def test_generate_keeps_non_json_contract_out_of_json_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        ollama_client.httpx,
+        "AsyncClient",
+        _make_client(captured, _FakeResponse({"response": "bounded"})),
+    )
+
+    await ollama_client.generate(
+        model="llama3.1:8b",
+        prompt="bounded",
+        generation_policy=ChatGenerationPolicy(deterministic=True),
+    )
+
+    assert "format" not in captured["payload"]
+    assert captured["payload"]["options"] == {
+        "temperature": 0.0,
+        "seed": 42,
+    }
 
 
 @pytest.mark.asyncio

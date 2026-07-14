@@ -47,6 +47,7 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
         "Per-Model Task Benchmarks",
         "Benchmark Evidence Ingestion + Operator Comparison",
         "Local Output Contract Hardening",
+        "Deterministic Local Decoding",
     ):
         assert phase in text
 
@@ -63,5 +64,6 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
     assert (
         "Phase 28: Benchmark Evidence Ingestion + Operator Comparison" not in next_queue
     )
-    assert "Deploy Phase 29" in next_queue
-    assert "local-only assisted benchmark" in next_queue
+    assert "Deploy Phase 29" not in next_queue
+    assert "deploy Phase 30" in next_queue
+    assert "three-sample local stability gate" in next_queue

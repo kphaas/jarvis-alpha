@@ -210,9 +210,14 @@ async def test_stream_single_fails_closed_after_contract_retry_fails(
 ) -> None:
     calls = 0
 
-    async def fake_route(_prompt: str, _mode: str) -> dict[str, object]:
+    async def fake_route(
+        _prompt: str,
+        _mode: str,
+        **kwargs: object,
+    ) -> dict[str, object]:
         nonlocal calls
         calls += 1
+        assert "generation_policy" in kwargs
         return {"result": "not json", "mode": "local"}
 
     monkeypatch.setattr(chat, "route", fake_route)
@@ -247,8 +252,13 @@ async def test_stream_single_enforces_exact_json_for_local_output(
 ) -> None:
     prompts: list[str] = []
 
-    async def fake_route(prompt: str, mode: str) -> dict[str, object]:
+    async def fake_route(
+        prompt: str,
+        mode: str,
+        **kwargs: object,
+    ) -> dict[str, object]:
         prompts.append(prompt)
+        assert "generation_policy" in kwargs
         if len(prompts) == 1:
             return {"result": "Owner is Delta.", "mode": "local"}
         return {"result": '{"owner":"Delta"}', "mode": "local"}
@@ -284,9 +294,14 @@ async def test_stream_single_normalizes_isolated_json_fence_without_retry(
 ) -> None:
     calls = 0
 
-    async def fake_route(_prompt: str, _mode: str) -> dict[str, object]:
+    async def fake_route(
+        _prompt: str,
+        _mode: str,
+        **kwargs: object,
+    ) -> dict[str, object]:
         nonlocal calls
         calls += 1
+        assert "generation_policy" in kwargs
         return {
             "result": '```json\n{"status": "ready"}\n```',
             "mode": "local",
