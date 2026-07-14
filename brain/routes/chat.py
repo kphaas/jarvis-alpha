@@ -55,6 +55,13 @@ from brain.services.chat_memory_pack import (
     ChatMemoryPackManifest,
     pack_chat_memory_context,
 )
+from brain.services.chat_model_benchmark_evidence import (
+    CHAT_MODEL_BENCHMARK_APPROVAL_KEY_PATH_ENV,
+    CHAT_MODEL_BENCHMARK_EVIDENCE_PATH_ENV,
+    chat_model_benchmark_comparison,
+    load_chat_model_benchmark_approval_public_key,
+    load_chat_model_benchmark_evidence,
+)
 from brain.services.chat_prompt_compiler import (
     ChatPromptManifest,
     compile_chat_prompt,
@@ -2962,7 +2969,9 @@ async def chat_eval_harness(
 ) -> dict[str, object]:
     audit = await list_chat_outcomes(request=request, limit=limit, thread_id=None)
     outcomes = cast(list[Mapping[str, object]], audit.get("outcomes", []))
-    return chat_eval_payload(outcomes, trend_history=_chat_eval_trend_history())
+    payload = chat_eval_payload(outcomes, trend_history=_chat_eval_trend_history())
+    payload["model_benchmark_evidence"] = _chat_model_benchmark_comparison()
+    return payload
 
 
 def _chat_eval_trend_history() -> list[dict[str, object]]:
@@ -2976,6 +2985,69 @@ def _chat_eval_trend_history() -> list[dict[str, object]]:
     if not path.is_absolute():
         path = repo_root / path
     return load_chat_quality_trend_history(path)
+
+
+def _chat_model_benchmark_comparison() -> dict[str, object]:
+    repo_root = Path(__file__).resolve().parents[2]
+    raw_path = os.getenv(CHAT_MODEL_BENCHMARK_EVIDENCE_PATH_ENV)
+    path = (
+        Path(raw_path).expanduser()
+        if raw_path
+        else repo_root / "logs" / "chat_model_benchmark_evidence.v1.json"
+    )
+    if not path.is_absolute():
+        path = repo_root / path
+    if not path.exists():
+        return chat_model_benchmark_comparison()
+
+    raw_key_path = os.getenv(CHAT_MODEL_BENCHMARK_APPROVAL_KEY_PATH_ENV) or os.getenv(
+        "ALPHA_CHAT_TRACE_APPROVAL_PUBLIC_KEY_PATH"
+    )
+    if not raw_key_path:
+        logger.warning(
+            "CHAT_MODEL_BENCHMARK_EVIDENCE_UNAVAILABLE",
+            extra={
+                "event": "CHAT_MODEL_BENCHMARK_EVIDENCE_UNAVAILABLE",
+                "reason": "approval_key_unavailable",
+            },
+        )
+        return _unavailable_chat_model_benchmark_comparison("approval_key_unavailable")
+    try:
+        public_key = load_chat_model_benchmark_approval_public_key(Path(raw_key_path))
+        corpus = load_chat_model_benchmark_evidence(
+            path,
+            approval_public_key_pem=public_key,
+        )
+        comparison = chat_model_benchmark_comparison(corpus)
+    except ValueError as exc:
+        logger.warning(
+            "CHAT_MODEL_BENCHMARK_EVIDENCE_UNAVAILABLE",
+            extra={
+                "event": "CHAT_MODEL_BENCHMARK_EVIDENCE_UNAVAILABLE",
+                "reason": str(exc),
+            },
+        )
+        return _unavailable_chat_model_benchmark_comparison("evidence_invalid")
+    logger.info(
+        "CHAT_MODEL_BENCHMARK_EVIDENCE_READ",
+        extra={
+            "event": "CHAT_MODEL_BENCHMARK_EVIDENCE_READ",
+            "approved_batch_count": comparison["approved_batch_count"],
+            "approved_model_count": comparison["approved_model_count"],
+            "routing_eligible": False,
+        },
+    )
+    return comparison
+
+
+def _unavailable_chat_model_benchmark_comparison(
+    reason: str,
+) -> dict[str, object]:
+    return {
+        **chat_model_benchmark_comparison(),
+        "status": "unavailable",
+        "reason": reason,
+    }
 
 
 @router.patch("/v1/threads/{thread_id}")

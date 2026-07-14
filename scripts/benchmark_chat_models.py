@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from datetime import UTC, datetime
 import json
 from pathlib import Path
 import sys
@@ -67,6 +68,7 @@ def main() -> int:
             invoke=invoke,
         )
     )
+    payload["run_completed_at"] = datetime.now(UTC).isoformat()
     _emit(payload, args.output)
     return 1 if payload["failed"] else 0
 
