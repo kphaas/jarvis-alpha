@@ -28,6 +28,12 @@ from brain.services.chat_evidence_pack import (
     verify_chat_response,
 )
 from brain.services.chat_memory_pack import pack_chat_memory_context
+from brain.services.chat_model_task_benchmarks import (
+    CHAT_MODEL_TASK_BENCHMARK_VERSION,
+    DEFAULT_CHAT_MODEL_BENCHMARK_TASKS,
+    score_chat_model_task_response,
+    validate_chat_model_benchmark_tasks,
+)
 from brain.services.chat_prompt_compiler import compile_chat_prompt
 from brain.services.chat_quality_trends import summarize_chat_quality_trend
 from brain.services.chat_redacted_trace_corpus import load_redacted_trace_corpus
@@ -83,6 +89,7 @@ def run_chat_eval_harness(
         *_mcp_tool_boundary_eval_results(),
         *_trace_replay_eval_results(),
         *_redacted_trace_corpus_eval_results(),
+        _model_task_benchmark_contract(),
         _calibrated_routing_rollout_contract(),
         _model_score_calibration_contract(outcomes),
         _outcome_audit_contract(outcomes),
@@ -719,6 +726,43 @@ def _model_score_calibration_contract(
             "evaluated_outcome_count": payload.get("evaluated_outcome_count"),
             "model_count": len(rows) if isinstance(rows, list) else 0,
             "min_samples": payload.get("min_samples"),
+        },
+        failures=tuple(failures),
+    )
+
+
+def _model_task_benchmark_contract() -> ChatEvalResult:
+    failures = list(validate_chat_model_benchmark_tasks())
+    results = [
+        score_chat_model_task_response(
+            route_mode=route_mode,
+            task_id=task.task_id,
+            response_text=task.reference_response,
+            latency_ms=0,
+        )
+        for route_mode in ("local", "perplexity", "claude", "gemini")
+        for task in DEFAULT_CHAT_MODEL_BENCHMARK_TASKS
+    ]
+    if any(not result.passed for result in results):
+        failures.append("reference_response_failed")
+    if any(result.response_chars <= 0 for result in results):
+        failures.append("response_metadata_missing")
+    return ChatEvalResult(
+        name="per_model_tasks_have_versioned_objective_benchmarks",
+        eval_group="model_task_benchmarks",
+        passed=not failures,
+        details={
+            "benchmark_version": CHAT_MODEL_TASK_BENCHMARK_VERSION,
+            "model_count": 4,
+            "task_count": len(DEFAULT_CHAT_MODEL_BENCHMARK_TASKS),
+            "task_classes": sorted(
+                {task.task_class for task in DEFAULT_CHAT_MODEL_BENCHMARK_TASKS}
+            ),
+            "contract_result_count": len(results),
+            "model_calls": 0,
+            "advisory_only": True,
+            "routing_scores_mutated": False,
+            "raw_responses_retained": False,
         },
         failures=tuple(failures),
     )

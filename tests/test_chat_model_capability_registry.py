@@ -15,6 +15,7 @@ def test_default_chat_model_registry_has_required_routing_tags() -> None:
     assert local.metadata() == {
         "chat_model_registry_version": CHAT_MODEL_CAPABILITY_REGISTRY_VERSION,
         "chat_model_provider": "ollama",
+        "chat_model_id": "llama3.1:8b",
         "chat_model_deployment": "local",
         "chat_model_cost_tier": 0,
         "chat_model_latency_tier": 1,

@@ -5,17 +5,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from brain.core.models import CLAUDE_SMART, GEMINI_FAST, LOCAL_CHAT, PERPLEXITY_FAST
+
 ChatTaskClass = Literal["fast", "grounded", "analysis", "deep"]
 ModelDeployment = Literal["local", "brokered", "cloud"]
 PrivacyTier = Literal["local", "brokered", "external"]
 
-CHAT_MODEL_CAPABILITY_REGISTRY_VERSION = "chat_model_capability_registry.v1"
+CHAT_MODEL_CAPABILITY_REGISTRY_VERSION = "chat_model_capability_registry.v2"
 
 
 @dataclass(frozen=True)
 class ChatModelCapability:
     route_mode: str
     provider: str
+    model_id: str
     deployment: ModelDeployment
     cost_tier: int
     latency_tier: int
@@ -31,6 +34,7 @@ class ChatModelCapability:
         return {
             "chat_model_registry_version": CHAT_MODEL_CAPABILITY_REGISTRY_VERSION,
             "chat_model_provider": self.provider,
+            "chat_model_id": self.model_id,
             "chat_model_deployment": self.deployment,
             "chat_model_cost_tier": self.cost_tier,
             "chat_model_latency_tier": self.latency_tier,
@@ -57,6 +61,7 @@ DEFAULT_CHAT_MODEL_CAPABILITIES: tuple[ChatModelCapability, ...] = (
     ChatModelCapability(
         route_mode="local",
         provider="ollama",
+        model_id=LOCAL_CHAT,
         deployment="local",
         cost_tier=0,
         latency_tier=1,
@@ -71,6 +76,7 @@ DEFAULT_CHAT_MODEL_CAPABILITIES: tuple[ChatModelCapability, ...] = (
     ChatModelCapability(
         route_mode="perplexity",
         provider="perplexity",
+        model_id=PERPLEXITY_FAST,
         deployment="brokered",
         cost_tier=2,
         latency_tier=3,
@@ -85,6 +91,7 @@ DEFAULT_CHAT_MODEL_CAPABILITIES: tuple[ChatModelCapability, ...] = (
     ChatModelCapability(
         route_mode="claude",
         provider="anthropic",
+        model_id=CLAUDE_SMART,
         deployment="cloud",
         cost_tier=4,
         latency_tier=4,
@@ -99,6 +106,7 @@ DEFAULT_CHAT_MODEL_CAPABILITIES: tuple[ChatModelCapability, ...] = (
     ChatModelCapability(
         route_mode="gemini",
         provider="google",
+        model_id=GEMINI_FAST,
         deployment="cloud",
         cost_tier=3,
         latency_tier=4,

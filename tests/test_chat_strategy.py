@@ -85,6 +85,7 @@ def test_chat_strategy_sse_metadata_is_stable_for_helm() -> None:
         "chat_strategy_reason": "auto_complexity_1",
         "chat_model_registry_version": CHAT_MODEL_CAPABILITY_REGISTRY_VERSION,
         "chat_model_provider": "ollama",
+        "chat_model_id": "llama3.1:8b",
         "chat_model_deployment": "local",
         "chat_model_cost_tier": 0,
         "chat_model_latency_tier": 1,
@@ -104,6 +105,7 @@ def test_auto_strategy_uses_capability_registry_scores() -> None:
         ChatModelCapability(
             route_mode="local",
             provider="local-test",
+            model_id="local-test-v1",
             deployment="local",
             cost_tier=0,
             latency_tier=1,
@@ -118,6 +120,7 @@ def test_auto_strategy_uses_capability_registry_scores() -> None:
         ChatModelCapability(
             route_mode="claude",
             provider="cloud-test",
+            model_id="cloud-test-v1",
             deployment="cloud",
             cost_tier=5,
             latency_tier=5,
