@@ -44,6 +44,7 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
         "Helm Trend Panel",
         "Real Trace Sampling Workflow",
         "Calibrated Routing Rollout Gate",
+        "Per-Model Task Benchmarks",
     ):
         assert phase in text
 
@@ -56,4 +57,5 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
     assert "Phase 24: Helm Trend Panel" not in next_queue
     assert "Phase 25: Real Trace Sampling Workflow" not in next_queue
     assert "Phase 26: Calibrated Routing Rollout Gate" not in next_queue
-    assert "Phase 27: Per-Model Task Benchmarks" in next_queue
+    assert "Phase 27: Per-Model Task Benchmarks" not in next_queue
+    assert "Phase 28: Benchmark Evidence Ingestion + Operator Comparison" in next_queue
