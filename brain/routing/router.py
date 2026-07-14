@@ -2,15 +2,14 @@ import json
 import subprocess
 import asyncio
 from collections.abc import Mapping, Sequence
+import os
 
-from brain.core.config import GATEWAY_URL, OLLAMA_URL
 from brain.core.models import (
     CLAUDE_SMART,
     GEMINI_FAST,
     LOCAL_CHAT,
     PERPLEXITY_FAST,
 )
-from brain.routing.council import CouncilOrchestrator
 from brain.routing.calibrated_rollout import (
     ChatCalibratedRoutingPolicy,
     plan_calibrated_routing,
@@ -32,6 +31,8 @@ async def route(
     rollout_policy: ChatCalibratedRoutingPolicy | None = None,
 ) -> dict:
     if mode == "council":
+        from brain.routing.council import CouncilOrchestrator
+
         result = await CouncilOrchestrator().run(prompt)
         result.update(
             select_chat_strategy(prompt=prompt, requested_model=mode).metadata()
@@ -75,7 +76,7 @@ async def route(
             "-s",
             "-X",
             "POST",
-            f"{GATEWAY_URL}{endpoint}",
+            f"{_gateway_url()}{endpoint}",
             "-H",
             "Content-Type: application/json",
             "-d",
@@ -95,7 +96,7 @@ async def route(
                 "-s",
                 "-X",
                 "POST",
-                f"{OLLAMA_URL}/api/generate",
+                f"{_ollama_url()}/api/generate",
                 "-H",
                 "Content-Type: application/json",
                 "-d",
@@ -174,3 +175,11 @@ async def route(
 
     except Exception as e:
         return {"mode": mode, "result": "", "error": str(e), **metadata}
+
+
+def _gateway_url() -> str:
+    return os.environ["ALPHA_GATEWAY_URL"]
+
+
+def _ollama_url() -> str:
+    return os.environ.get("ALPHA_OLLAMA_URL", "http://127.0.0.1:11434")

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 from brain.services.chat_model_task_benchmarks import (
     CHAT_MODEL_TASK_BENCHMARK_VERSION,
@@ -188,3 +190,31 @@ def test_benchmark_script_refuses_calls_above_operator_cap() -> None:
 
     assert completed.returncode != 0
     assert "planned calls (4) exceed --max-calls (3)" in completed.stderr
+
+
+def test_router_import_does_not_require_database_configuration() -> None:
+    repo_root = Path.cwd()
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key
+        not in {
+            "ALPHA_DB_DSN",
+            "ALPHA_DB_DSN_WRITER",
+            "ALPHA_DB_DSN_BUDDY",
+            "ALPHA_GATEWAY_URL",
+        }
+    }
+    env["PYTHONPATH"] = os.pathsep.join(
+        (str(repo_root), str(repo_root / "common"), env.get("PYTHONPATH", ""))
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", "import brain.routing.router"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
