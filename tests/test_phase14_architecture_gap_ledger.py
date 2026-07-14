@@ -45,6 +45,8 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
         "Real Trace Sampling Workflow",
         "Calibrated Routing Rollout Gate",
         "Per-Model Task Benchmarks",
+        "Benchmark Evidence Ingestion + Operator Comparison",
+        "Local Output Contract Hardening",
     ):
         assert phase in text
 
@@ -58,4 +60,8 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
     assert "Phase 25: Real Trace Sampling Workflow" not in next_queue
     assert "Phase 26: Calibrated Routing Rollout Gate" not in next_queue
     assert "Phase 27: Per-Model Task Benchmarks" not in next_queue
-    assert "Phase 28: Benchmark Evidence Ingestion + Operator Comparison" in next_queue
+    assert (
+        "Phase 28: Benchmark Evidence Ingestion + Operator Comparison" not in next_queue
+    )
+    assert "Deploy Phase 29" in next_queue
+    assert "local-only assisted benchmark" in next_queue

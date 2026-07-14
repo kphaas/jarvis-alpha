@@ -20,6 +20,7 @@ from brain.services.chat_repair_loop import (
     repair_chat_response_once,
     run_chat_repair_loop,
 )
+from brain.services.chat_output_contract import ChatOutputContract
 
 
 def test_repair_loop_strips_unsupported_web_narration() -> None:
@@ -139,6 +140,181 @@ async def test_stream_single_retries_empty_response_once(
     assert streamed_text == "The current Alpha plan is to build the repair loop next."
     assert outcome["chat_repair_action"] == "retry_local_once"
     assert outcome["chat_repair_repaired"] is True
+    assert outcome["chat_outcome_quality_action"] == "accept"
+
+
+@pytest.mark.asyncio
+async def test_output_contract_retries_once_and_records_reason_only_metadata() -> None:
+    prompts: list[str] = []
+    evidence_pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+    contract = ChatOutputContract(
+        contract_id="exact_json",
+        exact_json_keys=("status",),
+    )
+
+    async def retry_once(prompt: str) -> ChatRepairAttemptResult:
+        prompts.append(prompt)
+        return ChatRepairAttemptResult(text='{"status":"ready"}', model_used="local")
+
+    repair = await run_chat_repair_loop(
+        response_text="The status is ready.",
+        user_msg="Return only a JSON object with key status.",
+        evidence_pack=evidence_pack,
+        retry_once=retry_once,
+        output_contract=contract,
+    )
+
+    assert len(prompts) == 1
+    assert repair.text == '{"status":"ready"}'
+    assert repair.repaired is True
+    assert repair.reason == "output_contract_repaired"
+    assert repair.verification.verified is True
+    metadata = repair.to_metadata()
+    assert metadata["chat_output_contract_passed"] is True
+    assert "The status is ready" not in json.dumps(metadata)
+
+
+@pytest.mark.asyncio
+async def test_output_contract_stops_after_one_failed_retry() -> None:
+    calls = 0
+    evidence_pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+    contract = ChatOutputContract(
+        contract_id="exact_json",
+        exact_json_keys=("status",),
+    )
+
+    async def retry_once(_prompt: str) -> ChatRepairAttemptResult:
+        nonlocal calls
+        calls += 1
+        return ChatRepairAttemptResult(text="still not json", model_used="local")
+
+    repair = await run_chat_repair_loop(
+        response_text="not json",
+        user_msg="Return only a JSON object with key status.",
+        evidence_pack=evidence_pack,
+        retry_once=retry_once,
+        output_contract=contract,
+    )
+
+    assert calls == 1
+    assert repair.attempts == 1
+    assert repair.repaired is False
+    assert repair.reason == "output_contract_retry_failed_verification"
+    assert repair.output_contract is not None
+    assert repair.output_contract.passed is False
+
+
+@pytest.mark.asyncio
+async def test_stream_single_fails_closed_after_contract_retry_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def fake_route(_prompt: str, _mode: str) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {"result": "not json", "mode": "local"}
+
+    monkeypatch.setattr(chat, "route", fake_route)
+    outcome: dict[str, object] = {}
+    evidence_pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+
+    chunks = [
+        chunk
+        async for chunk in chat._stream_single(
+            "User: Return only a JSON object with key status.",
+            "local",
+            "thread-contract-failed",
+            "local",
+            "Return only a JSON object with key status.",
+            evidence_pack=evidence_pack,
+            chat_outcome_holder=outcome,
+        )
+    ]
+
+    assert calls == 2
+    assert _streamed_text(chunks) == (
+        "I could not satisfy the requested output contract reliably. Try again "
+        "or switch to a stronger model."
+    )
+    assert outcome["chat_outcome_quality_reason"] == "output_contract_failed"
+    assert outcome["chat_outcome_escalation_rung"] == "operator_review"
+
+
+@pytest.mark.asyncio
+async def test_stream_single_enforces_exact_json_for_local_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompts: list[str] = []
+
+    async def fake_route(prompt: str, mode: str) -> dict[str, object]:
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return {"result": "Owner is Delta.", "mode": "local"}
+        return {"result": '{"owner":"Delta"}', "mode": "local"}
+
+    monkeypatch.setattr(chat, "route", fake_route)
+    outcome: dict[str, object] = {}
+    evidence_pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+
+    chunks = [
+        chunk
+        async for chunk in chat._stream_single(
+            "User: Return only a JSON object with key owner.",
+            "local",
+            "thread-contract",
+            "local",
+            "Return only a JSON object with key owner.",
+            evidence_pack=evidence_pack,
+            chat_outcome_holder=outcome,
+        )
+    ]
+
+    assert len(prompts) == 2
+    assert "Output contract" in prompts[0]
+    assert _streamed_text(chunks) == '{"owner":"Delta"}'
+    assert outcome["chat_output_contract_id"] == "exact_json"
+    assert outcome["chat_output_contract_passed"] is True
+    assert outcome["chat_outcome_quality_action"] == "accept"
+
+
+@pytest.mark.asyncio
+async def test_stream_single_normalizes_isolated_json_fence_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def fake_route(_prompt: str, _mode: str) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {
+            "result": '```json\n{"status": "ready"}\n```',
+            "mode": "local",
+        }
+
+    monkeypatch.setattr(chat, "route", fake_route)
+    outcome: dict[str, object] = {}
+    evidence_pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+
+    chunks = [
+        chunk
+        async for chunk in chat._stream_single(
+            "User: Return only a JSON object with key status.",
+            "local",
+            "thread-contract-normalized",
+            "local",
+            "Return only a JSON object with key status.",
+            evidence_pack=evidence_pack,
+            chat_outcome_holder=outcome,
+        )
+    ]
+
+    assert calls == 1
+    assert _streamed_text(chunks) == '{"status":"ready"}'
+    assert outcome["chat_repair_action"] == "normalize_output_contract"
+    assert outcome["chat_repair_before_issues"] == [
+        "output_contract_json_object_required"
+    ]
     assert outcome["chat_outcome_quality_action"] == "accept"
 
 

@@ -66,6 +66,11 @@ from brain.services.chat_prompt_compiler import (
     ChatPromptManifest,
     compile_chat_prompt,
 )
+from brain.services.chat_output_contract import (
+    ChatOutputContract,
+    compile_explicit_chat_output_contract,
+    render_chat_output_contract_prompt,
+)
 from brain.services.chat_quality_trends import load_chat_quality_trend_history
 from brain.services.chat_repair_loop import (
     ChatRepairAttemptResult,
@@ -163,6 +168,12 @@ CHAT_OUTCOME_METADATA_KEYS = (
     "chat_repair_before_issues",
     "chat_repair_after_issues",
     "chat_repair_model_used",
+    "chat_output_contract_schema_version",
+    "chat_output_contract_applied",
+    "chat_output_contract_id",
+    "chat_output_contract_passed",
+    "chat_output_contract_issue_count",
+    "chat_output_contract_issues",
     "chat_outcome_escalation_required",
     "chat_outcome_escalation_rung",
     "chat_outcome_escalation_action",
@@ -1933,6 +1944,7 @@ async def _repair_model_response(
     evidence_pack: ChatEvidencePack,
     verification: ChatResponseVerification,
     internet_verified: bool,
+    output_contract: ChatOutputContract | None = None,
 ) -> ChatRepairLoopResult:
     async def retry_once(repair_prompt: str) -> ChatRepairAttemptResult:
         retry_result = await route(repair_prompt, "local")
@@ -1953,6 +1965,7 @@ async def _repair_model_response(
         evidence_pack=evidence_pack,
         verification=verification,
         retry_once=retry_once,
+        output_contract=output_contract,
     )
 
 
@@ -1971,7 +1984,19 @@ async def _stream_single(
     routing_outcomes: tuple[Mapping[str, object], ...] = (),
 ) -> AsyncGenerator[str, None]:
     """Stream tokens from router → SSE events."""
-    jarvis_prompt = f"{JARVIS_SYSTEM_PROMPT}\n\n{_runtime_context_prompt()}\n\n{prompt}"
+    output_contract = (
+        compile_explicit_chat_output_contract(user_msg)
+        if mode in {"auto", "local"}
+        else None
+    )
+    routed_prompt = (
+        render_chat_output_contract_prompt(prompt=prompt, contract=output_contract)
+        if output_contract is not None
+        else prompt
+    )
+    jarvis_prompt = (
+        f"{JARVIS_SYSTEM_PROMPT}\n\n{_runtime_context_prompt()}\n\n{routed_prompt}"
+    )
     route_kwargs: dict[str, object] = {}
     if calibrated_routing_observation_enabled():
         route_kwargs = {
@@ -2002,6 +2027,9 @@ async def _stream_single(
         internet_verified=internet_verified,
     )
     model_used = result.get("mode", mode)
+    enforced_output_contract = (
+        output_contract if str(model_used).casefold() == "local" else None
+    )
     if evidence_pack:
         verification = verify_chat_response(
             response_text=text,
@@ -2014,6 +2042,7 @@ async def _stream_single(
             evidence_pack=evidence_pack,
             verification=verification,
             internet_verified=internet_verified,
+            output_contract=enforced_output_contract,
         )
         text = repair.text
         verification = repair.verification
@@ -2161,6 +2190,12 @@ async def _stream_council(
         f"Synthesize these responses into one clear answer:\n\n{council_text}\n\n"
         f"Original question: {prompt}"
     )
+    output_contract = compile_explicit_chat_output_contract(user_msg)
+    if output_contract is not None:
+        synth_prompt = render_chat_output_contract_prompt(
+            prompt=synth_prompt,
+            contract=output_contract,
+        )
     synth_result = await route(synth_prompt, "local")
     synth_text = _strip_unrequested_source_references(
         synth_result.get("result", ""), user_msg
@@ -2212,6 +2247,7 @@ async def _stream_council(
             evidence_pack=evidence_pack,
             verification=verification,
             internet_verified=evidence_pack.internet_used,
+            output_contract=output_contract,
         )
         synth_text = repair.text
         verification = repair.verification

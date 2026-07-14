@@ -15,6 +15,10 @@ from brain.services.chat_model_task_benchmarks import (
     score_chat_model_task_response,
     validate_chat_model_benchmark_tasks,
 )
+from brain.services.chat_local_output_benchmark import (
+    CHAT_LOCAL_OUTPUT_BENCHMARK_SCHEMA_VERSION,
+    run_local_output_contract_benchmark,
+)
 
 
 def test_benchmark_tasks_cover_each_registry_task_class() -> None:
@@ -218,3 +222,83 @@ def test_router_import_does_not_require_database_configuration() -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
+
+
+def test_local_output_contract_benchmark_repairs_each_task_once() -> None:
+    calls: list[str] = []
+
+    async def invoke(prompt: str, route_mode: str) -> dict[str, object]:
+        calls.append(prompt)
+        task = next(
+            task for task in DEFAULT_CHAT_MODEL_BENCHMARK_TASKS if task.prompt in prompt
+        )
+        response = task.reference_response if prompt.startswith("Repair") else "bad"
+        return {
+            "result": response,
+            "mode": route_mode,
+            "chat_model_id": "llama3.1:8b",
+        }
+
+    payload = asyncio.run(run_local_output_contract_benchmark(invoke=invoke))
+    rendered = json.dumps(payload)
+
+    assert payload["schema_version"] == CHAT_LOCAL_OUTPUT_BENCHMARK_SCHEMA_VERSION
+    assert payload["status"] == "passed"
+    assert payload["passed"] == 4
+    assert payload["reporting"]["model_calls"] == 8
+    assert payload["reporting"]["repair_attempts"] == 4
+    assert all(row["repair_attempted"] for row in payload["results"])
+    assert all(row["score"] == 100 for row in payload["results"])
+    assert all(row["chat_output_contract_passed"] for row in payload["results"])
+    assert "Project Atlas is paused" not in rendered
+
+
+def test_local_output_contract_script_defaults_to_zero_call_plan() -> None:
+    completed = subprocess.run(
+        [sys.executable, "scripts/benchmark_local_output_contract.py"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(completed.stdout)
+
+    assert payload["status"] == "planned"
+    assert payload["local_only"] is True
+    assert payload["planned_initial_calls"] == 4
+    assert payload["planned_max_calls"] == 8
+    assert payload["reporting"]["model_calls"] == 0
+
+
+def test_local_output_contract_script_enforces_worst_case_call_cap() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/benchmark_local_output_contract.py",
+            "--live",
+            "--max-calls",
+            "7",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "maximum calls (8) exceed --max-calls (7)" in completed.stderr
+
+
+def test_local_output_contract_benchmark_sanitizes_adapter_exception() -> None:
+    task = DEFAULT_CHAT_MODEL_BENCHMARK_TASKS[0]
+
+    async def invoke(_prompt: str, _route_mode: str) -> dict[str, object]:
+        raise RuntimeError("provider secret detail")
+
+    payload = asyncio.run(
+        run_local_output_contract_benchmark(invoke=invoke, tasks=(task,))
+    )
+    rendered = json.dumps(payload)
+
+    assert payload["status"] == "failed"
+    assert payload["reporting"]["model_calls"] == 1
+    assert payload["results"][0]["error_code"] == "model_call_failed"
+    assert "provider secret detail" not in rendered
