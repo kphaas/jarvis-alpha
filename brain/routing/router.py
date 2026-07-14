@@ -15,7 +15,9 @@ from brain.routing.calibrated_rollout import (
     plan_calibrated_routing,
 )
 from brain.routing.model_capability_registry import DEFAULT_CHAT_MODEL_CAPABILITIES
+from brain.routing.generation_policy import ChatGenerationPolicy
 from brain.routing.strategy import select_chat_strategy
+from brain.services.ollama_client import generate
 from jarvis_common.logging_config import get_logger
 
 COUNCIL_TRIGGER = "manual"  # future values: "complexity", "topic"
@@ -29,6 +31,7 @@ async def route(
     routing_outcomes: Sequence[Mapping[str, object]] = (),
     rollout_key: str | None = None,
     rollout_policy: ChatCalibratedRoutingPolicy | None = None,
+    generation_policy: ChatGenerationPolicy | None = None,
 ) -> dict:
     if mode == "council":
         from brain.routing.council import CouncilOrchestrator
@@ -91,24 +94,35 @@ async def route(
 
     try:
         if mode == "local":
-            cmd = [
-                "curl",
-                "-s",
-                "-X",
-                "POST",
-                f"{_ollama_url()}/api/generate",
-                "-H",
-                "Content-Type: application/json",
-                "-d",
-                json.dumps({"model": LOCAL_CHAT, "prompt": prompt, "stream": False}),
-                "--max-time",
-                "60",
-            ]
-            result = await asyncio.to_thread(
-                subprocess.run, cmd, capture_output=True, text=True, timeout=65
+            data = await generate(
+                model=LOCAL_CHAT,
+                prompt=prompt,
+                generation_policy=generation_policy,
             )
-            text = json.loads(result.stdout).get("response", "").strip()
-            return {"mode": "local", "result": text, **metadata}
+            text = str(data.get("response") or "").strip()
+            policy_metadata: dict[str, object] = {}
+            if generation_policy is not None:
+                policy_metadata = {
+                    **generation_policy.metadata(),
+                    "chat_deterministic_decoding_applied": (
+                        generation_policy.deterministic
+                    ),
+                    "chat_structured_output_applied": (generation_policy.json_mode),
+                }
+                logger.info(
+                    "CHAT_LOCAL_GENERATION_POLICY_APPLIED",
+                    extra={
+                        "event": "CHAT_LOCAL_GENERATION_POLICY_APPLIED",
+                        "model_id": LOCAL_CHAT,
+                        **policy_metadata,
+                    },
+                )
+            return {
+                "mode": "local",
+                "result": text,
+                **metadata,
+                **policy_metadata,
+            }
 
         if mode == "claude":
             raw = await asyncio.to_thread(
@@ -179,7 +193,3 @@ async def route(
 
 def _gateway_url() -> str:
     return os.environ["ALPHA_GATEWAY_URL"]
-
-
-def _ollama_url() -> str:
-    return os.environ.get("ALPHA_OLLAMA_URL", "http://127.0.0.1:11434")

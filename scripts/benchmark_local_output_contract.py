@@ -22,7 +22,7 @@ def main() -> int:
         run_local_output_contract_benchmark,
     )
 
-    plan = local_output_benchmark_plan()
+    plan = local_output_benchmark_plan(samples=args.samples)
     if not args.live:
         _emit(plan, args.output)
         return 0
@@ -32,24 +32,38 @@ def main() -> int:
             f"({args.max_calls})"
         )
 
+    from brain.routing.generation_policy import ChatGenerationPolicy
     from brain.routing.router import route
 
-    async def invoke(prompt: str, route_mode: str) -> dict[str, object]:
+    async def invoke(
+        prompt: str,
+        route_mode: str,
+        generation_policy: ChatGenerationPolicy,
+    ) -> dict[str, object]:
         if route_mode != "local":
             raise RuntimeError("local output benchmark forbids non-local routes")
-        return await route(prompt, mode="local")
+        return await route(
+            prompt,
+            mode="local",
+            generation_policy=generation_policy,
+        )
 
-    payload = asyncio.run(run_local_output_contract_benchmark(invoke=invoke))
+    payload = asyncio.run(
+        run_local_output_contract_benchmark(
+            invoke=invoke,
+            samples=args.samples,
+        )
+    )
     payload["run_completed_at"] = datetime.now(UTC).isoformat()
     _emit(payload, args.output)
-    return 1 if payload["failed"] else 0
+    return 0 if payload["status"] == "passed" else 1
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Plan or run the local-only Phase 29 output-contract benchmark. "
-            "Results are advisory and never mutate routing."
+            "Plan or run the local-only Phase 30 deterministic-output benchmark. "
+            "The repeated-run stability gate is advisory and never mutates routing."
         )
     )
     parser.add_argument(
@@ -58,10 +72,16 @@ def _parse_args() -> argparse.Namespace:
         help="Execute local Ollama calls; the default emits a zero-call plan.",
     )
     parser.add_argument(
+        "--samples",
+        type=_sample_count,
+        default=3,
+        help="Serial samples per task for the stability gate (default: 3).",
+    )
+    parser.add_argument(
         "--max-calls",
-        type=_positive_int,
-        default=8,
-        help="Hard call cap including one possible repair per task (default: 8).",
+        type=_call_cap,
+        default=24,
+        help="Hard call cap including one possible repair per sample (default: 24).",
     )
     parser.add_argument(
         "--output",
@@ -70,10 +90,17 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _positive_int(value: str) -> int:
+def _sample_count(value: str) -> int:
     parsed = int(value)
-    if parsed < 1 or parsed > 8:
-        raise argparse.ArgumentTypeError("must be between 1 and 8")
+    if parsed < 1 or parsed > 5:
+        raise argparse.ArgumentTypeError("must be between 1 and 5")
+    return parsed
+
+
+def _call_cap(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1 or parsed > 40:
+        raise argparse.ArgumentTypeError("must be between 1 and 40")
     return parsed
 
 

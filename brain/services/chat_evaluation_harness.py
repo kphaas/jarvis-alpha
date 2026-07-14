@@ -39,6 +39,7 @@ from brain.services.chat_output_contract import (
     apply_chat_output_contract_verification,
     compile_explicit_chat_output_contract,
     evaluate_chat_output_contract,
+    generation_policy_for_chat_output_contract,
 )
 from brain.services.chat_quality_trends import summarize_chat_quality_trend
 from brain.services.chat_redacted_trace_corpus import load_redacted_trace_corpus
@@ -273,6 +274,7 @@ def _output_contract_eval_result() -> ChatEvalResult:
         '{"status":"ready","owner":"Delta"}',
         contract,
     )
+    generation_policy = generation_policy_for_chat_output_contract(contract)
     rejected = evaluate_chat_output_contract("Status is ready.", contract)
     evidence_pack = build_chat_evidence_pack(memory_context="", internet_context=None)
     base_verification = verify_chat_response(
@@ -293,6 +295,10 @@ def _output_contract_eval_result() -> ChatEvalResult:
         failures.append("invalid_json_accepted")
     if gate.reason != "output_contract_failed" or gate.passed:
         failures.append(f"quality_gate:{gate.reason}")
+    if not generation_policy.deterministic:
+        failures.append("deterministic_decoding_not_requested")
+    if not generation_policy.json_mode:
+        failures.append("structured_output_not_requested")
 
     return ChatEvalResult(
         name="explicit_output_contract_is_enforced",
@@ -304,6 +310,8 @@ def _output_contract_eval_result() -> ChatEvalResult:
             "invalid_contract_passed": rejected.passed,
             "quality_action": gate.action,
             "quality_reason": gate.reason,
+            "deterministic_decoding": generation_policy.deterministic,
+            "structured_output": generation_policy.json_mode,
             "model_calls": 0,
         },
         failures=tuple(failures),

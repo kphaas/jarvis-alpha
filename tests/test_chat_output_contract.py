@@ -13,6 +13,7 @@ from brain.services.chat_output_contract import (
     apply_chat_output_contract_verification,
     compile_explicit_chat_output_contract,
     evaluate_chat_output_contract,
+    generation_policy_for_chat_output_contract,
     normalize_chat_output_contract_response,
     render_chat_output_contract_repair_prompt,
 )
@@ -27,6 +28,9 @@ def test_compiler_extracts_explicit_exact_json_contract() -> None:
     assert contract is not None
     assert contract.contract_id == "exact_json"
     assert contract.exact_json_keys == ("owner", "priority", "ticket_count")
+    generation_policy = generation_policy_for_chat_output_contract(contract)
+    assert generation_policy.deterministic is True
+    assert generation_policy.json_mode is True
     assert (
         evaluate_chat_output_contract(
             '{"owner":"Delta","priority":"high","ticket_count":3}',
@@ -60,6 +64,9 @@ def test_compiler_builds_privacy_and_sentence_constraints() -> None:
     assert contract is not None
     assert contract.required_terms == ("privacy", "cost", "external", "local")
     assert contract.max_sentences == 3
+    generation_policy = generation_policy_for_chat_output_contract(contract)
+    assert generation_policy.deterministic is True
+    assert generation_policy.json_mode is False
     evaluation = evaluate_chat_output_contract(
         "Local execution improves privacy. It costs more.",
         contract,

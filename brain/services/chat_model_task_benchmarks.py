@@ -32,6 +32,8 @@ _ALLOWED_ERROR_CODES = frozenset(
         "model_adapter_exception",
         "model_identity_mismatch",
         "route_mismatch",
+        "decoding_policy_not_applied",
+        "structured_output_not_applied",
     }
 )
 

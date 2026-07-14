@@ -7,6 +7,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from brain.routing.generation_policy import ChatGenerationPolicy
 from brain.services.chat_evidence_pack import ChatResponseVerification
 
 CHAT_OUTPUT_CONTRACT_SCHEMA_VERSION = "chat_output_contract.v1"
@@ -54,6 +55,17 @@ class ChatOutputContractEvaluation:
             "chat_output_contract_issue_count": len(self.issues),
             "chat_output_contract_issues": list(self.issues),
         }
+
+
+def generation_policy_for_chat_output_contract(
+    contract: ChatOutputContract,
+) -> ChatGenerationPolicy:
+    """Compile provider-neutral decoding controls from a validated contract."""
+
+    return ChatGenerationPolicy(
+        deterministic=True,
+        json_mode=bool(contract.exact_json_keys),
+    )
 
 
 def compile_explicit_chat_output_contract(
