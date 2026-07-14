@@ -657,6 +657,18 @@ async def test_chat_eval_harness_scores_compact_outcome_rows(
         yield conn
 
     monkeypatch.setattr(chat, "rls_connection", fake_rls_connection)
+    monkeypatch.setattr(
+        chat,
+        "_chat_model_benchmark_comparison",
+        lambda: {
+            "schema_version": "chat_model_benchmark_comparison.v1",
+            "status": "ready",
+            "approved_batch_count": 1,
+            "approved_model_count": 1,
+            "models": [{"route_mode": "local", "average_score": 65.0}],
+            "routing_eligible": False,
+        },
+    )
 
     response = await chat.chat_eval_harness(
         cast(Request, SimpleNamespace(state=SimpleNamespace(user_id="ken"))),
@@ -668,8 +680,42 @@ async def test_chat_eval_harness_scores_compact_outcome_rows(
     assert response["scoreboard"]["evaluated_outcome_count"] == 1
     assert response["scoreboard"]["quality_actions"] == {"accept": 1}
     assert response["model_calibration"]["evaluated_outcome_count"] == 1
+    assert response["model_benchmark_evidence"]["status"] == "ready"
+    assert response["model_benchmark_evidence"]["routing_eligible"] is False
     assert "content" not in json.dumps(response)
     assert conn.fetch_calls[0][1] == ("ken", 5)
+
+
+def test_model_benchmark_evidence_fails_closed_when_approval_key_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    evidence_path = tmp_path / "benchmark-evidence.json"
+    evidence_path.write_text("{}", encoding="utf-8")
+    warnings: list[tuple[str, object]] = []
+    monkeypatch.setenv(chat.CHAT_MODEL_BENCHMARK_EVIDENCE_PATH_ENV, str(evidence_path))
+    monkeypatch.delenv(chat.CHAT_MODEL_BENCHMARK_APPROVAL_KEY_PATH_ENV, raising=False)
+    monkeypatch.delenv("ALPHA_CHAT_TRACE_APPROVAL_PUBLIC_KEY_PATH", raising=False)
+    monkeypatch.setattr(
+        chat.logger,
+        "warning",
+        lambda event, *, extra: warnings.append((event, extra)),
+    )
+
+    comparison = chat._chat_model_benchmark_comparison()
+
+    assert comparison["status"] == "unavailable"
+    assert comparison["reason"] == "approval_key_unavailable"
+    assert comparison["routing_eligible"] is False
+    assert warnings == [
+        (
+            "CHAT_MODEL_BENCHMARK_EVIDENCE_UNAVAILABLE",
+            {
+                "event": "CHAT_MODEL_BENCHMARK_EVIDENCE_UNAVAILABLE",
+                "reason": "approval_key_unavailable",
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
