@@ -244,14 +244,7 @@ def evaluate_chat_quality_gate(
     action = "accept"
     reason = "verified_response"
 
-    if "empty_response" in verification.issues:
-        action = "replace_with_safe_fallback"
-        reason = "empty_response"
-        fallback_response = (
-            "I could not generate a reliable answer. Try again or switch to a "
-            "stronger model."
-        )
-    elif "unsupported_web_verification_claim" in verification.issues:
+    if "unsupported_web_verification_claim" in verification.issues:
         action = "replace_with_safe_fallback"
         reason = "unsupported_web_verification_claim"
         fallback_response = (
@@ -264,7 +257,20 @@ def evaluate_chat_quality_gate(
             "I need Beacon verification before I can answer that as current or "
             "verified."
         )
-
+    elif any(issue.startswith("output_contract_") for issue in verification.issues):
+        action = "replace_with_safe_fallback"
+        reason = "output_contract_failed"
+        fallback_response = (
+            "I could not satisfy the requested output contract reliably. Try again "
+            "or switch to a stronger model."
+        )
+    elif "empty_response" in verification.issues:
+        action = "replace_with_safe_fallback"
+        reason = "empty_response"
+        fallback_response = (
+            "I could not generate a reliable answer. Try again or switch to a "
+            "stronger model."
+        )
     return ChatQualityGateDecision(
         action=action,
         passed=action == "accept",

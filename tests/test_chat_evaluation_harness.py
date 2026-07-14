@@ -27,6 +27,7 @@ def test_chat_eval_harness_all_offline_contracts_pass() -> None:
         "golden_strategy",
         "memory_pack",
         "prompt_compiler",
+        "output_contract",
         "quality_gateway",
         "mcp_tool_boundary",
         "trace_replay",
@@ -65,6 +66,7 @@ def test_chat_eval_payload_scoreboards_outcome_metadata() -> None:
     assert payload["case_groups"]["golden_strategy"]["case_count"] == 4
     assert payload["case_groups"]["memory_pack"]["case_count"] == 2
     assert payload["case_groups"]["prompt_compiler"]["case_count"] == 2
+    assert payload["case_groups"]["output_contract"]["case_count"] == 1
     assert payload["case_groups"]["quality_gateway"]["case_count"] == 4
     assert payload["case_groups"]["mcp_tool_boundary"]["case_count"] == 1
     assert payload["case_groups"]["trace_replay"]["case_count"] == 4

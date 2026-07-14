@@ -35,6 +35,11 @@ from brain.services.chat_model_task_benchmarks import (
     validate_chat_model_benchmark_tasks,
 )
 from brain.services.chat_prompt_compiler import compile_chat_prompt
+from brain.services.chat_output_contract import (
+    apply_chat_output_contract_verification,
+    compile_explicit_chat_output_contract,
+    evaluate_chat_output_contract,
+)
 from brain.services.chat_quality_trends import summarize_chat_quality_trend
 from brain.services.chat_redacted_trace_corpus import load_redacted_trace_corpus
 from brain.services.chat_repair_loop import repair_chat_response_once
@@ -85,6 +90,7 @@ def run_chat_eval_harness(
         *_strategy_eval_results(),
         *_memory_pack_eval_results(),
         *_prompt_compiler_eval_results(),
+        _output_contract_eval_result(),
         *_quality_gate_eval_results(),
         *_mcp_tool_boundary_eval_results(),
         *_trace_replay_eval_results(),
@@ -248,6 +254,60 @@ def _quality_gate_eval_results() -> list[ChatEvalResult]:
             expected_escalation="none",
         ),
     ]
+
+
+def _output_contract_eval_result() -> ChatEvalResult:
+    prompt = "Return only a JSON object with keys status and owner."
+    contract = compile_explicit_chat_output_contract(prompt)
+    failures: list[str] = []
+    if contract is None:
+        return ChatEvalResult(
+            name="explicit_output_contract_is_enforced",
+            eval_group="output_contract",
+            passed=False,
+            details={"contract_compiled": False},
+            failures=("contract_not_compiled",),
+        )
+
+    accepted = evaluate_chat_output_contract(
+        '{"status":"ready","owner":"Delta"}',
+        contract,
+    )
+    rejected = evaluate_chat_output_contract("Status is ready.", contract)
+    evidence_pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+    base_verification = verify_chat_response(
+        response_text="Status is ready.",
+        evidence_pack=evidence_pack,
+    )
+    verification = apply_chat_output_contract_verification(
+        base_verification,
+        rejected,
+    )
+    gate = evaluate_chat_quality_gate(
+        evidence_pack=evidence_pack,
+        verification=verification,
+    )
+    if not accepted.passed:
+        failures.append("valid_json_rejected")
+    if rejected.passed:
+        failures.append("invalid_json_accepted")
+    if gate.reason != "output_contract_failed" or gate.passed:
+        failures.append(f"quality_gate:{gate.reason}")
+
+    return ChatEvalResult(
+        name="explicit_output_contract_is_enforced",
+        eval_group="output_contract",
+        passed=not failures,
+        details={
+            "contract_id": contract.contract_id,
+            "valid_contract_passed": accepted.passed,
+            "invalid_contract_passed": rejected.passed,
+            "quality_action": gate.action,
+            "quality_reason": gate.reason,
+            "model_calls": 0,
+        },
+        failures=tuple(failures),
+    )
 
 
 def _prompt_compiler_eval_results() -> list[ChatEvalResult]:

@@ -13,6 +13,14 @@ from brain.services.chat_evidence_pack import (
     render_chat_evidence_prompt,
     verify_chat_response,
 )
+from brain.services.chat_output_contract import (
+    ChatOutputContract,
+    ChatOutputContractEvaluation,
+    apply_chat_output_contract_verification,
+    evaluate_chat_output_contract,
+    normalize_chat_output_contract_response,
+    render_chat_output_contract_repair_prompt,
+)
 
 CHAT_REPAIR_LOOP_SCHEMA_VERSION = "chat_repair_loop.v1"
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
@@ -36,9 +44,10 @@ class ChatRepairLoopResult:
     before_issues: tuple[str, ...]
     after_issues: tuple[str, ...]
     model_used: str | None = None
+    output_contract: ChatOutputContractEvaluation | None = None
 
     def to_metadata(self) -> dict[str, object]:
-        return {
+        metadata: dict[str, object] = {
             "chat_repair_loop_schema_version": CHAT_REPAIR_LOOP_SCHEMA_VERSION,
             "chat_repair_attempted": self.attempted,
             "chat_repair_repaired": self.repaired,
@@ -49,6 +58,9 @@ class ChatRepairLoopResult:
             "chat_repair_after_issues": list(self.after_issues),
             "chat_repair_model_used": self.model_used,
         }
+        if self.output_contract is not None:
+            metadata.update(self.output_contract.to_metadata())
+        return metadata
 
 
 async def run_chat_repair_loop(
@@ -58,6 +70,7 @@ async def run_chat_repair_loop(
     evidence_pack: ChatEvidencePack,
     verification: ChatResponseVerification | None = None,
     retry_once: Callable[[str], Awaitable[ChatRepairAttemptResult]] | None = None,
+    output_contract: ChatOutputContract | None = None,
 ) -> ChatRepairLoopResult:
     """Run one repair pass only when the failure is bounded and auditable."""
 
@@ -65,6 +78,16 @@ async def run_chat_repair_loop(
         response_text=response_text,
         evidence_pack=evidence_pack,
     )
+    if output_contract is not None:
+        return await _run_output_contract_repair(
+            response_text=response_text,
+            user_msg=user_msg,
+            evidence_pack=evidence_pack,
+            verification=verification,
+            retry_once=retry_once,
+            output_contract=output_contract,
+        )
+
     deterministic = repair_chat_response_once(
         response_text=response_text,
         evidence_pack=evidence_pack,
@@ -115,6 +138,126 @@ async def run_chat_repair_loop(
         before_issues=verification.issues,
         after_issues=repaired_verification.issues,
         model_used=retry.model_used,
+    )
+
+
+async def _run_output_contract_repair(
+    *,
+    response_text: str,
+    user_msg: str,
+    evidence_pack: ChatEvidencePack,
+    verification: ChatResponseVerification,
+    retry_once: Callable[[str], Awaitable[ChatRepairAttemptResult]] | None,
+    output_contract: ChatOutputContract,
+) -> ChatRepairLoopResult:
+    initial_evaluation = evaluate_chat_output_contract(response_text, output_contract)
+    initial_verification = apply_chat_output_contract_verification(
+        verification,
+        initial_evaluation,
+    )
+    normalized_text, normalized = normalize_chat_output_contract_response(
+        response_text,
+        output_contract,
+    )
+    evaluation = evaluate_chat_output_contract(normalized_text, output_contract)
+    combined_verification = apply_chat_output_contract_verification(
+        verification,
+        evaluation,
+    )
+    if combined_verification.verified and not (
+        combined_verification.requires_web_verification
+    ):
+        if normalized:
+            return ChatRepairLoopResult(
+                text=normalized_text,
+                verification=combined_verification,
+                attempted=True,
+                repaired=True,
+                attempts=1,
+                action="normalize_output_contract",
+                reason="output_contract_normalized",
+                before_issues=initial_verification.issues,
+                after_issues=combined_verification.issues,
+                output_contract=evaluation,
+            )
+        return _no_repair(
+            normalized_text,
+            combined_verification,
+            "already_verified",
+            output_contract=evaluation,
+        )
+    if combined_verification.requires_web_verification or (
+        "unsupported_web_verification_claim" in combined_verification.issues
+    ):
+        return _no_repair(
+            response_text,
+            combined_verification,
+            "requires_beacon",
+            output_contract=evaluation,
+        )
+    if not retry_once:
+        return _no_repair(
+            response_text,
+            combined_verification,
+            "issue_not_repairable",
+            output_contract=evaluation,
+        )
+
+    repair_context = render_chat_evidence_prompt(
+        evidence_pack=evidence_pack,
+        user_msg=user_msg,
+        response_style_context=(
+            "Repair loop: answer from the provided evidence and original request. "
+            "Do not claim web access unless Beacon evidence is present."
+        ),
+    )
+    repair_prompt = render_chat_output_contract_repair_prompt(
+        user_msg=repair_context,
+        contract=output_contract,
+        issues=evaluation.issues,
+    )
+    retry = await retry_once(repair_prompt)
+    retry_text, _retry_normalized = normalize_chat_output_contract_response(
+        retry.text,
+        output_contract,
+    )
+    retry_verification = verify_chat_response(
+        response_text=retry_text,
+        evidence_pack=evidence_pack,
+    )
+    retry_evaluation = evaluate_chat_output_contract(retry_text, output_contract)
+    repaired_verification = apply_chat_output_contract_verification(
+        retry_verification,
+        retry_evaluation,
+    )
+    if repaired_verification.verified and not (
+        repaired_verification.requires_web_verification
+    ):
+        return ChatRepairLoopResult(
+            text=retry_text,
+            verification=repaired_verification,
+            attempted=True,
+            repaired=True,
+            attempts=1,
+            action="retry_local_once",
+            reason="output_contract_repaired",
+            before_issues=combined_verification.issues,
+            after_issues=repaired_verification.issues,
+            model_used=retry.model_used,
+            output_contract=retry_evaluation,
+        )
+    return ChatRepairLoopResult(
+        text=response_text,
+        verification=combined_verification,
+        attempted=True,
+        repaired=False,
+        attempts=1,
+        action="retry_local_once",
+        reason="output_contract_retry_failed_verification",
+        before_issues=combined_verification.issues,
+        after_issues=repaired_verification.issues,
+        model_used=retry.model_used,
+        output_contract=retry_evaluation,
     )
 
 
@@ -226,6 +369,8 @@ def _no_repair(
     response_text: str,
     verification: ChatResponseVerification,
     reason: str,
+    *,
+    output_contract: ChatOutputContractEvaluation | None = None,
 ) -> ChatRepairLoopResult:
     return ChatRepairLoopResult(
         text=response_text,
@@ -237,4 +382,5 @@ def _no_repair(
         reason=reason,
         before_issues=verification.issues,
         after_issues=verification.issues,
+        output_contract=output_contract,
     )
