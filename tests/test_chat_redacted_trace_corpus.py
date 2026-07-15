@@ -12,15 +12,19 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from brain.services import chat_evaluation_harness
 from brain.services.chat_redacted_trace_corpus import (
+    ASSISTED_PROBE_EVIDENCE_LANE,
     CHAT_TRACE_APPROVAL_PUBLIC_KEY_PATH_ENV,
     CHAT_TRACE_SAMPLE_RETENTION_POLICY,
     CHAT_TRACE_REDACTION_POLICY_VERSION,
     CHAT_TRACE_SAMPLING_WORKFLOW_VERSION,
+    LEGACY_UNCLASSIFIED_EVIDENCE_LANE,
+    REDACTED_TRACE_CORPUS_PATH,
     build_approved_trace_sample_corpus as _build_approved_trace_sample_corpus,
     load_redacted_trace_corpus,
     prepare_trace_sample_review_artifact,
     redact_chat_trace_candidate,
     trace_sample_approval_statement,
+    validate_redacted_trace_case,
 )
 from brain.privacy.redaction import stable_hash
 
@@ -83,7 +87,7 @@ def test_committed_redacted_trace_corpus_loads_without_raw_contact_leaks() -> No
     cases = load_redacted_trace_corpus()
     rendered = json.dumps([asdict(case) for case in cases])
 
-    assert len(cases) == 2
+    assert len(cases) == 3
     assert cases[0].redaction_policy_version == CHAT_TRACE_REDACTION_POLICY_VERSION
     assert cases[0].source_trace_hash.startswith("sha256:")
     contract_failure = next(
@@ -99,6 +103,15 @@ def test_committed_redacted_trace_corpus_loads_without_raw_contact_leaks() -> No
         "forbidden_content_present",
         "required_order_invalid",
     )
+    assert contract_failure.expected_output_contract_feasible is None
+    assert contract_failure.evidence_lane == LEGACY_UNCLASSIFIED_EVIDENCE_LANE
+    feasible_failure = next(
+        case for case in cases if case.expected_output_contract_feasible is True
+    )
+    assert feasible_failure.expected_output_contract_issues == (
+        "required_order_invalid",
+    )
+    assert feasible_failure.evidence_lane == ASSISTED_PROBE_EVIDENCE_LANE
     assert "ken@example.com" not in rendered
     assert "404-555-1212" not in rendered
     assert "Ken Haas" not in rendered
@@ -222,6 +235,8 @@ def test_signed_contract_failure_replays_post_repair_quality_gate(
     assert results[0].details["output_contract_id"] == "exact_json"
     assert results[0].details["output_contract_passed"] is False
     assert results[0].details["output_contract_issues"] == ["json_object_required"]
+    assert results[0].details["output_contract_feasible"] is True
+    assert results[0].details["evidence_lane"] == ASSISTED_PROBE_EVIDENCE_LANE
     assert results[0].details["quality_action"] == "replace_with_safe_fallback"
     assert results[0].details["escalation_rung"] == "operator_review"
     assert results[0].details["repair_action"] == "retry_local_once"
@@ -251,6 +266,58 @@ def test_contract_failure_sampling_requires_reproducible_contract_issues() -> No
         match="redacted_trace_output_contract_issues_mismatch",
     ):
         prepare_trace_sample_review_artifact(payload)
+
+
+def test_trace_hash_digits_do_not_trigger_contact_leak_false_positive() -> None:
+    payload = _contract_failure_payload()
+    payload["candidates"][0]["source_trace_id"] = "phase35-assisted-probe-07"
+
+    review = prepare_trace_sample_review_artifact(payload)
+
+    assert review["sampled_case_count"] == 1
+
+
+def test_contract_failure_sampling_requires_phase33_feasibility_metadata() -> None:
+    payload = _contract_failure_payload()
+    outcome = payload["candidates"][0]["outcome"]
+    outcome["chat_output_contract_feasible"] = False
+    outcome["chat_output_contract_conflict_count"] = 1
+    outcome["chat_output_contract_conflicts"] = ["required_term_forbidden"]
+    outcome["chat_output_contract_preflight_action"] = "skip_generation"
+
+    with pytest.raises(
+        ValueError,
+        match="trace_sampling_output_contract_feasibility_required",
+    ):
+        prepare_trace_sample_review_artifact(payload)
+
+
+def test_contract_failure_sampling_requires_explicit_evidence_lane() -> None:
+    payload = _contract_failure_payload()
+    del payload["candidates"][0]["evidence_lane"]
+
+    with pytest.raises(
+        ValueError,
+        match="trace_sampling_contract_failure_evidence_lane_required",
+    ):
+        prepare_trace_sample_review_artifact(payload)
+
+
+def test_phase35_metadata_rejects_legacy_infeasible_contract_failure() -> None:
+    corpus = json.loads(REDACTED_TRACE_CORPUS_PATH.read_text(encoding="utf-8"))
+    case = next(
+        item
+        for item in corpus["cases"]
+        if item.get("trace_kind") == "output_contract_failure"
+    )
+    case["expected_output_contract_feasible"] = True
+    case["evidence_lane"] = ASSISTED_PROBE_EVIDENCE_LANE
+
+    with pytest.raises(
+        ValueError,
+        match="redacted_trace_output_contract_not_feasible",
+    ):
+        validate_redacted_trace_case(case)
 
 
 def test_general_sampling_rejects_output_contract_metadata() -> None:
@@ -522,6 +589,7 @@ def test_trace_sampling_script_exports_only_redacted_corpus(tmp_path) -> None:
     review_summary = json.loads(prepared.stdout)
     assert review_summary["status"] == "prepared_for_review"
     assert review_summary["contract_failure_case_count"] == 0
+    assert review_summary["feasible_contract_failure_case_count"] == 0
     assert review_summary["review_artifact_cleanup_required"] is True
     assert "Ken Haas" not in review_output.read_text(encoding="utf-8")
 
@@ -570,6 +638,7 @@ def test_trace_sampling_script_exports_only_redacted_corpus(tmp_path) -> None:
     assert summary["status"] == "exported"
     assert summary["sampled_case_count"] == 1
     assert summary["contract_failure_case_count"] == 0
+    assert summary["feasible_contract_failure_case_count"] == 0
     assert summary["raw_trace_text_retained"] is False
     assert summary["raw_source_deleted"] is True
     assert summary["review_artifact_deleted"] is True
@@ -603,8 +672,11 @@ def test_trace_sampling_script_prepares_contract_failure_for_review(tmp_path) ->
     review = json.loads(review_output.read_text(encoding="utf-8"))
     assert summary["status"] == "prepared_for_review"
     assert summary["contract_failure_case_count"] == 1
+    assert summary["feasible_contract_failure_case_count"] == 1
     assert review["cases"][0]["trace_kind"] == "output_contract_failure"
     assert review["cases"][0]["replay_stage"] == "post_repair"
+    assert review["cases"][0]["expected_output_contract_feasible"] is True
+    assert review["cases"][0]["evidence_lane"] == ASSISTED_PROBE_EVIDENCE_LANE
     assert "Ken Haas" not in json.dumps(review)
 
 
@@ -690,6 +762,7 @@ def _contract_failure_payload() -> dict[str, object]:
             {
                 "source_trace_id": "phase31-contract-failure-source-001",
                 "trace_kind": "output_contract_failure",
+                "evidence_lane": ASSISTED_PROBE_EVIDENCE_LANE,
                 "prompt": (
                     "Ken Haas asked: Return only a JSON object with key status."
                 ),
@@ -713,6 +786,13 @@ def _contract_failure_payload() -> dict[str, object]:
                     "chat_output_contract_passed": False,
                     "chat_output_contract_issue_count": 1,
                     "chat_output_contract_issues": ["json_object_required"],
+                    "chat_output_contract_feasibility_schema_version": (
+                        "chat_output_contract_feasibility.v1"
+                    ),
+                    "chat_output_contract_feasible": True,
+                    "chat_output_contract_conflict_count": 0,
+                    "chat_output_contract_conflicts": [],
+                    "chat_output_contract_preflight_action": "allow_generation",
                 },
                 "sensitive_terms": ["Ken Haas"],
             }

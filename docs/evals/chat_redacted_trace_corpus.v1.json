@@ -75,6 +75,50 @@
       "source": "redacted_real_trace",
       "trace_id": "redacted-trace-2646703d4c32",
       "trace_kind": "output_contract_failure"
+    },
+    {
+      "evidence_lane": "assisted_probe",
+      "expected_escalation": "operator_review",
+      "expected_memory_absent": null,
+      "expected_memory_present": null,
+      "expected_output_contract_feasible": true,
+      "expected_output_contract_id": "safe_recovery+sentence_limit",
+      "expected_output_contract_issues": [
+        "required_order_invalid"
+      ],
+      "expected_output_contract_passed": false,
+      "expected_quality_action": "replace_with_safe_fallback",
+      "expected_repair_action": "retry_local_once",
+      "expected_repaired": false,
+      "expected_route_mode": "local",
+      "expected_tool_policy": "no_external_tool_executed",
+      "internet_context": null,
+      "internet_mode": "none",
+      "memory_budget_chars": 6000,
+      "memory_context": "",
+      "name": "sampled_real_trace_47cf87b0572d",
+      "prompt": "[term:ba717ad50091]: Provide a recovery plan for a failed routing rollout with containment, operator approval, preserve audit, and do not delete anything in three sentences.",
+      "redaction": {
+        "policy_version": "chat_trace_redaction.v1",
+        "raw_trace_text_retained": false,
+        "redacted_text_fields": [
+          "prompt",
+          "memory_context",
+          "internet_context",
+          "response_text",
+          "expected_memory_present",
+          "expected_memory_absent"
+        ],
+        "replacement_count": 1,
+        "source_trace_hash": "sha256:3963673609c45247eadab8451ebdb4b7390c87ce13007aeff63b3c9f41d275f1"
+      },
+      "replay_stage": "post_repair",
+      "requested_model": "local",
+      "response_text": "To repair a failed routing rollout, first contain the issue by isolating the affected area to prevent further propagation. Next, obtain operator approval and preserve audit logs to ensure transparency and compliance. Finally, roll back the changes made during the rollout and monitor the system for any remaining issues.",
+      "schema_version": "chat_redacted_trace_corpus.v1",
+      "source": "redacted_real_trace",
+      "trace_id": "redacted-trace-cabdf04e27e6",
+      "trace_kind": "output_contract_failure"
     }
   ],
   "description": "Metadata-safe redacted chat replay cases. Do not store raw prompt, response, contact, identifier, or private memory text here.",
@@ -93,6 +137,22 @@
       "sensitive_terms_reviewed": true,
       "source_trace_hashes": [
         "sha256:5e61a7b01c534a5ac6266dd50a4384a2cfb8b324ff216bd7475ba7a0692ce7cb"
+      ],
+      "workflow_version": "chat_trace_sampling.v1"
+    },
+    {
+      "approval_key_sha256": "sha256:be3c6e921d0bf6a3222c17e3e52217a0b25985a3a48b93cd8a6c08a7192ca6f9",
+      "approval_ref": "phase35-feasible-contract-failures-001",
+      "approval_signature": "KxUBvRN6XRH6T72VWm2udgdlOYhDFtCwGva7NlT2FiHwepVGYkX4PzzP/NAzI4XafQjkaOMOxDJ6WdHkmO3YAg==",
+      "approval_status": "approved",
+      "approved_redacted_content_sha256": "sha256:65287d03dfa5e81d5d27a12b3993ee9ec254fb02ae15aaa5351dea3b4233decd",
+      "purpose": "offline_quality_eval",
+      "raw_source_retention": "delete_raw_after_export",
+      "raw_trace_text_retained": false,
+      "sampled_case_count": 1,
+      "sensitive_terms_reviewed": true,
+      "source_trace_hashes": [
+        "sha256:3963673609c45247eadab8451ebdb4b7390c87ce13007aeff63b3c9f41d275f1"
       ],
       "workflow_version": "chat_trace_sampling.v1"
     }

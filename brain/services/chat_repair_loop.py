@@ -276,8 +276,8 @@ async def _run_output_contract_repair(
             output_contract=retry_evaluation,
         )
     return ChatRepairLoopResult(
-        text=response_text,
-        verification=combined_verification,
+        text=retry_text,
+        verification=repaired_verification,
         attempted=True,
         repaired=False,
         attempts=1,

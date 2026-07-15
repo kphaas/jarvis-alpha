@@ -51,6 +51,7 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
         "Contract-failure trace expansion and activation",
         "Contract feasibility preflight",
         "Exact-key structured decoding",
+        "Feasible contract-failure corpus expansion",
     ):
         assert phase in text
 
@@ -74,5 +75,6 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
     assert "three-sample local stability gate" not in next_queue
     assert "Phase 31" not in next_queue
     assert "Phase 33" not in next_queue
-    assert "Phase 34" in next_queue
-    assert "operator-approved feasible contract-failure cases" in next_queue
+    assert "Phase 34" not in next_queue
+    assert "Phase 35" in next_queue
+    assert "historical_raw" in next_queue
