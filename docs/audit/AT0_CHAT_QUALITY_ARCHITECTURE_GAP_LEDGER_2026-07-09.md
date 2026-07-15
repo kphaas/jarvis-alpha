@@ -94,12 +94,12 @@ flowchart TD
 | Requirement | State | Evidence | Gap |
 |---|---:|---|---|
 | Model-agnostic strategy selection | Partial | Strategy plan uses the capability registry for local, Perplexity, Claude, Gemini, council, and deep verify paths; the calibrated rollout gate can shadow or canary bounded outcome overlays. | Needs shadow evidence and operator approval before active exposure. |
-| Better lower-model output | Partial | Memory packing, prompt compilation, evidence pack, trace replay, approved corpus sampling, explicit output contracts, deployed contract-driven deterministic local decoding, one bounded local repair, verification/gateway, and objective per-model task benchmarks can expose and replace weak output before final stream. | Needs operator-approved contract-failure traces; v1 validation is intentionally structural and lexical. |
+| Better lower-model output | Partial | Memory packing, prompt compilation, evidence pack, trace replay, an approved contract-failure batch, feasibility preflight, explicit output contracts, deterministic local decoding, exact-key schema generation, one bounded local repair, verification/gateway, and objective per-model task benchmarks improve or block weak output before final stream. | Needs broader operator-approved feasible contract failures; validation remains intentionally structural and lexical, and value types are not inferred. |
 | Context engineering | Partial | Evidence pack and memory pack record evidence types, memory priority, token budget, freshness labels, and untrusted raw web content. | Ranking is still deterministic and shallow; no learned retrieval policy. |
 | Verification and repair | Partial | One bounded repair pass can strip unsupported web narration, retry empty evidence-backed answers, or correct explicit local output-contract failures before gateway/escalation. | No learned repair policy or multi-step self-critique. |
 | Operator observability | Strong | Helm surfaces outcome, eval details, and trend metadata; Alpha logs quality and escalation decisions. | No trace replay view. |
 | Safety boundary | Strong | Outcome/eval reads are classified `read` and `security_read`; high-risk actions still route through Alpha approvals; MCP tools now have contract-derived boundaries. | Need real invocation wrappers to consume this boundary before broad tool expansion. |
-| Evaluation | Partial | Offline deterministic eval suite has golden strategy, memory pack, prompt compiler, output contracts, deterministic generation-policy checks, quality gateway, trace replay, redacted trace corpus, signed local benchmark evidence, model-score calibration, outcome audit groups, and deployed repeated-run local evidence. | Need operator-approved real contract-failure cases. |
+| Evaluation | Partial | Offline deterministic eval suite has golden strategy, memory pack, prompt compiler, output contracts, feasibility and generation-policy checks, quality gateway, trace replay, a signed contract-failure case, signed local benchmark evidence, model-score calibration, outcome audit groups, and deployed repeated-run local evidence. | Needs multiple operator-approved feasible contract-failure cases and Phase 34 deployed benchmark evidence. |
 
 ## 11-Pillar Audit
 
@@ -117,7 +117,7 @@ flowchart TD
 | Testability | 4 | Tests assert eval groups, outcome scoring, benchmark rubrics/privacy, deploy/CI gate wiring, synthetic trace replay, redacted corpus replay, and sampling rejection paths. | Add more operator-approved anonymized contract-failure traces. |
 | Privacy / Compliance | 4 | Outcome metadata is compact and authenticated; the sampler requires signed digest-bound review approval, generic/provider-native secret rejection, enforced delete-after-export retention, pseudonymous IDs, and fail-closed fixture validation. | Keep private-key custody outside Git and rotate approval keys through the existing runbook. |
 
-Weakest pillars: actual approved contract-failure trace volume, cloud comparison evidence, and learned lower-model repair depth.
+Weakest pillars: feasible approved contract-failure trace volume, cloud comparison evidence, and evidence-backed lower-model repair depth.
 
 ## Market Reference Anchors
 
@@ -147,11 +147,14 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 | Benchmark evidence ingestion and operator comparison | Closed initial | Reliability, privacy, observability, evaluation | Detached signatures gate metadata-only benchmark evidence; approved local task quality, latency, cost, deployment, and privacy are visible without changing routing. | M | P1 | Ken/AT-0 | 2026-07-14 | `tests/test_chat_model_benchmark_evidence.py`, ADR-0035, `/v1/chat/evals`, and the Helm model-comparison panel cover approval, ingestion, and operator display. |
 | Local output contract hardening | Closed initial, deployed | Reliability, output quality, latency, privacy | Explicit local response constraints are compiled, normalized safely, validated, repaired once at most, and failed closed without retaining raw output or changing routing. | M | P1 | Ken/AT-0 | 2026-07-14 | PR #700 deployed at `c39ceac`; `2081` tests and `23/23` deterministic chat evals passed on the merged commit. Three deployed live samples passed `10/12` task attempts, with both misses safely blocked, establishing the deterministic-decoding gap closed by Phase 30. |
 | Deterministic local decoding | Closed initial, deployed | Reliability, output quality, latency, extensibility | Explicit contracts request provider-neutral deterministic controls; Ollama receives fixed sampling and native JSON mode, while Alpha retains exact-key validation and requires stable quality plus canonical output hashes across three samples. | M | P1 | Ken/AT-0 | 2026-07-15 | PR #701 deployed at `f5b1ab3`; the fan-out deploy passed `2086` tests plus node health and chat-quality smokes. The deployed `llama3.1:8b` benchmark passed `12/12` attempts across three samples with `4/4` stable tasks, one canonical hash per task, `12` local calls, zero repairs, no raw prompt/response retention, no routing-score mutation, and calibrated routing off. |
+| Contract-failure trace expansion and activation | Closed initial, deployed | Reliability, privacy, evaluation | Signed redacted traces can reproduce final local output-contract failures without retaining raw turns; the first operator-approved batch is active in the deterministic eval gate. | M | P1 | Ken/AT-0 | 2026-07-15 | PRs #703 and #704 deployed at `9f16928`; corpus load, signature validation, post-repair replay, quality fallback, and operator-review assertions pass. |
+| Contract feasibility preflight | Closed initial, deployed | Reliability, latency, cost, output quality | Provable required/forbidden conflicts skip Auto/Local generation, Council fan-out, synthesis, and repair before returning a conflict-specific fallback and operator review. | M | P1 | Ken/AT-0 | 2026-07-15 | PR #705 deployed at `4d079be`; `2096` tests, `24/24` deterministic evals, node health, memory, Beacon, and Ask smokes passed. Local and Council tests prove zero route calls. |
+| Exact-key structured decoding | Implemented, pending deploy | Reliability, output quality, latency, extensibility | Exact JSON keys compile into a provider-neutral object schema; Ollama receives required keys with no additional properties while Alpha remains the final validator. | M | P1 | Ken/AT-0 | 2026-07-15 | ADR-0040 plus generation-policy, Ollama-adapter, benchmark, and output-contract eval tests; deployment and three-sample local benchmark remain required. |
 
 ## Next Build Queue
 
-1. Phase 31: add operator-approved contract-failure traces through the signed redaction workflow.
-2. Compare assisted deterministic-output evidence with approved raw local evidence without merging the evidence lanes.
+1. Merge and deploy Phase 34, then rerun the three-sample local stability benchmark.
+2. Add operator-approved feasible contract-failure cases without merging historical raw and assisted evidence lanes.
 3. Run an optional bounded cloud comparison only with explicit paid-egress approval.
 
 ## Facts
@@ -183,6 +186,8 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 - Phase 30 deployed at `f5b1ab3`; the fan-out deploy passed `2086` tests and its required node health, memory, Beacon, and chat-quality smokes.
 - The deployed local-only `llama3.1:8b` stability run passed `12/12` attempts across three samples and `4/4` stable tasks with one canonical hash per task, `12` calls, and zero repairs.
 - The Phase 30 stability run retained no raw prompts or responses, made no cloud calls, did not mutate routing scores, and confirmed calibrated routing remained off.
+- Phase 33 deployed at `4d079be`; the fan-out passed `2096` tests, all required node and chat-quality smokes, and a `24/24` zero-call eval that reports infeasible contracts as `skip_generation`.
+- Phase 34 exact-key policies emit only schema state and key count metadata; user-supplied key names remain confined to the in-memory prompt, contract, and provider request.
 - Trusted Sandbox CI and deploy now run chat quality evals in `.github/workflows/trusted-sandbox-ci.yml:135` and `scripts/jarvisalpha_deploy.sh:487`.
 - Helm reads the eval endpoint and renders Evaluation Harness and trend sections in `jarvis-helm` `src/ask/alphaAskClient.ts` and `src/ask/AskWorkspace.tsx`.
 

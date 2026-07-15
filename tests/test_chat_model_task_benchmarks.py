@@ -248,6 +248,9 @@ def test_local_output_contract_benchmark_repairs_each_task_once() -> None:
             "chat_structured_output_applied": bool(
                 getattr(generation_policy, "json_mode")
             ),
+            "chat_exact_key_schema_applied": bool(
+                getattr(generation_policy, "exact_json_keys")
+            ),
         }
 
     payload = asyncio.run(run_local_output_contract_benchmark(invoke=invoke))
@@ -261,6 +264,11 @@ def test_local_output_contract_benchmark_repairs_each_task_once() -> None:
     assert all(row["repair_attempted"] for row in payload["results"])
     assert all(row["score"] == 100 for row in payload["results"])
     assert all(row["chat_output_contract_passed"] for row in payload["results"])
+    assert all(
+        row["chat_exact_key_schema_applied"]
+        for row in payload["results"]
+        if row["task_id"] == "fast_exact_json"
+    )
     assert payload["stability"]["fully_passing_samples"] == 3
     assert payload["stability"]["stable_tasks"] == 4
     assert payload["stability"]["gate_passed"] is True

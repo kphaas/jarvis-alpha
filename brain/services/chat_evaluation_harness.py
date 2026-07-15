@@ -318,6 +318,21 @@ def _output_contract_eval_result() -> ChatEvalResult:
         failures.append("deterministic_decoding_not_requested")
     if not generation_policy.json_mode:
         failures.append("structured_output_not_requested")
+    expected_schema = {
+        "type": "object",
+        "properties": {
+            "status": {
+                "type": ["string", "number", "boolean", "object", "array", "null"]
+            },
+            "owner": {
+                "type": ["string", "number", "boolean", "object", "array", "null"]
+            },
+        },
+        "required": ["status", "owner"],
+        "additionalProperties": False,
+    }
+    if generation_policy.response_schema() != expected_schema:
+        failures.append("exact_key_schema_not_requested")
     if feasibility is None:
         failures.append("feasibility_contract_not_compiled")
     elif feasibility.feasible or feasibility.conflicts != ("required_term_forbidden",):
@@ -335,6 +350,8 @@ def _output_contract_eval_result() -> ChatEvalResult:
             "quality_reason": gate.reason,
             "deterministic_decoding": generation_policy.deterministic,
             "structured_output": generation_policy.json_mode,
+            "exact_key_schema": generation_policy.response_schema() is not None,
+            "exact_key_count": len(generation_policy.exact_json_keys),
             "infeasible_contract_blocked": bool(
                 feasibility is not None and not feasibility.feasible
             ),

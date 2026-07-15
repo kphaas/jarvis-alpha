@@ -74,6 +74,8 @@ def test_chat_eval_payload_scoreboards_outcome_metadata() -> None:
     )
     assert output_contract["details"]["deterministic_decoding"] is True
     assert output_contract["details"]["structured_output"] is True
+    assert output_contract["details"]["exact_key_schema"] is True
+    assert output_contract["details"]["exact_key_count"] == 2
     assert output_contract["details"]["infeasible_contract_blocked"] is True
     assert output_contract["details"]["preflight_action"] == "skip_generation"
     assert payload["case_groups"]["quality_gateway"]["case_count"] == 4

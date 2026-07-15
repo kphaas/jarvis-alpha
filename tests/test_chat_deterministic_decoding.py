@@ -11,6 +11,16 @@ from brain.routing.generation_policy import (
 )
 
 
+def test_exact_key_policy_requires_json_mode_and_unique_keys() -> None:
+    with pytest.raises(ValueError, match="require JSON mode"):
+        ChatGenerationPolicy(exact_json_keys=("status",))
+    with pytest.raises(ValueError, match="must be unique"):
+        ChatGenerationPolicy(
+            json_mode=True,
+            exact_json_keys=("status", "status"),
+        )
+
+
 @pytest.mark.asyncio
 async def test_local_router_applies_and_reports_generation_policy(
     monkeypatch: pytest.MonkeyPatch,
@@ -19,6 +29,7 @@ async def test_local_router_applies_and_reports_generation_policy(
     policy = ChatGenerationPolicy(
         deterministic=True,
         json_mode=True,
+        exact_json_keys=("status",),
     )
 
     async def fake_generate(**kwargs: object) -> dict[str, object]:
@@ -44,3 +55,5 @@ async def test_local_router_applies_and_reports_generation_policy(
     )
     assert result["chat_deterministic_decoding_applied"] is True
     assert result["chat_structured_output_applied"] is True
+    assert result["chat_exact_key_schema_applied"] is True
+    assert result["chat_generation_policy_exact_key_count"] == 1

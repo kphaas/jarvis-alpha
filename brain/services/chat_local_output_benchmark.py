@@ -165,6 +165,10 @@ async def run_local_output_contract_benchmark(
                     "chat_structured_output_applied"
                 )
                 is True,
+                "chat_exact_key_schema_applied": final_response.get(
+                    "chat_exact_key_schema_applied"
+                )
+                is True,
             }
             row["passed"] = score.passed and evaluation.passed
             rows.append(row)
@@ -303,4 +307,8 @@ def _response_error(
         "chat_structured_output_applied"
     ):
         return "structured_output_not_applied"
+    if generation_policy.exact_json_keys and not response.get(
+        "chat_exact_key_schema_applied"
+    ):
+        return "exact_key_schema_not_applied"
     return None
