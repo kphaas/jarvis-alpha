@@ -48,10 +48,15 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
         "Benchmark Evidence Ingestion + Operator Comparison",
         "Local Output Contract Hardening",
         "Deterministic Local Decoding",
+        "Contract-failure trace expansion and activation",
+        "Contract feasibility preflight",
+        "Exact-key structured decoding",
     ):
         assert phase in text
 
-    next_queue = text.split("## Next Build Queue", maxsplit=1)[1]
+    next_queue = text.split("## Next Build Queue", maxsplit=1)[1].split(
+        "## Facts", maxsplit=1
+    )[0]
     assert "Phase 19: Repair Loop" not in next_queue
     assert "Phase 20: MCP Tool Boundary" not in next_queue
     assert "Phase 21: Trend Observability" not in next_queue
@@ -67,5 +72,7 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
     assert "Deploy Phase 29" not in next_queue
     assert "deploy Phase 30" not in next_queue
     assert "three-sample local stability gate" not in next_queue
-    assert "Phase 31" in next_queue
-    assert "operator-approved contract-failure traces" in next_queue
+    assert "Phase 31" not in next_queue
+    assert "Phase 33" not in next_queue
+    assert "Phase 34" in next_queue
+    assert "operator-approved feasible contract-failure cases" in next_queue

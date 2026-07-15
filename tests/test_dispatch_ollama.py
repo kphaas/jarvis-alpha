@@ -204,15 +204,45 @@ async def test_generate_translates_deterministic_policy_to_ollama_options(
         generation_policy=ChatGenerationPolicy(
             deterministic=True,
             json_mode=True,
+            exact_json_keys=("status",),
         ),
     )
 
-    assert captured["payload"]["format"] == "json"
+    assert captured["payload"]["format"] == {
+        "type": "object",
+        "properties": {
+            "status": {
+                "type": ["string", "number", "boolean", "object", "array", "null"]
+            }
+        },
+        "required": ["status"],
+        "additionalProperties": False,
+    }
     assert captured["payload"]["options"] == {
         "num_predict": 100,
         "temperature": 0.0,
         "seed": 42,
     }
+
+
+@pytest.mark.asyncio
+async def test_generate_keeps_generic_json_mode_without_exact_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        ollama_client.httpx,
+        "AsyncClient",
+        _make_client(captured, _FakeResponse({"response": "{}"})),
+    )
+
+    await ollama_client.generate(
+        model="llama3.1:8b",
+        prompt="status",
+        generation_policy=ChatGenerationPolicy(json_mode=True),
+    )
+
+    assert captured["payload"]["format"] == "json"
 
 
 @pytest.mark.asyncio

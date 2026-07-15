@@ -32,6 +32,22 @@ def test_compiler_extracts_explicit_exact_json_contract() -> None:
     generation_policy = generation_policy_for_chat_output_contract(contract)
     assert generation_policy.deterministic is True
     assert generation_policy.json_mode is True
+    assert generation_policy.exact_json_keys == (
+        "owner",
+        "priority",
+        "ticket_count",
+    )
+    assert generation_policy.response_schema() == {
+        "type": "object",
+        "properties": {
+            key: {"type": ["string", "number", "boolean", "object", "array", "null"]}
+            for key in ("owner", "priority", "ticket_count")
+        },
+        "required": ["owner", "priority", "ticket_count"],
+        "additionalProperties": False,
+    }
+    assert generation_policy.metadata()["chat_generation_policy_exact_key_count"] == 3
+    assert "owner" not in json.dumps(generation_policy.metadata())
     assert (
         evaluate_chat_output_contract(
             '{"owner":"Delta","priority":"high","ticket_count":3}',
@@ -68,6 +84,8 @@ def test_compiler_builds_privacy_and_sentence_constraints() -> None:
     generation_policy = generation_policy_for_chat_output_contract(contract)
     assert generation_policy.deterministic is True
     assert generation_policy.json_mode is False
+    assert generation_policy.exact_json_keys == ()
+    assert generation_policy.response_schema() is None
     evaluation = evaluate_chat_output_contract(
         "Local execution improves privacy. It costs more.",
         contract,

@@ -61,7 +61,10 @@ async def generate(
     effective_format = format
     effective_options = dict(options or {})
     if generation_policy is not None:
-        if generation_policy.json_mode:
+        response_schema = generation_policy.response_schema()
+        if response_schema is not None:
+            effective_format = response_schema
+        elif generation_policy.json_mode:
             effective_format = "json"
         if generation_policy.deterministic:
             effective_options.update(

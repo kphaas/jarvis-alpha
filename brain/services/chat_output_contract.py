@@ -93,6 +93,7 @@ def generation_policy_for_chat_output_contract(
     return ChatGenerationPolicy(
         deterministic=True,
         json_mode=bool(contract.exact_json_keys),
+        exact_json_keys=contract.exact_json_keys,
     )
 
 

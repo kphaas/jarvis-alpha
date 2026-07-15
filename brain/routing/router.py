@@ -108,6 +108,9 @@ async def route(
                         generation_policy.deterministic
                     ),
                     "chat_structured_output_applied": (generation_policy.json_mode),
+                    "chat_exact_key_schema_applied": bool(
+                        generation_policy.exact_json_keys
+                    ),
                 }
                 logger.info(
                     "CHAT_LOCAL_GENERATION_POLICY_APPLIED",
