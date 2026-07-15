@@ -1,8 +1,8 @@
 # AT-0 Chat Quality Architecture Review + Gap Ledger
 
 Date: 2026-07-09
-Scope: Alpha chat-quality amplification phases 1-36, with Helm as the operator display surface.
-Verdict: The shipped system now matches the original direction in architecture shape, but it is not complete. AT-0 has moved beyond routing into context, prompt compilation, memory packing, evidence, verification, bounded repair, MCP/tool trust boundaries, escalation, outcomes, registry-backed routing, trace-seeded eval gates, trend observability, a redacted trace corpus contract, an approval-gated real-trace sampling workflow, outcome-calibrated model score overlays, a default-off calibrated-routing rollout gate, objective per-model task benchmarks, signed local benchmark evidence, operator comparison, output contracts, and Helm trend rendering. Phase 35 is deployed with one signed feasible `assisted_probe` failure. Phase 36 adds the historical-evidence provenance gate, but metadata discovery found no eligible historical outcomes, so no historical batch is activated; optional approved cloud evidence and genuine operator-approved historical failures remain before meaningful active rollout.
+Scope: Alpha chat-quality amplification phases 1-38, with Helm as the operator display surface.
+Verdict: The shipped system now matches the original direction in architecture shape, but it is not complete. AT-0 has moved beyond routing into context, prompt compilation, memory packing, evidence, verification, bounded repair, MCP/tool trust boundaries, escalation, outcomes, registry-backed routing, trace-seeded eval gates, trend observability, signed trace and benchmark evidence, output contracts, deterministic local decoding, and operator comparison. Phase 36 is deployed and keeps assisted and historical provenance separate. Phase 37 found no eligible historical outcomes, while a separate Brain-only assisted baseline passed 20/20 attempts. Phase 38 adds a harder, explicitly selected adversarial profile without changing the baseline, activating corpus evidence, or changing live routing. Genuine operator-approved historical failures and optional approved cloud evidence remain before meaningful active rollout.
 
 ## Target Architecture
 
@@ -53,7 +53,8 @@ flowchart TD
     HR --> MS["Outcome-calibrated model scores"]
     MS --> CR["Calibrated routing rollout gate"]
     CR --> PM["Per-model task benchmarks"]
-    PM --> HP["Helm trend panel"]
+    PM --> AP["Adversarial assisted probes"]
+    AP --> HP["Helm trend panel"]
     HP --> G["CI + deploy regression gate"]
 ```
 
@@ -90,18 +91,20 @@ flowchart TD
 | Local Output Contract Hardening | Done, initial | `brain/services/chat_output_contract.py` compiles and validates explicit response constraints; the existing repair loop permits one local retry before the quality gateway fails closed. | Improves lower-model instruction compliance without provider lock-in, open-ended reflection, or routing changes. |
 | Deterministic Local Decoding | Done, deployed | `brain/routing/generation_policy.py` keeps controls provider-neutral; `brain/services/ollama_client.py` translates them to fixed sampling and native JSON mode; the deployed local benchmark passed three stable samples. | Reduces avoidable local-model variance while preserving model-agnostic validation and default-off routing. |
 | Historical-Raw Provenance Gate | Ready, no batch activated | `brain/services/chat_redacted_trace_corpus.py` requires exact operator-attested provenance and separate assisted/historical approvals; `scripts/sample_chat_traces.py --require-historical-raw` fails closed when no historical case exists. | Prevents assisted probes from being represented as production-history evidence while preserving the signed corpus workflow. |
+| Historical Evidence Activation Audit | Audited, no activation | Metadata-only discovery returned zero eligible historical outcomes; a separate five-sample Brain baseline passed 20/20 assisted attempts with zero repairs and no raw retention. | Preserves truthful evidence provenance while proving the deployed local baseline is stable. |
+| Adversarial Assisted-Probe Expansion | Implemented, live evidence pending deploy | `brain/services/chat_local_output_benchmark.py` defines a separate versioned eight-task adversarial profile; `scripts/benchmark_local_output_contract.py --profile adversarial` plans zero calls by default and caps a three-sample live run at 48 calls. | Probes harder lower-model contracts without replacing the stable baseline or overstating assisted evidence as real usage. |
 
 ## Architecture Fit
 
 | Requirement | State | Evidence | Gap |
 |---|---:|---|---|
 | Model-agnostic strategy selection | Partial | Strategy plan uses the capability registry for local, Perplexity, Claude, Gemini, council, and deep verify paths; the calibrated rollout gate can shadow or canary bounded outcome overlays. | Needs shadow evidence and operator approval before active exposure. |
-| Better lower-model output | Partial | Memory packing, prompt compilation, evidence pack, trace replay, an approved assisted contract-failure batch, feasibility preflight, explicit output contracts, deterministic local decoding, exact-key schema generation, one bounded local repair, verification/gateway, and objective per-model task benchmarks improve or block weak output before final stream. | Needs genuine operator-approved historical feasible failures; validation remains intentionally structural and lexical, and value types are not inferred. |
+| Better lower-model output | Partial | Memory packing, prompt compilation, evidence pack, trace replay, an approved assisted contract-failure batch, feasibility preflight, explicit output contracts, deterministic local decoding, exact-key schema generation, one bounded local repair, verification/gateway, and objective baseline plus adversarial task profiles improve or block weak output before final stream. | Needs deployed adversarial live evidence and genuine operator-approved historical feasible failures; validation remains intentionally structural and lexical. |
 | Context engineering | Partial | Evidence pack and memory pack record evidence types, memory priority, token budget, freshness labels, and untrusted raw web content. | Ranking is still deterministic and shallow; no learned retrieval policy. |
 | Verification and repair | Partial | One bounded repair pass can strip unsupported web narration, retry empty evidence-backed answers, or correct explicit local output-contract failures before gateway/escalation. | No learned repair policy or multi-step self-critique. |
 | Operator observability | Strong | Helm surfaces outcome, eval details, and trend metadata; Alpha logs quality and escalation decisions. | No trace replay view. |
 | Safety boundary | Strong | Outcome/eval reads are classified `read` and `security_read`; high-risk actions still route through Alpha approvals; MCP tools now have contract-derived boundaries. | Need real invocation wrappers to consume this boundary before broad tool expansion. |
-| Evaluation | Partial | Offline deterministic eval suite has golden strategy, memory pack, prompt compiler, output contracts, feasibility and generation-policy checks, quality gateway, trace replay, signed feasible and legacy contract-failure cases, signed local benchmark evidence, model-score calibration, outcome audit groups, and deployed repeated-run local evidence. | Needs multiple independently sourced `historical_raw` feasible contract-failure cases; the current historical count is zero. |
+| Evaluation | Partial | Offline deterministic eval suite has golden strategy, memory pack, prompt compiler, output contracts, feasibility and generation-policy checks, quality gateway, trace replay, signed feasible and legacy contract-failure cases, signed local benchmark evidence, model-score calibration, outcome audit groups, and separate baseline and adversarial local profiles. | Needs deployed adversarial live evidence and independently sourced `historical_raw` feasible contract-failure cases; the current historical count is zero. |
 
 ## 11-Pillar Audit
 
@@ -154,12 +157,15 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 | Exact-key structured decoding | Closed initial, deployed | Reliability, output quality, latency, extensibility | Exact JSON keys compile into a provider-neutral object schema; Ollama receives required keys with no additional properties while Alpha remains the final validator. | M | P1 | Ken/AT-0 | 2026-07-15 | PR #706 deployed at `f30a5b3`; the final sourced-secrets deploy passed `2098` tests and required smokes. The deployed local benchmark passed `12/12` attempts, `4/4` stable tasks, and `3/3` exact-key samples at score `100` with zero repairs. |
 | Feasible contract-failure corpus expansion | Closed initial, deployed | Reliability, privacy, evaluation | New contract-failure samples must prove Phase 33 feasibility, reproduce the declared post-repair failure, and identify an explicit evidence lane without weakening legacy signed-case compatibility. | M | P1 | Ken/AT-0 | 2026-07-15 | PR #707 deployed at `7b75a88`; `2103` tests, `25/25` deterministic evals, and all `3/3` signed corpus cases passed. Batch `phase35-feasible-contract-failures-001` contains one approved `assisted_probe` case. |
 | Historical-raw provenance gate | Ready, activation blocked on real evidence | Reliability, privacy, evaluation | Historical failures require exact operator-attested source and selection provenance, cannot mix with assisted probes in one approval batch, and fail closed when a historical-only workflow contains no historical case. | S | P1 | Ken/AT-0 | 2026-07-15 | ADR-0042 and `tests/test_chat_redacted_trace_corpus.py` cover provenance, lane separation, empty historical rejection, legacy compatibility, and metadata-only replay. Discovery returned zero eligible outcomes, so no Phase 36 batch is active. |
+| Historical evidence activation audit | Evidence audit complete, no activation | Reliability, privacy, evaluation | Metadata-only discovery found no natural failures, so no historical batch was fabricated; the separate assisted baseline proved stable local behavior. | S | P1 | Ken/AT-0 | 2026-07-15 | Discovery returned 0 outcomes and accessed no raw content. The Brain-only baseline passed 20/20 attempts, 4/4 tasks across five samples, zero repairs, and retained no raw prompts or responses. |
+| Adversarial assisted-probe expansion | Implemented, live evidence pending deploy | Reliability, output quality, privacy, evaluation | Eight harder reviewed tasks cover typed and nullable JSON, distractor grounding, negative gates, dual thresholds, and ordered recovery without changing the default baseline. | M | P1 | Ken/AT-0 | 2026-07-15 | ADR-0043 and `tests/test_chat_model_task_benchmarks.py` cover profile isolation, 8/8 reference contracts, zero-call planning, metadata privacy, and the 48-call fail-closed cap. |
 
 ## Next Build Queue
 
-1. Merge and deploy the Phase 36 provenance gate, then require the unchanged signed corpus eval to pass on the merged commit.
-2. Wait for a naturally occurring eligible failure, rerun metadata-only discovery, obtain explicit raw-access approval, and prepare a separately signed `historical_raw` digest; do not merge it with `assisted_probe` evidence.
-3. Run an optional bounded cloud comparison only with explicit paid-egress approval.
+1. Merge and deploy Phase 38, then run the three-sample adversarial profile on Brain with an explicit 48-call cap and an external metadata-only output path.
+2. If a failure reproduces after the bounded repair, review it through the separate redacted, signed `assisted_probe` workflow; do not activate a corpus case from benchmark metadata alone.
+3. Wait for a naturally occurring eligible failure before preparing a separately signed `historical_raw` digest; do not merge it with assisted evidence.
+4. Run an optional bounded cloud comparison only with explicit paid-egress approval.
 
 ## Facts
 
@@ -195,9 +201,13 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 - Phase 34 deployed at `f30a5b3`; the final sourced-secrets deploy passed `2098` tests and required smokes, and its local benchmark passed `12/12` attempts with `4/4` stable tasks and zero repairs.
 - Phase 35 batch `phase35-feasible-contract-failures-001` contains one signed `assisted_probe` failure that recompiles as feasible and reproduces `required_order_invalid`; its approved digest is `sha256:65287d03dfa5e81d5d27a12b3993ee9ec254fb02ae15aaa5351dea3b4233decd` and no raw/review artifact remains.
 - Phase 35 deployed at `7b75a88`; the merged gate passed `2103` tests, `25/25` deterministic eval cases, and all `3/3` signed corpus cases.
+- Phase 36 deployed at `5b8f5e5`; the merged gate passed `2112` tests, `25/25` deterministic eval cases, and all `3/3` signed corpus cases with zero model calls.
 - On 2026-07-15, an operator-approved metadata-only `/v1/chat/outcomes` discovery returned zero outcome rows and zero eligible historical failures; no raw prompt, response, memory, or conversation text was accessed.
 - New `historical_raw` cases require exact source, selection, and operator-attestation provenance; assisted and historical contract failures cannot share one approval batch.
 - Phase 36 activates no historical batch. A future batch requires a naturally occurring eligible failure and a separate approved digest and detached signature.
+- The Phase 37 Brain-only five-sample baseline passed `20/20` attempts with `4/4` stable tasks, zero repairs, no raw retention, no routing-score mutation, and digest `sha256:1311584ce5393cb7a443385bc24df2dd349410ab5969e45d65bf81810e20a941`; it is assisted evidence, not historical evidence.
+- Phase 38 keeps the baseline unchanged and adds an explicit versioned adversarial profile with eight reviewed tasks, a zero-call default plan, and a 48-call worst-case cap for three live samples.
+- Phase 38 local pre-merge proof passed `2115` tests with `6` skipped, all `25/25` deterministic chat eval cases, and all `3/3` signed corpus cases with zero model calls; this is not post-merge deploy proof.
 - Trusted Sandbox CI and deploy now run chat quality evals in `.github/workflows/trusted-sandbox-ci.yml:135` and `scripts/jarvisalpha_deploy.sh:487`.
 - Helm reads the eval endpoint and renders Evaluation Harness and trend sections in `jarvis-helm` `src/ask/alphaAskClient.ts` and `src/ask/AskWorkspace.tsx`.
 
@@ -217,12 +227,14 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 | Medium | Model registry or configured model aliases become stale. | Keep registry small and versioned, record configured model IDs in benchmark output, and add runtime digest capture before ingesting evidence. |
 | Medium | A model, Ollama, quantization, or hardware change invalidates deterministic-output evidence. | Treat the evidence as runtime-specific and rerun the three-sample stability gate after any component change. |
 | Medium | An assisted probe is mislabeled as historical production evidence. | Require exact signed historical provenance, forbid it on assisted probes, and reject mixed evidence-lane batches. |
+| Medium | Adversarial task changes make new evidence incomparable with the deployed baseline. | Keep profiles separately named and versioned; never replace the four baseline tasks in place. |
 | Medium | Memory/RAG packing overuses stale memory. | Keep freshness/source priority and Beacon-over-memory tests in the eval gate. |
 | Medium | MCP expansion bypasses Alpha approvals. | Require route classification and approval policy before any executable tool. |
 
 ## Recommendations
 
-1. Collect separately signed `historical_raw` feasible failures only when independently approved evidence is available.
-2. Keep `assisted_probe` deterministic-output results separate from approved `historical_raw` model evidence.
-3. Run a bounded paid comparison only with explicit operator approval and an external metadata-only output path.
-4. Keep calibrated routing off until shadow comparisons show measurable quality gain without unacceptable cost, privacy, or latency regression.
+1. Run the Phase 38 adversarial profile on the deployed Brain runtime before treating it as model evidence.
+2. Collect separately signed `historical_raw` feasible failures only when independently approved evidence is available.
+3. Keep `assisted_probe` deterministic-output results separate from approved `historical_raw` model evidence.
+4. Run a bounded paid comparison only with explicit operator approval and an external metadata-only output path.
+5. Keep calibrated routing off until shadow comparisons show measurable quality gain without unacceptable cost, privacy, or latency regression.

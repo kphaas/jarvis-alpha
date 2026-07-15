@@ -323,11 +323,14 @@ def score_chat_model_task_response(
     response_text: str,
     latency_ms: int,
     error_code: str | None = None,
+    task: ChatModelBenchmarkTask | None = None,
 ) -> ChatModelTaskBenchmarkResult:
     capability = get_chat_model_capability(route_mode)
     if capability is None:
         raise ValueError(f"unknown route mode: {route_mode}")
-    task = _task_by_id(task_id)
+    task = task or _task_by_id(task_id)
+    if task.task_id != task_id:
+        raise ValueError("benchmark task ID mismatch")
     check_results = tuple(
         {
             "check_id": check.check_id,

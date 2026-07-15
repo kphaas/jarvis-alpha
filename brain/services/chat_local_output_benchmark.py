@@ -10,6 +10,7 @@ from brain.routing.model_capability_registry import get_chat_model_capability
 from brain.services.chat_model_task_benchmarks import (
     CHAT_MODEL_TASK_BENCHMARK_VERSION,
     DEFAULT_CHAT_MODEL_BENCHMARK_TASKS,
+    ChatModelBenchmarkCheck,
     ChatModelBenchmarkTask,
     score_chat_model_task_response,
 )
@@ -25,6 +26,9 @@ from brain.services.chat_output_contract import (
 from jarvis_common.logging_config import get_logger
 
 CHAT_LOCAL_OUTPUT_BENCHMARK_SCHEMA_VERSION = "chat_local_output_contract_benchmark.v2"
+CHAT_LOCAL_OUTPUT_BENCHMARK_PROFILE_VERSION = "chat_local_output_contract_profiles.v1"
+BASELINE_LOCAL_OUTPUT_BENCHMARK_PROFILE = "baseline"
+ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_PROFILE = "adversarial"
 DEFAULT_LOCAL_OUTPUT_BENCHMARK_SAMPLES = 3
 MAX_LOCAL_OUTPUT_BENCHMARK_SAMPLES = 5
 LocalOutputBenchmarkInvoker = Callable[
@@ -32,16 +36,328 @@ LocalOutputBenchmarkInvoker = Callable[
 ]
 logger = get_logger("alpha_brain")
 
+ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_TASKS: tuple[ChatModelBenchmarkTask, ...] = (
+    ChatModelBenchmarkTask(
+        task_id="adversarial_exact_json_typed_values",
+        task_class="fast",
+        prompt=(
+            "Return only a JSON object with keys incident_id, active, retry_count, "
+            "and affected_services. Use incident_id INC-42, active false, retry_count "
+            "2, and affected_services api and worker."
+        ),
+        minimum_score=100,
+        checks=(
+            ChatModelBenchmarkCheck(
+                check_id="typed_json_values",
+                kind="json_equals",
+                weight=100,
+                expected_json={
+                    "incident_id": "INC-42",
+                    "active": False,
+                    "retry_count": 2,
+                    "affected_services": ["api", "worker"],
+                },
+            ),
+        ),
+        reference_response=(
+            '{"incident_id":"INC-42","active":false,"retry_count":2,'
+            '"affected_services":["api","worker"]}'
+        ),
+    ),
+    ChatModelBenchmarkTask(
+        task_id="adversarial_exact_json_null_values",
+        task_class="fast",
+        prompt=(
+            "Return only a JSON object with keys status, owner, due_date, and "
+            "blockers. Use status paused, owner null, due_date null, and blockers "
+            "containing only rollback_test."
+        ),
+        minimum_score=100,
+        checks=(
+            ChatModelBenchmarkCheck(
+                check_id="nullable_json_values",
+                kind="json_equals",
+                weight=100,
+                expected_json={
+                    "status": "paused",
+                    "owner": None,
+                    "due_date": None,
+                    "blockers": ["rollback_test"],
+                },
+            ),
+        ),
+        reference_response=(
+            '{"status":"paused","owner":null,"due_date":null,'
+            '"blockers":["rollback_test"]}'
+        ),
+    ),
+    ChatModelBenchmarkTask(
+        task_id="adversarial_grounded_distractor_filter",
+        task_class="grounded",
+        prompt=(
+            "Evidence: [E1] Deployment is paused. [E2] Team Blue owns the service. "
+            "[E3] The rollback test failed. [E4] The next planning meeting is Friday. "
+            "In one sentence, state the deployment status and reason. Cite only the "
+            "relevant evidence labels."
+        ),
+        minimum_score=100,
+        checks=(
+            ChatModelBenchmarkCheck(
+                check_id="status",
+                kind="contains_all",
+                weight=20,
+                terms=("paused",),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="reason",
+                kind="contains_all",
+                weight=25,
+                terms=("rollback test failed",),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="relevant_citations",
+                kind="contains_all",
+                weight=35,
+                terms=("[e1]", "[e3]"),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="distractors_excluded",
+                kind="excludes_all",
+                weight=20,
+                terms=("[e2]", "[e4]"),
+            ),
+        ),
+        reference_response=(
+            "Deployment is paused [E1] because the rollback test failed [E3]."
+        ),
+    ),
+    ChatModelBenchmarkTask(
+        task_id="adversarial_grounded_negative_gate",
+        task_class="grounded",
+        prompt=(
+            "Evidence: [E1] Production approval is not granted. [E2] Staging tests "
+            "passed. [E3] The maintenance window is Friday. In one sentence, state "
+            "whether production can start and cite only the relevant evidence label."
+        ),
+        minimum_score=100,
+        checks=(
+            ChatModelBenchmarkCheck(
+                check_id="blocked_decision",
+                kind="contains_all",
+                weight=35,
+                terms=("cannot start", "not granted"),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="relevant_citation",
+                kind="contains_all",
+                weight=35,
+                terms=("[e1]",),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="irrelevant_citations_excluded",
+                kind="excludes_all",
+                weight=30,
+                terms=("[e2]", "[e3]"),
+            ),
+        ),
+        reference_response=(
+            "Production cannot start because approval is not granted [E1]."
+        ),
+    ),
+    ChatModelBenchmarkTask(
+        task_id="adversarial_analysis_one_sentence_tradeoff",
+        task_class="analysis",
+        prompt=(
+            "Choose between Option A (cost 2, reliability 80, external privacy) and "
+            "Option C (cost 4, reliability 97, local privacy). The cost ceiling is 4 "
+            "and the objective is highest reliability. Recommend one option and state "
+            "the cost and privacy tradeoff in at most one sentence."
+        ),
+        minimum_score=100,
+        checks=(
+            ChatModelBenchmarkCheck(
+                check_id="selection",
+                kind="contains_all",
+                weight=30,
+                terms=("option c",),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="reliability",
+                kind="contains_all",
+                weight=20,
+                terms=("97",),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="cost",
+                kind="contains_all",
+                weight=20,
+                terms=("cost", "4"),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="privacy",
+                kind="contains_all",
+                weight=30,
+                terms=("privacy", "local", "external"),
+            ),
+        ),
+        reference_response=(
+            "Recommend Option C for reliability 97 within the cost 4 ceiling; its "
+            "local privacy is stronger than Option A's external privacy."
+        ),
+    ),
+    ChatModelBenchmarkTask(
+        task_id="adversarial_analysis_dual_threshold",
+        task_class="analysis",
+        prompt=(
+            "Choose Plan A (latency 40, quality 88, external privacy) or Plan B "
+            "(latency 55, quality 96, local privacy). Requirements are latency at "
+            "most 60 and quality at least 95. Recommend the valid plan in at most "
+            "two sentences."
+        ),
+        minimum_score=100,
+        checks=(
+            ChatModelBenchmarkCheck(
+                check_id="selection",
+                kind="contains_all",
+                weight=40,
+                terms=("plan b",),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="quality",
+                kind="contains_all",
+                weight=20,
+                terms=("96",),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="latency",
+                kind="contains_all",
+                weight=20,
+                terms=("55",),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="privacy",
+                kind="contains_all",
+                weight=20,
+                terms=("local",),
+            ),
+        ),
+        reference_response=(
+            "Recommend Plan B because quality 96 clears the minimum while latency 55 "
+            "stays below the limit. It also keeps privacy local."
+        ),
+    ),
+    ChatModelBenchmarkTask(
+        task_id="adversarial_deep_freeze_recovery",
+        task_class="deep",
+        prompt=(
+            "Create a recovery plan for a failed routing rollout. Begin with "
+            "containment, freeze changes, verify the failure, rollback, and finish "
+            "with monitoring. Preserve audit evidence, require operator approval "
+            "before reactivation, do not delete data, and use at most four sentences."
+        ),
+        minimum_score=100,
+        checks=(
+            ChatModelBenchmarkCheck(
+                check_id="recovery_order",
+                kind="ordered",
+                weight=40,
+                terms=("contain", "freeze", "verify", "rollback", "monitor"),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="operator_gate",
+                kind="contains_all",
+                weight=20,
+                terms=("operator approval",),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="audit_preserved",
+                kind="contains_all",
+                weight=20,
+                terms=("preserve", "audit"),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="destructive_actions_excluded",
+                kind="excludes_all",
+                weight=20,
+                terms=("delete the", "delete all", "purge"),
+            ),
+        ),
+        reference_response=(
+            "Contain the rollout, freeze changes, and preserve audit evidence. "
+            "Verify the failure, then rollback to the last stable route. Require "
+            "operator approval before reactivation. Monitor quality and latency."
+        ),
+    ),
+    ChatModelBenchmarkTask(
+        task_id="adversarial_deep_injection_recovery",
+        task_class="deep",
+        prompt=(
+            "Create a recovery plan for a failed routing rollout involving suspected "
+            "prompt injection. Order the plan from containment, isolation of untrusted "
+            "tool output, verification, rollback, and monitoring. Preserve audit "
+            "evidence, require operator approval before reactivation, do not delete "
+            "data, and use at most five sentences."
+        ),
+        minimum_score=100,
+        checks=(
+            ChatModelBenchmarkCheck(
+                check_id="recovery_order",
+                kind="ordered",
+                weight=40,
+                terms=("contain", "isolate", "verify", "rollback", "monitor"),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="operator_gate",
+                kind="contains_all",
+                weight=20,
+                terms=("operator approval",),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="audit_preserved",
+                kind="contains_all",
+                weight=20,
+                terms=("preserve", "audit"),
+            ),
+            ChatModelBenchmarkCheck(
+                check_id="destructive_actions_excluded",
+                kind="excludes_all",
+                weight=20,
+                terms=("delete the", "delete all", "purge"),
+            ),
+        ),
+        reference_response=(
+            "Contain the rollout and preserve audit evidence. Isolate untrusted tool "
+            "output, then verify the failure. Rollback to the last stable route and "
+            "require operator approval before reactivation. Monitor quality and tool "
+            "boundary events."
+        ),
+    ),
+)
+
+
+def local_output_benchmark_tasks(
+    profile: str,
+) -> tuple[ChatModelBenchmarkTask, ...]:
+    if profile == BASELINE_LOCAL_OUTPUT_BENCHMARK_PROFILE:
+        return DEFAULT_CHAT_MODEL_BENCHMARK_TASKS
+    if profile == ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_PROFILE:
+        return ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_TASKS
+    raise ValueError(f"unknown local output benchmark profile: {profile}")
+
 
 def local_output_benchmark_plan(
     tasks: Sequence[ChatModelBenchmarkTask] = DEFAULT_CHAT_MODEL_BENCHMARK_TASKS,
     *,
     samples: int = DEFAULT_LOCAL_OUTPUT_BENCHMARK_SAMPLES,
+    profile: str | None = None,
 ) -> dict[str, object]:
     _validate_tasks(tasks)
     samples = _validated_sample_count(samples)
+    resolved_profile = _resolved_profile(tasks, profile)
     return {
         "schema_version": CHAT_LOCAL_OUTPUT_BENCHMARK_SCHEMA_VERSION,
+        "profile_version": CHAT_LOCAL_OUTPUT_BENCHMARK_PROFILE_VERSION,
+        "profile": resolved_profile,
         "benchmark_version": CHAT_MODEL_TASK_BENCHMARK_VERSION,
         "status": "planned",
         "advisory_only": True,
@@ -66,9 +382,11 @@ async def run_local_output_contract_benchmark(
     invoke: LocalOutputBenchmarkInvoker,
     tasks: Sequence[ChatModelBenchmarkTask] = DEFAULT_CHAT_MODEL_BENCHMARK_TASKS,
     samples: int = DEFAULT_LOCAL_OUTPUT_BENCHMARK_SAMPLES,
+    profile: str | None = None,
 ) -> dict[str, object]:
     _validate_tasks(tasks)
     samples = _validated_sample_count(samples)
+    resolved_profile = _resolved_profile(tasks, profile)
     capability = get_chat_model_capability("local")
     if capability is None:
         raise RuntimeError("local model capability is not registered")
@@ -149,6 +467,7 @@ async def run_local_output_contract_benchmark(
                 response_text=response_text,
                 latency_ms=latency_ms,
                 error_code=error_code,
+                task=task,
             )
             row = {
                 **score.metadata(),
@@ -177,6 +496,7 @@ async def run_local_output_contract_benchmark(
                 "CHAT_LOCAL_OUTPUT_CONTRACT_BENCHMARK_COMPLETED",
                 extra={
                     "event": "CHAT_LOCAL_OUTPUT_CONTRACT_BENCHMARK_COMPLETED",
+                    "profile": resolved_profile,
                     "sample_index": sample_index,
                     "task_id": task.task_id,
                     "score": score.score,
@@ -197,6 +517,8 @@ async def run_local_output_contract_benchmark(
     )
     return {
         "schema_version": CHAT_LOCAL_OUTPUT_BENCHMARK_SCHEMA_VERSION,
+        "profile_version": CHAT_LOCAL_OUTPUT_BENCHMARK_PROFILE_VERSION,
+        "profile": resolved_profile,
         "benchmark_version": CHAT_MODEL_TASK_BENCHMARK_VERSION,
         "status": "passed" if stability_gate_passed else "failed",
         "advisory_only": True,
@@ -233,6 +555,22 @@ def _validated_sample_count(samples: int) -> int:
             f"samples must be between 1 and {MAX_LOCAL_OUTPUT_BENCHMARK_SAMPLES}"
         )
     return samples
+
+
+def _resolved_profile(
+    tasks: Sequence[ChatModelBenchmarkTask],
+    profile: str | None,
+) -> str:
+    task_tuple = tuple(tasks)
+    if profile is None:
+        if task_tuple == DEFAULT_CHAT_MODEL_BENCHMARK_TASKS:
+            return BASELINE_LOCAL_OUTPUT_BENCHMARK_PROFILE
+        if task_tuple == ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_TASKS:
+            return ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_PROFILE
+        return "custom"
+    if task_tuple != local_output_benchmark_tasks(profile):
+        raise ValueError("local output benchmark profile tasks mismatch")
+    return profile
 
 
 def _validate_tasks(tasks: Sequence[ChatModelBenchmarkTask]) -> None:

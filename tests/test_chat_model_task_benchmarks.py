@@ -18,6 +18,9 @@ from brain.services.chat_model_task_benchmarks import (
     validate_chat_model_benchmark_tasks,
 )
 from brain.services.chat_local_output_benchmark import (
+    ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_PROFILE,
+    ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_TASKS,
+    CHAT_LOCAL_OUTPUT_BENCHMARK_PROFILE_VERSION,
     CHAT_LOCAL_OUTPUT_BENCHMARK_SCHEMA_VERSION,
     run_local_output_contract_benchmark,
 )
@@ -285,11 +288,123 @@ def test_local_output_contract_script_defaults_to_zero_call_plan() -> None:
     payload = json.loads(completed.stdout)
 
     assert payload["status"] == "planned"
+    assert payload["profile"] == "baseline"
+    assert payload["profile_version"] == CHAT_LOCAL_OUTPUT_BENCHMARK_PROFILE_VERSION
     assert payload["local_only"] is True
     assert payload["samples"] == 3
     assert payload["planned_initial_calls"] == 12
     assert payload["planned_max_calls"] == 24
     assert payload["reporting"]["model_calls"] == 0
+
+
+def test_adversarial_local_output_profile_passes_reviewed_references() -> None:
+    assert len(ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_TASKS) == 8
+    assert {task.task_class for task in ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_TASKS} == {
+        "fast",
+        "grounded",
+        "analysis",
+        "deep",
+    }
+
+    async def invoke(
+        prompt: str,
+        route_mode: str,
+        generation_policy: object,
+    ) -> dict[str, object]:
+        task = next(
+            task
+            for task in ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_TASKS
+            if task.prompt in prompt
+        )
+        return {
+            "result": task.reference_response,
+            "mode": route_mode,
+            "chat_model_id": "llama3.1:8b",
+            "chat_deterministic_decoding_applied": True,
+            "chat_structured_output_applied": bool(
+                getattr(generation_policy, "json_mode")
+            ),
+            "chat_exact_key_schema_applied": bool(
+                getattr(generation_policy, "exact_json_keys")
+            ),
+        }
+
+    payload = asyncio.run(
+        run_local_output_contract_benchmark(
+            invoke=invoke,
+            tasks=ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_TASKS,
+            samples=1,
+            profile=ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_PROFILE,
+        )
+    )
+    rendered = json.dumps(payload)
+
+    assert payload["status"] == "passed"
+    assert payload["profile"] == ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_PROFILE
+    assert payload["profile_version"] == CHAT_LOCAL_OUTPUT_BENCHMARK_PROFILE_VERSION
+    assert payload["passed"] == 8
+    assert payload["reporting"] == {
+        "model_calls": 8,
+        "repair_attempts": 0,
+        "raw_prompts_retained": False,
+        "raw_responses_retained": False,
+    }
+    assert all(row["score"] == 100 for row in payload["results"])
+    assert all(row["chat_output_contract_passed"] for row in payload["results"])
+    assert all(
+        task.prompt not in rendered and task.reference_response not in rendered
+        for task in ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_TASKS
+    )
+
+
+def test_adversarial_local_output_script_is_zero_call_and_bounded() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/benchmark_local_output_contract.py",
+            "--profile",
+            "adversarial",
+            "--samples",
+            "3",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(completed.stdout)
+    rendered = json.dumps(payload)
+
+    assert payload["profile"] == ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_PROFILE
+    assert payload["task_count"] == 8
+    assert payload["planned_initial_calls"] == 24
+    assert payload["planned_max_calls"] == 48
+    assert payload["reporting"]["model_calls"] == 0
+    assert all(
+        task.prompt not in rendered and task.reference_response not in rendered
+        for task in ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_TASKS
+    )
+
+
+def test_adversarial_local_output_script_enforces_48_call_cap() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/benchmark_local_output_contract.py",
+            "--profile",
+            "adversarial",
+            "--live",
+            "--samples",
+            "3",
+            "--max-calls",
+            "47",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "maximum calls (48) exceed --max-calls (47)" in completed.stderr
 
 
 def test_local_output_contract_benchmark_refuses_empty_task_set() -> None:

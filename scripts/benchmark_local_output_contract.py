@@ -19,10 +19,19 @@ def main() -> int:
 
     from brain.services.chat_local_output_benchmark import (
         local_output_benchmark_plan,
+        local_output_benchmark_tasks,
         run_local_output_contract_benchmark,
     )
 
-    plan = local_output_benchmark_plan(samples=args.samples)
+    try:
+        tasks = local_output_benchmark_tasks(args.profile)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    plan = local_output_benchmark_plan(
+        tasks,
+        samples=args.samples,
+        profile=args.profile,
+    )
     if not args.live:
         _emit(plan, args.output)
         return 0
@@ -51,7 +60,9 @@ def main() -> int:
     payload = asyncio.run(
         run_local_output_contract_benchmark(
             invoke=invoke,
+            tasks=tasks,
             samples=args.samples,
+            profile=args.profile,
         )
     )
     payload["run_completed_at"] = datetime.now(UTC).isoformat()
@@ -65,6 +76,11 @@ def _parse_args() -> argparse.Namespace:
             "Plan or run the local-only Phase 30 deterministic-output benchmark. "
             "The repeated-run stability gate is advisory and never mutates routing."
         )
+    )
+    parser.add_argument(
+        "--profile",
+        default="baseline",
+        help="Reviewed task profile: baseline or adversarial (default: baseline).",
     )
     parser.add_argument(
         "--live",
@@ -99,8 +115,8 @@ def _sample_count(value: str) -> int:
 
 def _call_cap(value: str) -> int:
     parsed = int(value)
-    if parsed < 1 or parsed > 40:
-        raise argparse.ArgumentTypeError("must be between 1 and 40")
+    if parsed < 1 or parsed > 64:
+        raise argparse.ArgumentTypeError("must be between 1 and 64")
     return parsed
 
 
