@@ -83,9 +83,22 @@ def test_committed_redacted_trace_corpus_loads_without_raw_contact_leaks() -> No
     cases = load_redacted_trace_corpus()
     rendered = json.dumps([asdict(case) for case in cases])
 
-    assert len(cases) == 1
+    assert len(cases) == 2
     assert cases[0].redaction_policy_version == CHAT_TRACE_REDACTION_POLICY_VERSION
     assert cases[0].source_trace_hash.startswith("sha256:")
+    contract_failure = next(
+        case for case in cases if case.trace_kind == "output_contract_failure"
+    )
+    assert contract_failure.expected_route_mode == "local"
+    assert contract_failure.expected_quality_action == "replace_with_safe_fallback"
+    assert contract_failure.expected_escalation == "operator_review"
+    assert contract_failure.expected_repair_action == "retry_local_once"
+    assert contract_failure.expected_repaired is False
+    assert contract_failure.expected_output_contract_passed is False
+    assert contract_failure.expected_output_contract_issues == (
+        "forbidden_content_present",
+        "required_order_invalid",
+    )
     assert "ken@example.com" not in rendered
     assert "404-555-1212" not in rendered
     assert "Ken Haas" not in rendered
