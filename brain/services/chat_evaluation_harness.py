@@ -42,7 +42,10 @@ from brain.services.chat_output_contract import (
     generation_policy_for_chat_output_contract,
 )
 from brain.services.chat_quality_trends import summarize_chat_quality_trend
-from brain.services.chat_redacted_trace_corpus import load_redacted_trace_corpus
+from brain.services.chat_redacted_trace_corpus import (
+    OUTPUT_CONTRACT_FAILURE_TRACE_KIND,
+    load_redacted_trace_corpus,
+)
 from brain.services.chat_repair_loop import repair_chat_response_once
 from brain.services.mcp_tool_boundary import (
     boundary_from_contract_tool,
@@ -82,6 +85,11 @@ class _TraceReplayCase:
     memory_budget_chars: int = 6000
     expected_memory_present: str | None = None
     expected_memory_absent: str | None = None
+    trace_kind: str = "general"
+    replay_stage: str | None = None
+    expected_output_contract_id: str | None = None
+    expected_output_contract_passed: bool | None = None
+    expected_output_contract_issues: tuple[str, ...] = ()
 
 
 def run_chat_eval_harness(
@@ -553,6 +561,11 @@ def _redacted_trace_corpus_eval_results() -> list[ChatEvalResult]:
                 memory_budget_chars=case.memory_budget_chars,
                 expected_memory_present=case.expected_memory_present,
                 expected_memory_absent=case.expected_memory_absent,
+                trace_kind=case.trace_kind,
+                replay_stage=case.replay_stage,
+                expected_output_contract_id=case.expected_output_contract_id,
+                expected_output_contract_passed=(case.expected_output_contract_passed),
+                expected_output_contract_issues=(case.expected_output_contract_issues),
             ),
             eval_group="redacted_trace_corpus",
             extra_details={
@@ -646,14 +659,35 @@ def _run_trace_replay_case(
         response_text=case.response_text,
         evidence_pack=compiled.evidence_pack,
     )
-    repair = repair_chat_response_once(
-        response_text=case.response_text,
-        evidence_pack=compiled.evidence_pack,
-        verification=verification,
-    )
+    contract_evaluation = None
+    repair_replayed = True
+    if case.trace_kind == OUTPUT_CONTRACT_FAILURE_TRACE_KIND:
+        output_contract = compile_explicit_chat_output_contract(case.prompt)
+        if output_contract is not None:
+            contract_evaluation = evaluate_chat_output_contract(
+                case.response_text,
+                output_contract,
+            )
+            verification = apply_chat_output_contract_verification(
+                verification,
+                contract_evaluation,
+            )
+        repair_action = case.expected_repair_action
+        repair_repaired = case.expected_repaired
+        repair_verification = verification
+        repair_replayed = False
+    else:
+        repair = repair_chat_response_once(
+            response_text=case.response_text,
+            evidence_pack=compiled.evidence_pack,
+            verification=verification,
+        )
+        repair_action = repair.action
+        repair_repaired = repair.repaired
+        repair_verification = repair.verification
     gate = evaluate_chat_quality_gate(
         evidence_pack=compiled.evidence_pack,
-        verification=repair.verification,
+        verification=repair_verification,
         strategy_metadata=strategy.metadata(),
     )
     escalation = plan_chat_escalation(quality_gate=gate)
@@ -667,10 +701,21 @@ def _run_trace_replay_case(
         failures.append(f"quality_action:{gate.action}")
     if escalation.rung != case.expected_escalation:
         failures.append(f"escalation:{escalation.rung}")
-    if repair.action != case.expected_repair_action:
-        failures.append(f"repair_action:{repair.action}")
-    if repair.repaired is not case.expected_repaired:
-        failures.append(f"repair_repaired:{repair.repaired}")
+    if case.trace_kind == OUTPUT_CONTRACT_FAILURE_TRACE_KIND:
+        if contract_evaluation is None:
+            failures.append("output_contract:not_compiled")
+        else:
+            if contract_evaluation.contract_id != case.expected_output_contract_id:
+                failures.append(f"output_contract_id:{contract_evaluation.contract_id}")
+            if contract_evaluation.passed is not case.expected_output_contract_passed:
+                failures.append(f"output_contract_passed:{contract_evaluation.passed}")
+            if contract_evaluation.issues != case.expected_output_contract_issues:
+                failures.append("output_contract_issues:mismatch")
+    else:
+        if repair_action != case.expected_repair_action:
+            failures.append(f"repair_action:{repair_action}")
+        if repair_repaired is not case.expected_repaired:
+            failures.append(f"repair_repaired:{repair_repaired}")
     if (
         case.expected_memory_present
         and case.expected_memory_present not in memory_pack.context
@@ -693,8 +738,20 @@ def _run_trace_replay_case(
             "memory_truncated": memory_pack.manifest.truncated,
             "quality_action": gate.action,
             "escalation_rung": escalation.rung,
-            "repair_action": repair.action,
-            "repair_repaired": repair.repaired,
+            "repair_action": repair_action,
+            "repair_repaired": repair_repaired,
+            "repair_replayed": repair_replayed,
+            "trace_kind": case.trace_kind,
+            "replay_stage": case.replay_stage,
+            "output_contract_id": (
+                contract_evaluation.contract_id if contract_evaluation else None
+            ),
+            "output_contract_passed": (
+                contract_evaluation.passed if contract_evaluation else None
+            ),
+            "output_contract_issues": (
+                list(contract_evaluation.issues) if contract_evaluation else []
+            ),
             **dict(extra_details or {}),
         },
         failures=tuple(failures),

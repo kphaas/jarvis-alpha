@@ -15,6 +15,11 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from brain.privacy.redaction import redact_contact_tokens, short_hash, stable_hash
+from brain.services.chat_output_contract import (
+    CHAT_OUTPUT_CONTRACT_SCHEMA_VERSION,
+    compile_explicit_chat_output_contract,
+    evaluate_chat_output_contract,
+)
 
 CHAT_REDACTED_TRACE_CORPUS_SCHEMA_VERSION = "chat_redacted_trace_corpus.v1"
 CHAT_TRACE_REDACTION_POLICY_VERSION = "chat_trace_redaction.v1"
@@ -25,6 +30,10 @@ REDACTED_TRACE_CORPUS_PATH = Path("docs/evals/chat_redacted_trace_corpus.v1.json
 MAX_TRACE_SAMPLE_BATCH = 25
 MAX_TRACE_TEXT_CHARS = 50_000
 MAX_TRACE_APPROVAL_PUBLIC_KEY_BYTES = 16_384
+MAX_OUTPUT_CONTRACT_ISSUES = 16
+GENERAL_TRACE_KIND = "general"
+OUTPUT_CONTRACT_FAILURE_TRACE_KIND = "output_contract_failure"
+OUTPUT_CONTRACT_FAILURE_REPLAY_STAGE = "post_repair"
 REDACTED_TRACE_CORPUS_DESCRIPTION = (
     "Metadata-safe redacted chat replay cases. Do not store raw prompt, response, "
     "contact, identifier, or private memory text here."
@@ -43,6 +52,8 @@ _TRACE_TEXT_FIELDS = (
 )
 _TRACE_METADATA_FIELDS = (
     "name",
+    "trace_kind",
+    "replay_stage",
     "requested_model",
     "internet_mode",
     "expected_route_mode",
@@ -51,6 +62,9 @@ _TRACE_METADATA_FIELDS = (
     "expected_tool_policy",
     "expected_repair_action",
     "expected_repaired",
+    "expected_output_contract_id",
+    "expected_output_contract_passed",
+    "expected_output_contract_issues",
     "memory_budget_chars",
 )
 _REDACTED_CASE_FIELDS = frozenset(
@@ -101,6 +115,7 @@ _SAMPLE_CANDIDATE_FIELDS = frozenset(
         "memory_context",
         "internet_context",
         "response_text",
+        "trace_kind",
         "outcome",
         "sensitive_terms",
         "expected_memory_present",
@@ -117,6 +132,22 @@ _SAMPLE_OUTCOME_FIELDS = frozenset(
         "chat_repair_repaired",
         "chat_memory_pack_budget_chars",
         "chat_prompt_tool_policy",
+        "chat_output_contract_schema_version",
+        "chat_output_contract_applied",
+        "chat_output_contract_id",
+        "chat_output_contract_passed",
+        "chat_output_contract_issue_count",
+        "chat_output_contract_issues",
+    }
+)
+_SAMPLE_OUTPUT_CONTRACT_FIELDS = frozenset(
+    {
+        "chat_output_contract_schema_version",
+        "chat_output_contract_applied",
+        "chat_output_contract_id",
+        "chat_output_contract_passed",
+        "chat_output_contract_issue_count",
+        "chat_output_contract_issues",
     }
 )
 _SAMPLING_BATCH_FIELDS = frozenset(
@@ -190,6 +221,11 @@ class RedactedTraceReplayCase:
     memory_budget_chars: int = 6000
     expected_memory_present: str | None = None
     expected_memory_absent: str | None = None
+    trace_kind: str = GENERAL_TRACE_KIND
+    replay_stage: str | None = None
+    expected_output_contract_id: str | None = None
+    expected_output_contract_passed: bool | None = None
+    expected_output_contract_issues: tuple[str, ...] = ()
 
 
 def redact_chat_trace_candidate(
@@ -620,6 +656,21 @@ def _case_from_mapping(item: object) -> RedactedTraceReplayCase:
             if item.get("expected_memory_absent")
             else None
         ),
+        trace_kind=str(item.get("trace_kind") or GENERAL_TRACE_KIND),
+        replay_stage=(str(item["replay_stage"]) if item.get("replay_stage") else None),
+        expected_output_contract_id=(
+            str(item["expected_output_contract_id"])
+            if item.get("expected_output_contract_id")
+            else None
+        ),
+        expected_output_contract_passed=(
+            item.get("expected_output_contract_passed")
+            if isinstance(item.get("expected_output_contract_passed"), bool)
+            else None
+        ),
+        expected_output_contract_issues=tuple(
+            str(value) for value in item.get("expected_output_contract_issues", [])
+        ),
     )
 
 
@@ -663,6 +714,7 @@ def validate_redacted_trace_case(item: Mapping[str, object]) -> None:
         raise ValueError("redacted_trace_id_not_safe")
     if item.get("source") != "redacted_real_trace":
         raise ValueError("redacted_trace_source_invalid")
+    _validate_output_contract_failure_case(item)
 
 
 def _sample_candidate(candidate: object) -> dict[str, object]:
@@ -713,6 +765,19 @@ def _sample_candidate(candidate: object) -> dict[str, object]:
     repaired = outcome.get("chat_repair_repaired", False)
     if not isinstance(repaired, bool):
         raise ValueError("trace_sampling_repair_repaired_invalid")
+    trace_kind = _safe_token(
+        candidate.get("trace_kind") or GENERAL_TRACE_KIND,
+        error="trace_sampling_trace_kind_invalid",
+    )
+    if trace_kind not in {GENERAL_TRACE_KIND, OUTPUT_CONTRACT_FAILURE_TRACE_KIND}:
+        raise ValueError("trace_sampling_trace_kind_invalid")
+    contract_failure_metadata = _sample_output_contract_failure_metadata(
+        trace_kind=trace_kind,
+        outcome=outcome,
+        quality_action=quality_action,
+        escalation=escalation,
+        repaired=repaired,
+    )
     budget = _bounded_int(
         outcome.get("chat_memory_pack_budget_chars") or 6000,
         minimum=1,
@@ -725,6 +790,7 @@ def _sample_candidate(candidate: object) -> dict[str, object]:
                 "sampled_real_trace_"
                 f"{short_hash(source_trace_id, namespace='chat_trace_case')}"
             ),
+            "trace_kind": trace_kind,
             "source_trace_id": source_trace_id,
             "prompt": _required_string(candidate, "prompt"),
             "requested_model": _required_safe_token(candidate, "requested_model"),
@@ -748,6 +814,7 @@ def _sample_candidate(candidate: object) -> dict[str, object]:
             "memory_budget_chars": budget,
             "expected_memory_present": candidate.get("expected_memory_present"),
             "expected_memory_absent": candidate.get("expected_memory_absent"),
+            **contract_failure_metadata,
         },
         sensitive_terms=tuple(sensitive_terms),
     )
@@ -758,6 +825,133 @@ def _sample_candidate(candidate: object) -> dict[str, object]:
         raise ValueError("trace_sampling_redaction_required")
     validate_redacted_trace_case(redacted)
     return redacted
+
+
+def _sample_output_contract_failure_metadata(
+    *,
+    trace_kind: str,
+    outcome: Mapping[str, object],
+    quality_action: str,
+    escalation: str,
+    repaired: bool,
+) -> dict[str, object]:
+    supplied_fields = _SAMPLE_OUTPUT_CONTRACT_FIELDS.intersection(outcome)
+    if trace_kind == GENERAL_TRACE_KIND:
+        if supplied_fields:
+            raise ValueError("trace_sampling_output_contract_metadata_not_allowed")
+        return {}
+
+    if supplied_fields != _SAMPLE_OUTPUT_CONTRACT_FIELDS:
+        raise ValueError("trace_sampling_output_contract_metadata_required")
+    if (
+        outcome.get("chat_output_contract_schema_version")
+        != CHAT_OUTPUT_CONTRACT_SCHEMA_VERSION
+    ):
+        raise ValueError("trace_sampling_output_contract_schema_mismatch")
+    if outcome.get("chat_output_contract_applied") is not True:
+        raise ValueError("trace_sampling_output_contract_not_applied")
+    if outcome.get("chat_output_contract_passed") is not False:
+        raise ValueError("trace_sampling_output_contract_failure_required")
+
+    contract_id = _required_safe_token(outcome, "chat_output_contract_id")
+    issues = outcome.get("chat_output_contract_issues")
+    if (
+        not isinstance(issues, list)
+        or not issues
+        or len(issues) > MAX_OUTPUT_CONTRACT_ISSUES
+        or any(
+            not isinstance(issue, str) or not _SAFE_TOKEN_RE.fullmatch(issue)
+            for issue in issues
+        )
+    ):
+        raise ValueError("trace_sampling_output_contract_issues_invalid")
+    if len(set(issues)) != len(issues):
+        raise ValueError("trace_sampling_output_contract_issues_duplicate")
+    issue_count = _bounded_int(
+        outcome.get("chat_output_contract_issue_count"),
+        minimum=1,
+        maximum=MAX_OUTPUT_CONTRACT_ISSUES,
+        error="trace_sampling_output_contract_issue_count_invalid",
+    )
+    if issue_count != len(issues):
+        raise ValueError("trace_sampling_output_contract_issue_count_mismatch")
+    if (
+        quality_action != "replace_with_safe_fallback"
+        or escalation != "operator_review"
+        or outcome.get("chat_repair_action") != "retry_local_once"
+        or repaired is not False
+    ):
+        raise ValueError("trace_sampling_output_contract_failure_outcome_invalid")
+    if outcome.get("chat_outcome_route_mode") != "local":
+        raise ValueError("trace_sampling_output_contract_failure_route_invalid")
+    return {
+        "replay_stage": OUTPUT_CONTRACT_FAILURE_REPLAY_STAGE,
+        "expected_output_contract_id": contract_id,
+        "expected_output_contract_passed": False,
+        "expected_output_contract_issues": list(issues),
+    }
+
+
+def _validate_output_contract_failure_case(item: Mapping[str, object]) -> None:
+    trace_kind = str(item.get("trace_kind") or GENERAL_TRACE_KIND)
+    contract_fields = {
+        "replay_stage",
+        "expected_output_contract_id",
+        "expected_output_contract_passed",
+        "expected_output_contract_issues",
+    }
+    supplied_fields = contract_fields.intersection(item)
+    if trace_kind == GENERAL_TRACE_KIND:
+        if supplied_fields:
+            raise ValueError("redacted_trace_output_contract_metadata_not_allowed")
+        return
+    if trace_kind != OUTPUT_CONTRACT_FAILURE_TRACE_KIND:
+        raise ValueError("redacted_trace_kind_invalid")
+    if supplied_fields != contract_fields:
+        raise ValueError("redacted_trace_output_contract_metadata_required")
+    if item.get("replay_stage") != OUTPUT_CONTRACT_FAILURE_REPLAY_STAGE:
+        raise ValueError("redacted_trace_output_contract_replay_stage_invalid")
+    if item.get("expected_output_contract_passed") is not False:
+        raise ValueError("redacted_trace_output_contract_failure_required")
+    if item.get("expected_route_mode") != "local":
+        raise ValueError("redacted_trace_output_contract_failure_route_invalid")
+    if (
+        item.get("expected_quality_action") != "replace_with_safe_fallback"
+        or item.get("expected_escalation") != "operator_review"
+        or item.get("expected_repair_action") != "retry_local_once"
+        or item.get("expected_repaired") is not False
+    ):
+        raise ValueError("redacted_trace_output_contract_failure_outcome_invalid")
+
+    expected_contract_id = _required_text(item, "expected_output_contract_id")
+    if not _SAFE_TOKEN_RE.fullmatch(expected_contract_id):
+        raise ValueError("redacted_trace_output_contract_id_invalid")
+    expected_issues = item.get("expected_output_contract_issues")
+    if (
+        not isinstance(expected_issues, list)
+        or not expected_issues
+        or len(expected_issues) > MAX_OUTPUT_CONTRACT_ISSUES
+        or any(
+            not isinstance(issue, str) or not _SAFE_TOKEN_RE.fullmatch(issue)
+            for issue in expected_issues
+        )
+        or len(set(expected_issues)) != len(expected_issues)
+    ):
+        raise ValueError("redacted_trace_output_contract_issues_invalid")
+
+    contract = compile_explicit_chat_output_contract(_required_text(item, "prompt"))
+    if contract is None:
+        raise ValueError("redacted_trace_output_contract_not_compilable")
+    if contract.contract_id != expected_contract_id:
+        raise ValueError("redacted_trace_output_contract_id_mismatch")
+    evaluation = evaluate_chat_output_contract(
+        _required_text(item, "response_text"),
+        contract,
+    )
+    if evaluation.passed is not False:
+        raise ValueError("redacted_trace_output_contract_failure_not_reproduced")
+    if list(evaluation.issues) != expected_issues:
+        raise ValueError("redacted_trace_output_contract_issues_mismatch")
 
 
 def _validate_sampling_approval(
