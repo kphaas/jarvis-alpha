@@ -39,6 +39,7 @@ from brain.services.chat_output_contract import (
     apply_chat_output_contract_verification,
     compile_explicit_chat_output_contract,
     evaluate_chat_output_contract,
+    evaluate_chat_output_contract_feasibility,
     generation_policy_for_chat_output_contract,
 )
 from brain.services.chat_quality_trends import summarize_chat_quality_trend
@@ -283,6 +284,16 @@ def _output_contract_eval_result() -> ChatEvalResult:
         contract,
     )
     generation_policy = generation_policy_for_chat_output_contract(contract)
+    conflicting_contract = compile_explicit_chat_output_contract(
+        "Provide a recovery plan for a failed routing rollout with containment, "
+        "operator approval, preserve audit, and do not delete anything. Compare "
+        "purge privacy tradeoff and cost in one sentence."
+    )
+    feasibility = (
+        evaluate_chat_output_contract_feasibility(conflicting_contract)
+        if conflicting_contract is not None
+        else None
+    )
     rejected = evaluate_chat_output_contract("Status is ready.", contract)
     evidence_pack = build_chat_evidence_pack(memory_context="", internet_context=None)
     base_verification = verify_chat_response(
@@ -307,6 +318,10 @@ def _output_contract_eval_result() -> ChatEvalResult:
         failures.append("deterministic_decoding_not_requested")
     if not generation_policy.json_mode:
         failures.append("structured_output_not_requested")
+    if feasibility is None:
+        failures.append("feasibility_contract_not_compiled")
+    elif feasibility.feasible or feasibility.conflicts != ("required_term_forbidden",):
+        failures.append("infeasible_contract_not_blocked")
 
     return ChatEvalResult(
         name="explicit_output_contract_is_enforced",
@@ -320,6 +335,14 @@ def _output_contract_eval_result() -> ChatEvalResult:
             "quality_reason": gate.reason,
             "deterministic_decoding": generation_policy.deterministic,
             "structured_output": generation_policy.json_mode,
+            "infeasible_contract_blocked": bool(
+                feasibility is not None and not feasibility.feasible
+            ),
+            "preflight_action": (
+                feasibility.to_metadata()["chat_output_contract_preflight_action"]
+                if feasibility is not None
+                else None
+            ),
             "model_calls": 0,
         },
         failures=tuple(failures),

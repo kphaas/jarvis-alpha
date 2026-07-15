@@ -16,8 +16,10 @@ from brain.services.chat_evidence_pack import (
 from brain.services.chat_output_contract import (
     ChatOutputContract,
     ChatOutputContractEvaluation,
+    ChatOutputContractFeasibility,
     apply_chat_output_contract_verification,
     evaluate_chat_output_contract,
+    evaluate_chat_output_contract_feasibility,
     normalize_chat_output_contract_response,
     render_chat_output_contract_repair_prompt,
 )
@@ -45,6 +47,7 @@ class ChatRepairLoopResult:
     after_issues: tuple[str, ...]
     model_used: str | None = None
     output_contract: ChatOutputContractEvaluation | None = None
+    output_contract_feasibility: ChatOutputContractFeasibility | None = None
 
     def to_metadata(self) -> dict[str, object]:
         metadata: dict[str, object] = {
@@ -60,6 +63,8 @@ class ChatRepairLoopResult:
         }
         if self.output_contract is not None:
             metadata.update(self.output_contract.to_metadata())
+        if self.output_contract_feasibility is not None:
+            metadata.update(self.output_contract_feasibility.to_metadata())
         return metadata
 
 
@@ -79,6 +84,30 @@ async def run_chat_repair_loop(
         evidence_pack=evidence_pack,
     )
     if output_contract is not None:
+        feasibility = evaluate_chat_output_contract_feasibility(output_contract)
+        if not feasibility.feasible:
+            evaluation = ChatOutputContractEvaluation(
+                contract_id=output_contract.contract_id,
+                passed=False,
+                issues=("contract_infeasible",),
+            )
+            failed_verification = apply_chat_output_contract_verification(
+                verification,
+                evaluation,
+            )
+            return ChatRepairLoopResult(
+                text=response_text,
+                verification=failed_verification,
+                attempted=False,
+                repaired=False,
+                attempts=0,
+                action="skip_generation",
+                reason="output_contract_infeasible",
+                before_issues=failed_verification.issues,
+                after_issues=failed_verification.issues,
+                output_contract=evaluation,
+                output_contract_feasibility=feasibility,
+            )
         return await _run_output_contract_repair(
             response_text=response_text,
             user_msg=user_msg,
