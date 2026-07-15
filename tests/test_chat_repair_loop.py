@@ -21,7 +21,10 @@ from brain.services.chat_repair_loop import (
     repair_chat_response_once,
     run_chat_repair_loop,
 )
-from brain.services.chat_output_contract import ChatOutputContract
+from brain.services.chat_output_contract import (
+    ChatOutputContract,
+    evaluate_chat_output_contract,
+)
 
 
 PHASE32_CONFLICT_PROMPT = (
@@ -210,6 +213,43 @@ async def test_output_contract_stops_after_one_failed_retry() -> None:
     assert repair.reason == "output_contract_retry_failed_verification"
     assert repair.output_contract is not None
     assert repair.output_contract.passed is False
+    assert repair.text == "still not json"
+    assert repair.output_contract == evaluate_chat_output_contract(
+        repair.text,
+        contract,
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_contract_retry_keeps_retry_issues_aligned() -> None:
+    evidence_pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+    contract = ChatOutputContract(
+        contract_id="safe_recovery",
+        required_terms=("privacy",),
+        ordered_terms=("contain", "verify", "rollback", "monitor"),
+    )
+
+    async def retry_once(_prompt: str) -> ChatRepairAttemptResult:
+        return ChatRepairAttemptResult(
+            text="Privacy monitor then contain.",
+            model_used="local",
+        )
+
+    repair = await run_chat_repair_loop(
+        response_text="Contain then rollback.",
+        user_msg="Provide the privacy recovery stages.",
+        evidence_pack=evidence_pack,
+        retry_once=retry_once,
+        output_contract=contract,
+    )
+
+    assert repair.repaired is False
+    assert repair.text == "Privacy monitor then contain."
+    assert repair.output_contract == evaluate_chat_output_contract(
+        repair.text,
+        contract,
+    )
+    assert repair.after_issues == repair.verification.issues
 
 
 @pytest.mark.asyncio

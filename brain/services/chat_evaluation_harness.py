@@ -44,6 +44,7 @@ from brain.services.chat_output_contract import (
 )
 from brain.services.chat_quality_trends import summarize_chat_quality_trend
 from brain.services.chat_redacted_trace_corpus import (
+    LEGACY_UNCLASSIFIED_EVIDENCE_LANE,
     OUTPUT_CONTRACT_FAILURE_TRACE_KIND,
     load_redacted_trace_corpus,
 )
@@ -91,6 +92,8 @@ class _TraceReplayCase:
     expected_output_contract_id: str | None = None
     expected_output_contract_passed: bool | None = None
     expected_output_contract_issues: tuple[str, ...] = ()
+    expected_output_contract_feasible: bool | None = None
+    evidence_lane: str = LEGACY_UNCLASSIFIED_EVIDENCE_LANE
 
 
 def run_chat_eval_harness(
@@ -606,6 +609,10 @@ def _redacted_trace_corpus_eval_results() -> list[ChatEvalResult]:
                 expected_output_contract_id=case.expected_output_contract_id,
                 expected_output_contract_passed=(case.expected_output_contract_passed),
                 expected_output_contract_issues=(case.expected_output_contract_issues),
+                expected_output_contract_feasible=(
+                    case.expected_output_contract_feasible
+                ),
+                evidence_lane=case.evidence_lane,
             ),
             eval_group="redacted_trace_corpus",
             extra_details={
@@ -700,10 +707,14 @@ def _run_trace_replay_case(
         evidence_pack=compiled.evidence_pack,
     )
     contract_evaluation = None
+    contract_feasibility = None
     repair_replayed = True
     if case.trace_kind == OUTPUT_CONTRACT_FAILURE_TRACE_KIND:
         output_contract = compile_explicit_chat_output_contract(case.prompt)
         if output_contract is not None:
+            contract_feasibility = evaluate_chat_output_contract_feasibility(
+                output_contract
+            )
             contract_evaluation = evaluate_chat_output_contract(
                 case.response_text,
                 output_contract,
@@ -751,6 +762,15 @@ def _run_trace_replay_case(
                 failures.append(f"output_contract_passed:{contract_evaluation.passed}")
             if contract_evaluation.issues != case.expected_output_contract_issues:
                 failures.append("output_contract_issues:mismatch")
+            if (
+                case.expected_output_contract_feasible is not None
+                and contract_feasibility is not None
+                and contract_feasibility.feasible
+                is not case.expected_output_contract_feasible
+            ):
+                failures.append(
+                    f"output_contract_feasible:{contract_feasibility.feasible}"
+                )
     else:
         if repair_action != case.expected_repair_action:
             failures.append(f"repair_action:{repair_action}")
@@ -782,6 +802,7 @@ def _run_trace_replay_case(
             "repair_repaired": repair_repaired,
             "repair_replayed": repair_replayed,
             "trace_kind": case.trace_kind,
+            "evidence_lane": case.evidence_lane,
             "replay_stage": case.replay_stage,
             "output_contract_id": (
                 contract_evaluation.contract_id if contract_evaluation else None
@@ -791,6 +812,9 @@ def _run_trace_replay_case(
             ),
             "output_contract_issues": (
                 list(contract_evaluation.issues) if contract_evaluation else []
+            ),
+            "output_contract_feasible": (
+                contract_feasibility.feasible if contract_feasibility else None
             ),
             **dict(extra_details or {}),
         },

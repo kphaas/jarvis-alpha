@@ -17,8 +17,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from brain.privacy.redaction import redact_contact_tokens, short_hash, stable_hash
 from brain.services.chat_output_contract import (
     CHAT_OUTPUT_CONTRACT_SCHEMA_VERSION,
+    CHAT_OUTPUT_CONTRACT_FEASIBILITY_SCHEMA_VERSION,
     compile_explicit_chat_output_contract,
     evaluate_chat_output_contract,
+    evaluate_chat_output_contract_feasibility,
 )
 
 CHAT_REDACTED_TRACE_CORPUS_SCHEMA_VERSION = "chat_redacted_trace_corpus.v1"
@@ -34,6 +36,12 @@ MAX_OUTPUT_CONTRACT_ISSUES = 16
 GENERAL_TRACE_KIND = "general"
 OUTPUT_CONTRACT_FAILURE_TRACE_KIND = "output_contract_failure"
 OUTPUT_CONTRACT_FAILURE_REPLAY_STAGE = "post_repair"
+ASSISTED_PROBE_EVIDENCE_LANE = "assisted_probe"
+HISTORICAL_RAW_EVIDENCE_LANE = "historical_raw"
+LEGACY_UNCLASSIFIED_EVIDENCE_LANE = "legacy_unclassified"
+_CONTRACT_FAILURE_EVIDENCE_LANES = frozenset(
+    {ASSISTED_PROBE_EVIDENCE_LANE, HISTORICAL_RAW_EVIDENCE_LANE}
+)
 REDACTED_TRACE_CORPUS_DESCRIPTION = (
     "Metadata-safe redacted chat replay cases. Do not store raw prompt, response, "
     "contact, identifier, or private memory text here."
@@ -65,6 +73,8 @@ _TRACE_METADATA_FIELDS = (
     "expected_output_contract_id",
     "expected_output_contract_passed",
     "expected_output_contract_issues",
+    "expected_output_contract_feasible",
+    "evidence_lane",
     "memory_budget_chars",
 )
 _REDACTED_CASE_FIELDS = frozenset(
@@ -116,6 +126,7 @@ _SAMPLE_CANDIDATE_FIELDS = frozenset(
         "internet_context",
         "response_text",
         "trace_kind",
+        "evidence_lane",
         "outcome",
         "sensitive_terms",
         "expected_memory_present",
@@ -138,6 +149,11 @@ _SAMPLE_OUTCOME_FIELDS = frozenset(
         "chat_output_contract_passed",
         "chat_output_contract_issue_count",
         "chat_output_contract_issues",
+        "chat_output_contract_feasibility_schema_version",
+        "chat_output_contract_feasible",
+        "chat_output_contract_conflict_count",
+        "chat_output_contract_conflicts",
+        "chat_output_contract_preflight_action",
     }
 )
 _SAMPLE_OUTPUT_CONTRACT_FIELDS = frozenset(
@@ -148,6 +164,11 @@ _SAMPLE_OUTPUT_CONTRACT_FIELDS = frozenset(
         "chat_output_contract_passed",
         "chat_output_contract_issue_count",
         "chat_output_contract_issues",
+        "chat_output_contract_feasibility_schema_version",
+        "chat_output_contract_feasible",
+        "chat_output_contract_conflict_count",
+        "chat_output_contract_conflicts",
+        "chat_output_contract_preflight_action",
     }
 )
 _SAMPLING_BATCH_FIELDS = frozenset(
@@ -226,6 +247,8 @@ class RedactedTraceReplayCase:
     expected_output_contract_id: str | None = None
     expected_output_contract_passed: bool | None = None
     expected_output_contract_issues: tuple[str, ...] = ()
+    expected_output_contract_feasible: bool | None = None
+    evidence_lane: str = LEGACY_UNCLASSIFIED_EVIDENCE_LANE
 
 
 def redact_chat_trace_candidate(
@@ -671,6 +694,14 @@ def _case_from_mapping(item: object) -> RedactedTraceReplayCase:
         expected_output_contract_issues=tuple(
             str(value) for value in item.get("expected_output_contract_issues", [])
         ),
+        expected_output_contract_feasible=(
+            item.get("expected_output_contract_feasible")
+            if isinstance(item.get("expected_output_contract_feasible"), bool)
+            else None
+        ),
+        evidence_lane=str(
+            item.get("evidence_lane") or LEGACY_UNCLASSIFIED_EVIDENCE_LANE
+        ),
     )
 
 
@@ -698,8 +729,12 @@ def validate_redacted_trace_case(item: Mapping[str, object]) -> None:
     ):
         raise ValueError("redacted_trace_text_fields_mismatch")
     rendered = json.dumps(dict(item), sort_keys=True)
-    if redact_contact_tokens(rendered, namespace="chat_trace") != rendered:
-        raise ValueError("redacted_trace_contact_token_leak")
+    for field in _TRACE_TEXT_FIELDS:
+        value = item.get(field)
+        if isinstance(value, str) and (
+            redact_contact_tokens(value, namespace="chat_trace") != value
+        ):
+            raise ValueError("redacted_trace_contact_token_leak")
     if _UUID_RE.search(rendered):
         raise ValueError("redacted_trace_uuid_leak")
     if _SSN_RE.search(rendered) or _IPV4_RE.search(rendered):
@@ -777,6 +812,7 @@ def _sample_candidate(candidate: object) -> dict[str, object]:
         quality_action=quality_action,
         escalation=escalation,
         repaired=repaired,
+        evidence_lane=candidate.get("evidence_lane"),
     )
     budget = _bounded_int(
         outcome.get("chat_memory_pack_budget_chars") or 6000,
@@ -834,10 +870,11 @@ def _sample_output_contract_failure_metadata(
     quality_action: str,
     escalation: str,
     repaired: bool,
+    evidence_lane: object,
 ) -> dict[str, object]:
     supplied_fields = _SAMPLE_OUTPUT_CONTRACT_FIELDS.intersection(outcome)
     if trace_kind == GENERAL_TRACE_KIND:
-        if supplied_fields:
+        if supplied_fields or evidence_lane is not None:
             raise ValueError("trace_sampling_output_contract_metadata_not_allowed")
         return {}
 
@@ -852,6 +889,19 @@ def _sample_output_contract_failure_metadata(
         raise ValueError("trace_sampling_output_contract_not_applied")
     if outcome.get("chat_output_contract_passed") is not False:
         raise ValueError("trace_sampling_output_contract_failure_required")
+    if (
+        outcome.get("chat_output_contract_feasibility_schema_version")
+        != CHAT_OUTPUT_CONTRACT_FEASIBILITY_SCHEMA_VERSION
+        or outcome.get("chat_output_contract_feasible") is not True
+        or outcome.get("chat_output_contract_conflict_count") != 0
+        or outcome.get("chat_output_contract_conflicts") != []
+        or outcome.get("chat_output_contract_preflight_action") != "allow_generation"
+    ):
+        raise ValueError("trace_sampling_output_contract_feasibility_required")
+    if not isinstance(evidence_lane, str) or evidence_lane not in (
+        _CONTRACT_FAILURE_EVIDENCE_LANES
+    ):
+        raise ValueError("trace_sampling_contract_failure_evidence_lane_required")
 
     contract_id = _required_safe_token(outcome, "chat_output_contract_id")
     issues = outcome.get("chat_output_contract_issues")
@@ -889,6 +939,8 @@ def _sample_output_contract_failure_metadata(
         "expected_output_contract_id": contract_id,
         "expected_output_contract_passed": False,
         "expected_output_contract_issues": list(issues),
+        "expected_output_contract_feasible": True,
+        "evidence_lane": evidence_lane,
     }
 
 
@@ -901,14 +953,23 @@ def _validate_output_contract_failure_case(item: Mapping[str, object]) -> None:
         "expected_output_contract_issues",
     }
     supplied_fields = contract_fields.intersection(item)
+    feasibility_fields = {
+        "expected_output_contract_feasible",
+        "evidence_lane",
+    }
+    supplied_feasibility_fields = feasibility_fields.intersection(item)
     if trace_kind == GENERAL_TRACE_KIND:
-        if supplied_fields:
+        if supplied_fields or supplied_feasibility_fields:
             raise ValueError("redacted_trace_output_contract_metadata_not_allowed")
         return
     if trace_kind != OUTPUT_CONTRACT_FAILURE_TRACE_KIND:
         raise ValueError("redacted_trace_kind_invalid")
     if supplied_fields != contract_fields:
         raise ValueError("redacted_trace_output_contract_metadata_required")
+    if supplied_feasibility_fields and supplied_feasibility_fields != (
+        feasibility_fields
+    ):
+        raise ValueError("redacted_trace_output_contract_feasibility_metadata_required")
     if item.get("replay_stage") != OUTPUT_CONTRACT_FAILURE_REPLAY_STAGE:
         raise ValueError("redacted_trace_output_contract_replay_stage_invalid")
     if item.get("expected_output_contract_passed") is not False:
@@ -944,6 +1005,15 @@ def _validate_output_contract_failure_case(item: Mapping[str, object]) -> None:
         raise ValueError("redacted_trace_output_contract_not_compilable")
     if contract.contract_id != expected_contract_id:
         raise ValueError("redacted_trace_output_contract_id_mismatch")
+    if supplied_feasibility_fields:
+        evidence_lane = item.get("evidence_lane")
+        if evidence_lane not in _CONTRACT_FAILURE_EVIDENCE_LANES:
+            raise ValueError("redacted_trace_contract_failure_evidence_lane_invalid")
+        if item.get("expected_output_contract_feasible") is not True:
+            raise ValueError("redacted_trace_output_contract_feasibility_invalid")
+        feasibility = evaluate_chat_output_contract_feasibility(contract)
+        if not feasibility.feasible:
+            raise ValueError("redacted_trace_output_contract_not_feasible")
     evaluation = evaluate_chat_output_contract(
         _required_text(item, "response_text"),
         contract,
