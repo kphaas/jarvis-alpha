@@ -2,7 +2,7 @@
 
 Date: 2026-07-09
 Scope: Alpha chat-quality amplification phases 1-30, with Helm as the operator display surface.
-Verdict: The shipped system now matches the original direction in architecture shape, but it is not complete. AT-0 has moved beyond routing into context, prompt compilation, memory packing, evidence, verification, bounded repair, MCP/tool trust boundaries, escalation, outcomes, registry-backed routing, trace-seeded eval gates, trend observability, a redacted trace corpus contract, an approval-gated real-trace sampling workflow, outcome-calibrated model score overlays, a default-off calibrated-routing rollout gate, objective per-model task benchmarks, signed local benchmark evidence, operator comparison, output contracts, and Helm trend rendering. Phase 30 adds contract-driven deterministic local decoding and a repeated-run stability gate; the remaining work is deployed stability proof, broader operator-approved trace coverage, and optional approved cloud evidence before meaningful active rollout.
+Verdict: The shipped system now matches the original direction in architecture shape, but it is not complete. AT-0 has moved beyond routing into context, prompt compilation, memory packing, evidence, verification, bounded repair, MCP/tool trust boundaries, escalation, outcomes, registry-backed routing, trace-seeded eval gates, trend observability, a redacted trace corpus contract, an approval-gated real-trace sampling workflow, outcome-calibrated model score overlays, a default-off calibrated-routing rollout gate, objective per-model task benchmarks, signed local benchmark evidence, operator comparison, output contracts, and Helm trend rendering. Phase 30 is deployed and its three-sample deterministic local stability gate passed; the remaining work is broader operator-approved contract-failure trace coverage and optional approved cloud evidence before meaningful active rollout.
 
 ## Target Architecture
 
@@ -34,7 +34,9 @@ flowchart TD
     M --> C["Evidence pack"]
     C --> P["Prompt compiler"]
     P --> R["Model capability registry"]
-    R --> V["Response verification"]
+    R --> OC["Output contract"]
+    OC --> LD["Deterministic local decoding"]
+    LD --> V["Response verification"]
     V --> RL["Repair loop"]
     RL --> TB["MCP / tool boundary"]
     TB --> Q["Quality gateway"]
@@ -85,19 +87,19 @@ flowchart TD
 | Per-Model Task Benchmarks | Done, initial | `brain/services/chat_model_task_benchmarks.py` defines one objective task per registry class, compact scoring, and model scorecards; `scripts/benchmark_chat_models.py` is a zero-call plan unless explicitly run live. | Compares local and cloud models on identical reviewed tasks without adding paid calls to PR gates or changing live routing. |
 | Benchmark Evidence Ingestion + Operator Comparison | Done, local evidence approved | `brain/services/chat_model_benchmark_evidence.py` validates detached Ed25519 approvals and exposes metadata-only task comparisons through `/v1/chat/evals`; Helm renders the comparison. | Makes reviewed quality, latency, cost, deployment, and privacy evidence durable without making it routing-eligible. |
 | Local Output Contract Hardening | Done, initial | `brain/services/chat_output_contract.py` compiles and validates explicit response constraints; the existing repair loop permits one local retry before the quality gateway fails closed. | Improves lower-model instruction compliance without provider lock-in, open-ended reflection, or routing changes. |
-| Deterministic Local Decoding | Implemented, deploy proof pending | `brain/routing/generation_policy.py` keeps controls provider-neutral; `brain/services/ollama_client.py` translates them to fixed sampling and native JSON mode; the local benchmark requires three stable samples. | Reduces avoidable local-model variance while preserving model-agnostic validation and default-off routing. |
+| Deterministic Local Decoding | Done, deployed | `brain/routing/generation_policy.py` keeps controls provider-neutral; `brain/services/ollama_client.py` translates them to fixed sampling and native JSON mode; the deployed local benchmark passed three stable samples. | Reduces avoidable local-model variance while preserving model-agnostic validation and default-off routing. |
 
 ## Architecture Fit
 
 | Requirement | State | Evidence | Gap |
 |---|---:|---|---|
 | Model-agnostic strategy selection | Partial | Strategy plan uses the capability registry for local, Perplexity, Claude, Gemini, council, and deep verify paths; the calibrated rollout gate can shadow or canary bounded outcome overlays. | Needs shadow evidence and operator approval before active exposure. |
-| Better lower-model output | Partial | Memory packing, prompt compilation, evidence pack, trace replay, approved corpus sampling, explicit output contracts, contract-driven deterministic local decoding, one bounded local repair, verification/gateway, and objective per-model task benchmarks can expose and replace weak output before final stream. | Needs deployed three-sample stability evidence and operator-approved contract-failure traces; v1 validation is intentionally structural and lexical. |
+| Better lower-model output | Partial | Memory packing, prompt compilation, evidence pack, trace replay, approved corpus sampling, explicit output contracts, deployed contract-driven deterministic local decoding, one bounded local repair, verification/gateway, and objective per-model task benchmarks can expose and replace weak output before final stream. | Needs operator-approved contract-failure traces; v1 validation is intentionally structural and lexical. |
 | Context engineering | Partial | Evidence pack and memory pack record evidence types, memory priority, token budget, freshness labels, and untrusted raw web content. | Ranking is still deterministic and shallow; no learned retrieval policy. |
 | Verification and repair | Partial | One bounded repair pass can strip unsupported web narration, retry empty evidence-backed answers, or correct explicit local output-contract failures before gateway/escalation. | No learned repair policy or multi-step self-critique. |
 | Operator observability | Strong | Helm surfaces outcome, eval details, and trend metadata; Alpha logs quality and escalation decisions. | No trace replay view. |
 | Safety boundary | Strong | Outcome/eval reads are classified `read` and `security_read`; high-risk actions still route through Alpha approvals; MCP tools now have contract-derived boundaries. | Need real invocation wrappers to consume this boundary before broad tool expansion. |
-| Evaluation | Partial | Offline deterministic eval suite has golden strategy, memory pack, prompt compiler, output contracts, deterministic generation-policy checks, quality gateway, trace replay, redacted trace corpus, signed local benchmark evidence, model-score calibration, and outcome audit groups. | Need operator-approved real failure cases and deployed repeated-run local evidence. |
+| Evaluation | Partial | Offline deterministic eval suite has golden strategy, memory pack, prompt compiler, output contracts, deterministic generation-policy checks, quality gateway, trace replay, redacted trace corpus, signed local benchmark evidence, model-score calibration, outcome audit groups, and deployed repeated-run local evidence. | Need operator-approved real contract-failure cases. |
 
 ## 11-Pillar Audit
 
@@ -112,10 +114,10 @@ flowchart TD
 | Usability / Accessibility | 3 | Helm uses compact chips and inspector panel. | Improve signed-out auth messaging only if operators still hit confusion. |
 | Performance | 4 | Required evals run offline with zero model calls; optional benchmark runs measure compact per-task latency. | Capture provider token usage only after adapters expose a stable metadata contract. |
 | Cost | 4 | Current regression suite has `model_calls: 0`; live benchmark calls require explicit models, a hard call cap, and paid-route acknowledgment. | Keep paid benchmark runs bounded and operator approved. |
-| Testability | 4 | Tests assert eval groups, outcome scoring, benchmark rubrics/privacy, deploy/CI gate wiring, synthetic trace replay, redacted corpus replay, and sampling rejection paths. | Add more operator-approved anonymized traces and actual model scorecards. |
-| Privacy / Compliance | 4 | Outcome metadata is compact and authenticated; the sampler requires signed digest-bound review approval, generic/provider-native secret rejection, enforced delete-after-export retention, pseudonymous IDs, and fail-closed fixture validation. | Provision the external signing key before the first real batch. |
+| Testability | 4 | Tests assert eval groups, outcome scoring, benchmark rubrics/privacy, deploy/CI gate wiring, synthetic trace replay, redacted corpus replay, and sampling rejection paths. | Add more operator-approved anonymized contract-failure traces. |
+| Privacy / Compliance | 4 | Outcome metadata is compact and authenticated; the sampler requires signed digest-bound review approval, generic/provider-native secret rejection, enforced delete-after-export retention, pseudonymous IDs, and fail-closed fixture validation. | Keep private-key custody outside Git and rotate approval keys through the existing runbook. |
 
-Weakest pillars: actual approved trace volume, per-model task benchmarks, and learned lower-model repair depth.
+Weakest pillars: actual approved contract-failure trace volume, cloud comparison evidence, and learned lower-model repair depth.
 
 ## Market Reference Anchors
 
@@ -144,13 +146,13 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 | Per-model task benchmarks | Closed initial, local evidence approved | Reliability, cost, extensibility, evaluation | Every registered route can run the same four objective task classes and produce compact score/latency/model identity evidence without changing routing. | M | P1 | Ken/AT-0 | 2026-07-14 | `tests/test_chat_model_task_benchmarks.py`, the `model_task_benchmarks` eval group, `scripts/benchmark_chat_models.py`, and ADR-0034 cover rubric validation, metadata privacy, cost gates, and scorecards. |
 | Benchmark evidence ingestion and operator comparison | Closed initial | Reliability, privacy, observability, evaluation | Detached signatures gate metadata-only benchmark evidence; approved local task quality, latency, cost, deployment, and privacy are visible without changing routing. | M | P1 | Ken/AT-0 | 2026-07-14 | `tests/test_chat_model_benchmark_evidence.py`, ADR-0035, `/v1/chat/evals`, and the Helm model-comparison panel cover approval, ingestion, and operator display. |
 | Local output contract hardening | Closed initial, deployed | Reliability, output quality, latency, privacy | Explicit local response constraints are compiled, normalized safely, validated, repaired once at most, and failed closed without retaining raw output or changing routing. | M | P1 | Ken/AT-0 | 2026-07-14 | PR #700 deployed at `c39ceac`; `2081` tests and `23/23` deterministic chat evals passed on the merged commit. Three deployed live samples passed `10/12` task attempts, with both misses safely blocked, establishing the deterministic-decoding gap closed by Phase 30. |
-| Deterministic local decoding | Implemented, deploy proof pending | Reliability, output quality, latency, extensibility | Explicit contracts now request provider-neutral deterministic controls; Ollama receives fixed sampling and native JSON mode, while Alpha retains exact-key validation and a three-sample gate requires stable quality and canonical output hashes. | M | P1 | Ken/AT-0 | 2026-07-14 | `tests/test_chat_deterministic_decoding.py`, `tests/test_dispatch_ollama.py`, `tests/test_chat_model_task_benchmarks.py`, the `output_contract` eval group, and ADR-0037 cover translation, metadata, call bounds, and stability failure. |
+| Deterministic local decoding | Closed initial, deployed | Reliability, output quality, latency, extensibility | Explicit contracts request provider-neutral deterministic controls; Ollama receives fixed sampling and native JSON mode, while Alpha retains exact-key validation and requires stable quality plus canonical output hashes across three samples. | M | P1 | Ken/AT-0 | 2026-07-15 | PR #701 deployed at `f5b1ab3`; the fan-out deploy passed `2086` tests plus node health and chat-quality smokes. The deployed `llama3.1:8b` benchmark passed `12/12` attempts across three samples with `4/4` stable tasks, one canonical hash per task, `12` local calls, zero repairs, no raw prompt/response retention, no routing-score mutation, and calibrated routing off. |
 
 ## Next Build Queue
 
-1. Merge and deploy Phase 30 with calibrated routing off.
-2. Run the three-sample local stability gate on the deployed model and require stable quality plus one canonical hash per task.
-3. Add operator-approved contract-failure traces through the signed redaction workflow.
+1. Phase 31: add operator-approved contract-failure traces through the signed redaction workflow.
+2. Compare assisted deterministic-output evidence with approved raw local evidence without merging the evidence lanes.
+3. Run an optional bounded cloud comparison only with explicit paid-egress approval.
 
 ## Facts
 
@@ -178,6 +180,9 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 - `chat_eval_payload()` includes `model_calibration` without making live model calls in `brain/services/chat_evaluation_harness.py:80`.
 - Calibrated routing is default off; shadow and active modes require bounded compact outcome evidence in `brain/routing/calibrated_rollout.py`.
 - Active calibrated routing requires a nonzero deterministic canary percentage and automatically holds below its applied-outcome acceptance floor.
+- Phase 30 deployed at `f5b1ab3`; the fan-out deploy passed `2086` tests and its required node health, memory, Beacon, and chat-quality smokes.
+- The deployed local-only `llama3.1:8b` stability run passed `12/12` attempts across three samples and `4/4` stable tasks with one canonical hash per task, `12` calls, and zero repairs.
+- The Phase 30 stability run retained no raw prompts or responses, made no cloud calls, did not mutate routing scores, and confirmed calibrated routing remained off.
 - Trusted Sandbox CI and deploy now run chat quality evals in `.github/workflows/trusted-sandbox-ci.yml:135` and `scripts/jarvisalpha_deploy.sh:487`.
 - Helm reads the eval endpoint and renders Evaluation Harness and trend sections in `jarvis-helm` `src/ask/alphaAskClient.ts` and `src/ask/AskWorkspace.tsx`.
 
@@ -201,7 +206,7 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 
 ## Recommendations
 
-1. Deploy Phase 30 and run the three-sample local stability gate with the 24-call worst-case cap.
+1. Add signed, operator-approved contract-failure traces without committing raw prompts or responses.
 2. Keep assisted deterministic-output results separate from approved raw-model evidence.
 3. Run a bounded paid comparison only with explicit operator approval and an external metadata-only output path.
-4. Do not enable active calibrated routing until shadow comparisons show measurable quality gain without unacceptable cost, privacy, or latency regression.
+4. Keep calibrated routing off until shadow comparisons show measurable quality gain without unacceptable cost, privacy, or latency regression.
