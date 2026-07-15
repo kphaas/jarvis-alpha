@@ -52,6 +52,7 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
         "Contract feasibility preflight",
         "Exact-key structured decoding",
         "Feasible contract-failure corpus expansion",
+        "Historical-raw provenance gate",
     ):
         assert phase in text
 
@@ -76,5 +77,7 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
     assert "Phase 31" not in next_queue
     assert "Phase 33" not in next_queue
     assert "Phase 34" not in next_queue
-    assert "Phase 35" in next_queue
+    assert "Phase 35" not in next_queue
+    assert "Phase 36" in next_queue
     assert "historical_raw" in next_queue
+    assert "naturally occurring" in next_queue

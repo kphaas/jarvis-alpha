@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 import json
 import subprocess
 import sys
@@ -17,6 +18,9 @@ from brain.services.chat_redacted_trace_corpus import (
     CHAT_TRACE_SAMPLE_RETENTION_POLICY,
     CHAT_TRACE_REDACTION_POLICY_VERSION,
     CHAT_TRACE_SAMPLING_WORKFLOW_VERSION,
+    HISTORICAL_RAW_EVIDENCE_LANE,
+    HISTORICAL_RAW_SELECTION_METHOD,
+    HISTORICAL_RAW_SOURCE_SYSTEM,
     LEGACY_UNCLASSIFIED_EVIDENCE_LANE,
     REDACTED_TRACE_CORPUS_PATH,
     build_approved_trace_sample_corpus as _build_approved_trace_sample_corpus,
@@ -244,6 +248,41 @@ def test_signed_contract_failure_replays_post_repair_quality_gate(
     assert "Ken Haas" not in json.dumps(results[0].details)
 
 
+def test_signed_historical_failure_replays_attested_provenance(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    corpus = build_approved_trace_sample_corpus(
+        _historical_contract_failure_payload(),
+        approval_ref="phase36-historical-failure-001",
+    )
+    output = tmp_path / "historical-failure-corpus.json"
+    output.write_text(json.dumps(corpus), encoding="utf-8")
+    sampled_cases = load_redacted_trace_corpus(
+        output,
+        approval_public_key_pem=_TEST_APPROVAL_PUBLIC_KEY_PEM,
+    )
+    monkeypatch.setattr(
+        chat_evaluation_harness,
+        "load_redacted_trace_corpus",
+        lambda: sampled_cases,
+    )
+
+    result = next(
+        result
+        for result in chat_evaluation_harness.run_chat_eval_harness()
+        if result.eval_group == "redacted_trace_corpus"
+    )
+
+    assert result.passed is True
+    assert result.details["evidence_lane"] == HISTORICAL_RAW_EVIDENCE_LANE
+    assert result.details["historical_source_system"] == (HISTORICAL_RAW_SOURCE_SYSTEM)
+    assert result.details["historical_selection_method"] == (
+        HISTORICAL_RAW_SELECTION_METHOD
+    )
+    assert result.details["historical_operator_attested"] is True
+
+
 def test_contract_failure_sampling_requires_failed_post_repair_outcome() -> None:
     payload = _contract_failure_payload()
     payload["candidates"][0]["outcome"]["chat_output_contract_passed"] = True
@@ -299,6 +338,66 @@ def test_contract_failure_sampling_requires_explicit_evidence_lane() -> None:
     with pytest.raises(
         ValueError,
         match="trace_sampling_contract_failure_evidence_lane_required",
+    ):
+        prepare_trace_sample_review_artifact(payload)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "historical_source_system",
+        "historical_selection_method",
+        "historical_operator_attested",
+    ],
+)
+def test_historical_failure_sampling_requires_complete_provenance(field: str) -> None:
+    payload = _historical_contract_failure_payload()
+    del payload["candidates"][0][field]
+
+    with pytest.raises(
+        ValueError,
+        match="trace_sampling_historical_provenance_required",
+    ):
+        prepare_trace_sample_review_artifact(payload)
+
+
+def test_historical_failure_sampling_rejects_invalid_provenance() -> None:
+    payload = _historical_contract_failure_payload()
+    payload["candidates"][0]["historical_operator_attested"] = False
+
+    with pytest.raises(
+        ValueError,
+        match="trace_sampling_historical_provenance_invalid",
+    ):
+        prepare_trace_sample_review_artifact(payload)
+
+
+def test_assisted_probe_rejects_historical_provenance() -> None:
+    payload = _contract_failure_payload()
+    payload["candidates"][0].update(
+        {
+            "historical_source_system": HISTORICAL_RAW_SOURCE_SYSTEM,
+            "historical_selection_method": HISTORICAL_RAW_SELECTION_METHOD,
+            "historical_operator_attested": True,
+        }
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="trace_sampling_historical_provenance_not_allowed",
+    ):
+        prepare_trace_sample_review_artifact(payload)
+
+
+def test_contract_failure_sampling_rejects_mixed_evidence_lanes() -> None:
+    payload = _historical_contract_failure_payload()
+    assisted_candidate = deepcopy(_contract_failure_payload()["candidates"][0])
+    assisted_candidate["source_trace_id"] = "phase36-assisted-mixed-source-001"
+    payload["candidates"].append(assisted_candidate)
+
+    with pytest.raises(
+        ValueError,
+        match="trace_sampling_contract_failure_evidence_lanes_mixed",
     ):
         prepare_trace_sample_review_artifact(payload)
 
@@ -590,6 +689,8 @@ def test_trace_sampling_script_exports_only_redacted_corpus(tmp_path) -> None:
     assert review_summary["status"] == "prepared_for_review"
     assert review_summary["contract_failure_case_count"] == 0
     assert review_summary["feasible_contract_failure_case_count"] == 0
+    assert review_summary["assisted_probe_case_count"] == 0
+    assert review_summary["historical_raw_case_count"] == 0
     assert review_summary["review_artifact_cleanup_required"] is True
     assert "Ken Haas" not in review_output.read_text(encoding="utf-8")
 
@@ -639,6 +740,8 @@ def test_trace_sampling_script_exports_only_redacted_corpus(tmp_path) -> None:
     assert summary["sampled_case_count"] == 1
     assert summary["contract_failure_case_count"] == 0
     assert summary["feasible_contract_failure_case_count"] == 0
+    assert summary["assisted_probe_case_count"] == 0
+    assert summary["historical_raw_case_count"] == 0
     assert summary["raw_trace_text_retained"] is False
     assert summary["raw_source_deleted"] is True
     assert summary["review_artifact_deleted"] is True
@@ -673,11 +776,123 @@ def test_trace_sampling_script_prepares_contract_failure_for_review(tmp_path) ->
     assert summary["status"] == "prepared_for_review"
     assert summary["contract_failure_case_count"] == 1
     assert summary["feasible_contract_failure_case_count"] == 1
+    assert summary["assisted_probe_case_count"] == 1
+    assert summary["historical_raw_case_count"] == 0
     assert review["cases"][0]["trace_kind"] == "output_contract_failure"
     assert review["cases"][0]["replay_stage"] == "post_repair"
     assert review["cases"][0]["expected_output_contract_feasible"] is True
     assert review["cases"][0]["evidence_lane"] == ASSISTED_PROBE_EVIDENCE_LANE
     assert "Ken Haas" not in json.dumps(review)
+
+
+def test_trace_sampling_script_requires_historical_raw_case(tmp_path) -> None:
+    assisted_source = tmp_path / "assisted-source.json"
+    historical_source = tmp_path / "historical-source.json"
+    rejected_review = tmp_path / "rejected-review.json"
+    historical_review = tmp_path / "historical-review.json"
+    assisted_source.write_text(
+        json.dumps(_contract_failure_payload()),
+        encoding="utf-8",
+    )
+    historical_source.write_text(
+        json.dumps(_historical_contract_failure_payload()),
+        encoding="utf-8",
+    )
+
+    rejected = subprocess.run(
+        [
+            sys.executable,
+            "scripts/sample_chat_traces.py",
+            "--input",
+            str(assisted_source),
+            "--prepare-review-output",
+            str(rejected_review),
+            "--require-historical-raw",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert rejected.returncode == 2
+    assert "trace_sampling_historical_raw_case_required" in rejected.stderr
+    assert not rejected_review.exists()
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/sample_chat_traces.py",
+            "--input",
+            str(historical_source),
+            "--prepare-review-output",
+            str(historical_review),
+            "--require-historical-raw",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    summary = json.loads(completed.stdout)
+    review = json.loads(historical_review.read_text(encoding="utf-8"))
+    assert summary["assisted_probe_case_count"] == 0
+    assert summary["historical_raw_case_count"] == 1
+    assert review["cases"][0]["historical_source_system"] == (
+        HISTORICAL_RAW_SOURCE_SYSTEM
+    )
+    assert review["cases"][0]["historical_selection_method"] == (
+        HISTORICAL_RAW_SELECTION_METHOD
+    )
+    assert review["cases"][0]["historical_operator_attested"] is True
+
+
+def test_trace_sampling_script_rejects_assisted_export_when_historical_required(
+    tmp_path,
+) -> None:
+    source = tmp_path / "assisted-source.json"
+    review_path = tmp_path / "assisted-review.json"
+    output = tmp_path / "rejected-corpus.json"
+    public_key = tmp_path / "approval-public-key.pem"
+    payload = _contract_failure_payload()
+    review = prepare_trace_sample_review_artifact(payload)
+    source.write_text(json.dumps(payload), encoding="utf-8")
+    review_path.write_text(json.dumps(review), encoding="utf-8")
+    public_key.write_bytes(_TEST_APPROVAL_PUBLIC_KEY_PEM)
+
+    rejected = subprocess.run(
+        [
+            sys.executable,
+            "scripts/sample_chat_traces.py",
+            "--input",
+            str(source),
+            "--output",
+            str(output),
+            "--approval-ref",
+            "phase31-contract-failure-001",
+            "--approved-redacted-content-sha256",
+            str(review["redacted_content_sha256"]),
+            "--approval-signature",
+            _approval_signature(
+                "phase31-contract-failure-001",
+                str(review["redacted_content_sha256"]),
+            ),
+            "--approval-public-key",
+            str(public_key),
+            "--review-artifact",
+            str(review_path),
+            "--delete-inputs-after-export",
+            "--require-historical-raw",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert rejected.returncode == 2
+    assert "trace_sampling_historical_raw_case_required" in rejected.stderr
+    assert source.exists()
+    assert review_path.exists()
+    assert not output.exists()
 
 
 def build_approved_trace_sample_corpus(
@@ -798,3 +1013,15 @@ def _contract_failure_payload() -> dict[str, object]:
             }
         ],
     }
+
+
+def _historical_contract_failure_payload() -> dict[str, object]:
+    payload = deepcopy(_contract_failure_payload())
+    payload["approval"]["approval_ref"] = "phase36-historical-failure-001"
+    candidate = payload["candidates"][0]
+    candidate["source_trace_id"] = "phase36-historical-source-001"
+    candidate["evidence_lane"] = HISTORICAL_RAW_EVIDENCE_LANE
+    candidate["historical_source_system"] = HISTORICAL_RAW_SOURCE_SYSTEM
+    candidate["historical_selection_method"] = HISTORICAL_RAW_SELECTION_METHOD
+    candidate["historical_operator_attested"] = True
+    return payload
