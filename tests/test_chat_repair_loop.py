@@ -12,6 +12,7 @@ os.environ.setdefault("ALPHA_GATEWAY_URL", "http://127.0.0.1:8188")
 
 from brain.routes import chat
 from brain.services.chat_evidence_pack import (
+    CHAT_OUTPUT_CONTRACT_INFEASIBLE_RESPONSE,
     build_chat_evidence_pack,
     verify_chat_response,
 )
@@ -21,6 +22,13 @@ from brain.services.chat_repair_loop import (
     run_chat_repair_loop,
 )
 from brain.services.chat_output_contract import ChatOutputContract
+
+
+PHASE32_CONFLICT_PROMPT = (
+    "[term:7c6ac55a39ab] exercise. Provide a recovery plan for a failed routing "
+    "rollout with containment, operator approval, preserve audit, and do not delete "
+    "anything. Compare purge privacy tradeoff and cost in one sentence."
+)
 
 
 def test_repair_loop_strips_unsupported_web_narration() -> None:
@@ -202,6 +210,114 @@ async def test_output_contract_stops_after_one_failed_retry() -> None:
     assert repair.reason == "output_contract_retry_failed_verification"
     assert repair.output_contract is not None
     assert repair.output_contract.passed is False
+
+
+@pytest.mark.asyncio
+async def test_output_contract_preflight_skips_repair_call() -> None:
+    calls = 0
+    evidence_pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+    contract = ChatOutputContract(
+        contract_id="conflicting_terms",
+        required_terms=("purge",),
+        forbidden_terms=("purge",),
+    )
+
+    async def retry_once(_prompt: str) -> ChatRepairAttemptResult:
+        nonlocal calls
+        calls += 1
+        return ChatRepairAttemptResult(text="should not run", model_used="local")
+
+    repair = await run_chat_repair_loop(
+        response_text=CHAT_OUTPUT_CONTRACT_INFEASIBLE_RESPONSE,
+        user_msg=PHASE32_CONFLICT_PROMPT,
+        evidence_pack=evidence_pack,
+        retry_once=retry_once,
+        output_contract=contract,
+    )
+
+    assert calls == 0
+    assert repair.attempted is False
+    assert repair.action == "skip_generation"
+    assert repair.reason == "output_contract_infeasible"
+    assert repair.verification.issues == ("output_contract_contract_infeasible",)
+    assert repair.to_metadata()["chat_output_contract_preflight_action"] == (
+        "skip_generation"
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_single_preflight_skips_initial_and_repair_model_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def fake_route(*_args: object, **_kwargs: object) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("infeasible contract must not reach a provider")
+
+    monkeypatch.setattr(chat, "route", fake_route)
+    outcome: dict[str, object] = {}
+    evidence_pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+
+    chunks = [
+        chunk
+        async for chunk in chat._stream_single(
+            f"User: {PHASE32_CONFLICT_PROMPT}",
+            "local",
+            "thread-contract-infeasible",
+            "local",
+            PHASE32_CONFLICT_PROMPT,
+            evidence_pack=evidence_pack,
+            chat_outcome_holder=outcome,
+        )
+    ]
+
+    assert calls == 0
+    assert _streamed_text(chunks) == CHAT_OUTPUT_CONTRACT_INFEASIBLE_RESPONSE
+    assert outcome["chat_output_contract_feasible"] is False
+    assert outcome["chat_output_contract_preflight_action"] == "skip_generation"
+    assert outcome["chat_repair_action"] == "skip_generation"
+    assert outcome["chat_outcome_quality_reason"] == "output_contract_infeasible"
+    assert outcome["chat_outcome_escalation_rung"] == "operator_review"
+
+
+@pytest.mark.asyncio
+async def test_stream_council_preflight_skips_all_model_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def fake_route(*_args: object, **_kwargs: object) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("infeasible contract must not reach council providers")
+
+    monkeypatch.setattr(chat, "route", fake_route)
+    outcome: dict[str, object] = {}
+    detail: dict[str, object] = {}
+    evidence_pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+
+    chunks = [
+        chunk
+        async for chunk in chat._stream_council(
+            f"User: {PHASE32_CONFLICT_PROMPT}",
+            ["claude", "gemini"],
+            "thread-council-contract-infeasible",
+            True,
+            PHASE32_CONFLICT_PROMPT,
+            evidence_pack=evidence_pack,
+            council_detail_holder=detail,
+            chat_outcome_holder=outcome,
+        )
+    ]
+
+    assert calls == 0
+    assert _streamed_text(chunks).strip() == CHAT_OUTPUT_CONTRACT_INFEASIBLE_RESPONSE
+    assert detail["model_count"] == 0
+    assert detail["synthesis_model"] == chat.CONTRACT_FEASIBILITY_MODEL_LABEL
+    assert outcome["chat_output_contract_feasible"] is False
+    assert outcome["chat_outcome_quality_reason"] == "output_contract_infeasible"
 
 
 @pytest.mark.asyncio

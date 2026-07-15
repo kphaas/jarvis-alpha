@@ -6,6 +6,11 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+CHAT_OUTPUT_CONTRACT_INFEASIBLE_RESPONSE = (
+    "The requested output requirements conflict. Clarify which constraint should "
+    "take priority."
+)
+
 UNSUPPORTED_WEB_PROOF_RE = re.compile(
     r"(?is)\b(?:Beacon|web|internet|online|source|citation).{0,60}"
     r"\b(?:verified|checked|confirmed|found|looked\s+up)\b|"
@@ -257,6 +262,10 @@ def evaluate_chat_quality_gate(
             "I need Beacon verification before I can answer that as current or "
             "verified."
         )
+    elif "output_contract_contract_infeasible" in verification.issues:
+        action = "replace_with_safe_fallback"
+        reason = "output_contract_infeasible"
+        fallback_response = CHAT_OUTPUT_CONTRACT_INFEASIBLE_RESPONSE
     elif any(issue.startswith("output_contract_") for issue in verification.issues):
         action = "replace_with_safe_fallback"
         reason = "output_contract_failed"

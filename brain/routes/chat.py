@@ -43,6 +43,7 @@ from brain.routing.calibrated_rollout import (
 from brain.services.at0_self_model import build_at0_self_model, is_at0_self_query
 from brain.services.chat_evaluation_harness import chat_eval_payload
 from brain.services.chat_evidence_pack import (
+    CHAT_OUTPUT_CONTRACT_INFEASIBLE_RESPONSE,
     ChatEscalationDecision,
     ChatEvidencePack,
     ChatQualityGateDecision,
@@ -67,8 +68,11 @@ from brain.services.chat_prompt_compiler import (
     compile_chat_prompt,
 )
 from brain.services.chat_output_contract import (
+    CHAT_OUTPUT_CONTRACT_FEASIBILITY_METADATA_KEYS,
     ChatOutputContract,
+    ChatOutputContractFeasibility,
     compile_explicit_chat_output_contract,
+    evaluate_chat_output_contract_feasibility,
     generation_policy_for_chat_output_contract,
     render_chat_output_contract_prompt,
 )
@@ -121,6 +125,7 @@ BEACON_INSUFFICIENT_MODEL = "beacon/insufficient-evidence"
 MEMORY_COMMAND_MODEL = "alpha/memory-command"
 AT0_SELF_MODEL_LABEL = "alpha/at0-self-model"
 CONVERSATION_QUALITY_MODEL_LABEL = "alpha/conversation-quality-contract"
+CONTRACT_FEASIBILITY_MODEL_LABEL = "alpha/contract-feasibility-preflight"
 COUNCIL_DETAIL_SCHEMA_VERSION = "chat_council_detail.v2"
 COUNCIL_DETAIL_RESPONSE_MAX_CHARS = 2000
 CHAT_OUTCOME_SCHEMA_VERSION = "chat_outcome.v1"
@@ -146,6 +151,7 @@ CHAT_STRATEGY_METADATA_KEYS = (
     "chat_strategy_reason",
     *CHAT_MODEL_CAPABILITY_METADATA_KEYS,
     *CHAT_CALIBRATED_ROUTING_METADATA_KEYS,
+    *CHAT_OUTPUT_CONTRACT_FEASIBILITY_METADATA_KEYS,
 )
 CHAT_OUTCOME_METADATA_KEYS = (
     "chat_outcome_schema_version",
@@ -175,6 +181,7 @@ CHAT_OUTCOME_METADATA_KEYS = (
     "chat_output_contract_passed",
     "chat_output_contract_issue_count",
     "chat_output_contract_issues",
+    *CHAT_OUTPUT_CONTRACT_FEASIBILITY_METADATA_KEYS,
     "chat_outcome_escalation_required",
     "chat_outcome_escalation_rung",
     "chat_outcome_escalation_action",
@@ -876,7 +883,39 @@ def _chat_outcome_message_metadata(
     for key in CHAT_CALIBRATED_ROUTING_METADATA_KEYS:
         if key in route_result:
             metadata[key] = route_result[key]
+    for key in CHAT_OUTPUT_CONTRACT_FEASIBILITY_METADATA_KEYS:
+        if key in route_result:
+            metadata[key] = route_result[key]
     return metadata
+
+
+def _chat_output_contract_preflight(
+    *,
+    contract: ChatOutputContract,
+    route_mode: str,
+    thread_id: str,
+) -> tuple[ChatOutputContractFeasibility, dict[str, object] | None]:
+    feasibility = evaluate_chat_output_contract_feasibility(contract)
+    if feasibility.feasible:
+        return feasibility, None
+    logger.info(
+        "CHAT_OUTPUT_CONTRACT_PREFLIGHT_BLOCKED",
+        extra={
+            "event": "CHAT_OUTPUT_CONTRACT_PREFLIGHT_BLOCKED",
+            "thread_id": thread_id,
+            "contract_id": contract.contract_id,
+            **feasibility.to_metadata(),
+        },
+    )
+    return feasibility, {
+        "result": CHAT_OUTPUT_CONTRACT_INFEASIBLE_RESPONSE,
+        "mode": CONTRACT_FEASIBILITY_MODEL_LABEL,
+        "chat_route_mode": route_mode,
+        "chat_model_path": "none",
+        "chat_strategy": "contract_feasibility_preflight",
+        "chat_strategy_reason": "output_contract_infeasible",
+        **feasibility.to_metadata(),
+    }
 
 
 def _merge_chat_outcome_metadata(
@@ -1995,27 +2034,40 @@ async def _stream_single(
         if mode in {"auto", "local"}
         else None
     )
-    routed_prompt = (
-        render_chat_output_contract_prompt(prompt=prompt, contract=output_contract)
-        if output_contract is not None
-        else prompt
-    )
-    jarvis_prompt = (
-        f"{JARVIS_SYSTEM_PROMPT}\n\n{_runtime_context_prompt()}\n\n{routed_prompt}"
-    )
-    route_kwargs: dict[str, object] = {}
+    feasibility: ChatOutputContractFeasibility | None = None
+    preflight_result: dict[str, object] | None = None
     if output_contract is not None:
-        route_kwargs["generation_policy"] = generation_policy_for_chat_output_contract(
-            output_contract
+        feasibility, preflight_result = _chat_output_contract_preflight(
+            contract=output_contract,
+            route_mode=mode,
+            thread_id=thread_id,
         )
-    if calibrated_routing_observation_enabled():
-        route_kwargs.update(
-            {
-                "routing_outcomes": routing_outcomes,
-                "rollout_key": thread_id,
-            }
+    if preflight_result is not None:
+        result = preflight_result
+    else:
+        routed_prompt = (
+            render_chat_output_contract_prompt(prompt=prompt, contract=output_contract)
+            if output_contract is not None
+            else prompt
         )
-    result = await route(jarvis_prompt, mode, **route_kwargs)
+        jarvis_prompt = (
+            f"{JARVIS_SYSTEM_PROMPT}\n\n{_runtime_context_prompt()}\n\n{routed_prompt}"
+        )
+        route_kwargs: dict[str, object] = {}
+        if output_contract is not None:
+            route_kwargs["generation_policy"] = (
+                generation_policy_for_chat_output_contract(output_contract)
+            )
+        if calibrated_routing_observation_enabled():
+            route_kwargs.update(
+                {
+                    "routing_outcomes": routing_outcomes,
+                    "rollout_key": thread_id,
+                }
+            )
+        result = await route(jarvis_prompt, mode, **route_kwargs)
+        if feasibility is not None:
+            result = {**result, **feasibility.to_metadata()}
     strategy_metadata = _chat_strategy_sse_metadata(result, thread_id)
     if strategy_metadata:
         yield f"data: {json.dumps(strategy_metadata)}\n\n"
@@ -2040,7 +2092,12 @@ async def _stream_single(
     )
     model_used = result.get("mode", mode)
     enforced_output_contract = (
-        output_contract if str(model_used).casefold() == "local" else None
+        output_contract
+        if (
+            (feasibility is not None and not feasibility.feasible)
+            or str(model_used).casefold() == "local"
+        )
+        else None
     )
     if evidence_pack:
         verification = verify_chat_response(
@@ -2170,13 +2227,23 @@ async def _stream_council(
     chat_outcome_holder: dict[str, object] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Parallel council calls → optional per-model stream → synthesis."""
-    tasks = {m: asyncio.create_task(route(prompt, m)) for m in models}
-    results = {}
-    for m, task in tasks.items():
-        try:
-            results[m] = await task
-        except Exception as e:
-            results[m] = {"result": f"[{m} error: {e}]", "mode": m}
+    output_contract = compile_explicit_chat_output_contract(user_msg)
+    feasibility: ChatOutputContractFeasibility | None = None
+    preflight_result: dict[str, object] | None = None
+    if output_contract is not None:
+        feasibility, preflight_result = _chat_output_contract_preflight(
+            contract=output_contract,
+            route_mode="council",
+            thread_id=thread_id,
+        )
+    results: dict[str, Mapping[str, object]] = {}
+    if preflight_result is None:
+        tasks = {m: asyncio.create_task(route(prompt, m)) for m in models}
+        for m, task in tasks.items():
+            try:
+                results[m] = await task
+            except Exception as e:
+                results[m] = {"result": f"[{m} error: {e}]", "mode": m}
 
     if show_council:
         for m, res in results.items():
@@ -2194,29 +2261,34 @@ async def _stream_council(
                 yield f"data: {chunk}\n\n"
                 await asyncio.sleep(0.005)
 
-    council_text = "\n\n".join(
-        f"[{m.upper()}]: {_strip_unrequested_source_references(r.get('result', ''), user_msg)}"
-        for m, r in results.items()
-    )
-    synth_prompt = (
-        f"Synthesize these responses into one clear answer:\n\n{council_text}\n\n"
-        f"Original question: {prompt}"
-    )
-    output_contract = compile_explicit_chat_output_contract(user_msg)
-    if output_contract is not None:
-        synth_prompt = render_chat_output_contract_prompt(
-            prompt=synth_prompt,
-            contract=output_contract,
+    if preflight_result is not None:
+        synth_result = preflight_result
+        synth_text = CHAT_OUTPUT_CONTRACT_INFEASIBLE_RESPONSE
+    else:
+        council_text = "\n\n".join(
+            f"[{m.upper()}]: {_strip_unrequested_source_references(r.get('result', ''), user_msg)}"
+            for m, r in results.items()
         )
-    synth_route_kwargs: dict[str, object] = {}
-    if output_contract is not None:
-        synth_route_kwargs["generation_policy"] = (
-            generation_policy_for_chat_output_contract(output_contract)
+        synth_prompt = (
+            "Synthesize these responses into one clear answer:\n\n"
+            f"{council_text}\n\nOriginal question: {prompt}"
         )
-    synth_result = await route(synth_prompt, "local", **synth_route_kwargs)
-    synth_text = _strip_unrequested_source_references(
-        synth_result.get("result", ""), user_msg
-    )
+        if output_contract is not None:
+            synth_prompt = render_chat_output_contract_prompt(
+                prompt=synth_prompt,
+                contract=output_contract,
+            )
+        synth_route_kwargs: dict[str, object] = {}
+        if output_contract is not None:
+            synth_route_kwargs["generation_policy"] = (
+                generation_policy_for_chat_output_contract(output_contract)
+            )
+        synth_result = await route(synth_prompt, "local", **synth_route_kwargs)
+        if feasibility is not None:
+            synth_result = {**synth_result, **feasibility.to_metadata()}
+        synth_text = _strip_unrequested_source_references(
+            synth_result.get("result", ""), user_msg
+        )
     council_detail_v2 = _build_council_detail_v2(
         results=results,
         user_msg=user_msg,

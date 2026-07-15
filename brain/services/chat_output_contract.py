@@ -11,6 +11,14 @@ from brain.routing.generation_policy import ChatGenerationPolicy
 from brain.services.chat_evidence_pack import ChatResponseVerification
 
 CHAT_OUTPUT_CONTRACT_SCHEMA_VERSION = "chat_output_contract.v1"
+CHAT_OUTPUT_CONTRACT_FEASIBILITY_SCHEMA_VERSION = "chat_output_contract_feasibility.v1"
+CHAT_OUTPUT_CONTRACT_FEASIBILITY_METADATA_KEYS = (
+    "chat_output_contract_feasibility_schema_version",
+    "chat_output_contract_feasible",
+    "chat_output_contract_conflict_count",
+    "chat_output_contract_conflicts",
+    "chat_output_contract_preflight_action",
+)
 _JSON_KEYS_RE = re.compile(
     r"(?is)\b(?:return|respond\s+with|output)\s+only\s+(?:a\s+)?json\s+object"
     r"\s+with\s+keys?\s+(.+?)(?:\.\s|\.$|$)"
@@ -54,6 +62,26 @@ class ChatOutputContractEvaluation:
             "chat_output_contract_passed": self.passed,
             "chat_output_contract_issue_count": len(self.issues),
             "chat_output_contract_issues": list(self.issues),
+        }
+
+
+@dataclass(frozen=True)
+class ChatOutputContractFeasibility:
+    contract_id: str
+    feasible: bool
+    conflicts: tuple[str, ...]
+
+    def to_metadata(self) -> dict[str, object]:
+        return {
+            "chat_output_contract_feasibility_schema_version": (
+                CHAT_OUTPUT_CONTRACT_FEASIBILITY_SCHEMA_VERSION
+            ),
+            "chat_output_contract_feasible": self.feasible,
+            "chat_output_contract_conflict_count": len(self.conflicts),
+            "chat_output_contract_conflicts": list(self.conflicts),
+            "chat_output_contract_preflight_action": (
+                "allow_generation" if self.feasible else "skip_generation"
+            ),
         }
 
 
@@ -178,6 +206,24 @@ def evaluate_chat_output_contract(
     )
 
 
+def evaluate_chat_output_contract_feasibility(
+    contract: ChatOutputContract,
+) -> ChatOutputContractFeasibility:
+    """Reject contracts whose mandatory text necessarily violates an exclusion."""
+
+    conflicts: list[str] = []
+    if _mandatory_terms_conflict(contract.required_terms, contract.forbidden_terms):
+        conflicts.append("required_term_forbidden")
+    if _mandatory_terms_conflict(contract.ordered_terms, contract.forbidden_terms):
+        conflicts.append("ordered_term_forbidden")
+    unique_conflicts = _unique(conflicts)
+    return ChatOutputContractFeasibility(
+        contract_id=contract.contract_id,
+        feasible=not unique_conflicts,
+        conflicts=unique_conflicts,
+    )
+
+
 def normalize_chat_output_contract_response(
     response_text: str,
     contract: ChatOutputContract,
@@ -297,6 +343,20 @@ def _explicit_sentence_limit(user_msg: str) -> int | None:
         return None
     raw = match.group(1).casefold()
     return _NUMBER_WORDS.get(raw, int(raw) if raw.isdigit() else None)
+
+
+def _mandatory_terms_conflict(
+    mandatory_terms: Iterable[str],
+    forbidden_terms: Iterable[str],
+) -> bool:
+    normalized_forbidden = tuple(
+        term.strip().casefold() for term in forbidden_terms if term.strip()
+    )
+    return any(
+        forbidden in mandatory.strip().casefold()
+        for mandatory in mandatory_terms
+        for forbidden in normalized_forbidden
+    )
 
 
 def _sentence_count(text: str) -> int:

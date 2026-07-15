@@ -13,6 +13,7 @@ from brain.services.chat_output_contract import (
     apply_chat_output_contract_verification,
     compile_explicit_chat_output_contract,
     evaluate_chat_output_contract,
+    evaluate_chat_output_contract_feasibility,
     generation_policy_for_chat_output_contract,
     normalize_chat_output_contract_response,
     render_chat_output_contract_repair_prompt,
@@ -113,6 +114,39 @@ def test_safe_recovery_contract_enforces_order_and_destructive_exclusions() -> N
         "Contain, delete all records, verify, rollback, then monitor.",
         contract,
     ).issues == ("required_content_missing", "forbidden_content_present")
+
+
+def test_feasibility_preflight_detects_phase32_required_forbidden_conflict() -> None:
+    contract = compile_explicit_chat_output_contract(
+        "[term:7c6ac55a39ab] exercise. Provide a recovery plan for a failed "
+        "routing rollout with containment, operator approval, preserve audit, and "
+        "do not delete anything. Compare purge privacy tradeoff and cost in one "
+        "sentence."
+    )
+
+    assert contract is not None
+    feasibility = evaluate_chat_output_contract_feasibility(contract)
+    assert feasibility.feasible is False
+    assert feasibility.conflicts == ("required_term_forbidden",)
+    assert feasibility.to_metadata() == {
+        "chat_output_contract_feasibility_schema_version": (
+            "chat_output_contract_feasibility.v1"
+        ),
+        "chat_output_contract_feasible": False,
+        "chat_output_contract_conflict_count": 1,
+        "chat_output_contract_conflicts": ["required_term_forbidden"],
+        "chat_output_contract_preflight_action": "skip_generation",
+    }
+
+
+def test_feasibility_preflight_does_not_reject_narrower_required_term() -> None:
+    contract = ChatOutputContract(
+        contract_id="non_conflicting_substring",
+        required_terms=("delete",),
+        forbidden_terms=("delete all",),
+    )
+
+    assert evaluate_chat_output_contract_feasibility(contract).feasible is True
 
 
 def test_contract_metadata_and_repair_prompt_do_not_retain_prior_response() -> None:
