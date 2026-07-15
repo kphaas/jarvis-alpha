@@ -65,5 +65,7 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
         "Phase 28: Benchmark Evidence Ingestion + Operator Comparison" not in next_queue
     )
     assert "Deploy Phase 29" not in next_queue
-    assert "deploy Phase 30" in next_queue
-    assert "three-sample local stability gate" in next_queue
+    assert "deploy Phase 30" not in next_queue
+    assert "three-sample local stability gate" not in next_queue
+    assert "Phase 31" in next_queue
+    assert "operator-approved contract-failure traces" in next_queue
