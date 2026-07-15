@@ -56,6 +56,16 @@ def main() -> int:
             feasible_contract_failure_case_count = (
                 _feasible_contract_failure_case_count(review_artifact)
             )
+            assisted_probe_case_count = _evidence_lane_case_count(
+                review_artifact,
+                "assisted_probe",
+            )
+            historical_raw_case_count = _evidence_lane_case_count(
+                review_artifact,
+                "historical_raw",
+            )
+            if args.require_historical_raw and historical_raw_case_count == 0:
+                return _reject("trace_sampling_historical_raw_case_required")
             _atomic_write_json(review_path, review_artifact)
             print(
                 json.dumps(
@@ -71,6 +81,8 @@ def main() -> int:
                         "feasible_contract_failure_case_count": (
                             feasible_contract_failure_case_count
                         ),
+                        "assisted_probe_case_count": assisted_probe_case_count,
+                        "historical_raw_case_count": historical_raw_case_count,
                         "raw_trace_text_retained": False,
                         "review_artifact_cleanup_required": True,
                     },
@@ -106,6 +118,16 @@ def main() -> int:
         feasible_contract_failure_case_count = _feasible_contract_failure_case_count(
             review_artifact
         )
+        assisted_probe_case_count = _evidence_lane_case_count(
+            review_artifact,
+            "assisted_probe",
+        )
+        historical_raw_case_count = _evidence_lane_case_count(
+            review_artifact,
+            "historical_raw",
+        )
+        if args.require_historical_raw and historical_raw_case_count == 0:
+            return _reject("trace_sampling_historical_raw_case_required")
         approval_public_key_pem = load_trace_sample_approval_public_key(
             args.approval_public_key
         )
@@ -157,6 +179,8 @@ def main() -> int:
                 "feasible_contract_failure_case_count": (
                     feasible_contract_failure_case_count
                 ),
+                "assisted_probe_case_count": assisted_probe_case_count,
+                "historical_raw_case_count": historical_raw_case_count,
                 "corpus_case_count": len(cases),
                 "raw_trace_text_retained": False,
                 "raw_source_deleted": not source_path.exists(),
@@ -214,6 +238,11 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         help="Write the redacted review artifact outside the repository and exit.",
     )
+    parser.add_argument(
+        "--require-historical-raw",
+        action="store_true",
+        help="Reject preparation or export unless the batch contains historical_raw.",
+    )
     return parser.parse_args()
 
 
@@ -261,6 +290,20 @@ def _feasible_contract_failure_case_count(
         if isinstance(case, Mapping)
         and case.get("trace_kind") == "output_contract_failure"
         and case.get("expected_output_contract_feasible") is True
+    )
+
+
+def _evidence_lane_case_count(
+    review_artifact: Mapping[str, object],
+    evidence_lane: str,
+) -> int:
+    cases = review_artifact.get("cases")
+    if not isinstance(cases, list):
+        raise ValueError("trace_sampling_review_cases_required")
+    return sum(
+        1
+        for case in cases
+        if isinstance(case, Mapping) and case.get("evidence_lane") == evidence_lane
     )
 
 

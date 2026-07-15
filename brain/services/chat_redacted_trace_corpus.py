@@ -39,8 +39,17 @@ OUTPUT_CONTRACT_FAILURE_REPLAY_STAGE = "post_repair"
 ASSISTED_PROBE_EVIDENCE_LANE = "assisted_probe"
 HISTORICAL_RAW_EVIDENCE_LANE = "historical_raw"
 LEGACY_UNCLASSIFIED_EVIDENCE_LANE = "legacy_unclassified"
+HISTORICAL_RAW_SOURCE_SYSTEM = "alpha_chat_history"
+HISTORICAL_RAW_SELECTION_METHOD = "operator_selected_existing_turn"
 _CONTRACT_FAILURE_EVIDENCE_LANES = frozenset(
     {ASSISTED_PROBE_EVIDENCE_LANE, HISTORICAL_RAW_EVIDENCE_LANE}
+)
+_HISTORICAL_PROVENANCE_FIELDS = frozenset(
+    {
+        "historical_source_system",
+        "historical_selection_method",
+        "historical_operator_attested",
+    }
 )
 REDACTED_TRACE_CORPUS_DESCRIPTION = (
     "Metadata-safe redacted chat replay cases. Do not store raw prompt, response, "
@@ -75,6 +84,7 @@ _TRACE_METADATA_FIELDS = (
     "expected_output_contract_issues",
     "expected_output_contract_feasible",
     "evidence_lane",
+    *_HISTORICAL_PROVENANCE_FIELDS,
     "memory_budget_chars",
 )
 _REDACTED_CASE_FIELDS = frozenset(
@@ -127,6 +137,7 @@ _SAMPLE_CANDIDATE_FIELDS = frozenset(
         "response_text",
         "trace_kind",
         "evidence_lane",
+        *_HISTORICAL_PROVENANCE_FIELDS,
         "outcome",
         "sensitive_terms",
         "expected_memory_present",
@@ -249,6 +260,9 @@ class RedactedTraceReplayCase:
     expected_output_contract_issues: tuple[str, ...] = ()
     expected_output_contract_feasible: bool | None = None
     evidence_lane: str = LEGACY_UNCLASSIFIED_EVIDENCE_LANE
+    historical_source_system: str | None = None
+    historical_selection_method: str | None = None
+    historical_operator_attested: bool | None = None
 
 
 def redact_chat_trace_candidate(
@@ -562,6 +576,7 @@ def prepare_trace_sample_review_artifact(
         raise ValueError("trace_sampling_batch_too_large")
 
     sampled_cases = [_sample_candidate(candidate) for candidate in candidates]
+    _require_single_contract_failure_evidence_lane(sampled_cases)
     source_hashes = [
         str(_mapping_value(case.get("redaction")).get("source_trace_hash"))
         for case in sampled_cases
@@ -702,6 +717,21 @@ def _case_from_mapping(item: object) -> RedactedTraceReplayCase:
         evidence_lane=str(
             item.get("evidence_lane") or LEGACY_UNCLASSIFIED_EVIDENCE_LANE
         ),
+        historical_source_system=(
+            str(item["historical_source_system"])
+            if item.get("historical_source_system")
+            else None
+        ),
+        historical_selection_method=(
+            str(item["historical_selection_method"])
+            if item.get("historical_selection_method")
+            else None
+        ),
+        historical_operator_attested=(
+            item.get("historical_operator_attested")
+            if isinstance(item.get("historical_operator_attested"), bool)
+            else None
+        ),
     )
 
 
@@ -813,6 +843,11 @@ def _sample_candidate(candidate: object) -> dict[str, object]:
         escalation=escalation,
         repaired=repaired,
         evidence_lane=candidate.get("evidence_lane"),
+        historical_provenance={
+            field: candidate[field]
+            for field in _HISTORICAL_PROVENANCE_FIELDS
+            if field in candidate
+        },
     )
     budget = _bounded_int(
         outcome.get("chat_memory_pack_budget_chars") or 6000,
@@ -871,10 +906,11 @@ def _sample_output_contract_failure_metadata(
     escalation: str,
     repaired: bool,
     evidence_lane: object,
+    historical_provenance: Mapping[str, object],
 ) -> dict[str, object]:
     supplied_fields = _SAMPLE_OUTPUT_CONTRACT_FIELDS.intersection(outcome)
     if trace_kind == GENERAL_TRACE_KIND:
-        if supplied_fields or evidence_lane is not None:
+        if supplied_fields or evidence_lane is not None or historical_provenance:
             raise ValueError("trace_sampling_output_contract_metadata_not_allowed")
         return {}
 
@@ -902,6 +938,10 @@ def _sample_output_contract_failure_metadata(
         _CONTRACT_FAILURE_EVIDENCE_LANES
     ):
         raise ValueError("trace_sampling_contract_failure_evidence_lane_required")
+    provenance_metadata = _sample_historical_provenance(
+        evidence_lane=evidence_lane,
+        historical_provenance=historical_provenance,
+    )
 
     contract_id = _required_safe_token(outcome, "chat_output_contract_id")
     issues = outcome.get("chat_output_contract_issues")
@@ -941,7 +981,31 @@ def _sample_output_contract_failure_metadata(
         "expected_output_contract_issues": list(issues),
         "expected_output_contract_feasible": True,
         "evidence_lane": evidence_lane,
+        **provenance_metadata,
     }
+
+
+def _sample_historical_provenance(
+    *,
+    evidence_lane: str,
+    historical_provenance: Mapping[str, object],
+) -> dict[str, object]:
+    supplied_fields = set(historical_provenance)
+    if evidence_lane == ASSISTED_PROBE_EVIDENCE_LANE:
+        if supplied_fields:
+            raise ValueError("trace_sampling_historical_provenance_not_allowed")
+        return {}
+    if supplied_fields != _HISTORICAL_PROVENANCE_FIELDS:
+        raise ValueError("trace_sampling_historical_provenance_required")
+    if (
+        historical_provenance.get("historical_source_system")
+        != HISTORICAL_RAW_SOURCE_SYSTEM
+        or historical_provenance.get("historical_selection_method")
+        != HISTORICAL_RAW_SELECTION_METHOD
+        or historical_provenance.get("historical_operator_attested") is not True
+    ):
+        raise ValueError("trace_sampling_historical_provenance_invalid")
+    return dict(historical_provenance)
 
 
 def _validate_output_contract_failure_case(item: Mapping[str, object]) -> None:
@@ -958,8 +1022,9 @@ def _validate_output_contract_failure_case(item: Mapping[str, object]) -> None:
         "evidence_lane",
     }
     supplied_feasibility_fields = feasibility_fields.intersection(item)
+    supplied_historical_fields = _HISTORICAL_PROVENANCE_FIELDS.intersection(item)
     if trace_kind == GENERAL_TRACE_KIND:
-        if supplied_fields or supplied_feasibility_fields:
+        if supplied_fields or supplied_feasibility_fields or supplied_historical_fields:
             raise ValueError("redacted_trace_output_contract_metadata_not_allowed")
         return
     if trace_kind != OUTPUT_CONTRACT_FAILURE_TRACE_KIND:
@@ -970,6 +1035,8 @@ def _validate_output_contract_failure_case(item: Mapping[str, object]) -> None:
         feasibility_fields
     ):
         raise ValueError("redacted_trace_output_contract_feasibility_metadata_required")
+    if supplied_historical_fields and not supplied_feasibility_fields:
+        raise ValueError("redacted_trace_historical_provenance_not_allowed")
     if item.get("replay_stage") != OUTPUT_CONTRACT_FAILURE_REPLAY_STAGE:
         raise ValueError("redacted_trace_output_contract_replay_stage_invalid")
     if item.get("expected_output_contract_passed") is not False:
@@ -1009,6 +1076,11 @@ def _validate_output_contract_failure_case(item: Mapping[str, object]) -> None:
         evidence_lane = item.get("evidence_lane")
         if evidence_lane not in _CONTRACT_FAILURE_EVIDENCE_LANES:
             raise ValueError("redacted_trace_contract_failure_evidence_lane_invalid")
+        _validate_historical_provenance(
+            item,
+            evidence_lane=str(evidence_lane),
+            supplied_fields=supplied_historical_fields,
+        )
         if item.get("expected_output_contract_feasible") is not True:
             raise ValueError("redacted_trace_output_contract_feasibility_invalid")
         feasibility = evaluate_chat_output_contract_feasibility(contract)
@@ -1022,6 +1094,38 @@ def _validate_output_contract_failure_case(item: Mapping[str, object]) -> None:
         raise ValueError("redacted_trace_output_contract_failure_not_reproduced")
     if list(evaluation.issues) != expected_issues:
         raise ValueError("redacted_trace_output_contract_issues_mismatch")
+
+
+def _validate_historical_provenance(
+    item: Mapping[str, object],
+    *,
+    evidence_lane: str,
+    supplied_fields: frozenset[str],
+) -> None:
+    if evidence_lane == ASSISTED_PROBE_EVIDENCE_LANE:
+        if supplied_fields:
+            raise ValueError("redacted_trace_historical_provenance_not_allowed")
+        return
+    if supplied_fields != _HISTORICAL_PROVENANCE_FIELDS:
+        raise ValueError("redacted_trace_historical_provenance_required")
+    if (
+        item.get("historical_source_system") != HISTORICAL_RAW_SOURCE_SYSTEM
+        or item.get("historical_selection_method") != HISTORICAL_RAW_SELECTION_METHOD
+        or item.get("historical_operator_attested") is not True
+    ):
+        raise ValueError("redacted_trace_historical_provenance_invalid")
+
+
+def _require_single_contract_failure_evidence_lane(
+    cases: Sequence[Mapping[str, object]],
+) -> None:
+    lanes = {
+        str(case.get("evidence_lane"))
+        for case in cases
+        if case.get("trace_kind") == OUTPUT_CONTRACT_FAILURE_TRACE_KIND
+    }
+    if len(lanes) > 1:
+        raise ValueError("trace_sampling_contract_failure_evidence_lanes_mixed")
 
 
 def _validate_sampling_approval(

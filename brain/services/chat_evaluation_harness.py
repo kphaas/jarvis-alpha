@@ -619,6 +619,9 @@ def _redacted_trace_corpus_eval_results() -> list[ChatEvalResult]:
                 "source_trace_hash": case.source_trace_hash,
                 "redaction_policy_version": case.redaction_policy_version,
                 "raw_trace_text_retained": False,
+                "historical_source_system": case.historical_source_system,
+                "historical_selection_method": case.historical_selection_method,
+                "historical_operator_attested": (case.historical_operator_attested),
             },
         )
         for case in load_redacted_trace_corpus()
