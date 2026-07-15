@@ -52,6 +52,7 @@ def main() -> int:
             if review_path == source_path:
                 return _reject("trace_sampling_review_output_matches_input")
             review_artifact = prepare_trace_sample_review_artifact(sample_payload)
+            contract_failure_case_count = _contract_failure_case_count(review_artifact)
             _atomic_write_json(review_path, review_artifact)
             print(
                 json.dumps(
@@ -63,6 +64,7 @@ def main() -> int:
                         ],
                         "approval_statement": review_artifact["approval_statement"],
                         "sampled_case_count": review_artifact["sampled_case_count"],
+                        "contract_failure_case_count": contract_failure_case_count,
                         "raw_trace_text_retained": False,
                         "review_artifact_cleanup_required": True,
                     },
@@ -94,6 +96,7 @@ def main() -> int:
         expected_review_artifact = prepare_trace_sample_review_artifact(sample_payload)
         if review_artifact != expected_review_artifact:
             return _reject("trace_sampling_review_artifact_mismatch")
+        contract_failure_case_count = _contract_failure_case_count(review_artifact)
         approval_public_key_pem = load_trace_sample_approval_public_key(
             args.approval_public_key
         )
@@ -141,6 +144,7 @@ def main() -> int:
                 ],
                 "approval_key_sha256": latest_batch["approval_key_sha256"],
                 "sampled_case_count": latest_batch["sampled_case_count"],
+                "contract_failure_case_count": contract_failure_case_count,
                 "corpus_case_count": len(cases),
                 "raw_trace_text_retained": False,
                 "raw_source_deleted": not source_path.exists(),
@@ -219,6 +223,18 @@ def _atomic_write_json(path: Path, payload: object) -> None:
     finally:
         if temporary_path is not None and temporary_path.exists():
             temporary_path.unlink()
+
+
+def _contract_failure_case_count(review_artifact: Mapping[str, object]) -> int:
+    cases = review_artifact.get("cases")
+    if not isinstance(cases, list):
+        raise ValueError("trace_sampling_review_cases_required")
+    return sum(
+        1
+        for case in cases
+        if isinstance(case, Mapping)
+        and case.get("trace_kind") == "output_contract_failure"
+    )
 
 
 def _reject(reason: str) -> int:

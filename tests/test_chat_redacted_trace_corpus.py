@@ -176,6 +176,81 @@ def test_sampled_trace_replays_through_quality_pipeline(
     assert results[0].details["raw_trace_text_retained"] is False
 
 
+def test_signed_contract_failure_replays_post_repair_quality_gate(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    corpus = build_approved_trace_sample_corpus(
+        _contract_failure_payload(),
+        approval_ref="phase31-contract-failure-001",
+    )
+    output = tmp_path / "contract-failure-corpus.json"
+    output.write_text(json.dumps(corpus), encoding="utf-8")
+    sampled_cases = load_redacted_trace_corpus(
+        output,
+        approval_public_key_pem=_TEST_APPROVAL_PUBLIC_KEY_PEM,
+    )
+    monkeypatch.setattr(
+        chat_evaluation_harness,
+        "load_redacted_trace_corpus",
+        lambda: sampled_cases,
+    )
+
+    results = [
+        result
+        for result in chat_evaluation_harness.run_chat_eval_harness()
+        if result.eval_group == "redacted_trace_corpus"
+    ]
+
+    assert len(results) == 1
+    assert results[0].passed is True
+    assert results[0].details["trace_kind"] == "output_contract_failure"
+    assert results[0].details["replay_stage"] == "post_repair"
+    assert results[0].details["output_contract_id"] == "exact_json"
+    assert results[0].details["output_contract_passed"] is False
+    assert results[0].details["output_contract_issues"] == ["json_object_required"]
+    assert results[0].details["quality_action"] == "replace_with_safe_fallback"
+    assert results[0].details["escalation_rung"] == "operator_review"
+    assert results[0].details["repair_action"] == "retry_local_once"
+    assert results[0].details["repair_replayed"] is False
+    assert "Ken Haas" not in json.dumps(results[0].details)
+
+
+def test_contract_failure_sampling_requires_failed_post_repair_outcome() -> None:
+    payload = _contract_failure_payload()
+    payload["candidates"][0]["outcome"]["chat_output_contract_passed"] = True
+
+    with pytest.raises(
+        ValueError,
+        match="trace_sampling_output_contract_failure_required",
+    ):
+        prepare_trace_sample_review_artifact(payload)
+
+
+def test_contract_failure_sampling_requires_reproducible_contract_issues() -> None:
+    payload = _contract_failure_payload()
+    payload["candidates"][0]["outcome"]["chat_output_contract_issues"] = [
+        "json_keys_mismatch"
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="redacted_trace_output_contract_issues_mismatch",
+    ):
+        prepare_trace_sample_review_artifact(payload)
+
+
+def test_general_sampling_rejects_output_contract_metadata() -> None:
+    payload = _contract_failure_payload()
+    payload["candidates"][0]["trace_kind"] = "general"
+
+    with pytest.raises(
+        ValueError,
+        match="trace_sampling_output_contract_metadata_not_allowed",
+    ):
+        prepare_trace_sample_review_artifact(payload)
+
+
 def test_signed_trace_corpus_loads_with_configured_public_key(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -433,6 +508,7 @@ def test_trace_sampling_script_exports_only_redacted_corpus(tmp_path) -> None:
     )
     review_summary = json.loads(prepared.stdout)
     assert review_summary["status"] == "prepared_for_review"
+    assert review_summary["contract_failure_case_count"] == 0
     assert review_summary["review_artifact_cleanup_required"] is True
     assert "Ken Haas" not in review_output.read_text(encoding="utf-8")
 
@@ -480,6 +556,7 @@ def test_trace_sampling_script_exports_only_redacted_corpus(tmp_path) -> None:
     rendered = output.read_text(encoding="utf-8")
     assert summary["status"] == "exported"
     assert summary["sampled_case_count"] == 1
+    assert summary["contract_failure_case_count"] == 0
     assert summary["raw_trace_text_retained"] is False
     assert summary["raw_source_deleted"] is True
     assert summary["review_artifact_deleted"] is True
@@ -488,6 +565,34 @@ def test_trace_sampling_script_exports_only_redacted_corpus(tmp_path) -> None:
     assert "Ken Haas" not in completed.stdout
     assert "Ken Haas" not in rendered
     assert "real-message-id-123" not in rendered
+
+
+def test_trace_sampling_script_prepares_contract_failure_for_review(tmp_path) -> None:
+    source = tmp_path / "contract-failure-source.json"
+    review_output = tmp_path / "contract-failure-review.json"
+    source.write_text(json.dumps(_contract_failure_payload()), encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/sample_chat_traces.py",
+            "--input",
+            str(source),
+            "--prepare-review-output",
+            str(review_output),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    summary = json.loads(completed.stdout)
+    review = json.loads(review_output.read_text(encoding="utf-8"))
+    assert summary["status"] == "prepared_for_review"
+    assert summary["contract_failure_case_count"] == 1
+    assert review["cases"][0]["trace_kind"] == "output_contract_failure"
+    assert review["cases"][0]["replay_stage"] == "post_repair"
+    assert "Ken Haas" not in json.dumps(review)
 
 
 def build_approved_trace_sample_corpus(
@@ -553,6 +658,50 @@ def _sample_payload() -> dict[str, object]:
                 "sensitive_terms": ["Ken Haas"],
                 "expected_memory_present": "[current]",
                 "expected_memory_absent": "[historical]",
+            }
+        ],
+    }
+
+
+def _contract_failure_payload() -> dict[str, object]:
+    return {
+        "schema_version": CHAT_TRACE_SAMPLING_WORKFLOW_VERSION,
+        "approval": {
+            "status": "approved",
+            "approval_ref": "phase31-contract-failure-001",
+            "purpose": "offline_quality_eval",
+            "sensitive_terms_reviewed": True,
+            "raw_source_retention": CHAT_TRACE_SAMPLE_RETENTION_POLICY,
+        },
+        "candidates": [
+            {
+                "source_trace_id": "phase31-contract-failure-source-001",
+                "trace_kind": "output_contract_failure",
+                "prompt": (
+                    "Ken Haas asked: Return only a JSON object with key status."
+                ),
+                "requested_model": "local",
+                "internet_mode": "none",
+                "memory_context": "[current] Ken Haas prefers exact JSON.",
+                "internet_context": None,
+                "response_text": "Ken Haas still did not receive JSON.",
+                "outcome": {
+                    "chat_outcome_schema_version": "chat_outcome.v1",
+                    "chat_outcome_route_mode": "local",
+                    "chat_outcome_quality_action": "replace_with_safe_fallback",
+                    "chat_outcome_escalation_rung": "operator_review",
+                    "chat_repair_action": "retry_local_once",
+                    "chat_repair_repaired": False,
+                    "chat_memory_pack_budget_chars": 6000,
+                    "chat_prompt_tool_policy": "no_external_tool_executed",
+                    "chat_output_contract_schema_version": "chat_output_contract.v1",
+                    "chat_output_contract_applied": True,
+                    "chat_output_contract_id": "exact_json",
+                    "chat_output_contract_passed": False,
+                    "chat_output_contract_issue_count": 1,
+                    "chat_output_contract_issues": ["json_object_required"],
+                },
+                "sensitive_terms": ["Ken Haas"],
             }
         ],
     }
