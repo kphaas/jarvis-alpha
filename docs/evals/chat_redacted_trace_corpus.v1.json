@@ -1,17 +1,21 @@
 {
-  "schema_version": "chat_redacted_trace_corpus.v1",
-  "redaction_policy_version": "chat_trace_redaction.v1",
-  "description": "Metadata-safe redacted chat replay cases. Do not store raw prompt, response, contact, identifier, or private memory text here.",
-  "sampling_workflow_version": "chat_trace_sampling.v1",
-  "sampling_batches": [],
   "cases": [
     {
+      "expected_escalation": "none",
+      "expected_memory_absent": "beta.openai.com is current",
+      "expected_memory_present": "[current]",
+      "expected_quality_action": "accept",
+      "expected_repair_action": "none",
+      "expected_repaired": false,
+      "expected_route_mode": "perplexity",
+      "expected_tool_policy": "beacon_evidence_is_authority",
+      "internet_context": "Official source: platform.openai.com/docs",
+      "internet_mode": "web_search",
+      "memory_context": "[current] [term:f49ee3f2f6e3] has stale memory that beta.openai.com may still be the docs host.",
       "name": "redacted_real_trace_beacon_over_stale_memory",
-      "trace_id": "redacted-real-trace-001",
-      "source": "redacted_real_trace",
+      "prompt": "[term:f49ee3f2f6e3] asked where the official OpenAI API docs live. Ignore contact token [email:0ee158bf8797].",
       "redaction": {
         "policy_version": "chat_trace_redaction.v1",
-        "source_trace_hash": "sha256:9a28c4fa85f556aeafcc8c8e0d4d9375ef3b9f7a6e963e42c9b39e2cb33c7f63",
         "raw_trace_text_retained": false,
         "redacted_text_fields": [
           "prompt",
@@ -21,22 +25,78 @@
           "expected_memory_present",
           "expected_memory_absent"
         ],
-        "replacement_count": 3
+        "replacement_count": 3,
+        "source_trace_hash": "sha256:9a28c4fa85f556aeafcc8c8e0d4d9375ef3b9f7a6e963e42c9b39e2cb33c7f63"
       },
-      "prompt": "[term:f49ee3f2f6e3] asked where the official OpenAI API docs live. Ignore contact token [email:0ee158bf8797].",
       "requested_model": "auto",
-      "internet_mode": "web_search",
-      "memory_context": "[current] [term:f49ee3f2f6e3] has stale memory that beta.openai.com may still be the docs host.",
-      "internet_context": "Official source: platform.openai.com/docs",
       "response_text": "The official source is platform.openai.com/docs.",
-      "expected_route_mode": "perplexity",
-      "expected_quality_action": "accept",
-      "expected_escalation": "none",
-      "expected_tool_policy": "beacon_evidence_is_authority",
-      "expected_repair_action": "none",
+      "source": "redacted_real_trace",
+      "trace_id": "redacted-real-trace-001"
+    },
+    {
+      "expected_escalation": "operator_review",
+      "expected_memory_absent": null,
+      "expected_memory_present": null,
+      "expected_output_contract_id": "privacy_tradeoff+safe_recovery+sentence_limit",
+      "expected_output_contract_issues": [
+        "forbidden_content_present",
+        "required_order_invalid"
+      ],
+      "expected_output_contract_passed": false,
+      "expected_quality_action": "replace_with_safe_fallback",
+      "expected_repair_action": "retry_local_once",
       "expected_repaired": false,
-      "expected_memory_present": "[current]",
-      "expected_memory_absent": "beta.openai.com is current"
+      "expected_route_mode": "local",
+      "expected_tool_policy": "no_external_tool_executed",
+      "internet_context": null,
+      "internet_mode": "none",
+      "memory_budget_chars": 6000,
+      "memory_context": "",
+      "name": "sampled_real_trace_6eab1c49eaf5",
+      "prompt": "[term:7c6ac55a39ab] exercise. Provide a recovery plan for a failed routing rollout with containment, operator approval, preserve audit, and do not delete anything. Compare purge privacy tradeoff and cost in one sentence.",
+      "redaction": {
+        "policy_version": "chat_trace_redaction.v1",
+        "raw_trace_text_retained": false,
+        "redacted_text_fields": [
+          "prompt",
+          "memory_context",
+          "internet_context",
+          "response_text",
+          "expected_memory_present",
+          "expected_memory_absent"
+        ],
+        "replacement_count": 1,
+        "source_trace_hash": "sha256:5e61a7b01c534a5ac6266dd50a4384a2cfb8b324ff216bd7475ba7a0692ce7cb"
+      },
+      "replay_stage": "post_repair",
+      "requested_model": "local",
+      "response_text": "Here is a revised recovery plan for a failed routing rollout:\n\n**Containment**: Immediately isolate the affected system to prevent further propagation of the issue and preserve audit logs; **Operator Approval**: Obtain approval from the operator to proceed with the recovery process, ensuring that all necessary steps are taken to minimize downtime and data loss; **Preserve Audit**: Ensure that all audit logs are preserved throughout the recovery process to maintain a complete record of events; **Rollback**: Roll back the routing rollout to its previous state, using version control or backup systems as needed; **Monitor**: Continuously monitor system performance and audit logs after rollback to ensure that the issue has been fully resolved and that no further problems arise; Purge privacy tradeoff: Purging data may compromise user privacy, but it can also reduce storage costs.",
+      "schema_version": "chat_redacted_trace_corpus.v1",
+      "source": "redacted_real_trace",
+      "trace_id": "redacted-trace-2646703d4c32",
+      "trace_kind": "output_contract_failure"
     }
-  ]
+  ],
+  "description": "Metadata-safe redacted chat replay cases. Do not store raw prompt, response, contact, identifier, or private memory text here.",
+  "redaction_policy_version": "chat_trace_redaction.v1",
+  "sampling_batches": [
+    {
+      "approval_key_sha256": "sha256:be3c6e921d0bf6a3222c17e3e52217a0b25985a3a48b93cd8a6c08a7192ca6f9",
+      "approval_ref": "phase32-contract-failure-001",
+      "approval_signature": "ckM1flN03UQdTkgP9JrsqIIhp55Oac1gJW/30uCIIbo8LF4gpGUpjoYnxYEFSRIrcFSV1V1i/7f+2lL2cyk8AA==",
+      "approval_status": "approved",
+      "approved_redacted_content_sha256": "sha256:0f4be4442ac8f7710f68032c2508d45fa939fd7fd72e6551a0d501b754305974",
+      "purpose": "offline_quality_eval",
+      "raw_source_retention": "delete_raw_after_export",
+      "raw_trace_text_retained": false,
+      "sampled_case_count": 1,
+      "sensitive_terms_reviewed": true,
+      "source_trace_hashes": [
+        "sha256:5e61a7b01c534a5ac6266dd50a4384a2cfb8b324ff216bd7475ba7a0692ce7cb"
+      ],
+      "workflow_version": "chat_trace_sampling.v1"
+    }
+  ],
+  "sampling_workflow_version": "chat_trace_sampling.v1",
+  "schema_version": "chat_redacted_trace_corpus.v1"
 }

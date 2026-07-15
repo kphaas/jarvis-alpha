@@ -77,7 +77,7 @@ def test_chat_eval_payload_scoreboards_outcome_metadata() -> None:
     assert payload["case_groups"]["quality_gateway"]["case_count"] == 4
     assert payload["case_groups"]["mcp_tool_boundary"]["case_count"] == 1
     assert payload["case_groups"]["trace_replay"]["case_count"] == 4
-    assert payload["case_groups"]["redacted_trace_corpus"]["case_count"] == 1
+    assert payload["case_groups"]["redacted_trace_corpus"]["case_count"] == 2
     assert payload["case_groups"]["model_task_benchmarks"]["case_count"] == 1
     assert payload["case_groups"]["calibrated_routing_rollout"]["case_count"] == 1
     assert payload["case_groups"]["model_score_calibration"]["case_count"] == 1

@@ -682,7 +682,7 @@ async def test_chat_eval_harness_scores_compact_outcome_rows(
     assert response["model_calibration"]["evaluated_outcome_count"] == 1
     assert response["model_benchmark_evidence"]["status"] == "ready"
     assert response["model_benchmark_evidence"]["routing_eligible"] is False
-    assert "content" not in json.dumps(response)
+    assert '"content":' not in json.dumps(response)
     assert conn.fetch_calls[0][1] == ("ken", 5)
 
 
