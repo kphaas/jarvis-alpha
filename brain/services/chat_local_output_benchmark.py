@@ -436,6 +436,7 @@ async def run_local_output_contract_benchmark(
                             user_msg=task.prompt,
                             contract=contract,
                             issues=evaluation.issues,
+                            failed_response_text=response_text,
                         ),
                         "local",
                         generation_policy,

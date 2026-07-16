@@ -176,9 +176,7 @@ def evaluate_chat_output_contract(
         elif set(parsed) != set(contract.exact_json_keys):
             issues.append("json_keys_mismatch")
 
-    if contract.required_terms and not all(
-        term.casefold() in normalized for term in contract.required_terms
-    ):
+    if _missing_required_terms(response_text=cleaned, contract=contract):
         issues.append("required_content_missing")
     if contract.forbidden_terms and any(
         term.casefold() in normalized for term in contract.forbidden_terms
@@ -289,14 +287,42 @@ def render_chat_output_contract_repair_prompt(
     user_msg: str,
     contract: ChatOutputContract,
     issues: tuple[str, ...],
+    failed_response_text: str | None = None,
 ) -> str:
     issue_summary = ", ".join(issues) or "contract_validation_failed"
+    targeted_instruction = _targeted_missing_term_instruction(
+        response_text=failed_response_text,
+        contract=contract,
+        issues=issues,
+    )
     return (
         "Repair the answer to the original request below. The prior answer is not "
         "included because it is untrusted. Return only the corrected answer.\n\n"
         f"Original request:\n{user_msg}\n\n"
         f"Validation failures: {issue_summary}\n\n"
+        f"{targeted_instruction}"
         f"{_contract_instruction(contract)}"
+    )
+
+
+def _targeted_missing_term_instruction(
+    *,
+    response_text: str | None,
+    contract: ChatOutputContract,
+    issues: tuple[str, ...],
+) -> str:
+    if response_text is None or "required_content_missing" not in issues:
+        return ""
+    missing_terms = _missing_required_terms(
+        response_text=response_text,
+        contract=contract,
+    )
+    if not missing_terms:
+        return ""
+    checklist = "\n".join(f"- {term}" for term in missing_terms)
+    return (
+        "Targeted validation checklist (include each missing term exactly):\n"
+        f"{checklist}\n\n"
     )
 
 
@@ -357,6 +383,17 @@ def _mandatory_terms_conflict(
         forbidden in mandatory.strip().casefold()
         for mandatory in mandatory_terms
         for forbidden in normalized_forbidden
+    )
+
+
+def _missing_required_terms(
+    *,
+    response_text: str,
+    contract: ChatOutputContract,
+) -> tuple[str, ...]:
+    normalized = response_text.casefold()
+    return tuple(
+        term for term in contract.required_terms if term.casefold() not in normalized
     )
 
 

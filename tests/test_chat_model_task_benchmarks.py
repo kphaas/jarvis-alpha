@@ -278,6 +278,65 @@ def test_local_output_contract_benchmark_repairs_each_task_once() -> None:
     assert "Project Atlas is paused" not in rendered
 
 
+def test_local_output_benchmark_targets_only_missing_contract_terms() -> None:
+    task = next(
+        task
+        for task in ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_TASKS
+        if task.task_id == "adversarial_analysis_one_sentence_tradeoff"
+    )
+    prompts: list[str] = []
+    initial_response = (
+        "Recommend Option C within cost 4; its local privacy is stronger than "
+        "Option A's external privacy."
+    )
+
+    async def invoke(
+        prompt: str,
+        route_mode: str,
+        generation_policy: object,
+    ) -> dict[str, object]:
+        prompts.append(prompt)
+        if prompt.startswith("Repair"):
+            checklist = prompt.split(
+                "Targeted validation checklist (include each missing term exactly):\n",
+                maxsplit=1,
+            )[1].split("\n\nOutput contract", maxsplit=1)[0]
+            assert checklist == "- 97"
+            result = task.reference_response
+        else:
+            result = initial_response
+        return {
+            "result": result,
+            "mode": route_mode,
+            "chat_model_id": "llama3.1:8b",
+            "chat_deterministic_decoding_applied": True,
+            "chat_structured_output_applied": bool(
+                getattr(generation_policy, "json_mode")
+            ),
+            "chat_exact_key_schema_applied": bool(
+                getattr(generation_policy, "exact_json_keys")
+            ),
+        }
+
+    payload = asyncio.run(
+        run_local_output_contract_benchmark(
+            invoke=invoke,
+            tasks=(task,),
+            samples=1,
+        )
+    )
+
+    assert len(prompts) == 2
+    assert initial_response not in prompts[1]
+    assert payload["status"] == "passed"
+    assert payload["reporting"] == {
+        "model_calls": 2,
+        "repair_attempts": 1,
+        "raw_prompts_retained": False,
+        "raw_responses_retained": False,
+    }
+
+
 def test_local_output_contract_script_defaults_to_zero_call_plan() -> None:
     completed = subprocess.run(
         [sys.executable, "scripts/benchmark_local_output_contract.py"],

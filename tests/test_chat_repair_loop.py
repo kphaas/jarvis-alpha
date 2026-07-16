@@ -5,9 +5,18 @@ import os
 
 import pytest
 
-os.environ.setdefault("ALPHA_DB_DSN", "postgresql://test:test@localhost/test")
-os.environ.setdefault("ALPHA_DB_DSN_WRITER", "postgresql://test:test@localhost/test")
-os.environ.setdefault("ALPHA_DB_DSN_BUDDY", "postgresql://test:test@localhost/test")
+os.environ.setdefault(
+    "ALPHA_DB_DSN",
+    "postgresql://test:test@localhost/test",  # pragma: allowlist secret
+)
+os.environ.setdefault(
+    "ALPHA_DB_DSN_WRITER",
+    "postgresql://test:test@localhost/test",  # pragma: allowlist secret
+)
+os.environ.setdefault(
+    "ALPHA_DB_DSN_BUDDY",
+    "postgresql://test:test@localhost/test",  # pragma: allowlist secret
+)
 os.environ.setdefault("ALPHA_GATEWAY_URL", "http://127.0.0.1:8188")
 
 from brain.routes import chat
@@ -183,6 +192,49 @@ async def test_output_contract_retries_once_and_records_reason_only_metadata() -
     metadata = repair.to_metadata()
     assert metadata["chat_output_contract_passed"] is True
     assert "The status is ready" not in json.dumps(metadata)
+
+
+@pytest.mark.asyncio
+async def test_output_contract_retry_targets_missing_terms_without_retaining_them() -> (
+    None
+):
+    prompts: list[str] = []
+    evidence_pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+    contract = ChatOutputContract(
+        contract_id="targeted_analysis",
+        required_terms=("Missing-Needle-9F", "local"),
+    )
+
+    async def retry_once(prompt: str) -> ChatRepairAttemptResult:
+        prompts.append(prompt)
+        return ChatRepairAttemptResult(
+            text="Use the local plan with Missing-Needle-9F.",
+            model_used="local",
+        )
+
+    repair = await run_chat_repair_loop(
+        response_text="Use the local plan. SENSITIVE-FAILED-ANSWER",
+        user_msg="Recommend the local plan and include the required identifier.",
+        evidence_pack=evidence_pack,
+        retry_once=retry_once,
+        output_contract=contract,
+    )
+
+    assert len(prompts) == 1
+    checklist = (
+        prompts[0]
+        .split(
+            "Targeted validation checklist (include each missing term exactly):\n",
+            maxsplit=1,
+        )[1]
+        .split("\n\nOutput contract", maxsplit=1)[0]
+    )
+    assert checklist == "- Missing-Needle-9F"
+    assert "SENSITIVE-FAILED-ANSWER" not in prompts[0]
+    assert repair.repaired is True
+    metadata = json.dumps(repair.to_metadata())
+    assert "Missing-Needle-9F" not in metadata
+    assert "SENSITIVE-FAILED-ANSWER" not in metadata
 
 
 @pytest.mark.asyncio
