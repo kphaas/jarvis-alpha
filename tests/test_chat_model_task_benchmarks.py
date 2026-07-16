@@ -332,9 +332,73 @@ def test_local_output_benchmark_targets_only_missing_contract_terms() -> None:
     assert payload["reporting"] == {
         "model_calls": 2,
         "repair_attempts": 1,
+        "constraint_finalizations": 0,
         "raw_prompts_retained": False,
         "raw_responses_retained": False,
     }
+
+
+def test_structured_finalizer_closes_phase39_analysis_failures() -> None:
+    tasks = tuple(
+        task
+        for task in ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_TASKS
+        if task.task_id
+        in {
+            "adversarial_analysis_one_sentence_tradeoff",
+            "adversarial_analysis_dual_threshold",
+        }
+    )
+    repaired_responses = {
+        "adversarial_analysis_one_sentence_tradeoff": (
+            "Recommend Option C within cost 4; its local privacy is stronger than "
+            "Option A's external privacy."
+        ),
+        "adversarial_analysis_dual_threshold": (
+            "Recommend Plan B because quality 96 clears the minimum while latency "
+            "55 stays below the limit. It keeps privacy private."
+        ),
+    }
+
+    async def invoke(
+        prompt: str,
+        route_mode: str,
+        generation_policy: object,
+    ) -> dict[str, object]:
+        task = next(task for task in tasks if task.prompt in prompt)
+        return {
+            "result": repaired_responses[task.task_id],
+            "mode": route_mode,
+            "chat_model_id": "llama3.1:8b",
+            "chat_deterministic_decoding_applied": True,
+            "chat_structured_output_applied": bool(
+                getattr(generation_policy, "json_mode")
+            ),
+            "chat_exact_key_schema_applied": bool(
+                getattr(generation_policy, "exact_json_keys")
+            ),
+        }
+
+    payload = asyncio.run(
+        run_local_output_contract_benchmark(
+            invoke=invoke,
+            tasks=tasks,
+            samples=1,
+        )
+    )
+    rendered = json.dumps(payload)
+
+    assert payload["status"] == "passed"
+    assert payload["passed"] == 2
+    assert payload["reporting"] == {
+        "model_calls": 4,
+        "repair_attempts": 2,
+        "constraint_finalizations": 2,
+        "raw_prompts_retained": False,
+        "raw_responses_retained": False,
+    }
+    assert all(row["score"] == 100 for row in payload["results"])
+    assert all(row["constraint_finalizer_applied"] for row in payload["results"])
+    assert all(response not in rendered for response in repaired_responses.values())
 
 
 def test_local_output_contract_script_defaults_to_zero_call_plan() -> None:
@@ -405,6 +469,7 @@ def test_adversarial_local_output_profile_passes_reviewed_references() -> None:
     assert payload["reporting"] == {
         "model_calls": 8,
         "repair_attempts": 0,
+        "constraint_finalizations": 0,
         "raw_prompts_retained": False,
         "raw_responses_retained": False,
     }

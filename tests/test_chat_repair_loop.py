@@ -32,6 +32,7 @@ from brain.services.chat_repair_loop import (
 )
 from brain.services.chat_output_contract import (
     ChatOutputContract,
+    ChatOutputConstraintSlot,
     evaluate_chat_output_contract,
 )
 
@@ -235,6 +236,49 @@ async def test_output_contract_retry_targets_missing_terms_without_retaining_the
     metadata = json.dumps(repair.to_metadata())
     assert "Missing-Needle-9F" not in metadata
     assert "SENSITIVE-FAILED-ANSWER" not in metadata
+
+
+@pytest.mark.asyncio
+async def test_output_contract_finalizes_one_typed_slot_after_retry() -> None:
+    calls = 0
+    evidence_pack = build_chat_evidence_pack(memory_context="", internet_context=None)
+    contract = ChatOutputContract(
+        contract_id="analysis",
+        required_terms=("option c", "97", "local"),
+        max_sentences=1,
+        constraint_slots=(
+            ChatOutputConstraintSlot(
+                slot_id="reliability",
+                required_terms=("97",),
+                render_text="Reliability: 97.",
+            ),
+        ),
+    )
+
+    async def retry_once(_prompt: str) -> ChatRepairAttemptResult:
+        nonlocal calls
+        calls += 1
+        return ChatRepairAttemptResult(
+            text="Recommend Option C for local execution.",
+            model_used="local",
+        )
+
+    repair = await run_chat_repair_loop(
+        response_text="Recommend Option C for local execution.",
+        user_msg="Recommend the option and include its reliability.",
+        evidence_pack=evidence_pack,
+        retry_once=retry_once,
+        output_contract=contract,
+    )
+
+    assert calls == 1
+    assert repair.repaired is True
+    assert repair.action == "retry_local_once_then_finalize"
+    assert repair.reason == "output_contract_finalized"
+    assert repair.text == ("Recommend Option C for local execution; Reliability: 97.")
+    assert repair.output_contract is not None
+    assert repair.output_contract.passed is True
+    assert "97" not in json.dumps(repair.to_metadata())
 
 
 @pytest.mark.asyncio

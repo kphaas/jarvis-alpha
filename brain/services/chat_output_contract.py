@@ -35,6 +35,15 @@ _NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 
 
 @dataclass(frozen=True)
+class ChatOutputConstraintSlot:
+    """Typed content that Alpha may safely restore after one failed repair."""
+
+    slot_id: str
+    required_terms: tuple[str, ...]
+    render_text: str
+
+
+@dataclass(frozen=True)
 class ChatOutputContract:
     """Constraints that can be validated without provider-specific APIs."""
 
@@ -44,6 +53,7 @@ class ChatOutputContract:
     forbidden_terms: tuple[str, ...] = ()
     ordered_terms: tuple[str, ...] = ()
     max_sentences: int | None = None
+    constraint_slots: tuple[ChatOutputConstraintSlot, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -108,19 +118,33 @@ def compile_explicit_chat_output_contract(
     required_terms: list[str] = []
     forbidden_terms: list[str] = []
     ordered_terms: tuple[str, ...] = ()
+    constraint_slots: list[ChatOutputConstraintSlot] = []
 
     if json_keys:
         features.append("exact_json")
 
     if "privacy tradeoff" in normalized:
         features.append("privacy_tradeoff")
-        required_terms.append("privacy")
+        privacy_terms = ["privacy"]
         if "cost" in normalized:
-            required_terms.append("cost")
-        required_terms.extend(
+            privacy_terms.append("cost")
+        privacy_values = tuple(
             match.group(1)
             for match in _PRIVACY_VALUE_RE.finditer(user_msg)
             if match.group(1).casefold() not in {"a", "and", "the"}
+        )
+        privacy_terms.extend(privacy_values)
+        required_terms.extend(privacy_terms)
+        label = (
+            "Privacy and cost tradeoff" if "cost" in normalized else "Privacy tradeoff"
+        )
+        detail = " versus ".join(privacy_values)
+        constraint_slots.append(
+            ChatOutputConstraintSlot(
+                slot_id="privacy_tradeoff",
+                required_terms=_unique(privacy_terms),
+                render_text=f"{label}: {detail}." if detail else f"{label}.",
+            )
         )
 
     if "recovery plan" in normalized and (
@@ -155,6 +179,7 @@ def compile_explicit_chat_output_contract(
         forbidden_terms=_unique(forbidden_terms),
         ordered_terms=ordered_terms,
         max_sentences=max_sentences,
+        constraint_slots=tuple(constraint_slots),
     )
 
 
@@ -211,10 +236,13 @@ def evaluate_chat_output_contract_feasibility(
     """Reject contracts whose mandatory text necessarily violates an exclusion."""
 
     conflicts: list[str] = []
+    if contract.max_sentences is not None and contract.max_sentences < 1:
+        conflicts.append("sentence_limit_invalid")
     if _mandatory_terms_conflict(contract.required_terms, contract.forbidden_terms):
         conflicts.append("required_term_forbidden")
     if _mandatory_terms_conflict(contract.ordered_terms, contract.forbidden_terms):
         conflicts.append("ordered_term_forbidden")
+    conflicts.extend(_constraint_slot_conflicts(contract))
     unique_conflicts = _unique(conflicts)
     return ChatOutputContractFeasibility(
         contract_id=contract.contract_id,
@@ -258,6 +286,40 @@ def normalize_chat_output_contract_response(
         return normalized, normalized != response_text
 
     return response_text, False
+
+
+def finalize_chat_output_contract_response(
+    response_text: str,
+    contract: ChatOutputContract,
+) -> tuple[str, bool]:
+    """Restore one typed missing slot only when the whole contract then passes."""
+
+    if (
+        not response_text.strip()
+        or contract.exact_json_keys
+        or not contract.constraint_slots
+        or not evaluate_chat_output_contract_feasibility(contract).feasible
+    ):
+        return response_text, False
+
+    missing_slots = tuple(
+        slot
+        for slot in contract.constraint_slots
+        if _missing_terms(response_text=response_text, terms=slot.required_terms)
+    )
+    if len(missing_slots) != 1:
+        return response_text, False
+
+    base = response_text.strip()
+    render_text = missing_slots[0].render_text.strip()
+    separator = " " if base.endswith((".", "!", "?")) else ". "
+    candidate, _normalized = normalize_chat_output_contract_response(
+        f"{base}{separator}{render_text}",
+        contract,
+    )
+    if not evaluate_chat_output_contract(candidate, contract).passed:
+        return response_text, False
+    return candidate, candidate != response_text
 
 
 def apply_chat_output_contract_verification(
@@ -386,15 +448,64 @@ def _mandatory_terms_conflict(
     )
 
 
+def _constraint_slot_conflicts(contract: ChatOutputContract) -> tuple[str, ...]:
+    if not contract.constraint_slots:
+        return ()
+
+    conflicts: list[str] = []
+    slot_ids = [slot.slot_id.casefold() for slot in contract.constraint_slots]
+    if contract.exact_json_keys:
+        conflicts.append("constraint_slot_json_unsupported")
+    if len(slot_ids) != len(set(slot_ids)) or any(
+        not _IDENTIFIER_RE.fullmatch(slot_id) for slot_id in slot_ids
+    ):
+        conflicts.append("constraint_slot_invalid")
+
+    required_terms = {term.casefold() for term in contract.required_terms}
+    for slot in contract.constraint_slots:
+        if (
+            not slot.required_terms
+            or any(not term.strip() for term in slot.required_terms)
+            or len(slot.required_terms)
+            != len({term.casefold() for term in slot.required_terms})
+            or not slot.render_text.strip()
+        ):
+            conflicts.append("constraint_slot_invalid")
+            continue
+        if any(term.casefold() not in required_terms for term in slot.required_terms):
+            conflicts.append("constraint_slot_unbound")
+        if _missing_terms(
+            response_text=slot.render_text,
+            terms=slot.required_terms,
+        ):
+            conflicts.append("constraint_slot_render_incomplete")
+        if any(
+            forbidden.casefold() in slot.render_text.casefold()
+            and all(
+                forbidden.casefold() not in term.casefold()
+                for term in slot.required_terms
+            )
+            for forbidden in contract.forbidden_terms
+        ):
+            conflicts.append("constraint_slot_forbidden")
+    return _unique(conflicts)
+
+
 def _missing_required_terms(
     *,
     response_text: str,
     contract: ChatOutputContract,
 ) -> tuple[str, ...]:
+    return _missing_terms(response_text=response_text, terms=contract.required_terms)
+
+
+def _missing_terms(
+    *,
+    response_text: str,
+    terms: Iterable[str],
+) -> tuple[str, ...]:
     normalized = response_text.casefold()
-    return tuple(
-        term for term in contract.required_terms if term.casefold() not in normalized
-    )
+    return tuple(term for term in terms if term.casefold() not in normalized)
 
 
 def _sentence_count(text: str) -> int:

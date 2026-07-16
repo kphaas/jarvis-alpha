@@ -16,8 +16,10 @@ from brain.services.chat_model_task_benchmarks import (
 )
 from brain.services.chat_output_contract import (
     ChatOutputContract,
+    ChatOutputConstraintSlot,
     compile_explicit_chat_output_contract,
     evaluate_chat_output_contract,
+    finalize_chat_output_contract_response,
     generation_policy_for_chat_output_contract,
     normalize_chat_output_contract_response,
     render_chat_output_contract_prompt,
@@ -25,7 +27,7 @@ from brain.services.chat_output_contract import (
 )
 from jarvis_common.logging_config import get_logger
 
-CHAT_LOCAL_OUTPUT_BENCHMARK_SCHEMA_VERSION = "chat_local_output_contract_benchmark.v2"
+CHAT_LOCAL_OUTPUT_BENCHMARK_SCHEMA_VERSION = "chat_local_output_contract_benchmark.v3"
 CHAT_LOCAL_OUTPUT_BENCHMARK_PROFILE_VERSION = "chat_local_output_contract_profiles.v1"
 BASELINE_LOCAL_OUTPUT_BENCHMARK_PROFILE = "baseline"
 ADVERSARIAL_LOCAL_OUTPUT_BENCHMARK_PROFILE = "adversarial"
@@ -371,6 +373,7 @@ def local_output_benchmark_plan(
         "reporting": {
             "model_calls": 0,
             "repair_attempts": 0,
+            "constraint_finalizations": 0,
             "raw_prompts_retained": False,
             "raw_responses_retained": False,
         },
@@ -395,10 +398,12 @@ async def run_local_output_contract_benchmark(
     fully_passing_samples = 0
     model_calls = 0
     repair_attempts = 0
+    constraint_finalizations = 0
     for sample_index in range(1, samples + 1):
         sample_rows: list[dict[str, object]] = []
         for task in tasks:
             task_repair_attempted = False
+            constraint_finalizer_applied = False
             contract = _benchmark_contract(task)
             generation_policy = generation_policy_for_chat_output_contract(contract)
             started_ns = perf_counter_ns()
@@ -460,6 +465,16 @@ async def run_local_output_contract_benchmark(
                 )
                 normalized = normalized or retry_normalized
                 evaluation = evaluate_chat_output_contract(response_text, contract)
+                if repair_error is None and not evaluation.passed:
+                    response_text, constraint_finalizer_applied = (
+                        finalize_chat_output_contract_response(response_text, contract)
+                    )
+                    if constraint_finalizer_applied:
+                        constraint_finalizations += 1
+                        evaluation = evaluate_chat_output_contract(
+                            response_text,
+                            contract,
+                        )
 
             latency_ms = max(0, round((perf_counter_ns() - started_ns) / 1_000_000))
             score = score_chat_model_task_response(
@@ -476,6 +491,7 @@ async def run_local_output_contract_benchmark(
                 **generation_policy.metadata(),
                 "sample_index": sample_index,
                 "repair_attempted": task_repair_attempted,
+                "constraint_finalizer_applied": constraint_finalizer_applied,
                 "deterministic_normalization_applied": normalized,
                 "chat_deterministic_decoding_applied": final_response.get(
                     "chat_deterministic_decoding_applied"
@@ -504,6 +520,7 @@ async def run_local_output_contract_benchmark(
                     "passed": row["passed"],
                     "contract_passed": evaluation.passed,
                     "repair_attempted": row["repair_attempted"],
+                    "constraint_finalizer_applied": row["constraint_finalizer_applied"],
                     "latency_ms": latency_ms,
                     "error_code": score.error_code,
                 },
@@ -544,6 +561,7 @@ async def run_local_output_contract_benchmark(
         "reporting": {
             "model_calls": model_calls,
             "repair_attempts": repair_attempts,
+            "constraint_finalizations": constraint_finalizations,
             "raw_prompts_retained": False,
             "raw_responses_retained": False,
         },
@@ -595,6 +613,9 @@ def _task_stability(
         "attempts": len(task_rows),
         "passed": passed,
         "repair_attempts": sum(bool(row.get("repair_attempted")) for row in task_rows),
+        "constraint_finalizations": sum(
+            bool(row.get("constraint_finalizer_applied")) for row in task_rows
+        ),
         "unique_response_hash_count": len(unique_hashes),
         "quality_stable": len(task_rows) == samples and passed == samples,
         "output_stable": len(task_rows) == samples and len(unique_hashes) == 1,
@@ -604,12 +625,21 @@ def _task_stability(
 def _benchmark_contract(task: ChatModelBenchmarkTask) -> ChatOutputContract:
     explicit = compile_explicit_chat_output_contract(task.prompt)
     required_terms: list[str] = []
+    constraint_slots: list[ChatOutputConstraintSlot] = []
     forbidden_terms: list[str] = []
     ordered_terms: tuple[str, ...] = ()
     exact_json_keys: tuple[str, ...] = ()
     for check in task.checks:
         if check.kind == "contains_all":
             required_terms.extend(check.terms)
+            if task.task_class == "analysis":
+                constraint_slots.append(
+                    ChatOutputConstraintSlot(
+                        slot_id=check.check_id,
+                        required_terms=check.terms,
+                        render_text=_benchmark_constraint_slot_text(check),
+                    )
+                )
         elif check.kind == "excludes_all":
             forbidden_terms.extend(check.terms)
         elif check.kind == "ordered":
@@ -624,7 +654,18 @@ def _benchmark_contract(task: ChatModelBenchmarkTask) -> ChatOutputContract:
         forbidden_terms=tuple(dict.fromkeys(forbidden_terms)),
         ordered_terms=ordered_terms,
         max_sentences=explicit.max_sentences if explicit is not None else None,
+        constraint_slots=tuple(constraint_slots),
     )
+
+
+def _benchmark_constraint_slot_text(check: ChatModelBenchmarkCheck) -> str:
+    label = check.check_id.replace("_", " ").capitalize()
+    details = (
+        tuple(term for term in check.terms if term.casefold() not in label.casefold())
+        or check.terms
+    )
+    separator = " versus " if "privacy" in check.check_id else "; "
+    return f"{label}: {separator.join(details)}."
 
 
 def _response_error(

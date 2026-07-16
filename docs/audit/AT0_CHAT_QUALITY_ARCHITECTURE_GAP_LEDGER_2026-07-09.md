@@ -1,8 +1,8 @@
 # AT-0 Chat Quality Architecture Review + Gap Ledger
 
 Date: 2026-07-09
-Scope: Alpha chat-quality amplification phases 1-39, with Helm as the operator display surface.
-Verdict: The shipped system now matches the original direction in architecture shape, but it is not complete. AT-0 has moved beyond routing into context, prompt compilation, memory packing, evidence, verification, bounded repair, MCP/tool trust boundaries, escalation, outcomes, registry-backed routing, trace-seeded eval gates, trend observability, signed trace and benchmark evidence, output contracts, deterministic local decoding, and operator comparison. Phase 38 deployed a harder adversarial profile and exposed two deterministic analysis omissions after repair. Phase 39 targets those validator-proven omissions inside the existing single repair attempt without changing routing, retention, or call budgets. Genuine operator-approved historical failures and optional approved cloud evidence remain before meaningful active rollout.
+Scope: Alpha chat-quality amplification phases 1-40, with Helm as the operator display surface.
+Verdict: The shipped system now matches the original direction in architecture shape, but it is not complete. AT-0 has moved beyond routing into context, prompt compilation, memory packing, evidence, verification, bounded repair, MCP/tool trust boundaries, escalation, outcomes, registry-backed routing, trace-seeded eval gates, trend observability, signed trace and benchmark evidence, output contracts, deterministic local decoding, and operator comparison. Phase 39 deployed targeted repair and confirmed two deterministic analysis answers still omitted one typed value after the single model retry. Phase 40 adds a bounded structured finalizer for exactly one reviewed missing slot without changing routing or call budgets. Genuine operator-approved historical failures and optional approved cloud evidence remain before meaningful active rollout.
 
 ## Target Architecture
 
@@ -55,7 +55,8 @@ flowchart TD
     CR --> PM["Per-model task benchmarks"]
     PM --> AP["Adversarial assisted probes"]
     AP --> MR["Targeted missing-term repair"]
-    MR --> HP["Helm trend panel"]
+    MR --> SF["Structured constraint finalizer"]
+    SF --> HP["Helm trend panel"]
     HP --> G["CI + deploy regression gate"]
 ```
 
@@ -94,19 +95,20 @@ flowchart TD
 | Historical-Raw Provenance Gate | Ready, no batch activated | `brain/services/chat_redacted_trace_corpus.py` requires exact operator-attested provenance and separate assisted/historical approvals; `scripts/sample_chat_traces.py --require-historical-raw` fails closed when no historical case exists. | Prevents assisted probes from being represented as production-history evidence while preserving the signed corpus workflow. |
 | Historical Evidence Activation Audit | Audited, no activation | Metadata-only discovery returned zero eligible historical outcomes; a separate five-sample Brain baseline passed 20/20 assisted attempts with zero repairs and no raw retention. | Preserves truthful evidence provenance while proving the deployed local baseline is stable. |
 | Adversarial Assisted-Probe Expansion | Done, deployed with bounded failures | `brain/services/chat_local_output_benchmark.py` defines a separate versioned eight-task adversarial profile; deployed commit `52313d4` passed required gates and the three-sample Brain run completed within its 48-call cap. | Exposed two stable analysis omissions after repair without replacing the baseline, retaining raw text, or changing routing. |
-| Targeted Missing-Term Repair | Implemented, deploy evidence pending | `brain/services/chat_output_contract.py` derives only validator-proven missing required terms for the existing repair prompt; production chat and local benchmarks share the same bounded path. | Makes lower-model repair precise without extra retries, provider coupling, raw retention, or Helm changes. |
+| Targeted Missing-Term Repair | Done, deployed with bounded failures | `brain/services/chat_output_contract.py` derives only validator-proven missing required terms for the existing repair prompt; deployed commit `e389705` passed `2119` tests and required smokes. | Improved one adversarial analysis answer but left one typed omission in each of two stable failing tasks. |
+| Structured Constraint Finalizer | Implemented, deploy evidence pending | `brain/services/chat_output_contract.py` can restore exactly one reviewed typed slot after the existing repair; production chat and local benchmarks share full revalidation. | Completes bounded structural omissions without another model call or open-ended synthesis. |
 
 ## Architecture Fit
 
 | Requirement | State | Evidence | Gap |
 |---|---:|---|---|
 | Model-agnostic strategy selection | Partial | Strategy plan uses the capability registry for local, Perplexity, Claude, Gemini, council, and deep verify paths; the calibrated rollout gate can shadow or canary bounded outcome overlays. | Needs shadow evidence and operator approval before active exposure. |
-| Better lower-model output | Partial | Memory packing, prompt compilation, evidence pack, trace replay, an approved assisted contract-failure batch, feasibility preflight, explicit output contracts, deterministic local decoding, exact-key schema generation, targeted one-pass repair, verification/gateway, and objective baseline plus adversarial task profiles improve or block weak output before final stream. | Needs deployed Phase 39 adversarial evidence and genuine operator-approved historical feasible failures; validation remains intentionally structural and lexical. |
+| Better lower-model output | Partial | Memory packing, prompt compilation, evidence pack, trace replay, an approved assisted contract-failure batch, feasibility preflight, explicit output contracts, deterministic local decoding, exact-key schema generation, targeted one-pass repair, a typed single-slot finalizer, verification/gateway, and objective baseline plus adversarial task profiles improve or block weak output before final stream. | Needs deployed Phase 40 adversarial evidence and genuine operator-approved historical feasible failures; validation remains intentionally structural and lexical. |
 | Context engineering | Partial | Evidence pack and memory pack record evidence types, memory priority, token budget, freshness labels, and untrusted raw web content. | Ranking is still deterministic and shallow; no learned retrieval policy. |
-| Verification and repair | Partial | One bounded repair pass can strip unsupported web narration, retry empty evidence-backed answers, or target validator-proven missing contract terms before gateway/escalation. | No learned repair policy or multi-step self-critique. |
+| Verification and repair | Partial | One bounded repair pass can strip unsupported web narration, retry empty evidence-backed answers, or target validator-proven missing contract terms; exactly one reviewed typed slot may then be finalized before full gateway/escalation checks. | No learned repair policy or multi-step self-critique; untyped and multi-slot failures remain blocked. |
 | Operator observability | Strong | Helm surfaces outcome, eval details, and trend metadata; Alpha logs quality and escalation decisions. | No trace replay view. |
 | Safety boundary | Strong | Outcome/eval reads are classified `read` and `security_read`; high-risk actions still route through Alpha approvals; MCP tools now have contract-derived boundaries. | Need real invocation wrappers to consume this boundary before broad tool expansion. |
-| Evaluation | Partial | Offline deterministic eval suite has golden strategy, memory pack, prompt compiler, output contracts, feasibility and generation-policy checks, quality gateway, trace replay, signed feasible and legacy contract-failure cases, signed local benchmark evidence, model-score calibration, outcome audit groups, and separate baseline and adversarial local profiles. | Needs the deployed Phase 39 adversarial rerun and independently sourced `historical_raw` feasible contract-failure cases; the current historical count is zero. |
+| Evaluation | Partial | Offline deterministic eval suite has golden strategy, memory pack, prompt compiler, output contracts, feasibility, generation-policy and finalizer checks, quality gateway, trace replay, signed feasible and legacy contract-failure cases, signed local benchmark evidence, model-score calibration, outcome audit groups, and separate baseline and adversarial local profiles. | Needs the deployed Phase 40 adversarial rerun and independently sourced `historical_raw` feasible contract-failure cases; the current historical count is zero. |
 
 ## 11-Pillar Audit
 
@@ -161,12 +163,13 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 | Historical-raw provenance gate | Ready, activation blocked on real evidence | Reliability, privacy, evaluation | Historical failures require exact operator-attested source and selection provenance, cannot mix with assisted probes in one approval batch, and fail closed when a historical-only workflow contains no historical case. | S | P1 | Ken/AT-0 | 2026-07-15 | ADR-0042 and `tests/test_chat_redacted_trace_corpus.py` cover provenance, lane separation, empty historical rejection, legacy compatibility, and metadata-only replay. Discovery returned zero eligible outcomes, so no Phase 36 batch is active. |
 | Historical evidence activation audit | Evidence audit complete, no activation | Reliability, privacy, evaluation | Metadata-only discovery found no natural failures, so no historical batch was fabricated; the separate assisted baseline proved stable local behavior. | S | P1 | Ken/AT-0 | 2026-07-15 | Discovery returned 0 outcomes and accessed no raw content. The Brain-only baseline passed 20/20 attempts, 4/4 tasks across five samples, zero repairs, and retained no raw prompts or responses. |
 | Adversarial assisted-probe expansion | Closed initial, deployed | Reliability, output quality, privacy, evaluation | Eight harder reviewed tasks cover typed and nullable JSON, distractor grounding, negative gates, dual thresholds, and ordered recovery without changing the default baseline. | M | P1 | Ken/AT-0 | 2026-07-15 | Deployed commit `52313d4` passed `2115` tests and required smokes; the Brain run passed `18/24` attempts and identified two stable post-repair analysis gaps within `30` local calls. |
-| Targeted missing-term repair | Implemented, deploy evidence pending | Reliability, output quality, latency, privacy | The existing one-pass repair now receives only the required terms the shared validator proves absent; failed answers remain excluded from prompts, logs, and metadata. | S | P1 | Ken/AT-0 | 2026-07-16 | ADR-0044 plus output-contract, repair-loop, and benchmark tests cover selective targeting, one-retry behavior, prior-answer exclusion, and metadata privacy. |
+| Targeted missing-term repair | Closed initial, deployed with bounded failures | Reliability, output quality, latency, privacy | The existing one-pass repair receives only required terms the shared validator proves absent; failed answers remain excluded from prompts, logs, and metadata. | S | P1 | Ken/AT-0 | 2026-07-16 | Phase 39 deployed at `e389705`; `2119` tests and required smokes passed. The Brain run remained `18/24`, while dual-threshold quality improved from 40 to 80 and each failing task narrowed to one typed omission. |
+| Structured constraint finalizer | Implemented, deploy evidence pending | Reliability, output quality, latency, privacy | Exactly one reviewed typed slot may be appended after the existing failed repair, then the complete contract and evidence verification must pass. | S | P1 | Ken/AT-0 | 2026-07-16 | ADR-0045 plus output-contract, repair-loop, and benchmark regressions cover Phase 39 failure shapes, one-slot bounds, sentence limits, no extra calls, and metadata privacy. |
 
 ## Next Build Queue
 
-1. Merge and deploy Phase 39, then rerun the three-sample adversarial profile on Brain with an explicit 48-call cap and an external metadata-only output path.
-2. If a failure persists after targeted repair, treat it as a semantic planning gap; do not relabel a benchmark-only contract as a user-explicit signed trace.
+1. Merge and deploy Phase 40, then rerun the three-sample adversarial profile on Brain with an explicit 48-call cap and an external metadata-only output path.
+2. Separate pure-model, repaired, and structured-finalized results; do not represent system-assisted completion as unaided model capability.
 3. Wait for a naturally occurring eligible failure before preparing a separately signed `historical_raw` digest; do not merge it with assisted evidence.
 4. Run an optional bounded cloud comparison only with explicit paid-egress approval.
 
@@ -214,6 +217,10 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 - Phase 38 retained no raw prompts or responses, made no cloud calls, did not mutate routing scores, and left calibrated routing off.
 - An approved four-call diagnostic capture confirmed the same missing-term shapes. The signed sampler correctly rejected the benchmark-only contract IDs, and all raw/review artifacts were deleted without corpus activation.
 - Phase 39 keeps one repair attempt and uses the validator's existing case-insensitive term semantics to create an ephemeral missing-term checklist; it adds no result fields, logs, route changes, or model calls.
+- Phase 39 deployed at `e389705`; the fan-out passed `2119` tests plus required health, memory, Beacon, and chat-quality smokes.
+- The deployed Phase 39 Brain run passed `18/24` attempts with `6/8` stable passing tasks, `30` local calls, and `6` repairs. The one-sentence task still omitted `97`; the dual-threshold task improved from score 40 to 80 but still omitted `local`.
+- Phase 39 retained no raw prompts or responses, made no cloud calls, did not mutate routing scores, and left calibrated routing off.
+- Phase 40 permits only one reviewed typed missing slot after the existing repair, adds no model call, revalidates the full contract and evidence, and reports finalization only as metadata-safe action, boolean, and count fields.
 - Trusted Sandbox CI and deploy now run chat quality evals in `.github/workflows/trusted-sandbox-ci.yml:135` and `scripts/jarvisalpha_deploy.sh:487`.
 - Helm reads the eval endpoint and renders Evaluation Harness and trend sections in `jarvis-helm` `src/ask/alphaAskClient.ts` and `src/ask/AskWorkspace.tsx`.
 
@@ -235,12 +242,14 @@ These are reference anchors, not claims that AT-0 implements each pattern fully.
 | Medium | An assisted probe is mislabeled as historical production evidence. | Require exact signed historical provenance, forbid it on assisted probes, and reject mixed evidence-lane batches. |
 | Medium | Adversarial task changes make new evidence incomparable with the deployed baseline. | Keep profiles separately named and versioned; never replace the four baseline tasks in place. |
 | Medium | Targeted repair terms leak through observability or raw capture. | Keep failed output and missing terms in memory only; persist the existing issue codes, hashes, counts, and decisions. |
+| Medium | Structured-finalized output is mistaken for unaided model capability. | Benchmark schema v3 records finalizer use per result and as an aggregate count; compare model-only, repaired, and finalized outcomes separately. |
+| Medium | Deterministic completion invents content beyond a reviewed contract. | Permit exactly one bound slot with a complete reviewed render clause, then revalidate every contract and evidence constraint; otherwise fail closed. |
 | Medium | Memory/RAG packing overuses stale memory. | Keep freshness/source priority and Beacon-over-memory tests in the eval gate. |
 | Medium | MCP expansion bypasses Alpha approvals. | Require route classification and approval policy before any executable tool. |
 
 ## Recommendations
 
-1. Deploy Phase 39 on the exact merged commit and rerun the bounded adversarial profile before claiming the missing-term gap is closed.
+1. Deploy Phase 40 on the exact merged commit and rerun the bounded adversarial profile before claiming the typed single-slot gap is closed.
 2. Collect separately signed `historical_raw` feasible failures only when independently approved evidence is available.
 3. Keep `assisted_probe` deterministic-output results separate from approved `historical_raw` model evidence.
 4. Run a bounded paid comparison only with explicit operator approval and an external metadata-only output path.

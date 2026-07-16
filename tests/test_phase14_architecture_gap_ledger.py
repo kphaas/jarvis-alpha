@@ -56,6 +56,7 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
         "Historical Evidence Activation Audit",
         "Adversarial Assisted-Probe Expansion",
         "Targeted Missing-Term Repair",
+        "Structured Constraint Finalizer",
     ):
         assert phase in text
 
@@ -84,6 +85,7 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
     assert "Phase 36" not in next_queue
     assert "Phase 37" not in next_queue
     assert "Phase 38" not in next_queue
-    assert "Phase 39" in next_queue
+    assert "Phase 39" not in next_queue
+    assert "Phase 40" in next_queue
     assert "historical_raw" in next_queue
     assert "naturally occurring" in next_queue
