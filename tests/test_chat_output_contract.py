@@ -177,13 +177,68 @@ def test_contract_metadata_and_repair_prompt_do_not_retain_prior_response() -> N
         user_msg="Require operator approval before reactivation.",
         contract=contract,
         issues=evaluation.issues,
+        failed_response_text="reactivate now",
     )
     metadata = evaluation.to_metadata()
 
     assert "reactivate now" not in prompt
     assert "operator approval" in prompt
+    assert (
+        "Targeted validation checklist (include each missing term exactly):\n"
+        "- operator approval"
+    ) in prompt
     assert "operator approval" not in json.dumps(metadata)
     assert metadata["chat_output_contract_issues"] == ["required_content_missing"]
+
+
+def test_repair_prompt_targets_only_validator_proven_missing_terms() -> None:
+    contract = ChatOutputContract(
+        contract_id="analysis",
+        required_terms=("97", "cost", "4", "privacy", "local", "external"),
+    )
+    failed_response = (
+        "SENSITIVE-PRIOR-CONTENT: Option C has cost 4, local privacy instead of "
+        "external privacy."
+    )
+
+    prompt = render_chat_output_contract_repair_prompt(
+        user_msg="Compare the options.",
+        contract=contract,
+        issues=("required_content_missing",),
+        failed_response_text=failed_response,
+    )
+    checklist = prompt.split(
+        "Targeted validation checklist (include each missing term exactly):\n",
+        maxsplit=1,
+    )[1].split("\n\nOutput contract", maxsplit=1)[0]
+
+    assert checklist == "- 97"
+    assert failed_response not in prompt
+    assert "SENSITIVE-PRIOR-CONTENT" not in prompt
+
+
+def test_repair_prompt_skips_targeting_without_a_proven_omission() -> None:
+    contract = ChatOutputContract(
+        contract_id="analysis",
+        required_terms=("privacy",),
+        max_sentences=1,
+    )
+
+    wrong_issue_prompt = render_chat_output_contract_repair_prompt(
+        user_msg="Use one sentence.",
+        contract=contract,
+        issues=("sentence_limit_exceeded",),
+        failed_response_text="No required content.",
+    )
+    no_missing_terms_prompt = render_chat_output_contract_repair_prompt(
+        user_msg="Include privacy.",
+        contract=contract,
+        issues=("required_content_missing",),
+        failed_response_text="Privacy is local.",
+    )
+
+    assert "Targeted validation checklist" not in wrong_issue_prompt
+    assert "Targeted validation checklist" not in no_missing_terms_prompt
 
 
 def test_contract_verification_fails_closed_through_quality_gateway() -> None:

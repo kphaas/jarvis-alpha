@@ -244,6 +244,7 @@ async def _run_output_contract_repair(
         user_msg=repair_context,
         contract=output_contract,
         issues=evaluation.issues,
+        failed_response_text=normalized_text,
     )
     retry = await retry_once(repair_prompt)
     retry_text, _retry_normalized = normalize_chat_output_contract_response(

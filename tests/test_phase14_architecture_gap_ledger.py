@@ -55,6 +55,7 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
         "Historical-raw provenance gate",
         "Historical Evidence Activation Audit",
         "Adversarial Assisted-Probe Expansion",
+        "Targeted Missing-Term Repair",
     ):
         assert phase in text
 
@@ -82,6 +83,7 @@ def test_phase14_gap_ledger_tracks_next_build_queue() -> None:
     assert "Phase 35" not in next_queue
     assert "Phase 36" not in next_queue
     assert "Phase 37" not in next_queue
-    assert "Phase 38" in next_queue
+    assert "Phase 38" not in next_queue
+    assert "Phase 39" in next_queue
     assert "historical_raw" in next_queue
     assert "naturally occurring" in next_queue
