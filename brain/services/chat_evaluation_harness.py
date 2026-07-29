@@ -40,6 +40,7 @@ from brain.services.chat_output_contract import (
     compile_explicit_chat_output_contract,
     evaluate_chat_output_contract,
     evaluate_chat_output_contract_feasibility,
+    finalize_chat_output_contract_response,
     generation_policy_for_chat_output_contract,
 )
 from brain.services.chat_quality_trends import summarize_chat_quality_trend
@@ -297,6 +298,21 @@ def _output_contract_eval_result() -> ChatEvalResult:
         if conflicting_contract is not None
         else None
     )
+    finalizer_contract = compile_explicit_chat_output_contract(
+        "Compare external privacy and local privacy tradeoff and cost in one sentence."
+    )
+    finalized_text, finalizer_applied = (
+        finalize_chat_output_contract_response(
+            "External privacy has a cost tradeoff.",
+            finalizer_contract,
+        )
+        if finalizer_contract is not None
+        else ("", False)
+    )
+    finalizer_passed = bool(
+        finalizer_contract is not None
+        and evaluate_chat_output_contract(finalized_text, finalizer_contract).passed
+    )
     rejected = evaluate_chat_output_contract("Status is ready.", contract)
     evidence_pack = build_chat_evidence_pack(memory_context="", internet_context=None)
     base_verification = verify_chat_response(
@@ -340,6 +356,8 @@ def _output_contract_eval_result() -> ChatEvalResult:
         failures.append("feasibility_contract_not_compiled")
     elif feasibility.feasible or feasibility.conflicts != ("required_term_forbidden",):
         failures.append("infeasible_contract_not_blocked")
+    if not finalizer_applied or not finalizer_passed:
+        failures.append("structured_constraint_finalizer_failed")
 
     return ChatEvalResult(
         name="explicit_output_contract_is_enforced",
@@ -363,6 +381,7 @@ def _output_contract_eval_result() -> ChatEvalResult:
                 if feasibility is not None
                 else None
             ),
+            "structured_constraint_finalizer": finalizer_applied and finalizer_passed,
             "model_calls": 0,
         },
         failures=tuple(failures),

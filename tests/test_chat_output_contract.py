@@ -10,10 +10,12 @@ from brain.services.chat_evidence_pack import (
 )
 from brain.services.chat_output_contract import (
     ChatOutputContract,
+    ChatOutputConstraintSlot,
     apply_chat_output_contract_verification,
     compile_explicit_chat_output_contract,
     evaluate_chat_output_contract,
     evaluate_chat_output_contract_feasibility,
+    finalize_chat_output_contract_response,
     generation_policy_for_chat_output_contract,
     normalize_chat_output_contract_response,
     render_chat_output_contract_repair_prompt,
@@ -81,6 +83,13 @@ def test_compiler_builds_privacy_and_sentence_constraints() -> None:
     assert contract is not None
     assert contract.required_terms == ("privacy", "cost", "external", "local")
     assert contract.max_sentences == 3
+    assert contract.constraint_slots == (
+        ChatOutputConstraintSlot(
+            slot_id="privacy_tradeoff",
+            required_terms=("privacy", "cost", "external", "local"),
+            render_text="Privacy and cost tradeoff: external versus local.",
+        ),
+    )
     generation_policy = generation_policy_for_chat_output_contract(contract)
     assert generation_policy.deterministic is True
     assert generation_policy.json_mode is False
@@ -239,6 +248,121 @@ def test_repair_prompt_skips_targeting_without_a_proven_omission() -> None:
 
     assert "Targeted validation checklist" not in wrong_issue_prompt
     assert "Targeted validation checklist" not in no_missing_terms_prompt
+
+
+def test_structured_finalizer_restores_one_slot_within_sentence_limit() -> None:
+    contract = ChatOutputContract(
+        contract_id="analysis",
+        required_terms=("option c", "97", "cost", "4", "privacy", "local"),
+        max_sentences=1,
+        constraint_slots=(
+            ChatOutputConstraintSlot(
+                slot_id="reliability",
+                required_terms=("97",),
+                render_text="Reliability: 97.",
+            ),
+        ),
+    )
+    response = "Recommend Option C for cost 4 and local privacy."
+
+    finalized, applied = finalize_chat_output_contract_response(response, contract)
+
+    assert applied is True
+    assert finalized == (
+        "Recommend Option C for cost 4 and local privacy; Reliability: 97."
+    )
+    assert evaluate_chat_output_contract(finalized, contract).passed is True
+    assert "97" not in json.dumps(
+        evaluate_chat_output_contract(finalized, contract).to_metadata()
+    )
+
+
+def test_structured_finalizer_refuses_ambiguous_or_unsafe_completion() -> None:
+    multiple_missing = ChatOutputContract(
+        contract_id="analysis",
+        required_terms=("97", "local"),
+        constraint_slots=(
+            ChatOutputConstraintSlot("reliability", ("97",), "Reliability: 97."),
+            ChatOutputConstraintSlot("privacy", ("local",), "Privacy: local."),
+        ),
+    )
+    forbidden_content = ChatOutputContract(
+        contract_id="analysis",
+        required_terms=("97",),
+        forbidden_terms=("purge",),
+        constraint_slots=(
+            ChatOutputConstraintSlot("reliability", ("97",), "Reliability: 97."),
+        ),
+    )
+    exact_json = ChatOutputContract(
+        contract_id="json",
+        exact_json_keys=("choice",),
+        required_terms=("97",),
+        constraint_slots=(
+            ChatOutputConstraintSlot("reliability", ("97",), "Reliability: 97."),
+        ),
+    )
+    unresolved_non_slot = ChatOutputContract(
+        contract_id="analysis",
+        required_terms=("option c", "97"),
+        constraint_slots=(
+            ChatOutputConstraintSlot("reliability", ("97",), "Reliability: 97."),
+        ),
+    )
+
+    assert finalize_chat_output_contract_response("Choose C.", multiple_missing) == (
+        "Choose C.",
+        False,
+    )
+    assert finalize_chat_output_contract_response(
+        "Choose C and purge records.", forbidden_content
+    ) == ("Choose C and purge records.", False)
+    assert finalize_chat_output_contract_response('{"choice":"C"}', exact_json) == (
+        '{"choice":"C"}',
+        False,
+    )
+    assert finalize_chat_output_contract_response(
+        "Choose an option.", unresolved_non_slot
+    ) == ("Choose an option.", False)
+
+
+def test_feasibility_preflight_rejects_incomplete_constraint_slot() -> None:
+    contract = ChatOutputContract(
+        contract_id="analysis",
+        required_terms=("97",),
+        constraint_slots=(
+            ChatOutputConstraintSlot(
+                slot_id="reliability",
+                required_terms=("97",),
+                render_text="Reliability is required.",
+            ),
+        ),
+    )
+
+    feasibility = evaluate_chat_output_contract_feasibility(contract)
+
+    assert feasibility.feasible is False
+    assert feasibility.conflicts == ("constraint_slot_render_incomplete",)
+
+
+def test_feasibility_preflight_rejects_zero_sentence_budget() -> None:
+    contract = ChatOutputContract(
+        contract_id="analysis",
+        required_terms=("privacy",),
+        max_sentences=0,
+        constraint_slots=(
+            ChatOutputConstraintSlot(
+                slot_id="privacy",
+                required_terms=("privacy",),
+                render_text="Privacy.",
+            ),
+        ),
+    )
+
+    feasibility = evaluate_chat_output_contract_feasibility(contract)
+
+    assert feasibility.feasible is False
+    assert feasibility.conflicts == ("sentence_limit_invalid",)
 
 
 def test_contract_verification_fails_closed_through_quality_gateway() -> None:

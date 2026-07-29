@@ -5,9 +5,18 @@ import os
 import subprocess
 import sys
 
-os.environ.setdefault("ALPHA_DB_DSN", "postgresql://test:test@localhost/test")
-os.environ.setdefault("ALPHA_DB_DSN_WRITER", "postgresql://test:test@localhost/test")
-os.environ.setdefault("ALPHA_DB_DSN_BUDDY", "postgresql://test:test@localhost/test")
+os.environ.setdefault(
+    "ALPHA_DB_DSN",
+    "postgresql://test:test@localhost/test",  # pragma: allowlist secret
+)
+os.environ.setdefault(
+    "ALPHA_DB_DSN_WRITER",
+    "postgresql://test:test@localhost/test",  # pragma: allowlist secret
+)
+os.environ.setdefault(
+    "ALPHA_DB_DSN_BUDDY",
+    "postgresql://test:test@localhost/test",  # pragma: allowlist secret
+)
 os.environ.setdefault("ALPHA_GATEWAY_URL", "http://127.0.0.1:8188")
 
 from brain.services.chat_evaluation_harness import (
@@ -78,6 +87,7 @@ def test_chat_eval_payload_scoreboards_outcome_metadata() -> None:
     assert output_contract["details"]["exact_key_count"] == 2
     assert output_contract["details"]["infeasible_contract_blocked"] is True
     assert output_contract["details"]["preflight_action"] == "skip_generation"
+    assert output_contract["details"]["structured_constraint_finalizer"] is True
     assert payload["case_groups"]["quality_gateway"]["case_count"] == 4
     assert payload["case_groups"]["mcp_tool_boundary"]["case_count"] == 1
     assert payload["case_groups"]["trace_replay"]["case_count"] == 4

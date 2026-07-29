@@ -20,6 +20,7 @@ from brain.services.chat_output_contract import (
     apply_chat_output_contract_verification,
     evaluate_chat_output_contract,
     evaluate_chat_output_contract_feasibility,
+    finalize_chat_output_contract_response,
     normalize_chat_output_contract_response,
     render_chat_output_contract_repair_prompt,
 )
@@ -276,6 +277,39 @@ async def _run_output_contract_repair(
             model_used=retry.model_used,
             output_contract=retry_evaluation,
         )
+
+    finalized_text, finalized = finalize_chat_output_contract_response(
+        retry_text,
+        output_contract,
+    )
+    if finalized:
+        finalized_evaluation = evaluate_chat_output_contract(
+            finalized_text,
+            output_contract,
+        )
+        finalized_verification = apply_chat_output_contract_verification(
+            verify_chat_response(
+                response_text=finalized_text,
+                evidence_pack=evidence_pack,
+            ),
+            finalized_evaluation,
+        )
+        if finalized_verification.verified and not (
+            finalized_verification.requires_web_verification
+        ):
+            return ChatRepairLoopResult(
+                text=finalized_text,
+                verification=finalized_verification,
+                attempted=True,
+                repaired=True,
+                attempts=1,
+                action="retry_local_once_then_finalize",
+                reason="output_contract_finalized",
+                before_issues=combined_verification.issues,
+                after_issues=finalized_verification.issues,
+                model_used=retry.model_used,
+                output_contract=finalized_evaluation,
+            )
     return ChatRepairLoopResult(
         text=retry_text,
         verification=repaired_verification,
