@@ -406,6 +406,8 @@ def test_linkedin_phase2_learning_loop_is_approval_gated() -> None:
     )
     assert "metrics_due_count" in service_source
     assert "review_friction_30d" in service_source
+    assert "load_linkedin_analytics_digest" in service_source
+    assert "recommendations" in service_source
 
 
 def test_linkedin_target_scout_uses_gateway_search_without_publish() -> None:
@@ -550,6 +552,7 @@ def test_social_routes_publish_only_through_linkedin_connector() -> None:
     assert "/linkedin/cadence" in source
     assert "/linkedin/read-plan" in source
     assert "/linkedin/operator-dashboard" in source
+    assert "/linkedin/analytics-digest" in source
     assert "/linkedin/engagements" in source
     assert "/linkedin/engagements/scout" in source
     assert "/linkedin/ingest" in source

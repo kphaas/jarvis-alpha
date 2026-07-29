@@ -58,6 +58,10 @@ def test_herald_ui_exposes_social_approval_outbox() -> None:
         in source
     )
     assert (
+        "apiJson<LinkedInAnalyticsDigest>('/v1/herald/social/linkedin/analytics-digest')"
+        in source
+    )
+    assert (
         "apiJson<ThoughtLeaderTargetList>('/v1/herald/social/linkedin/thought-leaders?status=active&limit=8')"
         in source
     )
@@ -97,6 +101,7 @@ def test_herald_ui_exposes_social_approval_outbox() -> None:
     assert "Best topic" in source
     assert "Metrics due" in source
     assert "Learning ready" in source
+    assert "Weekly digest" in source
     assert "Thought-leader target graph" in source
     assert "Analytics feedback loop" in source
     assert "Record metrics" in source

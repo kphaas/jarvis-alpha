@@ -115,6 +115,17 @@ elif label == "cadence":
         f"next_due={payload.get('next_due_date')} "
         f"ready={payload.get('approved_ready_count')}"
     )
+elif label == "digest":
+    for key in ("week_of", "headline", "recommendations", "best_topic"):
+        if key not in payload:
+            raise SystemExit(f"FAIL digest: missing {key}")
+    if not isinstance(payload.get("recommendations"), list) or not payload["recommendations"]:
+        raise SystemExit("FAIL digest: recommendations missing")
+    print(
+        "PASS digest: "
+        f"week_of={payload.get('week_of')} "
+        f"recommendations={len(payload.get('recommendations', []))}"
+    )
 elif label in {"create", "weekly"}:
     drafts = payload.get("drafts")
     if not isinstance(drafts, list) or not drafts:
@@ -185,6 +196,7 @@ PY
 
 request_json "GET" "platforms" "/v1/herald/social/platforms"
 request_json "GET" "cadence" "/v1/herald/social/linkedin/cadence"
+request_json "GET" "digest" "/v1/herald/social/linkedin/analytics-digest"
 request_json "POST" "weekly" "/v1/herald/social/linkedin/weekly"
 
 WEEKLY_DRAFT_ID="$(cat "${TMP_DIR}/weekly.id")"

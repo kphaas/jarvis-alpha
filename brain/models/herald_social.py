@@ -151,6 +151,17 @@ class HeraldLinkedInOperatorDashboardOut(BaseModel):
     review_friction_30d: dict[str, int]
 
 
+class HeraldLinkedInAnalyticsDigestOut(BaseModel):
+    week_of: date
+    headline: str
+    recommendations: list[str]
+    best_topic: str
+    best_reply_style: SocialReplyStyle
+    metrics_due_count: int
+    metric_snapshots_30d: int
+    metrics_learning_ready: bool
+
+
 class HeraldThoughtLeaderTargetCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

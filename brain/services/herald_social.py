@@ -1044,6 +1044,48 @@ async def load_linkedin_operator_dashboard(
     }
 
 
+async def load_linkedin_analytics_digest(
+    conn: asyncpg.Connection,
+) -> dict[str, object]:
+    dashboard = await load_linkedin_operator_dashboard(conn)
+    week_of = await conn.fetchval(
+        """
+        SELECT (current_date - (EXTRACT(ISODOW FROM current_date)::int - 1))::date
+        """
+    )
+    metrics_due = int(dashboard["metrics_due_count"] or 0)
+    samples = int(dashboard["metric_snapshots_30d"] or 0)
+    learning_ready = bool(dashboard["metrics_learning_ready"])
+    headline = (
+        f"LinkedIn learning: {samples} metric snapshots in 30d, "
+        f"{metrics_due} metric captures due."
+    )
+    recommendations = [
+        f"Next weekly topic: {dashboard['best_topic']}",
+        f"Default reply style: {str(dashboard['best_reply_style']).replace('_', ' ')}",
+    ]
+    if not learning_ready:
+        recommendations.append(
+            f"Collect {max(0, LINKEDIN_LEARNING_MIN_SAMPLES - samples)} more "
+            "metric snapshots before steering topics from performance."
+        )
+    elif metrics_due:
+        recommendations.append("Capture due metrics before using this week as signal.")
+    else:
+        recommendations.append("Use current topic/style ranking for the next draft.")
+
+    return {
+        "week_of": week_of,
+        "headline": headline,
+        "recommendations": recommendations,
+        "best_topic": dashboard["best_topic"],
+        "best_reply_style": dashboard["best_reply_style"],
+        "metrics_due_count": metrics_due,
+        "metric_snapshots_30d": samples,
+        "metrics_learning_ready": learning_ready,
+    }
+
+
 async def scout_linkedin_engagement_targets(
     conn: asyncpg.Connection,
     *,
