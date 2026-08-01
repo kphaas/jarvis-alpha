@@ -28,7 +28,7 @@ jobs:
       PYTEST_MARKERS: ${{ vars.JARVIS_PYTEST_MARKERS != '' && vars.JARVIS_PYTEST_MARKERS || 'not integration' }}
       UV_PYTHON: "3.12"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           clean: true
           fetch-depth: 1
