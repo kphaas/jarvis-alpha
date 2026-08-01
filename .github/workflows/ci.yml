@@ -27,13 +27,13 @@ jobs:
     name: github/guardrails
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Need history for the audit comparison against the baseline.
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -92,7 +92,7 @@ jobs:
       - name: Find existing staleness comment
         id: find
         if: github.event_name == 'pull_request' && steps.age.outputs.age_days != ''
-        uses: peter-evans/find-comment@v3
+        uses: peter-evans/find-comment@v4
         with:
           issue-number: ${{ github.event.pull_request.number }}
           comment-author: github-actions[bot]
@@ -103,7 +103,7 @@ jobs:
           github.event_name == 'pull_request' &&
           steps.age.outputs.age_days != '' &&
           fromJSON(steps.age.outputs.age_days) >= 14
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@v5
         with:
           comment-id: ${{ steps.find.outputs.comment-id }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -129,7 +129,7 @@ jobs:
           steps.age.outputs.age_days != '' &&
           fromJSON(steps.age.outputs.age_days) < 14 &&
           steps.find.outputs.comment-id != ''
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@v5
         with:
           comment-id: ${{ steps.find.outputs.comment-id }}
           edit-mode: replace
